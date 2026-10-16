@@ -241,6 +241,100 @@ pub fn s2r(text: &str) -> u32 {
     }
 }
 
+/// Fractional part, with the sign of `x` (SPEC-0004).
+pub fn frac(x: u32) -> u32 {
+    let e = exponent(x);
+    if e < 127 {
+        return x;
+    }
+    if e >= 150 {
+        return 0;
+    }
+    let k = e - 127;
+    let integer_part = x & !((1u32 << (23 - k)) - 1);
+    sub(x, integer_part)
+}
+
+/// Remainder of `x` by `y`, for `x >= 0` (SPEC-0004).
+pub fn fmod(x: u32, y: u32) -> u32 {
+    let y = y & !SIGN;
+    let r = mul(frac(mul(x, recip(y))), y);
+    let (rf, yf) = (f32::from_bits(r), f32::from_bits(y));
+    if rf > 0.0 && rf >= yf { sub(r, y) } else { r }
+}
+
+/// A real literal in a script, read by the compiler's own rule
+/// (SPEC-0005): integer and fraction digits accumulate with 32-bit
+/// wrap-around, and the value is `I + F / 10^n` in engine arithmetic.
+/// `text` is digits with at most one point.
+pub fn real_literal(text: &str) -> u32 {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let accumulate = |digits: &str| {
+        digits.bytes().fold(0i32, |v, d| {
+            v.wrapping_mul(10).wrapping_add(i32::from(d - b'0'))
+        })
+    };
+    let integer = i2r(accumulate(whole));
+    if fraction.is_empty() {
+        return integer;
+    }
+    let scale = (0..fraction.len()).fold(1i32, |v, _| v.wrapping_mul(10));
+    add(integer, div(i2r(accumulate(fraction)), i2r(scale)))
+}
+
+/// `R2SW(x, width, precision)`; `R2S(x)` is `r2sw(x, 0, 3)` (SPEC-0004).
+pub fn r2sw(x: u32, width: i32, precision: i32) -> String {
+    const TEN: u32 = 0x4120_0000;
+    const HALF: u32 = 0x3F00_0000;
+    let mut text = String::new();
+    if x & SIGN != 0 && x != SIGN {
+        text.push('-');
+    }
+    let a = x & !SIGN;
+    if exponent(a) >= 158 {
+        let nan = exponent(a) == 255 && fraction(a) != 0;
+        if !nan && f32::from_bits(a) >= f32::from_bits(0x7F7F_FFFF) {
+            text.push_str("inf");
+            return text;
+        }
+        let (mut t, mut k) = (a, 0);
+        loop {
+            t = div(t, TEN);
+            k += 1;
+            if t <= 0x4EFF_FFFF {
+                break;
+            }
+        }
+        text.push_str(&r2i(t).to_string());
+        text.push_str(&"0".repeat(k));
+        text.push('.');
+        text.push_str(&"0".repeat(precision.max(1) as usize));
+        return text;
+    }
+    let mut q = if precision < 0 { 6 } else { precision.min(9) };
+    let mut i = r2i(a);
+    let scale = 10i32.pow(q as u32);
+    let mut n = r2i(floor(add(mul(frac(a), i2r(scale)), HALF)));
+    if n >= scale {
+        i += 1;
+        n -= scale;
+    }
+    if precision < 0 {
+        while q > 1 && n % 10 == 0 {
+            q -= 1;
+            n /= 10;
+        }
+    }
+    let pad = (width - q).max(1) as usize;
+    text.push_str(&format!("{i:>pad$}."));
+    if q == 0 {
+        text.push_str(&n.to_string());
+    } else {
+        text.push_str(&format!("{n:0>q$}", q = q as usize));
+    }
+    text
+}
+
 /// JASS `==` on reals: the difference is below 0.001 in magnitude.
 pub fn jass_equal(a: u32, b: u32) -> bool {
     f32::from_bits(sub(a, b) & !SIGN) < f32::from_bits(0x3A83_126F)

@@ -30,6 +30,15 @@ fn reproduces_every_test_vector() {
             "i2r" => (i2r(a.parse().unwrap()), hex(expected)),
             "s2r" => (s2r(a.trim_matches('"')), hex(expected)),
             "r2i" => (r2i(hex(a)) as u32, expected.parse::<i32>().unwrap() as u32),
+            "r2sw" => {
+                let (w, p) = b.split_once(' ').unwrap();
+                let text = r2sw(hex(a), w.parse().unwrap(), p.parse().unwrap());
+                *checked.entry(op).or_default() += 1;
+                if format!("\"{text}\"") != expected {
+                    mismatches.push(format!("{line}: got \"{text}\""));
+                }
+                continue;
+            }
             other => panic!("unknown op {other}"),
         };
         *checked.entry(op).or_default() += 1;
@@ -39,7 +48,7 @@ fn reproduces_every_test_vector() {
     }
     eprintln!("checked {checked:?}");
     let ops = [
-        "add", "sub", "mul", "div", "recip", "floor", "i2r", "r2i", "s2r",
+        "add", "sub", "mul", "div", "recip", "floor", "i2r", "r2i", "s2r", "r2sw",
     ];
     assert!(
         ops.iter()
@@ -123,4 +132,44 @@ fn measured_table_matches() {
         }
     }
     assert_eq!((entries, tail), (1024, 8191), "incomplete measurement");
+}
+
+/// Examples of SPEC-0004 for `frac` and `fmod`.
+#[test]
+fn fractional_part_and_remainder() {
+    let bits = f32::to_bits;
+    assert_eq!(frac(bits(2.75)), bits(0.75));
+    assert_eq!(frac(bits(-2.75)), bits(-0.75));
+    assert_eq!(frac(bits(0.25)), bits(0.25));
+    assert_eq!(frac(bits(1.0e9)), 0);
+    assert_eq!(fmod(bits(310.0), bits(120.0)), 0x428B_FFFE);
+    assert_eq!(fmod(bits(450.0), bits(120.0)), bits(90.0));
+}
+
+/// Examples of SPEC-0004 for `R2S` and `R2SW`.
+#[test]
+fn real_to_text_examples() {
+    let bits = f32::to_bits;
+    assert_eq!(r2sw(0x8000_0000, 0, 3), "0.000");
+    assert_eq!(r2sw(bits(-0.0004), 0, 3), "-0.000");
+    assert_eq!(r2sw(bits(2.5), 1, 0), "3.0");
+    assert_eq!(r2sw(bits(-1.5), 10, 2), "-       1.50");
+    assert_eq!(r2sw(div(i2r(1), i2r(3)), 1, 9), "0.333333312");
+    assert_eq!(r2sw(bits(99.9995), 0, 3), "99.999");
+}
+
+/// Examples of SPEC-0005 for real literals.
+#[test]
+fn real_literal_examples() {
+    assert_eq!(real_literal("0.1"), 0x3DCC_CCCE);
+    assert_eq!(real_literal("1.5"), 1.5f32.to_bits());
+    assert_eq!(real_literal("123456.789"), 123_456.78f32.to_bits());
+    assert_eq!(real_literal("10000000000.0"), 1_410_065_408f32.to_bits());
+    assert_eq!(real_literal("4294967296.0"), 0);
+    assert_eq!(real_literal("2147483648.0"), (-2_147_483_648f32).to_bits());
+    let wrapped = f32::from_bits(real_literal("0.1234567891234"));
+    assert!((wrapped - 1.453).abs() < 1e-3, "{wrapped}");
+    assert_eq!(real_literal("5."), 5.0f32.to_bits());
+    assert_eq!(real_literal(".25"), 0.25f32.to_bits());
+    assert_eq!(real_literal("1792.0"), 1792.0f32.to_bits());
 }

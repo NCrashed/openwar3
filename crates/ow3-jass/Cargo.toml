@@ -1,0 +1,16 @@
+[package]
+name = "ow3-jass"
+description = "Parser for JASS, the scripting language of Warcraft III maps and AI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+ow3-formats = { path = "../ow3-formats" }
+
+[lints]
+workspace = true

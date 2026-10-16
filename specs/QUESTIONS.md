@@ -86,3 +86,25 @@ sound of a region names a sound of the same map. Not yet confirmed:
 - the float after a camera's far clipping distance;
 - the sound fields without a documented meaning (`unknown_a` to
   `unknown_h`) and the meaning of the sound flag bits.
+
+## JASS syntax (`ow3-jass`)
+
+Every script in the 1.27b archives (258 files) and the `war3map.j` of every
+shipped map parse; the only rejection is a test map that declares a native
+after the first function, which SPEC-0001 says the game rejects too. The
+following choices are not confirmed against the game:
+
+- **Operator precedence.** Assumed, lowest first: `or`, `and`, `not`,
+  comparisons, `+ -`, `* /`, unary `+ -`, with binary operators grouping to
+  the left. Do `and` and `or` have different precedence, and where does
+  `not` bind (`not a == b`)? Is `x == not y` accepted?
+- **Reserved words.** The parser reserves the six built-in type names
+  (`integer`, `real`, `boolean`, `string`, `handle`, `code`) as well as the
+  keywords; SPEC-0001 confirms this only for `code` as a parameter name.
+- **Literals.** How integer literals are read (octal with a leading `0`,
+  hexadecimal with `0x` and `$`, overflow), raw codes of one and of four
+  characters and other lengths, real literals such as `1.` and `.5`, and
+  which string escapes exist. The parser keeps all literals as written.
+- **Lines.** Are string literals across line breaks accepted, and is a
+  carriage return alone a line break?
+- **Names.** May names start or end with an underscore?

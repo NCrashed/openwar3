@@ -5,5 +5,6 @@
 //! on a separate sleep clock.
 
 pub mod clock;
+pub mod game;
 pub mod sleep;
 pub mod timers;

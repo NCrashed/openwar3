@@ -22,6 +22,46 @@ fn real(bits: u32) -> f32 {
     f32::from_bits(bits)
 }
 
+/// The timeout a timer is queued with: at least 0.0001 and at most just
+/// under 300 s (SPEC-0002).
+pub fn clamp_timeout(timeout: u32) -> u32 {
+    if real(timeout) >= real(WRAP) {
+        sub(WRAP, MAX_TIMEOUT_MARGIN)
+    } else if real(timeout) < real(MIN_TIMEOUT) || real(timeout).is_nan() {
+        MIN_TIMEOUT
+    } else {
+        timeout
+    }
+}
+
+/// 120.0, the length of the parts a long timer is split into.
+pub const LONG_PART: u32 = 0x42F0_0000;
+
+/// The timeout `TimerStart` works with: at least 0.0001 (SPEC-0002).
+pub fn raise_timeout(timeout: u32) -> u32 {
+    if real(timeout) < real(MIN_TIMEOUT) || real(timeout).is_nan() {
+        MIN_TIMEOUT
+    } else {
+        timeout
+    }
+}
+
+/// Splits a timeout (already raised) into `n` parts of 120 s and a last
+/// part `R` (SPEC-0002). With `n = 0` the timer is queued whole.
+///
+/// PROVISIONAL: `fmod` is not defined in SPEC-0004 yet. It is taken as
+/// `mul(sub(t, floor(t)), 120)` with `t = div(timeout, 120)`, which gives
+/// the documented `R = 69.99998` for 310 s.
+pub fn split_timeout(timeout: u32) -> (u32, u32) {
+    let n = (ow3_math::r2i(timeout).max(0) / 120) as u32;
+    if n == 0 {
+        return (0, timeout);
+    }
+    let t = ow3_math::div(timeout, LONG_PART);
+    let rest = ow3_math::mul(sub(t, ow3_math::floor(t)), LONG_PART);
+    (n, raise_timeout(rest))
+}
+
 /// Identifies one start of a timer. A timer started again gets a new id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TimerId(pub u64);
@@ -33,6 +73,14 @@ pub struct Fired<T> {
     /// The expiry, which is also the queue time while it is handled.
     pub expiry: u32,
     pub payload: T,
+}
+
+/// A tick in progress: timers expiring up to `limit` fire, and when the
+/// queue wraps at 300 s, the rest of the tick up to `after_wrap`.
+#[derive(Debug)]
+pub struct Tick {
+    limit: u32,
+    after_wrap: Option<u32>,
 }
 
 /// Pending timers ordered by expiry, then by start (SPEC-0002).
@@ -82,14 +130,7 @@ impl<T> TimerQueue<T> {
     /// A periodic timer is started again by its owner when it fires; the
     /// queue time is then its expiry, so periods do not drift.
     pub fn start(&mut self, timeout: u32, payload: T) -> TimerId {
-        let timeout = if real(timeout) >= real(WRAP) {
-            sub(WRAP, MAX_TIMEOUT_MARGIN)
-        } else if real(timeout) < real(MIN_TIMEOUT) || real(timeout).is_nan() {
-            MIN_TIMEOUT
-        } else {
-            timeout
-        };
-        let expiry = add(self.time, timeout);
+        let expiry = add(self.time, clamp_timeout(timeout));
         let id = TimerId(self.next_start);
         self.next_start += 1;
         self.pending.insert((expiry, id.0), payload);
@@ -112,39 +153,66 @@ impl<T> TimerQueue<T> {
     /// that expires in it, in order. `on_fire` may start and cancel timers;
     /// one that expires within the same tick fires in it too.
     pub fn tick(&mut self, mut on_fire: impl FnMut(&mut Self, Fired<T>)) {
-        let mut until = add(self.time, TICK);
-        if real(until) >= real(WRAP) {
-            self.fire_until(WRAP, &mut on_fire);
-            self.time = WRAP;
-            self.shift_back();
-            until = sub(until, WRAP);
-            if real(until).abs() < real(WRAP_EPSILON) {
-                until = 0;
-            }
+        let mut tick = self.begin_tick();
+        while let Some(fired) = self.next_due(&mut tick) {
+            on_fire(self, fired);
         }
-        self.fire_until(until, &mut on_fire);
-        self.time = until;
+        self.end_tick(tick);
     }
 
-    fn fire_until(&mut self, limit: u32, on_fire: &mut impl FnMut(&mut Self, Fired<T>)) {
-        while let Some(entry) = self.pending.first_entry() {
-            let (expiry, start) = *entry.key();
-            if real(expiry) > real(limit) {
-                break;
+    /// Starts a tick. Take the timers that expire in it with
+    /// [`TimerQueue::next_due`] until it returns `None`, then call
+    /// [`TimerQueue::end_tick`]. The queue may be changed in between.
+    pub fn begin_tick(&mut self) -> Tick {
+        let until = add(self.time, TICK);
+        if real(until) >= real(WRAP) {
+            Tick {
+                limit: WRAP,
+                after_wrap: Some(until),
             }
-            let payload = entry.remove();
-            let id = TimerId(start);
-            self.expiries.remove(&id);
-            self.time = expiry;
-            on_fire(
-                self,
-                Fired {
-                    id,
-                    expiry,
-                    payload,
-                },
-            );
+        } else {
+            Tick {
+                limit: until,
+                after_wrap: None,
+            }
         }
+    }
+
+    /// The next timer that expires within the tick, removed from the queue,
+    /// with the queue time set to its expiry.
+    pub fn next_due(&mut self, tick: &mut Tick) -> Option<Fired<T>> {
+        loop {
+            if let Some(entry) = self.pending.first_entry() {
+                let (expiry, start) = *entry.key();
+                if real(expiry) <= real(tick.limit) {
+                    let payload = entry.remove();
+                    let id = TimerId(start);
+                    self.expiries.remove(&id);
+                    self.time = expiry;
+                    return Some(Fired {
+                        id,
+                        expiry,
+                        payload,
+                    });
+                }
+            }
+            // Timers up to 300 s have fired: shift everything back and go
+            // on with the rest of the tick.
+            let until = tick.after_wrap.take()?;
+            self.time = WRAP;
+            self.shift_back();
+            let until = sub(until, WRAP);
+            tick.limit = if real(until).abs() < real(WRAP_EPSILON) {
+                0
+            } else {
+                until
+            };
+        }
+    }
+
+    pub fn end_tick(&mut self, tick: Tick) {
+        debug_assert!(tick.after_wrap.is_none(), "next_due was not drained");
+        self.time = tick.limit;
     }
 
     /// Moves the queue and every pending expiry back by 300 s.
@@ -263,6 +331,18 @@ mod tests {
         queue.tick(|_, f| fired.push(f.payload));
         assert_eq!(fired, [1]);
         assert!(queue.is_empty());
+    }
+
+    /// SPEC-0002 long timers: 310 s is two parts of 120 s and 69.99998 s.
+    #[test]
+    fn long_timeouts_are_split() {
+        assert_eq!(split_timeout(bits(119.5)), (0, bits(119.5)));
+        let (n, rest) = split_timeout(bits(310.0));
+        assert_eq!(n, 2);
+        assert!(real(rest) < 70.0 && real(rest) > 69.9999, "{}", real(rest));
+        assert_eq!(split_timeout(bits(450.0)), (3, bits(90.0)));
+        assert_eq!(split_timeout(bits(240.0)), (2, MIN_TIMEOUT));
+        assert_eq!(raise_timeout(bits(-1.0)), MIN_TIMEOUT);
     }
 
     /// A timer started at 299.5 s for 1 s expires after the queue wraps:

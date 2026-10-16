@@ -156,22 +156,54 @@ Choices where the spec is silent:
 ## Game time (`ow3-sim`)
 
 The timer queue follows SPEC-0002 and reproduces its tests T1c and T3c
-within the resolution of the 1000 s reference clock (2^-14 s). Choices
-where the spec is silent:
+within the resolution of the 1000 s reference clock (2^-14 s). The test
+maps T3c, SP, PQ (SQ), PZ, LT and RD run as scripts in `ow3-sim` and match
+the spec. Choices where the spec is silent:
 
-- **Timeout limits.** 0.0001 is the float nearest to it (`0x38D1B717`) and
-  `sub(300.0, 0.001)` uses the float nearest to 0.001 (`0x3A83126F`). Are
-  these the engine's constants?
 - **Order inside a chunk.** The chunk's ticks run first, then the sleep
   check that ends it. At full speed this puts checks at game times 0.1, 0.2,
   ... as the spec says.
 - **Threads due at the same check** resume in the order they went to sleep.
-- **Pause.** Pausing takes effect at the next chunk. Test PZ resumes a
-  thread at game time 1.025 after pausing at 1.0, which suggests the game
-  keeps running for one more chunk after `PauseGame(true)`; when exactly
-  does a pause take effect?
-- **One-second sleep.** The resume rule gives 1.1 s for
-  `TriggerSleepAction(1.0)` started at a check, and the speed ratios give
-  0.88 and 0.66 s at the lower speeds. The speed test SP measured 1.2, 0.92
-  and 0.75 s. Was that sleep started between checks, or does the rule miss
-  something?
+- **`fmod` for long timers.** SPEC-0004 does not define it. We use
+  `mul(sub(t, floor(t)), 120.0)` with `t = div(timeout, 120.0)`, which
+  gives `R = 69.99998` for 310 s as in the spec and fires every LT timer in
+  its second. Which operations does the game use?
+- **`TimerGetRemaining` of a long timer.** We add the parts still to run to
+  `sub(e, q)` with `add` and `mul(i2r(parts), 120.0)`. How does the game
+  compute it?
+- **Pausing a long timer.** `ResumeTimer` splits the saved remaining time
+  again by the same rule. Is that right?
+- **Never-started timer.** `sub(0, 0)` gives -0.0 under SPEC-0004, so we
+  return 0 directly for `TimerGetElapsed` of a timer never started. What
+  does `R2S` print for -0.0?
+- **Periodic restart.** A periodic timer is queued again before its
+  callback runs, with the queue time at its expiry. Is it before or after
+  the callback, and does `TimerStart` in the callback replace it?
+- **`DestroyTimer`** of a running timer removes it from the queue. Does a
+  destroyed timer whose callback is running still fire later if periodic?
+- **Script execution time.** Our scripts take no real time, so test CU
+  (stall) cannot be reproduced from the script; catch-up is tested by
+  adding real time directly.
+
+## Triggers and natives (`ow3-sim::game`)
+
+Provisional choices in the scheduler and natives, used by the test maps:
+
+- **Handles** are numbered from `0x100000` upwards in creation order, and
+  enum handles (`Player`, `ConvertGameSpeed`, ...) are created on first use
+  and then reused. In our run, test GS prints 1048578 and 1048576 for
+  `GetHandleId` of the speed before and after `SLOWEST`; what did the game
+  print? Is the first handle always `0x100000`, and are ids of destroyed
+  objects reused?
+- **Conditions** run in their own threads, in the order added, and stop at
+  the first false; a condition that sleeps or ends by an error counts as
+  false. Is that the game's order and short-circuit?
+- **`Condition` and `Filter`** return a new boolexpr on every call. Does the
+  game return the same handle for the same function?
+- **`ExecuteFunc`** of an unknown name or of a function with parameters
+  does nothing. What does the game do?
+- **`R2S` and `R2SW`** print with Rust's rounding (`{:.3}` and width and
+  precision). What are the exact rules, especially rounding of halves,
+  large values and -0.0?
+- **`ForForce`, `ForGroup` and the enumerations** are not implemented yet.
+  Does each callback get its own operation budget?

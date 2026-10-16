@@ -107,6 +107,8 @@ version = "0.0.0"
 name = "ow3-sim"
 version = "0.0.0"
 dependencies = [
+ "ow3-formats",
+ "ow3-jass",
  "ow3-math",
 ]
 

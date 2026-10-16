@@ -63,8 +63,9 @@ pub enum Op {
     ExitWhen(Label),
     /// Pops the return value. Cost 2.
     Return,
-    /// Cost 2.
-    ReturnNothing,
+    /// Leaves a function without a value: cost 2 at `endfunction`, 1 for
+    /// a `return` statement.
+    ReturnNothing { cost: u8 },
 }
 
 /// A compiled function: instructions with their source positions, and the
@@ -149,7 +150,7 @@ impl<'p> Compiler<'p> {
         }
         f.block(&function.body)?;
         f.position = function.position;
-        f.emit(Op::ReturnNothing);
+        f.emit(Op::ReturnNothing { cost: 2 });
         let slot_names = {
             let mut by_slot: Vec<(usize, String)> =
                 names.iter().map(|(n, &s)| (s, (*n).to_owned())).collect();
@@ -302,7 +303,7 @@ impl<'c, 'p> FunctionCompiler<'c, 'p> {
                     self.emit(Op::Coerce(self.returns.expect("checked")));
                     self.emit(Op::Return);
                 } else {
-                    self.emit(Op::ReturnNothing);
+                    self.emit(Op::ReturnNothing { cost: 1 });
                 }
             }
         }

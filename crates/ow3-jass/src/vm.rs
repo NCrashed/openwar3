@@ -673,9 +673,12 @@ impl<'a> Vm<'a> {
                         thread.frames.last_mut().expect("frame").pc = *target;
                     }
                 }
-                Op::Return | Op::ReturnNothing => {
-                    let value = matches!(code.ops[pc], Op::Return).then(|| pop(thread));
-                    self.charge(2)?;
+                Op::Return | Op::ReturnNothing { .. } => {
+                    let (value, cost) = match code.ops[pc] {
+                        Op::ReturnNothing { cost } => (None, cost),
+                        _ => (Some(pop(thread)), 2),
+                    };
+                    self.charge(u64::from(cost))?;
                     let frame = thread.frames.pop().expect("frame");
                     // Returning to the entry frame ends the thread.
                     let entry = thread.frames.last().is_some_and(|caller| caller.entry);
@@ -1099,8 +1102,16 @@ native CreateTimer takes nothing returns timer
             "globals
                 integer g = 0
                 integer x = 0
+                real r = 0.0
             endglobals
             function F takes integer a returns nothing
+            endfunction
+            function G takes real a returns nothing
+            endfunction
+            function E takes nothing returns nothing
+            endfunction
+            function R takes nothing returns nothing
+                return
             endfunction
             function Body takes nothing returns nothing
                 local integer lx = 0
@@ -1160,6 +1171,21 @@ native CreateTimer takes nothing returns timer
             ("exitwhen false", 7 + 2),
             ("if true and false then\nendif", 7 + 4),
             ("if false and true then\nendif", 7 + 4),
+            // Empty `then` or `else` (SPEC-0005 update).
+            ("if true then\nelse\nset x = 1\nendif", 7 + 3),
+            ("if false then\nelse\nset x = 1\nendif", 7 + 5),
+            ("if true then\nset x = 1\nelse\nendif", 7 + 5),
+            ("if false then\nset x = 1\nelse\nendif", 7 + 3),
+            // Reaching `endfunction` costs 2, a bare `return` 1.
+            ("call E()", 7 + 3),
+            ("call R()", 7 + 2),
+            // Integer to real conversion: +1 where the integer meets a real.
+            ("set r = 5", 7 + 3),
+            ("set r = x + x", 7 + 7),
+            ("set r = r + x", 7 + 7),
+            ("set r = x + r", 7 + 7),
+            ("if x < r then\nendif", 7 + 6),
+            ("call G(1)", 7 + 8),
         ] {
             assert_eq!(passes(extra), predicted(cost), "{extra}");
         }

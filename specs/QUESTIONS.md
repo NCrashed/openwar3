@@ -139,19 +139,13 @@ native name clash that spec describes. Not yet confirmed:
 
 ## JASS operation costs (`ow3-jass::vm`)
 
-The costs of SPEC-0005 reproduce its four published loop measurements.
-Choices where the spec is silent:
+The costs of SPEC-0005 reproduce its four published loop measurements and
+the costs it adds for conversions, `if` with an empty branch and a bare
+`return`. Choices where the spec is silent:
 
-- **Implicit integer to real conversion** costs 1 at the integer operand of
-  a mixed binary operator (as the spec assumes), and also when an integer
-  is stored in a real variable or local, passed as a real argument or
-  returned from a real function.
-- **Empty `then` with a non-empty `else`** is charged like any `if` with an
-  `else`: c(c) + c(branch) + 2.
 - **Global initialisers** run before any thread and are not counted.
-- **Callbacks** that natives run through `code` values (`ForGroup` and the
-  like) run in the calling thread and use its budget; whether they get a
-  budget of their own is not specified.
+- **Callbacks** that natives run through `code` values: see "Forces, groups
+  and enumerations" below.
 
 ## Game time (`ow3-sim`)
 

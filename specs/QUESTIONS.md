@@ -108,3 +108,31 @@ following choices are not confirmed against the game:
 - **Lines.** Are string literals across line breaks accepted, and is a
   carriage return alone a line break?
 - **Names.** May names start or end with an underscore?
+
+## JASS names and types (`ow3-jass::check`)
+
+`common.j` with `Blizzard.j`, all shipped map scripts and all but seven AI
+scripts pass the checker. Two map test scripts for SPEC-0001 fail with the
+native name clash that spec describes. Not yet confirmed:
+
+- **Outdated AI scripts.** `Scripts\demo.ai`, `h04_orange.ai` and the five
+  `orc03*.ai` call `common.ai` functions with older signatures (for example
+  `CampaignAI` with one argument, while `common.ai` takes `integer farms,
+  code heroes`) or use undeclared names. Does the game ever compile them,
+  and against which `common.ai`?
+- **`null` as an integer.** `(6)BomberCommand.w3x` returns `null` from an
+  integer function and the map is shipped, so the checker accepts `null`
+  where an integer is expected. Is that true everywhere (arguments,
+  assignments, `real`, `boolean`), and what value results?
+- **Repeated locals.** The same map declares `local real rHeight` twice in
+  one function. The checker accepts a repeated local of the same type. Is
+  a different type accepted, and can a local repeat a parameter's name?
+- **Order of declarations.** The checker requires a function to be
+  declared above the code that calls it or refers to it with `function`,
+  and a global above the global initialiser that uses it.
+- **Shared names.** May a global share its name with a function, or a local
+  with a global (the checker allows both)?
+- **Comparisons.** The checker allows `==` and `!=` between any two handle
+  types and between `null` and handle, string or code values.
+- **Code values.** Can `function F` refer to a native, or to a function
+  that takes parameters?

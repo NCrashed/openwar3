@@ -38,8 +38,7 @@ pub enum Object {
         function: usize,
     },
     Event,
-    /// A value of a handle-typed enumeration such as `gamespeed` or
-    /// `player`, made by `ConvertGameSpeed`, `Player` and the like.
+    /// A player made by `Player`, kept as an enumeration value for now.
     Enum {
         kind: &'static str,
         value: i32,
@@ -542,6 +541,11 @@ fn handle(value: &Value) -> Option<u32> {
     }
 }
 
+/// The handle of a `Convert*` value, whose id is the integer itself.
+fn converted(value: i32) -> Value {
+    Value::Handle(Some(value as u32))
+}
+
 fn integer(value: &Value) -> i32 {
     match value {
         Value::Integer(i) => *i,
@@ -856,36 +860,24 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
 
-    // Game speed and pause (SPEC-0002).
+    // Game speed and pause (SPEC-0002). A `Convert*` value is not an
+    // object: its handle id is the integer itself (test B1).
     native!(
         "constant native ConvertGameSpeed takes integer i returns gamespeed",
-        |vm, state, args| {
-            Ok(Some(Value::Handle(Some(
-                state
-                    .borrow_mut()
-                    .enum_handle("gamespeed", integer(&args[0])),
-            ))))
-        }
+        |vm, state, args| { Ok(Some(converted(integer(&args[0])))) }
     );
     native!(
         "native SetGameSpeed takes gamespeed whichspeed returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            if let Some(index) = state.enum_value(handle(&args[0])) {
-                state.clock.speed = Speed::from_index(index);
+            if let Some(index) = handle(&args[0]) {
+                state.borrow_mut().clock.speed = Speed::from_index(index as i32);
             }
             Ok(None)
         }
     );
     native!(
         "constant native GetGameSpeed takes nothing returns gamespeed",
-        |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let index = state.clock.speed.index();
-            Ok(Some(Value::Handle(Some(
-                state.enum_handle("gamespeed", index),
-            ))))
-        }
+        |vm, state, args| { Ok(Some(converted(state.borrow().clock.speed.index()))) }
     );
     native!(
         "native PauseGame takes boolean flag returns nothing",

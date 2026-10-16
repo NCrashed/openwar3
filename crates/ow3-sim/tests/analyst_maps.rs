@@ -129,6 +129,15 @@ fn pq_sleep_ticks() {
     );
 }
 
+/// `GetHandleId` of a `Convert*` value is the integer itself (test B1).
+#[test]
+fn gs_converted_handle_ids() {
+    let Some(output) = run("h-GS.w3x", 3.0) else {
+        return;
+    };
+    assert_lines(&output, &["GS before 2", "GS after SLOWEST 0"]);
+}
+
 /// SPEC-0002: the sleep clock runs during a pause; the pause takes effect
 /// at the end of the chunk.
 #[test]

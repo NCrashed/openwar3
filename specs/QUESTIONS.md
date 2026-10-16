@@ -164,10 +164,10 @@ the spec. Choices where the spec is silent:
   check that ends it. At full speed this puts checks at game times 0.1, 0.2,
   ... as the spec says.
 - **Threads due at the same check** resume in the order they went to sleep.
-- **`fmod` for long timers.** SPEC-0004 does not define it. We use
-  `mul(sub(t, floor(t)), 120.0)` with `t = div(timeout, 120.0)`, which
-  gives `R = 69.99998` for 310 s as in the spec and fires every LT timer in
-  its second. Which operations does the game use?
+- **`fmod` for long timers.** Answered: SPEC-0004 now defines it in
+  "Fractional part and remainder" (not in this repository yet). Until it
+  arrives we use `mul(sub(t, floor(t)), 120.0)` with `t = div(timeout,
+  120.0)`, which lacks the final correction.
 - **`TimerGetRemaining` of a long timer.** We add the parts still to run to
   `sub(e, q)` with `add` and `mul(i2r(parts), 120.0)`. How does the game
   compute it?
@@ -189,12 +189,11 @@ the spec. Choices where the spec is silent:
 
 Provisional choices in the scheduler and natives, used by the test maps:
 
-- **Handles** are numbered from `0x100000` upwards in creation order, and
-  enum handles (`Player`, `ConvertGameSpeed`, ...) are created on first use
-  and then reused. In our run, test GS prints 1048578 and 1048576 for
-  `GetHandleId` of the speed before and after `SLOWEST`; what did the game
-  print? Is the first handle always `0x100000`, and are ids of destroyed
-  objects reused?
+- **Handles** of objects are numbered from `0x100000` upwards in creation
+  order. A `Convert*` value is not an object: its handle id is the integer
+  itself (answered by test B1, `GetHandleId(GetGameSpeed())` gives 2).
+  Players from `Player` are objects created on first use. Is the first
+  object handle always `0x100000`, and are ids of destroyed objects reused?
 - **Conditions** run in their own threads, in the order added, and stop at
   the first false; a condition that sleeps or ends by an error counts as
   false. Is that the game's order and short-circuit?

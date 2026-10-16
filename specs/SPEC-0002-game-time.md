@@ -32,6 +32,14 @@ item 5) and still need a stopwatch check for indexes 0 and 1.
 - `GetGameSpeed` returns the current index (0, 1 or 2).
 - In some game modes `SetGameSpeed` does nothing (open question 1).
 - A game started from the lobby with default settings runs at index 2.
+- **Falling behind.** Real time that has not yet been turned into ticks is
+  kept, but at most 4 s of it. After a stall of the game (for example a
+  script that runs for several seconds of real time in one tick), the
+  game runs extra ticks to make up at most 4 s; any longer stall is lost
+  as game time. Test CU: after stalls of about 2.3, 6.9 and more than 10 s,
+  a 10 s sleep saw 10.1, 7.2 and 4.2 s of game time, matching
+  `min(stall, 4) + 10 - stall` (and only the 4 s of catch-up once the sleep
+  had already expired during the stall).
 
 ### Timers
 
@@ -41,10 +49,23 @@ All arithmetic on timer times below is the engine arithmetic of SPEC-0004
 
 - `q` starts at 0.0 when the game starts.
 - **Start.** `TimerStart(t, timeout, periodic, func)` takes `timeout`,
-  replaces it by `sub(300.0, 0.001)` if it is 300 or more (open question 6)
-  and by 0.0001 if it is less than 0.0001 (this includes 0 and negative
-  values), and sets the expiry `e = add(q, timeout)`. Each start also takes
-  the next number of a start counter.
+  replaces it by 0.0001 if it is less than 0.0001 (this includes 0 and
+  negative values), and sets the expiry `e = add(q, timeout)`. Each start
+  also takes the next number of a start counter.
+- **Long timers.** The queue itself holds only timeouts below 300 s (a
+  larger value given to it directly becomes `sub(300.0, 0.001)`), so a
+  timer started with `timeout` is split:
+  `n = trunc(timeout) / 120` (integer division of the integer parts) and
+  `R = fmod(timeout, 120.0)` (SPEC-0004). If `n = 0` the timer is an
+  ordinary entry with `timeout`. Otherwise it runs `n` parts of 120.0 s,
+  each started from the expiry of the previous one (`add(e, 120.0)`), and
+  then a last part of `R` s (at least 0.0001), after which it fires. A
+  periodic long timer starts the same sequence again. Because `fmod` is
+  inexact, a long timer can fire slightly early: 310 s is 2 parts and
+  `R = 69.99998`, so it fires just before a timer due at exactly 310 s.
+  `TimerGetTimeout` and `TimerGetRemaining` report the full timeout.
+  Tested: 299, 299.999, 300, 301, 310 and 450 s all fire at the requested
+  second.
 - **Order.** Pending timers are ordered by expiry `e`; equal expiries are
   ordered by the start counter, so the earlier start fires first.
 - **Tick.** At each simulation tick the queue computes
@@ -58,6 +79,22 @@ All arithmetic on timer times below is the engine arithmetic of SPEC-0004
   every pending expiry `e` by `sub(e, 300.0)` and continues with
   `q1 = sub(q1, 300.0)`, using 0.0 instead if that result is smaller than
   8e-7 in magnitude (`0x3556BF95`). So timer times never exceed 300.
+
+Constants used above, as stored in the game: 0.0001 is `0x38D1B717`,
+0.001 is `0x3A83126F` (both the nearest floats), 300.0 is `0x43960000`,
+120.0 is `0x42F00000`, the tick length is `0x3BA3D70A` and the wrap
+threshold 8e-7 is `0x3556BF95`.
+
+Reading a timer (`timeout` here is the value after the limits above):
+
+- `TimerGetTimeout(t)`: the timeout given to the last `TimerStart`.
+- `TimerGetRemaining(t)` of a running timer: `sub(e, q)`.
+- `TimerGetElapsed(t)` of a running timer: `sub(timeout, sub(e, q))`.
+- Of a paused timer, `TimerGetRemaining` is the value saved when it was
+  paused and `TimerGetElapsed` is `sub(TimerGetTimeout(t), remaining)`.
+- A timer never started reads 0 for timeout, remaining and elapsed. An
+  expired one-shot timer reads remaining 0 and elapsed equal to its
+  timeout.
 
 Consequences that scripts can see:
 
@@ -93,10 +130,16 @@ Consequences:
   | checks waited | 1 | 2 | 3 | 4 | 11 |
   | game seconds | 0.1 | 0.2 | 0.3 | 0.4 | 1.1 |
 
-- At lower speeds a sleep lasts fewer game seconds:
-  `TriggerSleepAction(1.0)` called 0.5 s after a speed change lasted 1.2,
-  0.92 and 0.75 game seconds at speed indexes 2, 1 and 0. The ratios
-  (0.77, 0.625) match the speed factors 0.8 and 0.6.
+- At lower speeds a sleep lasts fewer game seconds, scaled by the speed
+  factor: `TriggerSleepAction(1.0)` started at a check lasted 1.1 s at speed
+  index 2 (220 ticks), 0.88 s at index 1 (176 ticks) and 0.66 s at index 0
+  (132 ticks), five runs each (test SQ).
+- Resumes happen at the end of a 25 ms chunk of real time, so a sleep can
+  last one chunk longer than the rule says: one run in five took 225, 180
+  or 135 ticks. A chunk is 5, 4 or 3 ticks at speed index 2, 1 or 0.
+- In a LAN game both players resume the thread at the same tick (the resume
+  is distributed with the network turns), with the same durations as in
+  single player, including the occasional extra chunk.
 - Rule including sleeps that start between checks, in sleep clock time
   (equal to game time at speed 1.0 while the game keeps up): a thread that
   starts sleeping at time `t` resumes at the first sleep check `T` with
@@ -118,10 +161,12 @@ Consequences:
   for the same d.
 
 - While the game is paused with `PauseGame(true)`, game time and timers
-  stop, but the sleep clock keeps running: a thread that pauses the game at
-  game time 1.0 and calls `TriggerSleepAction(2.0)` resumes at game time
-  1.025 and can unpause the game. A 0.5 s timer started just before the
-  pause fires at game time 1.5, after the unpause.
+  stop, but the sleep clock keeps running, so a sleeping thread can resume
+  during the pause and unpause the game. The pause takes effect at the end
+  of the current 25 ms chunk: the remaining ticks of that chunk still run
+  (between 0 and 4 ticks were observed). A thread that paused at game time
+  1.0 and slept 2.0 s resumed at 1.025; a 0.5 s timer started just before
+  the pause fired at 1.5, after the unpause.
 
 `PolledWait` from `Blizzard.j` measures the remaining time with a timer
 (game time) and sleeps in steps of `TriggerSleepAction(0.1)`. It ends
@@ -138,23 +183,13 @@ speed: `PolledWait(1.0)` lasted 1.17-1.27 game seconds at speed 2 and
 
 ## Open questions
 
-1. Under which conditions does `SetGameSpeed` do nothing? In single
-   player it works (test: 2 -> `SLOWEST` gives 0, `FASTEST` gives 2,
-   `SLOW` gives 1). The game ignores it when a game setting flag is set;
-   which lobby or map setting sets that flag is not known yet.
-2. `TimerGetRemaining` and `TimerGetElapsed`: which operations derive them
-   from `e`, `q` and the timeout.
-3. The sleep clock in detail: sleeping threads are timed on a second timer
-   queue that is advanced with the real time of each frame; the 0.1 s
-   checks appear to be the network turns of single player (100 ms). Turn
-   length and alignment in multiplayer and in replays are not known.
-4. Multiplayer: all tests so far are single player.
-5. Catching up after a slowdown. Analysis of the game library shows that
-   real time not yet converted to ticks is accumulated and capped at 4000 ms,
-   so a lag longer than 4 s is not made up; not yet confirmed by a test.
-6. Timers of 300 s or more: the queue limits a timeout to just under 300 s;
-   whether `TimerStart` with a longer timeout fires late (after splitting)
-   or early (at 299.999 s) is not tested.
+1. Under which conditions does `SetGameSpeed` do nothing? It works in
+   single player and in a LAN game (both players see index 0 after
+   `SetGameSpeed(MAP_SPEED_SLOWEST)`). The game ignores it when a flag of the
+   game settings is set; that flag is not the map flag 0x4000 and was not
+   set in a LAN game. Battle.net games were not tested.
+2. Replays: how sleep resumes are reproduced when a replay is watched.
+3. The exact number of ticks that run after `PauseGame(true)`.
 
 ## Sources
 
@@ -162,7 +197,8 @@ speed: `PolledWait(1.0)` lasted 1.17-1.27 game seconds at speed 2 and
   workspace): tick length, speed table, minimum timer timeout.
 - `Scripts\common.j` (speed constants) and `Scripts\Blizzard.j`
   (`PolledWait`) from the user's `War3Patch.mpq`.
-- Test maps on 1.27b under Wine, single player, 2026-10-16.
+- Test maps on 1.27b under Wine, single player and a two-player LAN game
+  between two game instances, 2026-10-16 and 2026-10-17.
 
 ## Verification
 
@@ -194,3 +230,22 @@ the behaviour.
 6. **Game speed (T4).** In a default lobby game `GetGameSpeed` gives index
    2. Pending: measure with a stopwatch the real time between game times 10
    and 60 at each lobby speed; expected 50 s, 62.5 s and 83.3 s.
+7. **Long timers (LT).** At game time 1.0 start one-shot timers of 299,
+   299.999, 300, 301, 310 and 450 s and a periodic 1 s counter. Each fires
+   in the second it asks for; the 310 s timer fires before the counter's
+   310th tick.
+8. **Catching up (CU).** Stall the game for several seconds of real time
+   inside one tick (many `ExecuteFunc` calls of a function that runs until
+   the operation limit), then measure game time over
+   `TriggerSleepAction(10.0)`. Expected: 10.1 for a stall under 4 s, about
+   `14 - stall` for longer stalls, about 4.2 when the stall exceeds 10 s.
+9. **Timer readings (RD).** A never-started timer reads 0, 0, 0; a 0.5 s
+   one-shot timer read 0.5 s after it expired gives remaining 0, elapsed
+   0.5, timeout 0.5.
+10. **Sleep and speed, repeated (SQ).** Five `TriggerSleepAction(1.0)` in a
+    row at each speed index: 220 220 220 225 220, 176 176 180 176 176 and
+    135 132 132 135 132 ticks.
+11. **LAN (MP).** Two players; the sleep durations of item 3 measured by
+    both: identical tick numbers on both machines (20, 40, 40, 80-85 and
+    220-225 ticks for d = 0, 0.05, 0.1, 0.25, 1.0); `SetGameSpeed(SLOWEST)`
+    takes effect for both.

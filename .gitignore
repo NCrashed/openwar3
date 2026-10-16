@@ -1,0 +1,7 @@
+/target
+/result*
+.direnv/
+
+# Game data from the user's own Warcraft III copy. Never commit Blizzard files;
+# test fixtures in the repo must be authored by the project (see docs/clean-room.md).
+/game-data/

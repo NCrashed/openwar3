@@ -1,0 +1,13 @@
+[package]
+name = "ow3-formats"
+description = "Readers and writers for Warcraft III file formats (MPQ, BLP, SLK, MDX, map files)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -96,7 +96,12 @@ name = "ow3-jass"
 version = "0.0.0"
 dependencies = [
  "ow3-formats",
+ "ow3-math",
 ]
+
+[[package]]
+name = "ow3-math"
+version = "0.0.0"
 
 [[package]]
 name = "png"

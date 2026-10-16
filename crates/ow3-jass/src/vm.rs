@@ -24,6 +24,11 @@ use crate::semantics::{self, Fault, Value};
 /// Operations a thread may execute between sleeps (SPEC-0005).
 pub const OPERATION_LIMIT: u64 = 300_000;
 
+/// PROVISIONAL: threads started from inside other threads (by natives such
+/// as `ExecuteFunc` and `TriggerExecute`) may nest this deep; starting one
+/// more fails with an error in the caller. The game's limit is not known.
+pub const MAX_NESTING: u32 = 100;
+
 /// Implementation of a native. Receives the interpreter, so that it can call
 /// back into scripts or put the thread to sleep, and the arguments already
 /// converted to the declared parameter types. Returns `None` for natives
@@ -167,6 +172,8 @@ pub struct Vm<'a> {
     pub operation_limit: Option<u64>,
     /// Set by a native through [`Vm::sleep`].
     pending_sleep: Option<u32>,
+    /// Threads running now, one inside the other.
+    nesting: u32,
     /// Function and position being executed, for error messages.
     current: (usize, Position),
 }
@@ -251,6 +258,7 @@ impl<'a> Vm<'a> {
             thread_operations: 0,
             operation_limit: None,
             pending_sleep: None,
+            nesting: 0,
             current: (0, Position { line: 0, column: 0 }),
         };
         for script in scripts {
@@ -422,6 +430,16 @@ impl<'a> Vm<'a> {
     /// Runs a thread with its operation count, restoring the interrupted
     /// thread's state afterwards.
     fn run(&mut self, thread: &mut Thread) -> Result<Outcome, RuntimeError> {
+        if self.nesting >= MAX_NESTING {
+            return Err(self.error("thread nesting limit reached"));
+        }
+        self.nesting += 1;
+        let result = self.run_nested(thread);
+        self.nesting -= 1;
+        result
+    }
+
+    fn run_nested(&mut self, thread: &mut Thread) -> Result<Outcome, RuntimeError> {
         let saved_operations = std::mem::replace(&mut self.thread_operations, thread.operations);
         let saved_current = self.current;
         let saved_sleep = self.pending_sleep.take();

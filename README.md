@@ -22,6 +22,22 @@ Early setup. Nothing is playable yet.
 - **Deterministic simulation.** The game core produces bit-identical results
   on every machine, so lockstep multiplayer and replay-based testing work.
 
+## Getting the source
+
+The main repository is on GitHub:
+
+```sh
+git clone https://github.com/NCrashed/openwar3.git
+```
+
+A mirror is published over the [hbs2](https://github.com/NCrashed/hbs2)
+peer-to-peer network and stays available if the GitHub repository goes away.
+With a running `hbs2-peer` and `hbs2-git3` installed:
+
+```sh
+git clone hbs23://7VM1rtxrTmpXYVidNFHu5ZbNqRKMhKoRAV8vJebGaRN9 openwar3
+```
+
 ## Development
 
 ```sh

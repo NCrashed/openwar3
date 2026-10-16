@@ -118,7 +118,9 @@ AI environment must provide those too. Whether it provides the full
    `DebugBreak`.
 3. Whether `constant native` (the `constant` keyword on a declaration)
    changes any behaviour of the call.
-4. Do all `common.ai` natives work when declared by a map, or only some?
+4. Do all `common.ai` natives work when called from a map? A map that
+   declares all 123 of them loads (test map B5); calls were tested only for
+   `UnitAlive`.
 
 ## Sources
 

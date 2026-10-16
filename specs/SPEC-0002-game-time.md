@@ -40,8 +40,8 @@ A timer started with `TimerStart(t, timeout, periodic, func)` at game time
 
 - uses `timeout`, raised to 0.0001 if it is smaller (this includes 0 and
   negative values);
-- expires at `now + timeout`. The addition uses the engine's own float
-  addition, which differs from IEEE addition (open question 2);
+- expires at `now + timeout`, computed with the engine's addition
+  (SPEC-0004), which differs from IEEE addition (open question 2);
 - a periodic timer expires again one period after its previous expiry
   time, so periods do not drift and do not snap to ticks. A period shorter
   than a tick makes the timer fire several times within one tick.
@@ -102,11 +102,13 @@ about 1.2 s (measured with a coarse clock, to be repeated).
 
 ## Open questions
 
-1. Under which conditions does `SetGameSpeed` do nothing (multiplayer,
-   ladder, replays, a map flag)?
-2. Exact definition of the engine's float addition and subtraction used for
-   timer times. Needed for bit-exact expiry times; planned as a separate
-   spec on deterministic arithmetic.
+1. Under which conditions does `SetGameSpeed` do nothing? In single
+   player it works (test: 2 -> `SLOWEST` gives 0, `FASTEST` gives 2,
+   `SLOW` gives 1). The game ignores it when a game setting flag is set;
+   which lobby or map setting sets that flag is not known yet.
+2. Bit-exact timer times: addition and subtraction are specified in
+   SPEC-0004. Still open: which operations combine the timer time, the
+   timeout and the tick length, and in which order.
 3. Resume time of a sleep started between two checks (see the table in
    Script sleeps), and the cause of the drift between sleep checks and timer
    time.

@@ -79,9 +79,13 @@ native DebugBreak takes integer i returns nothing
 A map script can declare and call `DebugBreak` too. In the release game
 `DebugBreak(0)` returns normally and has no visible effect (test map H3).
 
-AI scripts shipped with the game also call natives from `common.j`, so the
-AI environment must provide those too. Whether it provides the full
-`common.j` set or a subset is open question 1.
+AI scripts shipped with the game also call natives from `common.j`. The
+game keeps one table of natives for both environments: the `common.ai`
+natives are registered once when the game starts, the `common.j` natives
+when a map starts, and a script of either kind finds a native by the name
+it declares. So the AI environment provides every `common.j` native, and
+the map environment every `common.ai` native (observed for `UnitAlive` and
+for declaring all 123). An implementation can use one native table.
 
 ### Signature rules
 
@@ -113,7 +117,9 @@ AI environment must provide those too. Whether it provides the full
 
 ## Open questions
 
-1. Does the AI environment provide every `common.j` native?
+1. Direct check from an AI script: a custom AI started with `StartMeleeAI`
+   for the human player wrote no output in the first test; the cause (AI
+   not started for a user slot, or a missing native) is not known.
 2. Observable semantics of the five undeclared map natives and of
    `DebugBreak`.
 3. Whether `constant native` (the `constant` keyword on a declaration)

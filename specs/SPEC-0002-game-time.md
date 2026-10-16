@@ -59,39 +59,49 @@ Firing:
 
 ### Script sleeps
 
-`TriggerSleepAction(d)` suspends the calling thread. Suspended threads are
-resumed only at **sleep checks**, which happen every 0.1 game seconds,
-counted from the start of the game: at game times 0.1, 0.2, 0.3, ...
+`TriggerSleepAction(d)` does **not** measure game time. Sleeping threads
+are timed on a separate **sleep clock** that advances with real time in
+steps of 25 ms (the chunks of the game loop) and is not scaled by the game
+speed. Threads are resumed only at sleep checks, which happen every 0.1 s
+of that clock.
 
-A thread that calls `TriggerSleepAction(d)` at a sleep check resumes at the
-first later check at which more than `d + 0.05` seconds have passed. In
-other words it waits `round(10 * d) + 1` checks, with halves rounded up:
+Consequences:
 
-| d | 0 to 0.0499 | 0.05 to 0.1499 | 0.15 to 0.2499 | 0.25 | 1.0 |
-|---|---|---|---|---|---|
-| checks waited | 1 | 2 | 3 | 4 | 11 |
-| game seconds | 0.1 | 0.2 | 0.3 | 0.4 | 1.1 |
+- At game speed index 2 (1.0) and while the game keeps up with real time,
+  the sleep clock and game time advance together, and the checks fall on
+  game times 0.1, 0.2, 0.3, ... In this case a thread that calls
+  `TriggerSleepAction(d)` at a check resumes at the first later check at
+  which more than `d + 0.05` seconds have passed, that is after
+  `round(10 * d) + 1` checks with halves rounded up:
 
-For a call made between two checks no rule is known yet (open question
-3). Observed resume times, relative to the check C before the call made at
-C + o:
+  | d | 0 to 0.0499 | 0.05 to 0.1499 | 0.15 to 0.2499 | 0.25 | 1.0 |
+  |---|---|---|---|---|---|
+  | checks waited | 1 | 2 | 3 | 4 | 11 |
+  | game seconds | 0.1 | 0.2 | 0.3 | 0.4 | 1.1 |
 
-| o | 0.003 | 0.03 | 0.049 | 0.051 | 0.07 | 0.097 |
-|---|---|---|---|---|---|---|
-| `TriggerSleepAction(0)` | C+0.1 | C+0.1 | C+0.1 | C+0.1 | C+0.2 | C+0.2 |
-| `TriggerSleepAction(0.05)` | C+0.2 | C+0.2 | C+0.2 | C+0.2 | C+0.2 | C+0.2 |
-| `TriggerSleepAction(0.1)` | C+0.2 | C+0.3 | C+0.2 | C+0.3 | C+0.3 | C+0.3 |
+- At lower speeds a sleep lasts fewer game seconds:
+  `TriggerSleepAction(1.0)` called 0.5 s after a speed change lasted 1.2,
+  0.92 and 0.75 game seconds at speed indexes 2, 1 and 0. The ratios
+  (0.77, 0.625) match the speed factors 0.8 and 0.6.
+- When the game falls behind real time, the sleep clock runs ahead of game
+  time. Sleep checks then fall between the 0.1 s steps of game time, in
+  multiples of 0.025 s, and resume times measured in game time become
+  irregular. This explains the irregular results of sleeps started between
+  checks: on a slow test machine, 136 sleeps started at offsets of 0 to
+  0.099 s after a check waited between 0.25 and 7.7 tenths of a game second
+  for the same d.
 
-The last row is not monotonic in o, so the resume time depends on more than
-the call time and d. Each value comes from one run; an implementation
-should not rely on this table until the rule is found.
+- While the game is paused with `PauseGame(true)`, game time and timers
+  stop, but the sleep clock keeps running: a thread that pauses the game at
+  game time 1.0 and calls `TriggerSleepAction(2.0)` resumes at game time
+  1.025 and can unpause the game. A 0.5 s timer started just before the
+  pause fires at game time 1.5, after the unpause.
 
-Sleep checks also drift against timer time: read on a reference timer, the
-checks fall 0.02 ms early at 3 s and 2.4 ms early at 20 s.
-
-`PolledWait` from `Blizzard.j` is built on a timer and `TriggerSleepAction`
-and inherits these rules: `PolledWait(1.0)` started at a check lasted
-about 1.2 s (measured with a coarse clock, to be repeated).
+`PolledWait` from `Blizzard.j` measures the remaining time with a timer
+(game time) and sleeps in steps of `TriggerSleepAction(0.1)`. It ends
+within a few tenths of a second after the requested game time at every
+speed: `PolledWait(1.0)` lasted 1.17-1.27 game seconds at speed 2 and
+1.03-1.06 at speeds 0 and 1.
 
 ## Edge cases
 
@@ -109,15 +119,13 @@ about 1.2 s (measured with a coarse clock, to be repeated).
 2. Bit-exact timer times: addition and subtraction are specified in
    SPEC-0004. Still open: which operations combine the timer time, the
    timeout and the tick length, and in which order.
-3. Resume time of a sleep started between two checks (see the table in
-   Script sleeps), and the cause of the drift between sleep checks and timer
-   time.
-4. Are sleep checks tied to game time in multiplayer as well, or to network
-   turns? All tests so far are single player.
-5. What happens when the game falls behind real time (catch-up limit,
-   dropped time)?
-6. Do timers fire while the game is paused (`PauseGame`, menu in single
-   player)?
+3. The exact definition of the sleep clock: is it the network turn time
+   (same for all players in multiplayer), and how the 0.1 s checks are
+   aligned to it.
+4. Multiplayer: all tests so far are single player.
+5. Catching up after a slowdown. Analysis of the game library shows that
+   real time not yet converted to ticks is accumulated and capped at 4000 ms,
+   so a lag longer than 4 s is not made up; not yet confirmed by a test.
 
 ## Sources
 
@@ -147,8 +155,13 @@ the behaviour.
    0.05, 0.0999, 0.1, 0.1001, 0.15, 0.2, 0.25 and record start and end in
    5 ms ticks. Expected: every call starts and ends on a multiple of 20
    ticks; durations 20, 20, 20, 40, 40, 40, 40, 60, 60, 80 ticks.
-4. **PolledWait (T2, to be repeated with the 1000 s clock).**
-   `PolledWait(1.0)` called at a sleep check returns about 1.2 s later.
-5. **Game speed (T4).** In a default lobby game `GetGameSpeed` gives index
+4. **Sleeps and game speed (SP).** In a trigger action: for speed indexes
+   2, 0, 1, 2 in turn, `SetGameSpeed`, `TriggerSleepAction(0.5)`, then
+   measure `TriggerSleepAction(1.0)` and `PolledWait(1.0)` in game time.
+   Expected: the sleep lasts about 1.2, 0.75, 0.92, 1.2 game seconds;
+   `PolledWait` lasts 1.0-1.3 game seconds at every speed.
+5. **Pause (PZ).** As described under Script sleeps: game time 1.0 at
+   the pause, 1.025 when the 2 s sleep ends, the 0.5 s timer at 1.5.
+6. **Game speed (T4).** In a default lobby game `GetGameSpeed` gives index
    2. Pending: measure with a stopwatch the real time between game times 10
    and 60 at each lobby speed; expected 50 s, 62.5 s and 83.3 s.

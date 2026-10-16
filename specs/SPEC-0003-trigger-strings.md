@@ -3,7 +3,7 @@ id: SPEC-0003
 title: Trigger string references (war3map.wts)
 status: draft
 reference_version: 1.27b
-analysts: ["analyst workspace", "Anton Gushcha (black-box test maps only)"]
+analysts: ["analyst workspace (static analysis of the binary, test maps)", "Anton Gushcha (black-box test maps only)"]
 ---
 
 ## Behaviour
@@ -20,17 +20,77 @@ STRING <n>
 Scripts and other map files refer to an entry with a string of the form
 `TRIGSTR_<n>`.
 
-### When a reference is replaced
+### Reading war3map.wts
 
-- A string is replaced only when the whole string is a reference:
-  `TRIGSTR_` followed by the number. A reference that is part of a longer
-  string stays as it is. For example `"[TRIGSTR_902]"` is shown with the
-  brackets and the reference text, and so is `"[" + "TRIGSTR_902" + "]"`.
-- The replacement happens when the text is used, for example when
-  `DisplayTextToPlayer` shows it. A script never sees the entry text: string
-  operations on `"TRIGSTR_902"` work on those 11 characters.
-- The number is read as a decimal integer, so leading zeros do not matter:
-  `TRIGSTR_0902` shows entry 902.
+- An entry starts with a line whose first word is `STRING` followed by the
+  number. Spaces before `STRING`, several spaces before the number and
+  spaces after it are allowed.
+- The text starts after the `{` that opens the body. Anything after the
+  `{` on the same line is part of the text: `{ ` followed by `text`
+  gives a first line consisting of one space, then `text`.
+- Text lines are kept as written, including leading spaces.
+- The text ends at the first line that starts with `}`. The rest of that
+  line is ignored (`}x` also ends the text).
+- Lines outside entries are ignored: comment lines such as `// comment`,
+  stray text lines and stray `}` lines after an entry.
+- Entries need not be separated by blank lines.
+- A UTF-8 byte order mark at the start of the file is ignored.
+- Entries with a negative number (`STRING -5`) or a number outside the
+  32-bit range (`STRING 4294968296`) cannot be reached by any reference
+  tried (`TRIGSTR_-5`, `TRIGSTR_1000`, `TRIGSTR_4294968296`).
+
+### What counts as a reference
+
+A string is a reference when it starts with exactly `TRIGSTR_`
+(case-sensitive, nothing before it). The number is read from the
+characters after the prefix as decimal digits up to the first other
+character:
+
+| String | Entry |
+|---|---|
+| `TRIGSTR_902`, `TRIGSTR_0902` | 902 |
+| `TRIGSTR_910abc`, `TRIGSTR_910 ` (trailing space) | 910 |
+| `TRIGSTR_` (no digits), `TRIGSTR_+910`, `TRIGSTR_0x38e` | 0 |
+| `TRIGSTR_-5` | none (empty text) |
+| `trigstr_910`, `Trigstr_910`, ` TRIGSTR_910` (leading space) | not a reference |
+
+### Where references are replaced
+
+A reference is replaced when it is passed as a string argument to one of
+these natives; the native then works with the entry text:
+
+`CopySaveGame`, `DefeatConditionSetDescription`, `DialogAddButton`,
+`DialogAddQuitButton`, `DialogSetMessage`, `DisplayTextToPlayer`,
+`DisplayTimedTextFromPlayer`, `DisplayTimedTextToPlayer`,
+`GetLocalizedString`, `LeaderboardAddItem`, `LeaderboardSetItemLabel`,
+`LeaderboardSetLabel`, `MultiboardSetItemIcon`, `MultiboardSetItemValue`,
+`MultiboardSetItemsIcon`, `MultiboardSetItemsValue`,
+`MultiboardSetTitleText`, `QuestItemSetDescription`, `QuestSetDescription`,
+`QuestSetTitle`, `RemoveSaveDirectory`, `RenameSaveDirectory`,
+`SaveGameExists`, `SetAltMinimapIcon`, `SetCinematicScene`,
+`SetIntroShotText`, `SetMapDescription`, `SetMapName`, `SetPlayerName`,
+`SetTextTagText`, `StringCase`, `StringLength`, `TimerDialogSetTitle`,
+`TriggerRegisterPlayerChatEvent`.
+
+Everything else sees the reference itself:
+
+- script operations: `"TRIGSTR_910" == "text 910"` is false,
+  `"TRIGSTR_" + "910" == "TRIGSTR_910"` is true;
+- all other natives, for example `SubString("TRIGSTR_910", 0, 4)` is
+  `"TRIG"`, `S2I` of a reference to an entry `42` is 0, and `Preload` writes
+  the reference text.
+
+Only the whole argument is examined. A string that merely contains a
+reference (`"[TRIGSTR_902]"`) is never replaced. It does not matter how
+the string was built: a literal, a variable and a concatenation that
+produces exactly `TRIGSTR_910` are all replaced (`StringLength` gives 8
+for `text 910` in each case). Values stored by these natives keep the
+entry text: `LeaderboardGetLabelText`, `MultiboardGetTitleText` return
+`text 910` after `TRIGSTR_910` was set.
+
+The game library also uses the same lookup when it reads `war3map.w3i`
+strings (map name, description, player and force names); this was not
+tested separately.
 
 ### Which text is shown
 
@@ -60,18 +120,14 @@ A malformed entry does not affect the entries after it: the next
 
 ## Open questions
 
-1. Which other places replace references: dialog texts, leaderboards,
-   multiboards, floating text, object data fields, `war3map.w3i` strings.
-2. Whitespace: are spaces before `STRING`, after the number, or around the
-   braces allowed, and are they part of the text?
-3. Is the prefix case-sensitive (`trigstr_902`)?
-4. Text that contains a line with a single `}`: does it end the entry?
-5. Numbers outside the 32-bit range, negative numbers, and `TRIGSTR_`
-   without digits.
+1. How the header number is read: why `STRING -5` and `STRING 4294968296`
+   cannot be referenced (rejected entries or a different number range).
 
 ## Sources
 
 - Test maps on 1.27b, 2026-10-16 (see Verification).
+- Analysis of the 1.27b game library for the list of natives that resolve
+  references and for the prefix comparison.
 - `(1)TheDeathSheep.w3m` from the user's installation, for the malformed
   entry.
 
@@ -114,3 +170,10 @@ description, and an optional quest with an empty title and the description
 
 In `(1)TheDeathSheep.w3m` the instruction quest has an empty description
 and three items with the texts of entries 682, 683 and 684.
+
+Test maps W2a, W2b and W2c (run by the analyst workspace) add the entries
+910-922 with the variants listed under "Reading war3map.wts" and check
+each reference form with `DisplayTextToPlayer` (read from the message
+log) and with `StringLength`, `StringCase`, `SubString`, `S2I`,
+`LeaderboardGetLabelText`, `MultiboardGetTitleText` and `Preload`. The
+expected results are the tables above.

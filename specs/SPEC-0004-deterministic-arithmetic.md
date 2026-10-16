@@ -126,6 +126,17 @@ The JASS native `R2I(x)`:
 bit pattern, and `mul(a, recip(b))` otherwise. For example
 `div(1.0, 0.005)` gives 200.00003, where IEEE gives 200.0.
 
+### Fractional part and remainder
+
+- `frac(x)`: if `e(x) < 127` (magnitude below 1) the result is `x`. If
+  `e(x) >= 150` the result is `0x00000000`. Otherwise let `k = e(x) - 127`
+  and `I` be `x` with its lowest `23 - k` fraction bits cleared (the integer
+  part, same sign); the result is `sub(x, I)`.
+- `fmod(x, y)` for `x >= 0` (the only case the game is known to use):
+  `r = mul(frac(mul(x, recip(|y|))), |y|)`; if `r > 0` and `r >= |y|`, the
+  result is `sub(r, |y|)`, otherwise `r`. Example: `fmod(310, 120)` gives
+  `0x428BFFFE` (69.99998).
+
 ### Decimal text to real: s2r(text)
 
 Used by `S2R` and, as far as tested, for real literals in scripts. `S2R`
@@ -156,6 +167,40 @@ returns 0.0 for `null` and `""` without parsing.
 Examples: `"0.1"` gives `0x3DCCCCCE` (IEEE nearest: `0x3DCCCCCD`), `"1.5"`
 gives `0x3FC00001` (1.5000001), `"123456789012"` gives `0x51E5F4C8`,
 `" 2"` gives 0.0, `"1e3"` gives 1.0, `"12;34"` gives 12.0.
+
+### Real to text: R2S and R2SW
+
+`R2S(x)` is `R2SW(x, 0, 3)`. `R2SW(x, w, p)` builds the text as follows
+(`a` is `x` with the sign bit cleared, `f2i` is the truncating conversion
+of the integer part, without saturation):
+
+1. If the sign bit of `x` is set and `x` is not `-0.0`, the text starts
+   with `-`. The sign comes before any padding.
+2. **Large values**, `e(a) >= 158` (`a >= 2^31`):
+   - if `a` is not NaN and `a >= 0x7F7FFFFF` (the largest float or
+     infinity), the rest is `inf`;
+   - otherwise (NaN included) divide by ten with `div(t, 10.0)`, counting
+     the divisions `k`, until the pattern of `t` is at most `0x4EFFFFFF`
+     (at least one division); the rest is the decimal integer `f2i(t)`,
+     `k` zeros, `.`, and `max(p, 1)` zeros. `w` is ignored.
+3. **Other values**:
+   - `q = p`, or 6 if `p < 0` (and then trailing zeros are removed, see
+     below); `q` is limited to at most 9;
+   - integer part `i = f2i(a)`; `P = 10^q` as an integer;
+   - fraction digits `n = f2i(floor(add(mul(frac(a), i2r(P)), 0.5)))`;
+   - if `n >= P`: `i = i + 1`, `n = n - P` (carry);
+   - if `p < 0`: while `q > 1` and `n` is a multiple of 10, `q = q - 1`
+     and `n = n / 10`;
+   - the rest is `i` right-aligned in `max(w - q, 1)` characters, `.`, and
+     `n` with leading zeros to `q` digits (for `q = 0`, `n` itself, which
+     is 0 after a carry or the fraction rounded down).
+
+Consequences: `R2S(-0.0)` is `0.000` while `R2S(-0.0004)` is `-0.000`;
+`R2SW(2.5, 1, 0)` is `3.0` (one fraction digit even for precision 0);
+`R2SW(-1.5, 10, 2)` is `-       1.50`; `R2SW(1.0/3.0, 1, 9)` is
+`0.333333312` (the fraction is multiplied in engine arithmetic, not
+printed exactly); `R2S(99.9995)` is `99.999` because the float nearest to
+99.9995 is 99.99949646. `R2SW(x, w, p)` with `p > 9` prints 9 digits.
 
 ### JASS integer operations
 
@@ -212,7 +257,8 @@ ends the thread; `-2147483648 / -1` terminates the game process; `and` and
 - `SPEC-0004-vectors.tsv`: 27000 input/result pairs produced by executing
   the game's own code, for `add`, `sub`, `mul`, `i2r`, `r2i` (the `R2I`
   native), `floor`, plus 7000 lines for `recip` and `div` and about 3000
-  for `s2r` (text in double quotes). Floats are hex bit patterns. An implementation must
+  for `s2r` (text in double quotes) and about 3000 for `r2sw` (pattern,
+  width and precision, text). Floats are hex bit patterns. An implementation must
   reproduce every line.
 - JASS test maps (to be made): print the bit patterns of `1.0 - 0.005`,
   `100000.0 * 0.005` and the results of `==` and `!=` on 1.0 and 1.0005.

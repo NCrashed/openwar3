@@ -96,6 +96,22 @@ Reading a timer (`timeout` here is the value after the limits above):
   expired one-shot timer reads remaining 0 and elapsed equal to its
   timeout.
 
+Periodic timers, pause and resume:
+
+- A periodic timer is started again after its callback has run: inside
+  the callback `TimerGetRemaining` is 0 and `TimerGetElapsed` is the
+  period. The next expiry is one period after the expiry that fired.
+- `TimerStart` on the expired timer inside its own callback replaces the
+  period and the callback: a 0.5 s periodic timer restarted with 0.3 s in
+  its second callback then fired every 0.3 s.
+- `DestroyTimer` on the expired timer inside its own callback stops it
+  without error.
+- `PauseTimer` keeps the remaining time; `ResumeTimer` continues from it,
+  also for long timers: a 130 s timer paused after 5.1 s for 10.1 s fired
+  at 130 + 10.1 s after its start. After `ResumeTimer`, `TimerGetElapsed`
+  counts from the resume (2 s after resuming it read 2.17 with 122.73
+  remaining, 124.90 having been left at the pause).
+
 Consequences that scripts can see:
 
 - While a timer callback runs, the game time seen through other timers is

@@ -53,8 +53,74 @@ the left one is true. Operands are evaluated left to right.
 
 ### Real literals
 
-`5.` and `.25` are valid and mean 5.0 and 0.25. The bit pattern of a real
-literal equals the result of `S2R` on the same text (checked for `0.1`).
+`5.` and `.25` are valid and mean 5.0 and 0.25. The compiler reads a real
+literal with its own rule, which differs from `S2R`:
+
+1. The digits before the point form an integer `I` and the digits after
+   it an integer `F`, both accumulated as `x * 10 + digit` with 32-bit
+   wrap-around. `n` is the number of digits after the point, and
+   `D = 10^n`, also computed with 32-bit wrap-around.
+2. The value is `i2r(I)` if there is no point or no digit after it,
+   otherwise `add(i2r(I), div(i2r(F), i2r(D)))` with the operations of
+   SPEC-0004 (`I`, `F`, `D` taken as signed 32-bit values).
+
+Examples: `0.1` gives `0x3DCCCCCE` (the same as `S2R("0.1")`), `1.5`
+gives exactly 1.5 (while `S2R("1.5")` gives 1.5000001), `123456.789`
+gives 123456.78125, `10000000000.0` gives 1410065408.0, `4294967296.0`
+gives 0.0, `2147483648.0` gives -2147483648.0 and `0.1234567891234` gives
+about 1.453, because the 13 fraction digits and `10^13` both wrap.
+
+### Names
+
+A name starts with a letter and continues with letters, digits and `_`;
+it may not end with `_` (`x1` is valid, `_x` and `x_` are syntax errors).
+These words cannot be used as names: `integer`, `real`, `boolean`,
+`string`, `handle`, `code`, `nothing`, `array`, `debug`, `native`, `type`,
+`extends`, `constant`, `takes`, `returns`, `local`, `set`, `call`,
+`null`, `true`, `not`, `and`, `or`, `loop`, `endloop`, `exitwhen`, `if`,
+`then`, `else`, `elseif`, `endif`, `return`, `function`, `endfunction`,
+`globals`, `endglobals` (each tested as a parameter name; `false` is
+assumed to behave like `true`).
+
+### Lines
+
+A carriage return alone ends a line, like a line feed. A string literal
+may contain a line break; the break becomes part of the string
+(`"a` + line feed + `b"` has length 3).
+
+### Declarations and scope
+
+- A function must be declared above any call to it and any `function F`
+  reference to it.
+- A global's initial value may use only globals declared above it, and
+  natives: functions are declared after the globals block, so a global
+  initialiser cannot call a script function.
+- A global may not have the name of a function.
+- A local or a parameter may have the name of a global; inside the
+  function it hides the global, which keeps its own value.
+- A `local` may repeat the name of another local of the same function, of
+  the same or of another type, and may repeat the name of a parameter,
+  also with another type. The latest declaration is the one in use (after
+  `local integer q = 1` and `local real q = 2.5`, `q` is the real 2.5).
+- `function F` may name a function with parameters or with a return
+  value, and also a native (the script compiles; using such a code value
+  is not specified).
+
+### Types
+
+- `null` is accepted for an integer or real argument, and in a `return`
+  of an integer or real function that is not the function's last
+  statement; it then gives 0 or 0.0 (`I2S(null)` is `"0"`). It is not
+  accepted as the value of `set` for an integer, real or boolean variable,
+  nor in the last statement of the function (`return null` as the last
+  line of an integer function is a syntax error).
+- Other `return` values are checked against the declared type wherever
+  they are: a handle or a string returned from an integer function is an
+  error, also in an earlier `return`.
+- `==` and `!=` accept two values of any handle types (`unit == player`
+  is valid and false), a handle, string or code value and `null`, and an
+  integer and a real (`1 == 1.0` is true). An integer and a boolean
+  cannot be compared.
 
 ### String literals
 
@@ -166,11 +232,15 @@ Implicit integer to real conversion (+1) is applied to the integer value:
 
 - stored into a real variable (also an integer literal: `set r = 5`);
 - passed as a real argument to a function or a native (also a literal);
-- returned from a function that returns real;
 - as the integer operand of an arithmetic operator or comparison whose
   other operand is real (`i + r`, `r + i`, `i < r`, `r == i`);
 - for an integer expression stored into a real, once, after the whole
   expression (`set r = i + j` converts the sum).
+
+An integer returned from a function declared to return real is **not**
+converted and costs nothing extra: the 32 bits of the integer are used as
+the real (`return i` with `i = 1065353216` returns 1.0, with `i = 1` a
+value that prints as 0.000).
 
 Statements:
 

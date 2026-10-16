@@ -169,12 +169,16 @@ fn parses_functions_and_statements() {
 fn operator_precedence_and_grouping() {
     assert_eq!(expression_shape("1 + 2 * 3"), "(1 + (2 * 3))");
     assert_eq!(expression_shape("1 - 2 - 3"), "((1 - 2) - 3)");
-    assert_eq!(expression_shape("a or b and c"), "(a or (b and c))");
-    assert_eq!(expression_shape("not a == b"), "(not (a == b))");
+    // SPEC-0005: `or` binds tighter than `and`, `not` binds like unary minus.
+    assert_eq!(expression_shape("a or b and c"), "((a or b) and c)");
+    assert_eq!(expression_shape("a and b or c"), "(a and (b or c))");
+    assert_eq!(expression_shape("not a == b"), "((not a) == b)");
     assert_eq!(
         expression_shape("a and not b or c"),
-        "((a and (not b)) or c)"
+        "(a and ((not b) or c))"
     );
+    assert_eq!(expression_shape("10 - 4 - 3"), "((10 - 4) - 3)");
+    assert_eq!(expression_shape("100 / 10 / 5"), "((100 / 10) / 5)");
     assert_eq!(expression_shape("-x * 2"), "((-x) * 2)");
     assert_eq!(expression_shape("(1 + 2) * 3"), "((1 + 2) * 3)");
     assert_eq!(expression_shape("a < b == true"), "((a < b) == true)");

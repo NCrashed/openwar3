@@ -1,9 +1,10 @@
 //! Values and the rules for literals and operators.
 //!
-//! PROVISIONAL: no spec covers these rules yet. They follow the most common
-//! reading of the language and are kept in this module so that they can be
-//! replaced when the specs arrive. Each open point is listed in
-//! specs/QUESTIONS.md under "JASS evaluation".
+//! Literals, integer operations and strings follow SPEC-0005.
+//!
+//! PROVISIONAL: real arithmetic and real literals still use IEEE single
+//! precision. SPEC-0004 describes the engine's own operations; they replace
+//! `real_op`, `real_literal` and the real comparisons once it is adopted.
 
 use std::rc::Rc;
 
@@ -58,6 +59,9 @@ impl Value {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     DivisionByZero,
+    /// `-2147483648 / -1`. The game crashes; SPEC-0005 asks to end the
+    /// thread instead.
+    DivisionOverflow,
     InvalidLiteral(String),
 }
 
@@ -101,8 +105,8 @@ pub fn real_literal(text: &str) -> Result<f32, Fault> {
         .map_err(|_| Fault::InvalidLiteral(text.to_owned()))
 }
 
-/// String literal escapes: `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`. Any
-/// other escaped character stands for itself.
+/// Escapes of string literals and raw codes (SPEC-0005): `\"`, `\\`, `\t`,
+/// `\n` and `\r`. The lexer rejects any other escape.
 pub fn decode_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -115,8 +119,6 @@ pub fn decode_escapes(text: &str) -> String {
             Some('n') => out.push('\n'),
             Some('r') => out.push('\r'),
             Some('t') => out.push('\t'),
-            Some('b') => out.push('\u{8}'),
-            Some('f') => out.push('\u{c}'),
             Some(other) => out.push(other),
             None => out.push('\\'),
         }
@@ -136,7 +138,7 @@ pub fn integer_op(op: crate::ast::BinaryOperator, a: i32, b: i32) -> Result<i32,
             if b == 0 {
                 return Err(Fault::DivisionByZero);
             }
-            a.wrapping_div(b)
+            a.checked_div(b).ok_or(Fault::DivisionOverflow)?
         }
         _ => unreachable!("not an arithmetic operator"),
     })

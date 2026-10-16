@@ -312,6 +312,7 @@ impl<'a> Vm<'a> {
     fn fault(&self, fault: Fault) -> RuntimeError {
         self.error(match fault {
             Fault::DivisionByZero => "division by zero".to_owned(),
+            Fault::DivisionOverflow => "integer division overflow".to_owned(),
             Fault::InvalidLiteral(text) => format!("invalid literal {text}"),
         })
     }
@@ -760,20 +761,96 @@ native Run takes code f returns nothing
     }
 
     #[test]
-    fn short_circuits_boolean_operators() {
+    /// The precedence and short-circuit table of SPEC-0005's verification.
+    fn spec_0005_precedence_and_short_circuit() {
+        let cases = [
+            ("T(\"a\") and F(\"b\") or T(\"c\")", "a b c", true),
+            ("F(\"a\") and T(\"b\") or T(\"c\")", "a", false),
+            ("T(\"a\") or F(\"b\") and F(\"c\")", "a c", false),
+            ("F(\"a\") or T(\"b\") and F(\"c\")", "a b c", false),
+            ("(F(\"a\") and F(\"b\")) or T(\"c\")", "a c", true),
+            ("F(\"a\") and (F(\"b\") or T(\"c\"))", "a", false),
+            (
+                "T(\"a\") or F(\"b\") and F(\"c\") or T(\"d\")",
+                "a c d",
+                true,
+            ),
+            ("F(\"a\") and T(\"b\") or T(\"c\") and T(\"d\")", "a", false),
+            ("not F(\"a\") and F(\"b\")", "a b", false),
+            ("not T(\"a\") or T(\"b\")", "a b", true),
+            ("not true and false", "", false),
+            ("true or true and false", "", false),
+            ("false and false or true", "", false),
+        ];
+        for (expression, evaluated, result) in cases {
+            let printed = run(&format!(
+                "function T takes string s returns boolean
+                    call Print(s)
+                    return true
+                endfunction
+                function F takes string s returns boolean
+                    call Print(s)
+                    return false
+                endfunction
+                function main takes nothing returns nothing
+                    if {expression} then
+                        call Print(\"=true\")
+                    else
+                        call Print(\"=false\")
+                    endif
+                endfunction"
+            ))
+            .unwrap();
+            let expected: Vec<String> = evaluated
+                .split_whitespace()
+                .map(str::to_owned)
+                .chain([format!("={result}")])
+                .collect();
+            assert_eq!(printed, expected, "{expression}");
+        }
+    }
+
+    /// The literal values of SPEC-0005's verification.
+    #[test]
+    fn spec_0005_literals() {
         let printed = run("
-            function Side takes string s returns boolean
-                call Print(s)
-                return true
-            endfunction
             function main takes nothing returns nothing
-                if false and Side(\"and\") or Side(\"or\") then
-                endif
-                if true or Side(\"never\") then
-                endif
+                call Print(I2S(0x10) + \" \" + I2S(0xFF) + \" \" + I2S(0xffffffff))
+                call Print(I2S($10) + \" \" + I2S($ff) + \" \" + I2S(0X1f))
+                call Print(I2S(010) + \" \" + I2S(017) + \" \" + I2S(4294967296))
+                call Print(I2S(2147483647 + 1) + \" \" + I2S('a') + \" \" + I2S('abcd'))
+                call Print(I2S('hfoo') + \" \" + I2S('\\n'))
+                call Print(R2S(5.) + \" \" + R2S(.25))
             endfunction")
         .unwrap();
-        assert_eq!(printed, ["or"]);
+        assert_eq!(
+            printed,
+            [
+                "16 255 -1",
+                "16 255 31",
+                "8 15 0",
+                "-2147483648 97 1633837924",
+                "1751543663 10",
+                "5.000 0.250"
+            ]
+        );
+        for invalid in ["08", "'ab'", "\"\\q\""] {
+            let err = run(&format!(
+                "function main takes nothing returns nothing\ncall Print(I2S({invalid}))\nendfunction"
+            ))
+            .unwrap_err();
+            assert!(!err.is_empty(), "{invalid} should not load");
+        }
+    }
+
+    #[test]
+    fn integer_division_overflow_ends_the_thread() {
+        let err = run("
+            function main takes nothing returns nothing
+                call Print(I2S((-2147483647 - 1) / -1))
+            endfunction")
+        .unwrap_err();
+        assert!(err.contains("integer division overflow"), "{err}");
     }
 
     #[test]

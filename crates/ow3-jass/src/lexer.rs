@@ -269,7 +269,25 @@ impl Lexer {
             }
             return Ok(TokenKind::Real(text));
         }
+        if text.len() > 1 && text.starts_with('0') && text.bytes().any(|b| b > b'7') {
+            return Err(self.error(position, format!("invalid octal number {text}")));
+        }
         Ok(TokenKind::Integer(text))
+    }
+
+    /// After a backslash inside a string or raw code. SPEC-0005 allows
+    /// `\"`, `\\`, `\t`, `\n` and `\r`; anything else is a syntax error.
+    fn escape(&mut self, text: &mut String) -> Result<()> {
+        let position = self.position();
+        match self.bump() {
+            Some(ch @ ('"' | '\\' | 't' | 'n' | 'r')) => {
+                text.push('\\');
+                text.push(ch);
+                Ok(())
+            }
+            Some(ch) => Err(self.error(position, format!("unknown escape \\{ch}"))),
+            None => Err(self.error(position, "unterminated escape")),
+        }
     }
 
     fn string(&mut self, position: Position) -> Result<TokenKind> {
@@ -278,13 +296,7 @@ impl Lexer {
         loop {
             match self.bump() {
                 Some('"') => return Ok(TokenKind::String(text)),
-                Some('\\') => {
-                    text.push('\\');
-                    match self.bump() {
-                        Some(escaped) => text.push(escaped),
-                        None => break,
-                    }
-                }
+                Some('\\') => self.escape(&mut text)?,
                 Some(ch) => text.push(ch),
                 None => break,
             }
@@ -295,23 +307,29 @@ impl Lexer {
     fn raw_code(&mut self, position: Position) -> Result<TokenKind> {
         self.bump();
         let mut text = String::new();
+        let mut characters = 0;
         loop {
             match self.bump() {
                 Some('\'') => break,
                 Some('\\') => {
-                    text.push('\\');
-                    if let Some(escaped) = self.bump() {
-                        text.push(escaped);
-                    }
+                    self.escape(&mut text)?;
+                    characters += 1;
                 }
                 Some('\n' | '\r') | None => {
                     return Err(self.error(position, "unterminated raw code"));
                 }
-                Some(ch) => text.push(ch),
+                Some(ch) => {
+                    text.push(ch);
+                    characters += 1;
+                }
             }
         }
-        if text.is_empty() {
-            return Err(self.error(position, "empty raw code"));
+        // One or four characters (SPEC-0005); an escape counts as one.
+        if characters != 1 && characters != 4 {
+            return Err(self.error(
+                position,
+                format!("raw code '{text}' must have 1 or 4 characters"),
+            ));
         }
         Ok(TokenKind::RawCode(text))
     }

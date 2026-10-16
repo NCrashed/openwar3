@@ -1,8 +1,8 @@
 //! Recursive descent parser from tokens to the syntax tree.
 //!
-//! Operator precedence, lowest first: `or`, `and`, `not`, comparisons,
-//! `+ -`, `* /`, unary `+ -`. Binary operators group to the left. The
-//! precedence is not confirmed against the game yet (see specs/QUESTIONS.md).
+//! Operator precedence follows SPEC-0005, loosest first: `and`, `or`,
+//! comparisons, `+ -`, `* /`, then the unary `not`, `-` and `+`. Binary
+//! operators group to the left.
 
 use crate::ast::*;
 use crate::lexer::{Keyword, Symbol, Token, TokenKind};
@@ -463,10 +463,10 @@ impl Parser {
     /// Binary operators of precedence `level` and above.
     fn binary_level(&mut self, level: usize) -> Result<Expression> {
         let operators: &[(Option<Keyword>, Option<Symbol>, BinaryOperator)] = match level {
-            0 => &[(Some(Keyword::Or), None, BinaryOperator::Or)],
-            1 => &[(Some(Keyword::And), None, BinaryOperator::And)],
-            2 => return self.not_level(),
-            3 => &[
+            // `and` is looser than `or` (SPEC-0005).
+            0 => &[(Some(Keyword::And), None, BinaryOperator::And)],
+            1 => &[(Some(Keyword::Or), None, BinaryOperator::Or)],
+            2 => &[
                 (None, Some(Symbol::Equal), BinaryOperator::Equal),
                 (None, Some(Symbol::NotEqual), BinaryOperator::NotEqual),
                 (None, Some(Symbol::Less), BinaryOperator::Less),
@@ -478,11 +478,11 @@ impl Parser {
                     BinaryOperator::GreaterEqual,
                 ),
             ],
-            4 => &[
+            3 => &[
                 (None, Some(Symbol::Plus), BinaryOperator::Add),
                 (None, Some(Symbol::Minus), BinaryOperator::Subtract),
             ],
-            5 => &[
+            4 => &[
                 (None, Some(Symbol::Star), BinaryOperator::Multiply),
                 (None, Some(Symbol::Slash), BinaryOperator::Divide),
             ],
@@ -515,22 +515,6 @@ impl Parser {
         }
     }
 
-    /// `not` binds looser than comparisons: `not a == b` is `not (a == b)`.
-    fn not_level(&mut self) -> Result<Expression> {
-        let position = self.position();
-        if self.eat_keyword(Keyword::Not) {
-            let operand = self.not_level()?;
-            return Ok(Expression {
-                kind: ExpressionKind::Unary {
-                    operator: UnaryOperator::Not,
-                    operand: Box::new(operand),
-                },
-                position,
-            });
-        }
-        self.binary_level(3)
-    }
-
     fn unary(&mut self) -> Result<Expression> {
         let position = self.position();
         let operator = if self.eat_symbol(Symbol::Minus) {
@@ -538,7 +522,7 @@ impl Parser {
         } else if self.eat_symbol(Symbol::Plus) {
             Some(UnaryOperator::Plus)
         } else if self.eat_keyword(Keyword::Not) {
-            // `not` inside an arithmetic or comparison operand, as in `a == not b`.
+            // `not` binds as tightly as unary minus (SPEC-0005).
             Some(UnaryOperator::Not)
         } else {
             None

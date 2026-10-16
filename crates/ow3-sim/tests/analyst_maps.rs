@@ -1,47 +1,34 @@
-//! Runs the analysts' test maps from `game-data/1.27b/Maps/Test-ow3/` with
-//! the 1.27b `common.j` and `Blizzard.j`, and compares what they print with
-//! the results recorded in the specs. Each test passes without checking
-//! anything when the game data is absent.
+//! Runs the analysts' test maps from `game-data/1.27b/Maps/Test-ow3/`
+//! through the map loader with the 1.27b archives, and compares what they
+//! print with the results recorded in the specs. Each test passes without
+//! checking anything when the game data is absent.
 
 use std::path::PathBuf;
 
-use ow3_formats::mpq::Archive;
-use ow3_jass::ast::Script;
 use ow3_sim::game::Game;
+use ow3_sim::map::Map;
 
 fn game_data() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b")
 }
 
-fn parse(data: &[u8]) -> Script {
-    ow3_jass::parse(std::str::from_utf8(data).unwrap()).unwrap()
-}
-
-/// `common.j`, `Blizzard.j` and the map's script, or `None` without data.
-fn scripts(map: &str) -> Option<[Script; 3]> {
-    let root = game_data();
-    let map = root.join("Maps/Test-ow3").join(map);
-    if !map.exists() {
-        eprintln!("skipping: {} not found", map.display());
+/// The test map `name`, or `None` without game data.
+fn load(name: &str) -> Option<Map> {
+    let path = game_data().join("Maps/Test-ow3").join(name);
+    if !path.exists() {
+        eprintln!("skipping: {} not found", path.display());
         return None;
     }
-    let mut patch = Archive::open_path(root.join("War3Patch.mpq")).unwrap();
-    let common = parse(&patch.read("Scripts\\common.j").unwrap());
-    let blizzard = parse(&patch.read("Scripts\\Blizzard.j").unwrap());
-    let mut archive = Archive::open_path(&map).unwrap();
-    let script = parse(&archive.read("war3map.j").unwrap());
-    Some([common, blizzard, script])
+    Some(Map::load(&game_data(), &path).unwrap())
 }
 
-/// Runs `config` and `main`, then `seconds` of real time at full speed,
-/// and returns the printed lines, or `None` without game data.
-fn run(map: &str, seconds: f64) -> Option<Vec<String>> {
-    let scripts = scripts(map)?;
-    let refs: Vec<&Script> = scripts.iter().collect();
-    let program = ow3_jass::check::check(&refs).unwrap();
-    let mut game = Game::load(&program, &refs).unwrap();
-    game.run("config");
-    game.run("main");
+/// Starts the map, lets `seconds` of real time pass at full speed and
+/// returns the printed lines, or `None` without game data.
+fn run(name: &str, seconds: f64) -> Option<Vec<String>> {
+    let map = load(name)?;
+    let program = map.check().unwrap();
+    let mut game = Game::load_map(&program, &map).unwrap();
+    game.start();
     game.advance_seconds(seconds);
     let output = game.output();
     for line in &output {
@@ -360,32 +347,28 @@ fn survey() {
         .collect();
     names.sort();
     for name in names {
-        let map = dir.join(&name);
-        let data = Archive::open_path(&map).unwrap().read("war3map.j").unwrap();
-        if let Err(err) = ow3_jass::parse(std::str::from_utf8(&data).unwrap()) {
-            println!("== {name}: does not parse ({err})");
-            continue;
-        }
-        let Some(scripts) = scripts(&name) else {
-            continue;
-        };
-        let refs: Vec<&Script> = scripts.iter().collect();
-        let program = match ow3_jass::check::check(&refs) {
-            Ok(program) => program,
-            Err(d) => {
-                println!("== {name}: does not check ({})", d[0].message);
+        let map = match Map::load(&game_data(), &dir.join(&name)) {
+            Ok(map) => map,
+            Err(e) => {
+                println!("== {name}: does not load ({e})");
                 continue;
             }
         };
-        let mut game = match Game::load(&program, &refs) {
+        let program = match map.check() {
+            Ok(program) => program,
+            Err(e) => {
+                println!("== {name}: does not check ({e})");
+                continue;
+            }
+        };
+        let mut game = match Game::load_map(&program, &map) {
             Ok(game) => game,
             Err(e) => {
                 println!("== {name}: does not load ({e})");
                 continue;
             }
         };
-        game.run("config");
-        game.run("main");
+        game.start();
         game.advance_seconds(25.0);
         println!("== {name}");
         for line in game.output().iter().take(60) {
@@ -399,8 +382,8 @@ fn survey() {
 
 /// SPEC-0005: `ForGroup` callbacks and `GroupEnum` filters that sleep end
 /// at the sleep, and the enumeration goes on. The three units are created
-/// by the script. Destructables and death events are not simulated yet, so
-/// Y3 and Y5 are not checked.
+/// by the script. Y3 runs once per destructable of the map, a number the
+/// spec does not give; death events (Y5) are not simulated yet.
 #[test]
 fn b1_callbacks_sleep() {
     let Some(output) = run("h-B1-callbacks-speed.w3x", 3.0) else {
@@ -446,5 +429,50 @@ fn b6_forforce() {
             "W cb player 0 before sleep",
             "W after ForForce all (sleep)",
         ]
+    );
+}
+
+/// SPEC-0003 verification, test W1: references resolve in
+/// `DisplayTextToPlayer` and stay as they are in script strings.
+#[test]
+fn w1_trigger_strings() {
+    let Some(output) = run("ow3-W1-wts.w3x", 3.0) else {
+        return;
+    };
+    let shown = |n: &str| {
+        let at = output
+            .iter()
+            .position(|l| *l == format!("W1 {n} literal: [TRIGSTR_{n}]"))
+            .unwrap_or_else(|| panic!("no W1 {n} in {output:#?}"));
+        output[at + 1].clone()
+    };
+    assert_eq!(shown("900"), "first 900");
+    assert_eq!(shown("901"), "");
+    assert_eq!(shown("902"), "text 902");
+    assert_eq!(shown("903"), "");
+    assert_eq!(
+        shown("904").lines().collect::<Vec<_>>(),
+        ["line one", "line two"]
+    );
+    assert_eq!(shown("0902"), "text 902");
+    assert!(output.contains(&"W1 900: [TRIGSTR_900]".to_owned()));
+}
+
+/// SPEC-0003: only resolving natives see the entry text, whatever way the
+/// reference was built.
+#[test]
+fn w2c_resolving_natives() {
+    let Some(output) = run("h-W2c.w3x", 3.0) else {
+        return;
+    };
+    assert_lines(
+        &output,
+        &[
+            "C1 len literal=8 len var=8 len concat=8",
+            "C2 SubString=[TRIG] StringCase=[TEXT 910] S2I=0",
+            "C3 literal == text: false",
+            "C4 concat == literal: true",
+            "C5 var == text: false",
+        ],
     );
 }

@@ -6,5 +6,6 @@
 
 pub mod clock;
 pub mod game;
+pub mod map;
 pub mod sleep;
 pub mod timers;

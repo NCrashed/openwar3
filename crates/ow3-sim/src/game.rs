@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
+use ow3_formats::map::strings::RESOLVING_NATIVES;
 use ow3_jass::ast::Script;
 use ow3_jass::check::{Program, Type};
 use ow3_jass::semantics::Value;
@@ -19,6 +20,7 @@ use ow3_jass::vm::{LoadError, NativeFn, Natives, Outcome, RuntimeError, Thread, 
 use ow3_math::{add, i2r, mul, sub};
 
 use crate::clock::{CHUNK_MICROS, FrameClock, Speed, Step};
+use crate::map::Map;
 use crate::sleep::SleepQueue;
 use crate::timers::{Fired, LONG_PART, TimerId, TimerQueue, raise_timeout, split_timeout};
 
@@ -40,6 +42,7 @@ macro_rules! native {
 }
 
 mod enumerate;
+pub mod players;
 
 /// PROVISIONAL: the first handle number. Scripts usually see differences
 /// between handles, which do not depend on it.
@@ -61,6 +64,7 @@ pub enum Object {
     /// Unit handles in the order they were added.
     Group(Vec<u32>),
     Unit(Unit),
+    Destructable(Destructable),
     Location {
         x: u32,
         y: u32,
@@ -81,6 +85,14 @@ pub enum BoolExpr {
     And(Option<u32>, Option<u32>),
     Or(Option<u32>, Option<u32>),
     Not(Option<u32>),
+}
+
+/// PROVISIONAL: a placeholder destructable, as placed in `war3map.doo`.
+#[derive(Clone, Debug)]
+pub struct Destructable {
+    type_id: i32,
+    x: u32,
+    y: u32,
 }
 
 /// PROVISIONAL: a placeholder unit with what the enumerations need, until
@@ -131,6 +143,8 @@ struct Context {
     filter_player: Option<u32>,
     enum_unit: Option<u32>,
     filter_unit: Option<u32>,
+    enum_destructable: Option<u32>,
+    filter_destructable: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -157,11 +171,16 @@ pub struct State {
     objects: HashMap<u32, Object>,
     /// Handles of the player slots made so far, by id.
     players: BTreeMap<i32, u32>,
-    /// PROVISIONAL: the players in the game, as in single player with one
-    /// user (SPEC-0005: `GetPlayersAll()` holds one player).
-    players_present: Vec<i32>,
+    /// Player slots and the rest of the lobby and `config` setup.
+    pub setup: players::Setup,
+    /// PROVISIONAL: random numbers, until the game's generator is specified.
+    pub random: Random,
     /// Units in the order they were created.
     units: Vec<u32>,
+    /// Destructables in the order they were placed or created.
+    destructables: Vec<u32>,
+    /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
+    world_bounds: [u32; 4],
     next_handle: u32,
     /// Texts shown to the local player, in order.
     pub output: Vec<String>,
@@ -182,8 +201,11 @@ impl State {
             timers: TimerQueue::new(),
             objects: HashMap::new(),
             players: BTreeMap::new(),
-            players_present: vec![0],
+            setup: players::Setup::single_player(),
+            random: Random::new(0),
             units: Vec::new(),
+            destructables: Vec::new(),
+            world_bounds: [0; 4],
             next_handle: FIRST_HANDLE,
             output: Vec::new(),
             preload: Vec::new(),
@@ -337,7 +359,41 @@ pub struct Game<'a> {
 impl<'a> Game<'a> {
     /// Loads checked scripts. Natives not implemented here are stubs.
     pub fn load(program: &'a Program, scripts: &[&'a Script]) -> Result<Game<'a>, LoadError> {
-        let state = Rc::new(RefCell::new(State::new()));
+        Game::with_state(program, scripts, State::new())
+    }
+
+    /// Loads a map's checked scripts, with the players, trigger strings,
+    /// destructables and bounds of the map, as single player. Run `config`
+    /// and `main` next, or use [`Game::start`].
+    pub fn load_map(program: &'a Program, map: &'a Map) -> Result<Game<'a>, LoadError> {
+        let mut state = State::new();
+        state.setup = players::Setup::from_map(map);
+        let b = &map.world_bounds;
+        state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
+        for d in &map.destructables {
+            let destructable = Destructable {
+                type_id: d.type_id,
+                x: d.x.to_bits(),
+                y: d.y.to_bits(),
+            };
+            let handle = state.create(Object::Destructable(destructable));
+            state.destructables.push(handle);
+        }
+        Game::with_state(program, &map.script_refs(), state)
+    }
+
+    /// Runs `config`, then `main`, as the game does when a map starts.
+    pub fn start(&mut self) {
+        self.run("config");
+        self.run("main");
+    }
+
+    fn with_state(
+        program: &'a Program,
+        scripts: &[&'a Script],
+        state: State,
+    ) -> Result<Game<'a>, LoadError> {
+        let state = Rc::new(RefCell::new(state));
         let mut natives = Natives::default().stub_missing();
         register_natives(&mut natives, &state, program);
         let vm = Vm::load(program, scripts, &natives)?;
@@ -694,7 +750,16 @@ fn string(value: &Value) -> Option<&str> {
 // `rustfmt` wraps short native bodies in braces inside the `native!` calls.
 #[allow(unused_braces)]
 fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: &Program) {
-    let mut add = |declaration: &str, f: NativeFn| natives.register(declaration, f);
+    // Natives that resolve trigger strings get their arguments resolved.
+    let shared = state.clone();
+    let mut add = |declaration: &str, f: NativeFn| {
+        let f = if RESOLVING_NATIVES.contains(&players::native_name(declaration)) {
+            players::resolving(f, shared.clone())
+        } else {
+            f
+        };
+        natives.register(declaration, f);
+    };
 
     // Timers (SPEC-0002).
     native!(
@@ -1051,8 +1116,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
 
-    // Players and messages. PROVISIONAL: player 0 is the local player, and
-    // texts are recorded without resolving trigger strings.
+    // Players and messages. Texts shown to the local player are recorded;
+    // trigger strings in them are resolved (SPEC-0003).
     native!(
         add,
         state,
@@ -1065,16 +1130,6 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                     .contains(&id)
                     .then(|| state.borrow_mut().player_handle(id)),
             )))
-        }
-    );
-    native!(
-        add,
-        state,
-        "constant native GetLocalPlayer takes nothing returns player",
-        |vm, state, args| {
-            Ok(Some(Value::Handle(Some(
-                state.borrow_mut().player_handle(0),
-            ))))
         }
     );
     native!(
@@ -1093,7 +1148,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     ] {
         native!(add, state, declaration, |vm, state, args| {
             let mut state = state.borrow_mut();
-            if state.player_id(handle(&args[0])) == Some(0) {
+            if state.player_id(handle(&args[0])) == Some(state.setup.local_player) {
                 let text = string(args.last().expect("message"))
                     .unwrap_or("")
                     .to_owned();
@@ -1194,8 +1249,75 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             )))
         }
     );
+    // PROVISIONAL: byte positions, clamped to the string; an end before the
+    // start gives an empty string.
+    native!(
+        add,
+        state,
+        "native SubString takes string source, integer start, integer end returns string",
+        |vm, state, args| {
+            let Some(source) = string(&args[0]) else {
+                return Ok(Some(Value::String(None)));
+            };
+            let clamp = |i: i32| (i.max(0) as usize).min(source.len());
+            let (start, end) = (clamp(integer(&args[1])), clamp(integer(&args[2])));
+            let bytes = source.as_bytes().get(start..end.max(start)).unwrap_or(&[]);
+            Ok(Some(Value::string(&String::from_utf8_lossy(bytes))))
+        }
+    );
+    // PROVISIONAL: ASCII letters only.
+    native!(
+        add,
+        state,
+        "native StringCase takes string source, boolean upper returns string",
+        |vm, state, args| {
+            let Some(source) = string(&args[0]) else {
+                return Ok(Some(Value::String(None)));
+            };
+            Ok(Some(Value::string(&if args[1] == Value::Boolean(true) {
+                source.to_ascii_uppercase()
+            } else {
+                source.to_ascii_lowercase()
+            })))
+        }
+    );
+
+    native!(
+        add,
+        state,
+        "native GetRandomInt takes integer lowBound, integer highBound returns integer",
+        |vm, state, args| {
+            let value = state
+                .borrow_mut()
+                .random
+                .integer(integer(&args[0]), integer(&args[1]));
+            Ok(Some(Value::Integer(value)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native GetRandomReal takes real lowBound, real highBound returns real",
+        |vm, state, args| {
+            let value = state
+                .borrow_mut()
+                .random
+                .real(real(&args[0]), real(&args[1]));
+            Ok(Some(Value::Real(value)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetRandomSeed takes integer seed returns nothing",
+        |vm, state, args| {
+            state.borrow_mut().random = Random::new(integer(&args[0]) as u32 as u64);
+            Ok(None)
+        }
+    );
 
     enumerate::register(&mut add, state);
+    players::register(&mut add, state);
 }
 
 /// `S2I` (SPEC-0005): leading spaces, an optional sign, decimal digits up to
@@ -1213,4 +1335,40 @@ pub fn s2i(text: &str) -> i32 {
     }
     let value = if negative { -value } else { value };
     value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
+/// PROVISIONAL: a deterministic stand-in for the game's random numbers
+/// (SplitMix64), so that scripts see varied values. The game's generator,
+/// its seeding and how bounds are handled are not specified yet.
+#[derive(Clone, Debug)]
+pub struct Random {
+    state: u64,
+}
+
+impl Random {
+    pub fn new(seed: u64) -> Random {
+        Random { state: seed }
+    }
+
+    fn next(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// An integer from `low` to `high`, both included, in either order.
+    pub fn integer(&mut self, low: i32, high: i32) -> i32 {
+        let (low, high) = (low.min(high), low.max(high));
+        let span = (i64::from(high) - i64::from(low) + 1) as u64;
+        (i64::from(low) + (self.next() % span) as i64) as i32
+    }
+
+    /// A real from `low` to `high` with engine arithmetic: `low` plus the
+    /// span times a multiple of 2^-24 below 1.
+    pub fn real(&mut self, low: u32, high: u32) -> u32 {
+        let fraction = mul(i2r((self.next() >> 40) as i32), 0x3380_0000);
+        add(low, mul(sub(high, low), fraction))
+    }
 }

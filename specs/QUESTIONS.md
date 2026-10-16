@@ -215,10 +215,9 @@ where the specs are silent:
   order units were added; `GroupEnum*` in the order units were created.
 - **Clearing.** `GroupEnum*` and `ForceEnumPlayers*` clear the group or
   force first. Does `ForceEnumPlayers` clear?
-- **`ForceEnumPlayers` with a `null` filter** adds every player in the game.
-  In single player we take that to be player 0 only (SPEC-0005: `GetPlayersAll()`
-  holds one player). Which slot states count: playing users only, or
-  computers too?
+- **`ForceEnumPlayers` with a `null` filter** adds every player whose slot
+  is playing; see "Map loading and player slots" for which slots those
+  are.
 - **Changes during `ForGroup`.** It works on a copy of the group taken at
   the start and skips handles that no longer refer to units. What happens
   when the callback adds or removes units, or a unit is removed from the
@@ -234,8 +233,65 @@ where the specs are silent:
   is known; a `null` operand or a destroyed boolexpr counts as true. Each
   call makes a new boolexpr.
 - **`Player(n)`** gives `null` outside 0..15.
-- **Not yet:** `EnumDestructablesInRect`, `EnumItemsInRect`,
-  `GroupEnumUnitsOfType` (needs unit names), `GroupEnumUnitsSelected`,
-  `ForceEnumAllies` and `ForceEnumEnemies` (need alliances), and death
-  events. `GetPlayerSlotState` is still a stub, so melee start-up creates
-  no units.
+- **`EnumDestructablesInRect`** first tests every destructable in the rect
+  with the filter, then runs the action for those that passed, in the
+  order of `war3map.doo`. Or does it run the action right after each
+  filter? A destructable is in the rect when `min <= x <= max`.
+- **Not yet:** `EnumItemsInRect`, `GroupEnumUnitsOfType` (needs unit
+  names), `GroupEnumUnitsSelected` and death events.
+
+## Map loading and player slots (`ow3-sim::map`, `game::players`)
+
+`Map::load` reads a map with the game archives, and `Game::load_map`
+starts it as single player. All 191 maps of the installation (outside the
+test folders) load, run `config` and `main` and 30 s of game time without
+a thread error. Test W1 matches SPEC-0003. Choices where no spec says
+anything yet:
+
+- **Archive order.** Files come from the map, then `War3Patch.mpq`,
+  `War3xlocal.mpq`, `War3x.mpq`, `War3local.mpq`, `War3.mpq`. A map may
+  replace `Scripts\common.j` and `Scripts\Blizzard.j` with its own copies.
+  Is that the game's order, and does the game accept such copies?
+- **Who plays in single player.** The local player is the first user slot
+  of `war3map.w3i`; the slots in the game are the local player's and every
+  computer slot. Other user slots are empty. Is that what the game does
+  for a map started from the single player menu, for melee maps and for
+  maps with fixed player settings?
+- **Slots before `config`.** Controller from the `war3map.w3i` slot type
+  (user, computer, neutral, rescuable), race from the slot (human when the
+  race is selectable), name from the slot with trigger strings resolved,
+  start location `n` for player `n`, team by force. Slots the map does not
+  list are users (0..11) or neutral (12..15), named "Player <n+1>". Which
+  of these does the game set, and to what?
+- **`GetPlayerRace` with a selectable race** gives human. What does the
+  game pick in single player?
+- **Alliances.** A player is an ally of itself and of every player it
+  gives `ALLIANCE_PASSIVE`; `IsPlayerEnemy` is the opposite. Is that the
+  rule for `IsPlayerAlly` and `IsPlayerEnemy`, and which alliances does
+  the game set before `config` and `main`?
+- **World bounds** span the whole terrain grid: from the `war3map.w3e`
+  origin to `origin + (size - 1) * 128`. Each `GetWorldBounds` call makes a
+  new rect. What are the game's bounds, and does it return a new rect?
+- **Destructables** are the `war3map.doo` entries whose type is in
+  `Units\DestructableData.slk` or is a custom destructable of the map.
+  Are other placed doodads ever enumerated?
+- **Real literals in `config`.** By SPEC-0004 and SPEC-0005 a literal reads
+  like `S2R`, so `DefineStartLocation(0, -8384.0, 1792.0)` gives
+  `GetStartLocationY(0) = 1792.0001` (`0x44E00001`). Can this be confirmed
+  in the game?
+- **Random numbers.** `GetRandomInt` and `GetRandomReal` use a stand-in
+  generator so that scripts see varied values: maps that wait
+  `PolledWait(GetRandomReal(20, 45))` and then run their own trigger again
+  recursed without end while the stub returned 0. We need the game's
+  generator: algorithm, seed at game start, `SetRandomSeed`, and how
+  bounds (inclusive, swapped) are handled. This matters for replays and
+  multiplayer.
+- **Nested threads.** Threads started by natives inside other threads
+  (`ExecuteFunc`, `TriggerExecute`, `TriggerEvaluate`, `ForGroup`, ...)
+  may nest 100 deep; one more fails in the caller. What does the game do
+  with deep nesting, for example a trigger that runs itself with
+  `TriggerExecute` without sleeping?
+- **`SubString`** uses byte positions clamped to the string, and an end
+  before the start gives "". **`StringCase`** changes ASCII letters only.
+  What does the game do with positions out of range and with non-ASCII
+  text?

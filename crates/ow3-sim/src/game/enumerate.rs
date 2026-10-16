@@ -21,8 +21,8 @@ use ow3_jass::vm::{NativeFn, Vm};
 use ow3_math::{add, mul, sub};
 
 use super::{
-    BoolExpr, Context, Object, State, Unit, code, handle, integer, real, run_new_thread,
-    test_boolexpr,
+    BoolExpr, Context, Destructable, Object, State, Unit, code, handle, integer, real,
+    run_new_thread, test_boolexpr,
 };
 
 fn f(bits: u32) -> f32 {
@@ -120,6 +120,13 @@ fn rect(state: &State, handle: Option<u32>) -> Option<[u32; 4]> {
             max_x,
             max_y,
         } => Some([*min_x, *min_y, *max_x, *max_y]),
+        _ => None,
+    }
+}
+
+fn destructable(state: &State, handle: Option<u32>) -> Option<&Destructable> {
+    match state.objects.get(&handle?)? {
+        Object::Destructable(d) => Some(d),
         _ => None,
     }
 }
@@ -268,7 +275,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     return Ok(None);
                 };
                 players.clear();
-                let present = state.players_present.clone();
+                let present = state.setup.present();
                 present
                     .into_iter()
                     .map(|id| state.player_handle(id))
@@ -514,6 +521,156 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 (f(min_x)..=f(max_x)).contains(&f(u.x)) && (f(min_y)..=f(max_y)).contains(&f(u.y))
             });
             Ok(None)
+        });
+    }
+
+    // Allies and enemies among the players in the game.
+    for (declaration, allies) in [
+        (
+            "native ForceEnumAllies takes force whichForce, player whichPlayer, boolexpr filter returns nothing",
+            true,
+        ),
+        (
+            "native ForceEnumEnemies takes force whichForce, player whichPlayer, boolexpr filter returns nothing",
+            false,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let force = handle(&args[0]);
+            let candidates: Vec<u32> = {
+                let mut state = state.borrow_mut();
+                let Some(of) = state.player_id(handle(&args[1])) else {
+                    return Ok(None);
+                };
+                let Some(players) = state.force(force) else {
+                    return Ok(None);
+                };
+                players.clear();
+                let present: Vec<i32> = state
+                    .setup
+                    .present()
+                    .into_iter()
+                    .filter(|&id| state.setup.is_ally(of, id) == allies)
+                    .collect();
+                present
+                    .into_iter()
+                    .map(|id| state.player_handle(id))
+                    .collect()
+            };
+            let chosen = select(vm, state, candidates, handle(&args[2]), None, |c, p| {
+                Context {
+                    filter_player: Some(p),
+                    ..c
+                }
+            });
+            let mut state = state.borrow_mut();
+            let ids: Vec<i32> = chosen
+                .into_iter()
+                .filter_map(|p| state.player_id(Some(p)))
+                .collect();
+            if let Some(players) = state.force(force) {
+                players.extend(ids);
+            }
+            Ok(None)
+        });
+    }
+
+    // Destructables and the world bounds.
+    native!(
+        add,
+        state,
+        "native GetWorldBounds takes nothing returns rect",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let [min_x, min_y, max_x, max_y] = state.world_bounds;
+            let h = state.create(Object::Rect {
+                min_x,
+                min_y,
+                max_x,
+                max_y,
+            });
+            Ok(Some(Value::Handle(Some(h))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native EnumDestructablesInRect takes rect r, boolexpr filter, code actionFunc returns nothing",
+        |vm, state, args| {
+            let candidates: Vec<u32> = {
+                let state = state.borrow();
+                let Some([min_x, min_y, max_x, max_y]) = rect(&state, handle(&args[0])) else {
+                    return Ok(None);
+                };
+                state
+                    .destructables
+                    .iter()
+                    .copied()
+                    .filter(|&d| {
+                        destructable(&state, Some(d)).is_some_and(|d| {
+                            (f(min_x)..=f(max_x)).contains(&f(d.x))
+                                && (f(min_y)..=f(max_y)).contains(&f(d.y))
+                        })
+                    })
+                    .collect()
+            };
+            let chosen = select(vm, state, candidates, handle(&args[1]), None, |c, d| {
+                Context {
+                    filter_destructable: Some(d),
+                    ..c
+                }
+            });
+            for_each(vm, state, chosen, code(&args[2]), |c, d| Context {
+                enum_destructable: Some(d),
+                ..c
+            });
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetEnumDestructable takes nothing returns destructable",
+        |vm, state, args| {
+            Ok(Some(Value::Handle(
+                state.borrow().context.enum_destructable,
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetFilterDestructable takes nothing returns destructable",
+        |vm, state, args| {
+            Ok(Some(Value::Handle(
+                state.borrow().context.filter_destructable,
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native GetDestructableTypeId takes destructable d returns integer",
+        |vm, state, args| {
+            let state = state.borrow();
+            let id = destructable(&state, handle(&args[0])).map_or(0, |d| d.type_id);
+            Ok(Some(Value::Integer(id)))
+        }
+    );
+    for (declaration, y) in [
+        (
+            "native GetDestructableX takes destructable d returns real",
+            false,
+        ),
+        (
+            "native GetDestructableY takes destructable d returns real",
+            true,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let state = state.borrow();
+            let at = destructable(&state, handle(&args[0])).map(|d| if y { d.y } else { d.x });
+            Ok(Some(Value::Real(at.unwrap_or(0))))
         });
     }
 

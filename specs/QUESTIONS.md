@@ -204,5 +204,44 @@ Provisional choices in the scheduler and natives, used by the test maps:
 - **`R2S` and `R2SW`** print with Rust's rounding (`{:.3}` and width and
   precision). What are the exact rules, especially rounding of halves,
   large values and -0.0?
-- **`ForForce`, `ForGroup` and the enumerations** are not implemented yet.
-  Does each callback get its own operation budget?
+
+## Forces, groups and enumerations (`ow3-sim::game::enumerate`)
+
+Tests B1, B6 and L5 match SPEC-0005 (callbacks and filters that sleep end
+at the sleep, the enumeration goes on). Units are placeholders with owner,
+type, position, facing and a dead flag until units are specified. Choices
+where the specs are silent:
+
+- **Budget and errors.** Each callback and each filter runs in a thread of
+  its own, with its own operation budget, and an error ends only that
+  callback. Is that so, or do they share the caller's budget?
+- **A filter that sleeps** counts as false, like a condition. Is the unit
+  or player then left out?
+- **Order.** `ForForce` goes by increasing player id; `ForGroup` in the
+  order units were added; `GroupEnum*` in the order units were created.
+- **Clearing.** `GroupEnum*` and `ForceEnumPlayers*` clear the group or
+  force first. Does `ForceEnumPlayers` clear?
+- **`ForceEnumPlayers` with a `null` filter** adds every player in the game.
+  In single player we take that to be player 0 only (SPEC-0005: `GetPlayersAll()`
+  holds one player). Which slot states count: playing users only, or
+  computers too?
+- **Changes during `ForGroup`.** It works on a copy of the group taken at
+  the start and skips handles that no longer refer to units. What happens
+  when the callback adds or removes units, or a unit is removed from the
+  game while still in a group?
+- **Range and rect tests.** A unit is in range when
+  `add(mul(dx, dx), mul(dy, dy)) <= mul(r, r)` with `dx = sub(x_u, x)`, and
+  in a rect when `min <= x_u <= max` on both axes. Does the range include
+  the unit's collision size, and which operations does the game use?
+- **Dead units** are enumerated by `GroupEnum*` until they are removed.
+- **Counted variants** stop after `countLimit` units or players have been
+  added; a limit of 0 or less adds none.
+- **`And`, `Or`, `Not`** test left to right and stop as soon as the result
+  is known; a `null` operand or a destroyed boolexpr counts as true. Each
+  call makes a new boolexpr.
+- **`Player(n)`** gives `null` outside 0..15.
+- **Not yet:** `EnumDestructablesInRect`, `EnumItemsInRect`,
+  `GroupEnumUnitsOfType` (needs unit names), `GroupEnumUnitsSelected`,
+  `ForceEnumAllies` and `ForceEnumEnemies` (need alliances), and death
+  events. `GetPlayerSlotState` is still a stub, so melee start-up creates
+  no units.

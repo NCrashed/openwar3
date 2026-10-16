@@ -268,6 +268,8 @@ fn l5_sleep_in_callbacks() {
     assert_lines(
         &output,
         &[
+            "Z2 ForForce callback before sleep",
+            "Z2 after ForForce",
             "Z3 condition before sleep",
             "Z3 evaluate -> 0",
             "Z4 ExecuteFunc before sleep",
@@ -285,6 +287,11 @@ fn l5_sleep_in_callbacks() {
         !output
             .iter()
             .any(|l| l.starts_with("Z3") && l.contains("after"))
+    );
+    assert!(
+        !output
+            .iter()
+            .any(|l| l == "Z2 ForForce callback after sleep")
     );
 }
 
@@ -388,4 +395,56 @@ fn survey() {
             println!("   ! {error}");
         }
     }
+}
+
+/// SPEC-0005: `ForGroup` callbacks and `GroupEnum` filters that sleep end
+/// at the sleep, and the enumeration goes on. The three units are created
+/// by the script. Destructables and death events are not simulated yet, so
+/// Y3 and Y5 are not checked.
+#[test]
+fn b1_callbacks_sleep() {
+    let Some(output) = run("h-B1-callbacks-speed.w3x", 3.0) else {
+        return;
+    };
+    let count = |line: &str| output.iter().filter(|l| *l == line).count();
+    assert_eq!(count("Y1 ForGroup cb before sleep"), 3);
+    assert_eq!(count("Y2 filter before sleep"), 3);
+    assert!(!output.iter().any(|l| l.ends_with("cb after sleep")));
+    assert!(!output.iter().any(|l| l == "Y2 filter after sleep"));
+    assert_lines(
+        &output,
+        &[
+            "Y1 after ForGroup",
+            "Y2 after GroupEnum",
+            "Y4 TriggerExecute action before sleep",
+            "Y4 after TriggerExecute",
+            "G1 speed 2",
+            "G2 after SLOWEST 0",
+            "G3 after FASTEST 2",
+            "G4 after SLOW 1",
+            "Y4 TriggerExecute action after sleep",
+        ],
+    );
+}
+
+/// SPEC-0005: `ForForce` callbacks that sleep end at the sleep; in single
+/// player `GetPlayersAll()` holds one player.
+#[test]
+fn b6_forforce() {
+    let Some(output) = run("h-B6-forforce.w3x", 3.0) else {
+        return;
+    };
+    assert_eq!(
+        output[1..],
+        [
+            "W cb player 0 before sleep",
+            "W cb player 1 before sleep",
+            "W cb player 2 before sleep",
+            "W after ForForce custom",
+            "V cb player 0 no sleep",
+            "V after ForForce all (no sleep)",
+            "W cb player 0 before sleep",
+            "W after ForForce all (sleep)",
+        ]
+    );
 }

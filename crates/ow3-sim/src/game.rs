@@ -9,11 +9,11 @@
 //! marked PROVISIONAL and listed in specs/QUESTIONS.md.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 use ow3_jass::ast::Script;
-use ow3_jass::check::Program;
+use ow3_jass::check::{Program, Type};
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{LoadError, NativeFn, Natives, Outcome, RuntimeError, Thread, Vm};
 use ow3_math::{add, i2r, mul, sub};
@@ -21,6 +21,25 @@ use ow3_math::{add, i2r, mul, sub};
 use crate::clock::{CHUNK_MICROS, FrameClock, Speed, Step};
 use crate::sleep::SleepQueue;
 use crate::timers::{Fired, LONG_PART, TimerId, TimerQueue, raise_timeout, split_timeout};
+
+/// Registers a native: `add` is the registering closure and `state` the
+/// shared state, which the body sees as `state`.
+macro_rules! native {
+    ($add:ident, $shared:ident, $declaration:expr, |$vm:ident, $state:ident, $args:ident| $body:expr) => {{
+        let $state = $shared.clone();
+        $add(
+            $declaration,
+            Rc::new(move |$vm: &mut Vm, $args: &[Value]| {
+                #[allow(unused_variables)]
+                let $state = &$state;
+                let _ = (&$vm, $args);
+                $body
+            }),
+        );
+    }};
+}
+
+mod enumerate;
 
 /// PROVISIONAL: the first handle number. Scripts usually see differences
 /// between handles, which do not depend on it.
@@ -33,16 +52,47 @@ pub enum Object {
     Trigger(Trigger),
     TriggerAction,
     TriggerCondition,
-    /// A `boolexpr` made by `Condition` or `Filter`.
-    BoolExpr {
-        function: usize,
-    },
+    BoolExpr(BoolExpr),
     Event,
-    /// A player made by `Player`, kept as an enumeration value for now.
-    Enum {
-        kind: &'static str,
-        value: i32,
+    /// A player slot, made on first use by `Player` and the like.
+    Player(i32),
+    /// Player ids, enumerated in increasing order.
+    Force(BTreeSet<i32>),
+    /// Unit handles in the order they were added.
+    Group(Vec<u32>),
+    Unit(Unit),
+    Location {
+        x: u32,
+        y: u32,
     },
+    Rect {
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+    },
+}
+
+/// A `boolexpr`: a function made by `Condition` or `Filter`, or `And`,
+/// `Or` and `Not` of other boolexprs.
+#[derive(Clone, Copy, Debug)]
+pub enum BoolExpr {
+    Function(usize),
+    And(Option<u32>, Option<u32>),
+    Or(Option<u32>, Option<u32>),
+    Not(Option<u32>),
+}
+
+/// PROVISIONAL: a placeholder unit with what the enumerations need, until
+/// units are specified.
+#[derive(Clone, Debug)]
+pub struct Unit {
+    owner: i32,
+    type_id: i32,
+    x: u32,
+    y: u32,
+    facing: u32,
+    alive: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -68,7 +118,8 @@ pub struct Timer {
 pub struct Trigger {
     enabled: bool,
     actions: Vec<usize>,
-    conditions: Vec<usize>,
+    /// Boolexpr handles, tested in the order added.
+    conditions: Vec<u32>,
 }
 
 /// Event responses of the running thread, kept across its sleeps.
@@ -76,6 +127,10 @@ pub struct Trigger {
 struct Context {
     expired_timer: Option<u32>,
     triggering_trigger: Option<u32>,
+    enum_player: Option<u32>,
+    filter_player: Option<u32>,
+    enum_unit: Option<u32>,
+    filter_unit: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -100,7 +155,13 @@ pub struct State {
     pub clock: FrameClock,
     pub timers: TimerQueue<u32>,
     objects: HashMap<u32, Object>,
-    enums: HashMap<(&'static str, i32), u32>,
+    /// Handles of the player slots made so far, by id.
+    players: BTreeMap<i32, u32>,
+    /// PROVISIONAL: the players in the game, as in single player with one
+    /// user (SPEC-0005: `GetPlayersAll()` holds one player).
+    players_present: Vec<i32>,
+    /// Units in the order they were created.
+    units: Vec<u32>,
     next_handle: u32,
     /// Texts shown to the local player, in order.
     pub output: Vec<String>,
@@ -120,7 +181,9 @@ impl State {
             clock: FrameClock::new(),
             timers: TimerQueue::new(),
             objects: HashMap::new(),
-            enums: HashMap::new(),
+            players: BTreeMap::new(),
+            players_present: vec![0],
+            units: Vec::new(),
             next_handle: FIRST_HANDLE,
             output: Vec::new(),
             preload: Vec::new(),
@@ -138,18 +201,40 @@ impl State {
         handle
     }
 
-    fn enum_handle(&mut self, kind: &'static str, value: i32) -> u32 {
-        if let Some(&handle) = self.enums.get(&(kind, value)) {
+    /// The handle of player slot `id`, made on first use.
+    fn player_handle(&mut self, id: i32) -> u32 {
+        if let Some(&handle) = self.players.get(&id) {
             return handle;
         }
-        let handle = self.create(Object::Enum { kind, value });
-        self.enums.insert((kind, value), handle);
+        let handle = self.create(Object::Player(id));
+        self.players.insert(id, handle);
         handle
     }
 
-    fn enum_value(&self, handle: Option<u32>) -> Option<i32> {
+    fn player_id(&self, handle: Option<u32>) -> Option<i32> {
         match self.objects.get(&handle?)? {
-            Object::Enum { value, .. } => Some(*value),
+            Object::Player(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    fn force(&mut self, handle: Option<u32>) -> Option<&mut BTreeSet<i32>> {
+        match self.objects.get_mut(&handle?)? {
+            Object::Force(players) => Some(players),
+            _ => None,
+        }
+    }
+
+    fn group(&mut self, handle: Option<u32>) -> Option<&mut Vec<u32>> {
+        match self.objects.get_mut(&handle?)? {
+            Object::Group(units) => Some(units),
+            _ => None,
+        }
+    }
+
+    fn unit(&self, handle: Option<u32>) -> Option<&Unit> {
+        match self.objects.get(&handle?)? {
+            Object::Unit(unit) => Some(unit),
             _ => None,
         }
     }
@@ -493,16 +578,48 @@ fn evaluate_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) -> bo
         triggering_trigger: Some(trigger),
         ..state.borrow().context
     };
-    conditions.into_iter().all(|condition| {
-        match with_context(state, context, || vm.start_thread(condition, Vec::new())) {
-            Ok((Outcome::Finished(Some(Value::Boolean(true))), _)) => true,
-            Ok(_) => false,
-            Err(error) => {
-                state.borrow_mut().errors.push(error);
-                false
-            }
+    conditions
+        .into_iter()
+        .all(|condition| test_boolexpr(vm, state, Some(condition), context))
+}
+
+/// Runs a boolean function in its own thread: true only if it returns
+/// true. One that sleeps ends there and counts as false, as one that ends
+/// by an error (SPEC-0005).
+fn run_test(vm: &mut Vm, state: &Rc<RefCell<State>>, function: usize, context: Context) -> bool {
+    match with_context(state, context, || vm.start_thread(function, Vec::new())) {
+        Ok((Outcome::Finished(Some(Value::Boolean(true))), _)) => true,
+        Ok(_) => false,
+        Err(error) => {
+            state.borrow_mut().errors.push(error);
+            false
         }
-    })
+    }
+}
+
+/// Tests a boolexpr. PROVISIONAL: `null`, also as an operand, is true;
+/// `And` and `Or` test left to right and stop as soon as the result is
+/// known.
+fn test_boolexpr(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    expr: Option<u32>,
+    context: Context,
+) -> bool {
+    let object = expr.and_then(|h| state.borrow().objects.get(&h).cloned());
+    let Some(Object::BoolExpr(expr)) = object else {
+        return true;
+    };
+    match expr {
+        BoolExpr::Function(function) => run_test(vm, state, function, context),
+        BoolExpr::And(a, b) => {
+            test_boolexpr(vm, state, a, context) && test_boolexpr(vm, state, b, context)
+        }
+        BoolExpr::Or(a, b) => {
+            test_boolexpr(vm, state, a, context) || test_boolexpr(vm, state, b, context)
+        }
+        BoolExpr::Not(a) => !test_boolexpr(vm, state, a, context),
+    }
 }
 
 /// `TriggerExecute`: runs the actions; the caller continues once they end
@@ -578,23 +695,11 @@ fn string(value: &Value) -> Option<&str> {
 #[allow(unused_braces)]
 fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: &Program) {
     let mut add = |declaration: &str, f: NativeFn| natives.register(declaration, f);
-    macro_rules! native {
-        ($declaration:expr, |$vm:ident, $state:ident, $args:ident| $body:expr) => {{
-            let $state = state.clone();
-            add(
-                $declaration,
-                Rc::new(move |$vm: &mut Vm, $args: &[Value]| {
-                    #[allow(unused_variables)]
-                    let $state = &$state;
-                    let _ = (&$vm, $args);
-                    $body
-                }),
-            );
-        }};
-    }
 
     // Timers (SPEC-0002).
     native!(
+        add,
+        state,
         "native CreateTimer takes nothing returns timer",
         |vm, state, args| {
             let handle = state.borrow_mut().create(Object::Timer(Timer::default()));
@@ -602,6 +707,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native DestroyTimer takes timer whichTimer returns nothing",
         |vm, state, args| {
             if let Some(handle) = handle(&args[0]) {
@@ -613,6 +720,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TimerStart takes timer whichTimer, real timeout, boolean periodic, code handlerFunc returns nothing",
         |vm, state, args| {
             let Some(h) = handle(&args[0]) else {
@@ -631,6 +740,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TimerGetRemaining takes timer whichTimer returns real",
         |vm, state, args| {
             Ok(Some(Value::Real(
@@ -639,6 +750,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TimerGetElapsed takes timer whichTimer returns real",
         |vm, state, args| {
             // A timer never started reads 0 (SPEC-0002); `sub(0, 0)` would
@@ -654,6 +767,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TimerGetTimeout takes timer whichTimer returns real",
         |vm, state, args| {
             Ok(Some(Value::Real(
@@ -665,6 +780,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native PauseTimer takes timer whichTimer returns nothing",
         |vm, state, args| {
             let Some(h) = handle(&args[0]) else {
@@ -682,6 +799,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native ResumeTimer takes timer whichTimer returns nothing",
         |vm, state, args| {
             let Some(h) = handle(&args[0]) else {
@@ -695,12 +814,16 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native GetExpiredTimer takes nothing returns timer",
         |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.expired_timer))) }
     );
 
     // Threads (SPEC-0005).
     native!(
+        add,
+        state,
         "native TriggerSleepAction takes real timeout returns nothing",
         |vm, state, args| {
             vm.sleep(real(&args[0]));
@@ -715,6 +838,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         .map(|(i, f)| (f.name.clone(), i))
         .collect();
     native!(
+        add,
+        state,
         "native ExecuteFunc takes string funcName returns nothing",
         |vm, state, args| {
             // PROVISIONAL: an unknown name, or a function that takes arguments,
@@ -729,6 +854,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
 
     // Triggers.
     native!(
+        add,
+        state,
         "native CreateTrigger takes nothing returns trigger",
         |vm, state, args| {
             let trigger = Trigger {
@@ -742,6 +869,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native DestroyTrigger takes trigger whichTrigger returns nothing",
         |vm, state, args| {
             if let Some(h) = handle(&args[0]) {
@@ -751,6 +880,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction",
         |vm, state, args| {
             let mut state = state.borrow_mut();
@@ -763,15 +894,15 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TriggerAddCondition takes trigger whichTrigger, boolexpr condition returns triggercondition",
         |vm, state, args| {
             let mut state = state.borrow_mut();
-            let function = match handle(&args[1]).and_then(|h| state.objects.get(&h)) {
-                Some(Object::BoolExpr { function }) => Some(*function),
-                _ => None,
-            };
-            if let (Some(trigger), Some(f)) = (state.trigger(handle(&args[0])), function) {
-                trigger.conditions.push(f);
+            let condition = handle(&args[1])
+                .filter(|h| matches!(state.objects.get(h), Some(Object::BoolExpr(_))));
+            if let (Some(trigger), Some(c)) = (state.trigger(handle(&args[0])), condition) {
+                trigger.conditions.push(c);
             }
             Ok(Some(Value::Handle(Some(
                 state.create(Object::TriggerCondition),
@@ -783,13 +914,17 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         "native Condition takes code func returns conditionfunc",
         "native Filter takes code func returns filterfunc",
     ] {
-        native!(declaration, |vm, state, args| {
+        native!(add, state, declaration, |vm, state, args| {
             Ok(Some(Value::Handle(code(&args[0]).map(|function| {
-                state.borrow_mut().create(Object::BoolExpr { function })
+                state
+                    .borrow_mut()
+                    .create(Object::BoolExpr(BoolExpr::Function(function)))
             }))))
         });
     }
     native!(
+        add,
+        state,
         "native TriggerRegisterTimerEvent takes trigger whichTrigger, real timeout, boolean periodic returns event",
         |vm, state, args| {
             let Some(trigger) = handle(&args[0]) else {
@@ -808,6 +943,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TriggerExecute takes trigger whichTrigger returns nothing",
         |vm, state, args| {
             if let Some(trigger) = handle(&args[0]) {
@@ -817,6 +954,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native TriggerEvaluate takes trigger whichTrigger returns boolean",
         |vm, state, args| {
             let result =
@@ -825,6 +964,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "constant native GetTriggeringTrigger takes nothing returns trigger",
         |vm, state, args| {
             Ok(Some(Value::Handle(
@@ -842,7 +983,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             false,
         ),
     ] {
-        native!(declaration, |vm, state, args| {
+        native!(add, state, declaration, |vm, state, args| {
             if let Some(trigger) = state.borrow_mut().trigger(handle(&args[0])) {
                 trigger.enabled = enabled;
             }
@@ -850,6 +991,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         });
     }
     native!(
+        add,
+        state,
         "native IsTriggerEnabled takes trigger whichTrigger returns boolean",
         |vm, state, args| {
             let enabled = state
@@ -860,13 +1003,30 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
 
-    // Game speed and pause (SPEC-0002). A `Convert*` value is not an
-    // object: its handle id is the integer itself (test B1).
+    // A `Convert*` value is not an object: its handle id is the integer
+    // itself (test B1). This covers every `ConvertX takes integer returns
+    // some handle type` native the scripts declare.
+    for function in &program.functions {
+        if function.native
+            && function.name.starts_with("Convert")
+            && function.parameters == [Type::Integer]
+            && let Some(returns @ Type::Handle(_)) = function.returns
+        {
+            let declaration = format!(
+                "constant native {} takes integer i returns {}",
+                function.name,
+                program.type_name(returns)
+            );
+            native!(add, state, &declaration, |vm, state, args| {
+                Ok(Some(converted(integer(&args[0]))))
+            });
+        }
+    }
+
+    // Game speed and pause (SPEC-0002).
     native!(
-        "constant native ConvertGameSpeed takes integer i returns gamespeed",
-        |vm, state, args| { Ok(Some(converted(integer(&args[0])))) }
-    );
-    native!(
+        add,
+        state,
         "native SetGameSpeed takes gamespeed whichspeed returns nothing",
         |vm, state, args| {
             if let Some(index) = handle(&args[0]) {
@@ -876,10 +1036,14 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "constant native GetGameSpeed takes nothing returns gamespeed",
         |vm, state, args| { Ok(Some(converted(state.borrow().clock.speed.index()))) }
     );
     native!(
+        add,
+        state,
         "native PauseGame takes boolean flag returns nothing",
         |vm, state, args| {
             state.borrow_mut().clock.paused = args[0] == Value::Boolean(true);
@@ -890,26 +1054,36 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     // Players and messages. PROVISIONAL: player 0 is the local player, and
     // texts are recorded without resolving trigger strings.
     native!(
+        add,
+        state,
         "constant native Player takes integer number returns player",
         |vm, state, args| {
-            Ok(Some(Value::Handle(Some(
-                state.borrow_mut().enum_handle("player", integer(&args[0])),
-            ))))
+            // PROVISIONAL: ids outside the 16 player slots give null.
+            let id = integer(&args[0]);
+            Ok(Some(Value::Handle(
+                (0..16)
+                    .contains(&id)
+                    .then(|| state.borrow_mut().player_handle(id)),
+            )))
         }
     );
     native!(
+        add,
+        state,
         "constant native GetLocalPlayer takes nothing returns player",
         |vm, state, args| {
             Ok(Some(Value::Handle(Some(
-                state.borrow_mut().enum_handle("player", 0),
+                state.borrow_mut().player_handle(0),
             ))))
         }
     );
     native!(
+        add,
+        state,
         "constant native GetPlayerId takes player whichPlayer returns integer",
         |vm, state, args| {
             Ok(Some(Value::Integer(
-                state.borrow().enum_value(handle(&args[0])).unwrap_or(0),
+                state.borrow().player_id(handle(&args[0])).unwrap_or(0),
             )))
         }
     );
@@ -917,9 +1091,9 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         "native DisplayTimedTextToPlayer takes player toPlayer, real x, real y, real duration, string message returns nothing",
         "native DisplayTextToPlayer takes player toPlayer, real x, real y, string message returns nothing",
     ] {
-        native!(declaration, |vm, state, args| {
+        native!(add, state, declaration, |vm, state, args| {
             let mut state = state.borrow_mut();
-            if state.enum_value(handle(&args[0])) == Some(0) {
+            if state.player_id(handle(&args[0])) == Some(0) {
                 let text = string(args.last().expect("message"))
                     .unwrap_or("")
                     .to_owned();
@@ -929,6 +1103,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         });
     }
     native!(
+        add,
+        state,
         "native Preload takes string filename returns nothing",
         |vm, state, args| {
             let line = string(&args[0]).unwrap_or("").to_owned();
@@ -937,6 +1113,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native GetHandleId takes handle h returns integer",
         |vm, state, args| {
             Ok(Some(Value::Integer(
@@ -947,18 +1125,26 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
 
     // Conversions (SPEC-0004, SPEC-0005).
     native!(
+        add,
+        state,
         "native I2S takes integer i returns string",
         |vm, state, args| { Ok(Some(Value::string(&integer(&args[0]).to_string()))) }
     );
     native!(
+        add,
+        state,
         "native I2R takes integer i returns real",
         |vm, state, args| { Ok(Some(Value::Real(ow3_math::i2r(integer(&args[0]))))) }
     );
     native!(
+        add,
+        state,
         "native R2I takes real r returns integer",
         |vm, state, args| { Ok(Some(Value::Integer(ow3_math::r2i(real(&args[0]))))) }
     );
     native!(
+        add,
+        state,
         "native S2R takes string s returns real",
         |vm, state, args| {
             Ok(Some(Value::Real(ow3_math::s2r(
@@ -967,12 +1153,16 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native S2I takes string s returns integer",
         |vm, state, args| { Ok(Some(Value::Integer(s2i(string(&args[0]).unwrap_or(""))))) }
     );
     // PROVISIONAL: three decimals for R2S, and Rust's formatting of the
     // nearest decimal for both.
     native!(
+        add,
+        state,
         "native R2S takes real r returns string",
         |vm, state, args| {
             Ok(Some(Value::string(&format!(
@@ -982,6 +1172,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native R2SW takes real r, integer width, integer precision returns string",
         |vm, state, args| {
             let (width, precision) = (
@@ -993,6 +1185,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
     native!(
+        add,
+        state,
         "native StringLength takes string s returns integer",
         |vm, state, args| {
             Ok(Some(Value::Integer(
@@ -1000,6 +1194,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             )))
         }
     );
+
+    enumerate::register(&mut add, state);
 }
 
 /// `S2I` (SPEC-0005): leading spaces, an optional sign, decimal digits up to

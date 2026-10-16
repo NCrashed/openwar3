@@ -7,11 +7,18 @@ it is answered.
 
 ## Trigger strings (`war3map.wts`)
 
-Answered by SPEC-0003; its own open questions are listed there. One more:
+Answered by SPEC-0003; its own open questions are listed there. Choices
+the implementation made where the spec is silent:
 
 - **Malformed first definition.** If a number first appears as a header
   without a body and later with a braced body, which text is shown? Until
   answered: the empty text of the first, malformed definition.
+- **Indented opening brace.** A `{` after spaces or tabs opens the body.
+- **Missing closing brace.** A body that reaches the end of the file keeps
+  the text read so far.
+- **Comments before the brace.** Comment lines between the header and the
+  `{` are skipped, as editor-saved maps put one there; a non-comment line
+  instead of the `{` makes the entry empty.
 
 ## Map info (`war3map.w3i`)
 

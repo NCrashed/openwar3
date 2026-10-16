@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use ow3_formats::binary::RawCode;
+use ow3_formats::map;
 use ow3_formats::map::doodads::Doodads;
 use ow3_formats::map::info::MapInfo;
 use ow3_formats::map::objects::{ObjectKind, ObjectModifications, Value};
@@ -377,5 +378,76 @@ fn every_unit_placement_parses_and_matches_map_info() {
         "{} failures:\n{}",
         failures.len(),
         failures[..failures.len().min(20)].join("\n")
+    );
+}
+
+#[test]
+fn every_region_camera_and_sound_file_parses_completely() {
+    if maps().is_empty() {
+        return;
+    }
+    let mut failures = Vec::new();
+    let (mut regions, mut cameras, mut sounds) = (0, 0, 0);
+    let mut sound_names = Vec::new();
+    for path in maps() {
+        let mut archive = Archive::open_path(&path).unwrap();
+        let name = path.display().to_string();
+        let mut names_here = std::collections::BTreeSet::new();
+        if let Ok(data) = archive.read("war3map.w3s") {
+            match map::sounds::parse(&data) {
+                Ok(parsed) => {
+                    sounds += parsed.len();
+                    names_here.extend(parsed.into_iter().map(|s| s.name));
+                }
+                Err(err) => failures.push(format!("{name} w3s: {err}")),
+            }
+        }
+        if let Ok(data) = archive.read("war3map.w3c") {
+            match map::cameras::parse(&data) {
+                Ok(parsed) => cameras += parsed.len(),
+                Err(err) => failures.push(format!("{name} w3c: {err}")),
+            }
+        }
+        if let Ok(data) = archive.read("war3map.w3r") {
+            match map::regions::parse(&data) {
+                Ok(parsed) => {
+                    regions += parsed.len();
+                    for region in &parsed {
+                        if region.left > region.right || region.bottom > region.top {
+                            failures.push(format!("{name}: region {} is inverted", region.name));
+                        }
+                        if region.end != 0xFF {
+                            failures.push(format!(
+                                "{name}: region {} ends with {:#x}",
+                                region.name, region.end
+                            ));
+                        }
+                        // An ambient sound refers to a sound of the same map.
+                        if !region.ambient_sound.is_empty() {
+                            sound_names.push(names_here.contains(&region.ambient_sound));
+                        }
+                    }
+                }
+                Err(err) => failures.push(format!("{name} w3r: {err}")),
+            }
+        }
+    }
+    let resolved = sound_names.iter().filter(|&&found| found).count();
+    eprintln!(
+        "parsed {regions} regions, {cameras} cameras, {sounds} sounds; \
+         {resolved} of {} region ambient sounds found in w3s",
+        sound_names.len()
+    );
+    assert!(regions > 0 && cameras > 0 && sounds > 0);
+    assert_eq!(
+        resolved,
+        sound_names.len(),
+        "region ambient sounds not in w3s"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }

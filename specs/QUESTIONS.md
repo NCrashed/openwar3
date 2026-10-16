@@ -80,3 +80,13 @@ given there. Not yet confirmed:
   default gold of a mine when the field is 0;
 - whether dropped item sets in Reign of Chaos maps behave like those of
   Frozen Throne maps, which also have an item table index.
+
+## Regions, cameras and sounds (`war3map.w3r`, `w3c`, `w3s`)
+
+All files of the shipped maps parse to their last byte, every region's
+rectangle is ordered, every region ends with byte 0xFF, and every ambient
+sound of a region names a sound of the same map. Not yet confirmed:
+
+- the float after a camera's far clipping distance;
+- the sound fields without a documented meaning (`unknown_a` to
+  `unknown_h`) and the meaning of the sound flag bits.

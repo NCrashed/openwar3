@@ -11,3 +11,11 @@ publish = false
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+
+# Game data is large: unoptimised decompression and parsing make tests that
+# read real files take many seconds. Light optimisation keeps debugging usable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

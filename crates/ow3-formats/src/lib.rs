@@ -5,3 +5,4 @@
 
 pub mod blp;
 pub mod mpq;
+pub mod slk;

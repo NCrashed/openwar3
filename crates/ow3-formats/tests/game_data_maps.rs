@@ -10,6 +10,7 @@ use ow3_formats::map::info::MapInfo;
 use ow3_formats::map::objects::{ObjectKind, ObjectModifications, Value};
 use ow3_formats::map::strings::TriggerStrings;
 use ow3_formats::map::terrain::Terrain;
+use ow3_formats::map::units::PlacedUnits;
 use ow3_formats::mpq::Archive;
 use ow3_formats::slk::Table;
 
@@ -326,5 +327,55 @@ fn every_modified_field_exists_in_game_metadata() {
         "{} unknown fields:\n{}",
         unknown.len(),
         unknown[..unknown.len().min(20)].join("\n")
+    );
+}
+
+#[test]
+fn every_unit_placement_parses_and_matches_map_info() {
+    if maps().is_empty() {
+        return;
+    }
+    let mut failures = Vec::new();
+    let (mut files, mut units) = (0, 0);
+    for path in maps() {
+        let mut archive = Archive::open_path(&path).unwrap();
+        let Ok(data) = archive.read("war3mapUnits.doo") else {
+            continue;
+        };
+        files += 1;
+        let placed = match PlacedUnits::parse(&data) {
+            Ok(placed) => placed,
+            Err(err) => {
+                failures.push(format!("{}: {err}", path.display()));
+                continue;
+            }
+        };
+        units += placed.units.len();
+        // Every player of the map info has its start location placed where
+        // the map info says.
+        let info = MapInfo::parse(&archive.read("war3map.w3i").unwrap()).unwrap();
+        for player in &info.players {
+            let found = placed.units.iter().any(|u| {
+                u.kind == RawCode(*b"sloc")
+                    && u.owner == player.number
+                    && u.x == player.start_x
+                    && u.y == player.start_y
+            });
+            if !found {
+                failures.push(format!(
+                    "{}: no start location for player {}",
+                    path.display(),
+                    player.number
+                ));
+            }
+        }
+    }
+    eprintln!("parsed {units} placed units in {files} maps");
+    assert!(files > 100, "only {files} unit files");
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures[..failures.len().min(20)].join("\n")
     );
 }

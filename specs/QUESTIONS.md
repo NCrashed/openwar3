@@ -64,3 +64,19 @@ is always stored as the same value type. Not yet confirmed:
 - **Precedence** when the original table changes a field that the map's
   SLK or INI files also set, and how levels beyond an object's level count
   are handled.
+
+## Placed units (`war3mapUnits.doo`)
+
+All unit files of the shipped maps parse to their last byte, and every
+player of `war3map.w3i` has its start location placed at the coordinates
+given there. Not yet confirmed:
+
+- **Random kind.** After the abilities comes a kind: 0, 1 or 2 with data,
+  or another value with no data. Reign of Chaos maps use -1 for units that
+  are not random; `FrozenThrone/(4)Roundabout.w3x` has 0x281 on a gold mine.
+  How does the game treat values other than 0, 1 and 2?
+- the meaning of the flags byte and of the two bytes after the owner;
+- the 24-bit level and the item class byte of the level form, and the
+  default gold of a mine when the field is 0;
+- whether dropped item sets in Reign of Chaos maps behave like those of
+  Frozen Throne maps, which also have an item table index.

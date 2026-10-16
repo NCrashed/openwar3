@@ -35,25 +35,39 @@ item 5) and still need a stopwatch check for indexes 0 and 1.
 
 ### Timers
 
-A timer started with `TimerStart(t, timeout, periodic, func)` at game time
-`now`:
+Timers live in a queue with its own time `q`, measured in game seconds.
+All arithmetic on timer times below is the engine arithmetic of SPEC-0004
+(`add`, `sub`); comparisons are ordinary float comparisons.
 
-- uses `timeout`, raised to 0.0001 if it is smaller (this includes 0 and
-  negative values);
-- expires at `now + timeout`, computed with the engine's addition
-  (SPEC-0004), which differs from IEEE addition (open question 2);
-- a periodic timer expires again one period after its previous expiry
-  time, so periods do not drift and do not snap to ticks. A period shorter
-  than a tick makes the timer fire several times within one tick.
+- `q` starts at 0.0 when the game starts.
+- **Start.** `TimerStart(t, timeout, periodic, func)` takes `timeout`,
+  replaces it by `sub(300.0, 0.001)` if it is 300 or more (open question 6)
+  and by 0.0001 if it is less than 0.0001 (this includes 0 and negative
+  values), and sets the expiry `e = add(q, timeout)`. Each start also takes
+  the next number of a start counter.
+- **Order.** Pending timers are ordered by expiry `e`; equal expiries are
+  ordered by the start counter, so the earlier start fires first.
+- **Tick.** At each simulation tick the queue computes
+  `q1 = add(q, 0x3BA3D70A)` (the tick length). Then, while the earliest
+  pending timer has `e <= q1`: that timer is removed, `q` is set to its `e`,
+  and it fires (its callback runs, and a periodic timer is started again
+  with its period, so the next expiry is `add(e, period)`, which agrees
+  with test T1c). Finally `q` is set to `q1`.
+- **Wrap at 300 s.** If `q1 >= 300.0`, the queue first fires every timer
+  with `e <= 300.0` as above (with `q = 300.0` at the end), then replaces
+  every pending expiry `e` by `sub(e, 300.0)` and continues with
+  `q1 = sub(q1, 300.0)`, using 0.0 instead if that result is smaller than
+  8e-7 in magnitude (`0x3556BF95`). So timer times never exceed 300.
 
-Firing:
+Consequences that scripts can see:
 
-- All timers that expire within a tick fire during that tick, in order of
-  expiry time. Timers with the same expiry time fire in the order in which
-  they were started.
-- While a timer callback runs, the game time seen by scripts (for example
-  through `TimerGetElapsed` of another running timer) is the expiry time of
-  the firing timer, not the start or end of the tick.
+- While a timer callback runs, the game time seen through other timers is
+  the expiry of the firing timer, not the tick time.
+- A period shorter than a tick makes a timer fire several times within one
+  tick.
+- Because `q` is a sum of tick lengths computed with the engine addition,
+  it drifts slightly below the exact multiple of 0.005 (about 2 ms after 20
+  s on a reference timer).
 - `TriggerRegisterTimerEvent(trig, timeout, periodic)` follows the same
   rules: a 1.0 s event registered at game start fires at exactly 1.0.
 
@@ -83,6 +97,18 @@ Consequences:
   `TriggerSleepAction(1.0)` called 0.5 s after a speed change lasted 1.2,
   0.92 and 0.75 game seconds at speed indexes 2, 1 and 0. The ratios
   (0.77, 0.625) match the speed factors 0.8 and 0.6.
+- Rule including sleeps that start between checks, in sleep clock time
+  (equal to game time at speed 1.0 while the game keeps up): a thread that
+  starts sleeping at time `t` resumes at the first sleep check `T` with
+  `T - 0.05 > t + d`. For starts at a check this is the formula above.
+  In the T2d test (starts 0.003-0.097 s after a check, `d` 0, 0.05, 0.1)
+  it predicts 16 of 18 resume times; the two others were within 0.02 s of
+  a boundary, which the sleep clock (driven by real frame times) does not
+  resolve.
+- An implementation cannot reproduce the original exactly for sleeps that
+  start between checks, because the original depends on real frame timing.
+  Using game time divided by the speed factor as the sleep clock and the
+  rule above gives the behaviour of an unloaded single-player game.
 - When the game falls behind real time, the sleep clock runs ahead of game
   time. Sleep checks then fall between the 0.1 s steps of game time, in
   multiples of 0.025 s, and resume times measured in game time become
@@ -116,16 +142,19 @@ speed: `PolledWait(1.0)` lasted 1.17-1.27 game seconds at speed 2 and
    player it works (test: 2 -> `SLOWEST` gives 0, `FASTEST` gives 2,
    `SLOW` gives 1). The game ignores it when a game setting flag is set;
    which lobby or map setting sets that flag is not known yet.
-2. Bit-exact timer times: addition and subtraction are specified in
-   SPEC-0004. Still open: which operations combine the timer time, the
-   timeout and the tick length, and in which order.
-3. The exact definition of the sleep clock: is it the network turn time
-   (same for all players in multiplayer), and how the 0.1 s checks are
-   aligned to it.
+2. `TimerGetRemaining` and `TimerGetElapsed`: which operations derive them
+   from `e`, `q` and the timeout.
+3. The sleep clock in detail: sleeping threads are timed on a second timer
+   queue that is advanced with the real time of each frame; the 0.1 s
+   checks appear to be the network turns of single player (100 ms). Turn
+   length and alignment in multiplayer and in replays are not known.
 4. Multiplayer: all tests so far are single player.
 5. Catching up after a slowdown. Analysis of the game library shows that
    real time not yet converted to ticks is accumulated and capped at 4000 ms,
    so a lag longer than 4 s is not made up; not yet confirmed by a test.
+6. Timers of 300 s or more: the queue limits a timeout to just under 300 s;
+   whether `TimerStart` with a longer timeout fires late (after splitting)
+   or early (at 299.999 s) is not tested.
 
 ## Sources
 

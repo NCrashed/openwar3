@@ -121,12 +121,74 @@ thread-ending error is the closest safe behaviour.
 
 ### Operation limit
 
-Each thread may execute 300000 operations of the script machine. A thread
-started by `ExecuteFunc` gets its own budget; a plain function call uses
-the caller's. The cost of a statement depends on how the script is
-compiled into operations (open question 1). As a calibration point,
-`loop` / `set i = i + 1` / `endloop` with a global `i` runs 42856 times in a
-fresh thread.
+A thread runs at most **300000 operations** before it is stopped. The count
+starts at 0 when the thread starts and again each time it resumes after
+`TriggerSleepAction` (or another wait), so a thread that sleeps regularly
+can run any number of operations in total. A thread started by
+`ExecuteFunc` has its own count; a plain function call runs in the
+caller's thread and counts toward the caller's limit. Exactly 300000
+operations are executed; the 300001st is not.
+
+### Operation costs
+
+The script is compiled to simple operations and each operation executed
+counts once. The tables give the number of operations executed. `c(e)` is
+the cost of computing expression `e`, `c(S)` the cost of executing the
+statements `S`.
+
+Expressions:
+
+| Expression | Cost |
+|---|---|
+| literal of any type (`1`, `1.5`, `"a"`, `true`, `null`, `'hfoo'`), `function f` | 1 |
+| variable: global, local or parameter | 1 |
+| `a[i]` | c(i) + 1 |
+| `-e`, `not e` | c(e) + 1 |
+| `l op r` for `+ - * /` (also string `+`) and `== != < <= > >=` | c(l) + c(r) + 3 |
+| `( e )` | c(e) |
+| integer value used where a real is expected (implicit conversion) | c(e) + 1 |
+| `l and r`, `l` true | c(l) + c(r) + 2 |
+| `l and r`, `l` false | c(l) + 3 |
+| `l or r`, `l` false | c(l) + c(r) + 2 |
+| `l or r`, `l` true | c(l) + 3 |
+| native call `n(a1, ..., ak)` | (c(a1) + 1) + ... + (c(ak) + 1) + 1 |
+| function call `f(a1, ..., ak)` | (c(a1) + 1) + ... + (c(ak) + 1) + 1 + (1 if k > 0) + cost of running `f` |
+
+Running a function `f` once costs:
+
+- 1 per parameter;
+- per `local` declaration: 1, plus c(e) + 1 if it has an initial value `= e`;
+- the statements executed in its body;
+- at the end: `return e` costs c(e) + 2; `return` without a value and
+  reaching `endfunction` cost 2.
+
+Statements:
+
+| Statement | Cost |
+|---|---|
+| `set v = e` | c(e) + 1 |
+| `set a[i] = e` | c(i) + c(e) + 3 |
+| `call ...` | cost of the call expression |
+| `if c then S endif`, `S` not empty, `c` true | c(c) + c(S) + 2 |
+| `if c then S endif`, `S` not empty, `c` false | c(c) + 1 |
+| `if c then endif` (empty), and `if c then else endif` (both empty) | c(c) |
+| `if c then S1 else S2 endif`, `c` true | c(c) + c(S1) + 2 |
+| `if c then S1 else S2 endif`, `c` false | c(c) + c(S2) + 2 |
+| `if c1 then S1 elseif c2 then S2 endif`, `c1` true | c(c1) + c(S1) + 2 |
+| same, `c1` false, `c2` true | c(c1) + c(c2) + c(S2) + 4 |
+| same, both false | c(c1) + c(c2) + 4 |
+| `loop S endloop` | 1 on entry, then c(S) + 1 per pass through the body |
+| `exitwhen c` | c(c) + 1, whether it exits or not |
+
+A longer `elseif` chain behaves as `if c1 then S1 else` followed by the
+rest of the chain written as `if ... endif`, with the last `elseif` acting
+as an `if` with an empty `else`.
+
+Example: in a fresh thread, a function with `local integer lx = 0`,
+`set g = 0` and the loop `loop` / `set g = g + 1` / `endloop` (globals `g`)
+costs 5 before the loop, 1 to enter it and 7 per pass (6 for the `set`, 1
+to repeat). The 42856th store to `g` is the last one that fits in 300000
+operations.
 
 ### TriggerSleepAction outside trigger actions
 
@@ -159,9 +221,9 @@ returns `integer`) is rejected: the map does not load.
 
 ## Open questions
 
-1. Operation costs: how many operations each statement and expression
-   costs. Needed only for bit-exact behaviour of scripts that hit the
-   limit.
+1. Costs of constructs not measured yet: `if` with an empty `then` and a
+   non-empty `else`, and the exact place of implicit integer to real
+   conversions in mixed expressions (assumed at the integer operand).
 
 ## Sources
 
@@ -213,3 +275,14 @@ Each prints lines with `BJDebugMsg`, mirrored to a Preload file. Expected
   map. In a single-player test `GetPlayersAll()` holds one player.
 - **Operation limit and next action.** An action that loops forever is
   followed by an action that prints; the print appears.
+
+- **Operation costs.** 36 loop bodies, each run in its own thread with
+  `ExecuteFunc` until the limit stops it; the number of passes `N` is
+  recorded. With body cost `C` (the base loop plus the tested statement),
+  the model above predicts `N = floor(299988 / C) + 1` for every one of
+  them, for example 42856 for the plain loop (`C = 7`), 33333 for an added
+  `set x = 1` (`C = 9`), 21428 for an added `call f(1)` with an empty `f`
+  (`C = 14`) and 37499 for an added `call GetLocalPlayer()` (`C = 8`).
+- **Budget after a sleep.** A thread that runs 10000 passes of a 19-step
+  loop body, then `TriggerSleepAction(0)`, four times (about 760000
+  operations in total) finishes.

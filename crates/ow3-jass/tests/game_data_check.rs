@@ -126,6 +126,10 @@ fn map_scripts_check_against_blizzard_j() {
     let (mut checked, mut rejected_as_in_game) = (0, 0);
     let mut failures = Vec::new();
     for path in &paths {
+        if analyst_test_map(path) {
+            eprintln!("not required (analyst test map): {}", path.display());
+            continue;
+        }
         let mut archive = Archive::open_path(path).unwrap();
         let data = ["war3map.j", "Scripts\\war3map.j"]
             .iter()
@@ -160,4 +164,72 @@ fn map_scripts_check_against_blizzard_j() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// Smoke test of the interpreter: every shipped map's `config` and `main`
+/// run with stub natives that return default values. Stubs never call back
+/// into scripts, so this exercises the scripts' own control flow, globals
+/// and arithmetic, not their game logic.
+#[test]
+fn map_entry_points_run_with_stub_natives() {
+    use ow3_jass::vm::{Natives, Vm};
+    let Some(base) = base() else { return };
+    let root = game_data().join("Maps");
+    let mut paths = Vec::new();
+    maps(&root, &mut paths);
+    let natives = Natives::default().stub_missing();
+    let (mut ran, mut statements) = (0, 0);
+    let mut failures = Vec::new();
+    for path in &paths {
+        if analyst_test_map(path) {
+            eprintln!("not required (analyst test map): {}", path.display());
+            continue;
+        }
+        let mut archive = Archive::open_path(path).unwrap();
+        let data = ["war3map.j", "Scripts\\war3map.j"]
+            .iter()
+            .find_map(|name| archive.read(name).ok())
+            .unwrap();
+        let Ok(script) = ow3_jass::parse(std::str::from_utf8(&data).unwrap()) else {
+            continue;
+        };
+        let scripts = [&base.common, &base.blizzard, &script];
+        let Ok(program) = check(&scripts) else {
+            continue; // Covered above.
+        };
+        let name = path.strip_prefix(&root).unwrap().display().to_string();
+        let mut vm = match Vm::load(&program, &scripts, &natives) {
+            Ok(vm) => vm,
+            Err(err) => {
+                failures.push(format!("{name}: {err}"));
+                continue;
+            }
+        };
+        vm.operation_limit = Some(5_000_000);
+        for entry in ["config", "main"] {
+            if let Err(err) = vm.call_by_name(entry, Vec::new()) {
+                failures.push(format!("{name} {entry}: {err}"));
+            }
+        }
+        statements += vm.operations;
+        ran += 1;
+    }
+    eprintln!("ran config and main of {ran} maps, {statements} statements");
+    assert!(ran > 100);
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Black-box test maps made by analysts (`ow3-*` files and the `Test-ow3`
+/// folder). They may be invalid on purpose, so their results are reported
+/// but not required; specs state what the game does with them.
+fn analyst_test_map(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == "Test-ow3")
+        || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("ow3-"))
 }

@@ -105,6 +105,10 @@ fn every_map_script_parses() {
     let (mut parsed, mut functions) = (0, 0);
     let mut rejected_as_in_game = Vec::new();
     for path in &paths {
+        if analyst_test_map(path) {
+            eprintln!("not required (analyst test map): {}", path.display());
+            continue;
+        }
         let mut archive = Archive::open_path(path).unwrap();
         let Some(data) = ["war3map.j", "Scripts\\war3map.j"]
             .iter()
@@ -177,4 +181,14 @@ fn spec_0001_declaration_counts() {
         j.iter().all(|name| !ai.contains(name)),
         "a native is in both files"
     );
+}
+
+/// Black-box test maps made by analysts (`ow3-*` files and the `Test-ow3`
+/// folder). They may be invalid on purpose, so their results are reported
+/// but not required; specs state what the game does with them.
+fn analyst_test_map(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == "Test-ow3")
+        || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("ow3-"))
 }

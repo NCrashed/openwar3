@@ -10,6 +10,8 @@ pub mod ast;
 pub mod check;
 pub mod lexer;
 mod parser;
+pub mod semantics;
+pub mod vm;
 
 use std::fmt;
 

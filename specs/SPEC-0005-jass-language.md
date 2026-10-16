@@ -90,9 +90,9 @@ Escapes: `\"` (quote), `\\` (backslash), `\t` (tab, 9), `\n` (line feed,
 - An optional sign, digits and one optional `.`, up to the first other
   character: `"3abc"` gives 3.0, `"1,5"` gives 1.0, `".5"` gives 0.5.
 - No exponent: `"1e3"` gives 1.0.
-- The value is computed with the engine arithmetic of SPEC-0004 and can
-  differ from the nearest float: `"123456789012"` gives 123456793600.0.
-  The exact algorithm is open question 1.
+- The value is computed with the engine arithmetic; the exact algorithm
+  is `s2r` in SPEC-0004. It can differ from the nearest float:
+  `"0.1"` gives `0x3DCCCCCE`, one step above the nearest float.
 
 ### Errors that stop a thread
 
@@ -112,8 +112,8 @@ What survives the end of a thread:
   next statement.
 - A plain function call runs in the caller's thread, so an error ends the
   caller too.
-- When a trigger action thread ends with an error, the trigger's next
-  action still runs.
+- When a trigger action thread ends with an error (division by zero or
+  the operation limit), the trigger's next action still runs.
 
 `-2147483648 / -1` terminates the game process (a crash, observed under
 Wine). An implementation should not reproduce the crash. Treating it as a
@@ -124,7 +124,7 @@ thread-ending error is the closest safe behaviour.
 Each thread may execute 300000 operations of the script machine. A thread
 started by `ExecuteFunc` gets its own budget; a plain function call uses
 the caller's. The cost of a statement depends on how the script is
-compiled into operations (open question 2). As a calibration point,
+compiled into operations (open question 1). As a calibration point,
 `loop` / `set i = i + 1` / `endloop` with a global `i` runs 42856 times in a
 fresh thread.
 
@@ -132,10 +132,11 @@ fresh thread.
 
 | Where | Observed |
 |---|---|
-| Trigger action | sleeps, continues later (SPEC-0002) |
+| Trigger action, including actions started by `TriggerExecute` and by events (unit death tested) | sleeps, continues later (SPEC-0002); the code that caused the action continues at once |
 | Function started with `ExecuteFunc` | sleeps; the caller of `ExecuteFunc` continues at once, and the sleeping function resumes later |
 | Timer callback | the callback ends at the sleep |
-| `ForForce` callback | the callback ends at the sleep, and `ForForce` calls no further callbacks |
+| `ForForce`, `ForGroup` and `EnumDestructablesInRect` callbacks | each callback ends at the sleep; the enumeration continues with the next element |
+| Filter of `GroupEnumUnitsInRange` | each filter call ends at the sleep; the enumeration continues |
 | Trigger condition | the condition ends at the sleep and counts as false |
 
 ### Return values of the wrong type
@@ -158,15 +159,9 @@ returns `integer`) is rejected: the map does not load.
 
 ## Open questions
 
-1. Exact `S2R` algorithm (digit accumulation and scaling), to be specified
-   with test vectors in SPEC-0004.
-2. Operation costs: how many operations each statement and expression
+1. Operation costs: how many operations each statement and expression
    costs. Needed only for bit-exact behaviour of scripts that hit the
    limit.
-3. Which other callbacks forbid sleeping (`ForGroup`, enum filters,
-   `TriggerEvaluate` called from an action, unit event callbacks).
-4. When the operation limit ends a trigger action thread, does the
-   trigger's next action run (as it does after a division by zero)?
 
 ## Sources
 
@@ -213,4 +208,8 @@ Each prints lines with `BJDebugMsg`, mirrored to a Preload file. Expected
 - **Operation limit.** `ExecuteFunc` of an endless increment loop returns to
   the caller after 42856 iterations; the same loop called directly ends the
   action.
-- **Sleeps.** The table under "TriggerSleepAction outside trigger actions".
+- **Sleeps.** The table under "TriggerSleepAction outside trigger actions",
+  measured with 3 units, a force of 3 players and the destructables of the
+  map. In a single-player test `GetPlayersAll()` holds one player.
+- **Operation limit and next action.** An action that loops forever is
+  followed by an action that prints; the print appears.

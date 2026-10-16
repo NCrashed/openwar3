@@ -115,8 +115,6 @@ impl Program {
             _ if from == to => true,
             (Type::Integer, Type::Real) => true,
             (Type::Null, Type::Handle(_) | Type::String | Type::Code) => true,
-            // A shipped map returns null from an integer function.
-            (Type::Null, Type::Integer) => true,
             (Type::Handle(child), Type::Handle(ancestor)) => self.derives_from(child, ancestor),
             _ => false,
         }
@@ -187,6 +185,8 @@ struct Scope<'a> {
     locals: HashMap<&'a str, (Type, bool)>,
     returns: Option<Type>,
     loop_depth: usize,
+    /// Position of the function's last top-level statement.
+    last_statement: Option<Position>,
 }
 
 impl Checker {
@@ -266,6 +266,7 @@ impl Checker {
                 locals: HashMap::new(),
                 returns: None,
                 loop_depth: 0,
+                last_statement: None,
             };
             self.expect_assignable(&scope, initial, value_type, "initial value");
         }
@@ -273,6 +274,14 @@ impl Checker {
             self.report(
                 variable.position,
                 format!("global '{}' is already declared", variable.name),
+            );
+            return;
+        }
+        // SPEC-0005: a global may not have the name of a function.
+        if self.program.function(&variable.name).is_some() {
+            self.report(
+                variable.position,
+                format!("global '{}' has the name of a function", variable.name),
             );
             return;
         }
@@ -308,6 +317,13 @@ impl Checker {
         if parameters.len() != signature.parameters.len()
             || (signature.returns.is_some() && returns.is_none())
         {
+            return;
+        }
+        if self.program.global(&signature.name).is_some() {
+            self.report(
+                position,
+                format!("function '{}' has the name of a global", signature.name),
+            );
             return;
         }
         if let Some(existing) = self.program.function(&signature.name) {
@@ -356,6 +372,7 @@ impl Checker {
             locals: HashMap::new(),
             returns: info.returns,
             loop_depth: 0,
+            last_statement: function.body.last().map(|s| s.position),
         };
         for (parameter, &t) in function.signature.parameters.iter().zip(&info.parameters) {
             if scope.locals.insert(&parameter.name, (t, false)).is_some() {
@@ -372,19 +389,9 @@ impl Checker {
             if let Some(initial) = &local.initial {
                 self.expect_assignable(&scope, initial, t, "initial value");
             }
-            // A shipped map declares the same local twice; a redeclaration
-            // with the same type is accepted.
-            if let Some(previous) = scope.locals.insert(&local.name, (t, local.array)) {
-                if previous != (t, local.array) {
-                    self.report(
-                        local.position,
-                        format!(
-                            "'{}' is already a parameter or local of another type",
-                            local.name
-                        ),
-                    );
-                }
-            }
+            // SPEC-0005: a local may repeat the name of a parameter or an
+            // earlier local, with any type; the latest declaration is used.
+            scope.locals.insert(&local.name, (t, local.array));
         }
         self.statements(&mut scope, &function.body);
     }
@@ -443,6 +450,11 @@ impl Checker {
             }
             StatementKind::Return(value) => match (value, scope.returns) {
                 (None, None) => {}
+                // SPEC-0005: `null` may be returned as 0 or 0.0, except by
+                // the function's last statement.
+                (Some(value), Some(Type::Integer | Type::Real))
+                    if value.kind == ExpressionKind::Null
+                        && scope.last_statement != Some(position) => {}
                 (Some(value), Some(t)) => self.expect_assignable(scope, value, t, "returned value"),
                 (Some(_), None) => self.report(position, "the function returns nothing"),
                 (None, Some(t)) => {
@@ -492,6 +504,10 @@ impl Checker {
             );
         }
         for (argument, &t) in call.arguments.iter().zip(&function.parameters) {
+            // SPEC-0005: `null` is accepted as an integer or real argument.
+            if argument.kind == ExpressionKind::Null && matches!(t, Type::Integer | Type::Real) {
+                continue;
+            }
             self.expect_assignable(scope, argument, t, "argument");
         }
         function.returns
@@ -777,26 +793,53 @@ native I2S takes integer i returns string
         );
     }
 
-    /// Accepted because shipped maps rely on them.
+    /// SPEC-0005: repeated locals of any type, `null` as an integer or real
+    /// argument and in a `return` that is not the last statement.
     #[test]
-    fn accepts_what_shipped_maps_do() {
+    fn null_and_repeated_locals() {
         check_source(
             "function F takes integer n returns integer
                 local real h
-                local real h
+                local integer h
+                local real n
                 if n < 0 then
                     return null
                 endif
-                return n
+                return I2S(null) == \"0\"
+            endfunction",
+        )
+        .unwrap_err();
+        check_source(
+            "function F takes integer n returns integer
+                local real h
+                local integer h
+                local real n = 2.5
+                call I2S(null)
+                if n < 0 then
+                    return null
+                endif
+                return h
             endfunction",
         )
         .unwrap_or_else(|e| panic!("{e:?}"));
         let e = errors(
-            "function F takes nothing returns nothing
-                local real h
-                local integer h
+            "function F takes nothing returns integer
+                local integer i = 1
+                local boolean b
+                set i = null
+                set b = null
+                return null
             endfunction",
         );
-        assert_eq!(e, ["'h' is already a parameter or local of another type"]);
+        assert_eq!(
+            e,
+            [
+                "assigned value must be a integer, not a null",
+                "assigned value must be a boolean, not a null",
+                "returned value must be a integer, not a null",
+            ]
+        );
+        let source = "function G takes nothing returns nothing\n local integer x_ = 1\nendfunction";
+        assert!(crate::parse(source).is_err());
     }
 }

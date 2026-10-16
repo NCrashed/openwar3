@@ -231,6 +231,10 @@ impl Lexer {
             }
             'a'..='z' | 'A'..='Z' => {
                 let word = self.take_while(|c| c.is_ascii_alphanumeric() || c == '_');
+                // SPEC-0005: a name may not end with `_`.
+                if word.ends_with('_') {
+                    return Err(self.error(position, format!("name '{word}' ends with '_'")));
+                }
                 match Keyword::from_text(&word) {
                     Some(keyword) => TokenKind::Keyword(keyword),
                     None => TokenKind::Identifier(word),

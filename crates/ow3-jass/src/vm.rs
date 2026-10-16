@@ -317,6 +317,12 @@ impl<'a> Vm<'a> {
         self.pending_sleep = Some(duration);
     }
 
+    /// An error that ends the running thread, at its current position, for
+    /// natives that end their caller.
+    pub fn fail(&self, message: impl Into<String>) -> RuntimeError {
+        self.error(message)
+    }
+
     /// A new thread that will run a function, not started yet.
     pub fn spawn(&self, index: usize, arguments: Vec<Value>) -> Thread {
         let mut thread = Thread::default();
@@ -589,6 +595,13 @@ impl<'a> Vm<'a> {
                         self.charge(1)?;
                     }
                     thread.stack.push(value.coerce(*t));
+                }
+                Op::CoerceReturn(t) => {
+                    let value = match (pop(thread), t) {
+                        (Value::Integer(i), Type::Real) => Value::Real(i as u32),
+                        (value, t) => value.coerce(*t),
+                    };
+                    thread.stack.push(value);
                 }
                 Op::StoreLocal(slot) => {
                     let value = pop(thread);
@@ -897,6 +910,36 @@ native Run takes code f returns nothing
             .map_err(|e| e.to_string())?;
         let printed = output.borrow().clone();
         Ok(printed)
+    }
+
+    /// SPEC-0005: an integer returned from a real function keeps its bits;
+    /// a repeated local hides the earlier one; `null` passes as 0.
+    #[test]
+    fn returns_locals_and_null() {
+        let printed = run("
+            function One takes nothing returns real
+                local integer i = 1065353216
+                return i
+            endfunction
+            function Q takes integer q returns real
+                local integer q = 1
+                local real q = 2.5
+                return q
+            endfunction
+            function Z takes nothing returns integer
+                if true then
+                    return null
+                endif
+                return 5
+            endfunction
+            function main takes nothing returns nothing
+                call Print(R2S(One()))
+                call Print(R2S(Q(7)))
+                call Print(I2S(Z()))
+                call Print(I2S(null))
+            endfunction")
+        .unwrap();
+        assert_eq!(printed, ["1.000", "2.500", "0", "0"]);
     }
 
     #[test]

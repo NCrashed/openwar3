@@ -107,9 +107,10 @@ pub fn raw_code_literal(text: &str) -> Result<i32, Fault> {
         .fold(0u32, |acc, b| (acc << 8) | u32::from(b)) as i32)
 }
 
-/// Real literals read like `S2R` of their text (SPEC-0004, SPEC-0005).
+/// Real literals follow the compiler's own rule, which differs from `S2R`
+/// (SPEC-0005).
 pub fn real_literal(text: &str) -> u32 {
-    ow3_math::s2r(text)
+    ow3_math::real_literal(text)
 }
 
 /// Escapes of string literals and raw codes (SPEC-0005): `\"`, `\\`, `\t`,

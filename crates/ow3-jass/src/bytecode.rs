@@ -38,6 +38,9 @@ pub enum Op {
     /// Converts the top value for storage as `Type`. Cost 1 for an integer
     /// becoming a real, otherwise 0.
     Coerce(Type),
+    /// Converts the returned value for the declared type. Cost 0: an
+    /// integer returned as a real keeps its 32 bits (SPEC-0005).
+    CoerceReturn(Type),
     /// Pops the value. Cost 1.
     StoreLocal(usize),
     /// Pops the value. Cost 1.
@@ -109,8 +112,7 @@ impl<'p> Compiler<'p> {
     /// Compiles one expression evaluated outside any function, such as a
     /// global initialiser.
     pub fn compile_expression(&self, expression: &Expression) -> Result<Code, CompileError> {
-        let no_locals = HashMap::new();
-        let mut f = FunctionCompiler::new(self, &no_locals);
+        let mut f = FunctionCompiler::new(self, HashMap::new());
         f.expression(expression)?;
         Ok(f.finish(Vec::new(), Vec::new(), 0))
     }
@@ -120,43 +122,40 @@ impl<'p> Compiler<'p> {
             .program
             .function(&function.signature.name)
             .expect("checked");
+        // Every parameter and local declaration has a slot of its own. A
+        // local that repeats a name hides the earlier one from the next
+        // declaration on (SPEC-0005).
         let mut slots = Vec::new();
+        let mut slot_names = Vec::new();
         let mut names: HashMap<&str, usize> = HashMap::new();
         for (parameter, &t) in function.signature.parameters.iter().zip(&info.parameters) {
             names.insert(&parameter.name, slots.len());
             slots.push((t, false));
+            slot_names.push(parameter.name.clone());
         }
         for local in &function.locals {
             let t = self.program.type_named(&local.type_name).expect("checked");
-            // A repeated local of the same type reuses its slot.
-            if !names.contains_key(local.name.as_str()) {
-                names.insert(&local.name, slots.len());
-                slots.push((t, local.array));
-            }
+            slots.push((t, local.array));
+            slot_names.push(local.name.clone());
         }
-        let mut f = FunctionCompiler::new(self, &names);
+        let mut f = FunctionCompiler::new(self, names);
         f.returns = info.returns;
         f.slot_types = slots.clone();
-        for local in &function.locals {
+        for (i, local) in function.locals.iter().enumerate() {
+            let slot = info.parameters.len() + i;
             f.position = local.position;
             // One operation per declaration, c(e) + 1 for an initial value.
             f.emit(Op::Charge(1));
             if let Some(initial) = &local.initial {
-                let (t, _) = slots[names[local.name.as_str()]];
                 f.expression(initial)?;
-                f.emit(Op::Coerce(t));
-                f.emit(Op::StoreLocal(names[local.name.as_str()]));
+                f.emit(Op::Coerce(slots[slot].0));
+                f.emit(Op::StoreLocal(slot));
             }
+            f.locals.insert(&local.name, slot);
         }
         f.block(&function.body)?;
         f.position = function.position;
         f.emit(Op::ReturnNothing { cost: 2 });
-        let slot_names = {
-            let mut by_slot: Vec<(usize, String)> =
-                names.iter().map(|(n, &s)| (s, (*n).to_owned())).collect();
-            by_slot.sort();
-            by_slot.into_iter().map(|(_, n)| n).collect()
-        };
         Ok(Rc::new(f.finish(
             slots,
             slot_names,
@@ -167,7 +166,7 @@ impl<'p> Compiler<'p> {
 
 struct FunctionCompiler<'c, 'p> {
     compiler: &'c Compiler<'p>,
-    locals: &'c HashMap<&'c str, usize>,
+    locals: HashMap<&'c str, usize>,
     ops: Vec<Op>,
     positions: Vec<Position>,
     position: Position,
@@ -182,7 +181,7 @@ struct FunctionCompiler<'c, 'p> {
 const UNPATCHED: Label = usize::MAX;
 
 impl<'c, 'p> FunctionCompiler<'c, 'p> {
-    fn new(compiler: &'c Compiler<'p>, locals: &'c HashMap<&'c str, usize>) -> Self {
+    fn new(compiler: &'c Compiler<'p>, locals: HashMap<&'c str, usize>) -> Self {
         FunctionCompiler {
             compiler,
             locals,
@@ -300,7 +299,7 @@ impl<'c, 'p> FunctionCompiler<'c, 'p> {
                 if let Some(value) = value {
                     self.expression(value)?;
                     self.position = statement.position;
-                    self.emit(Op::Coerce(self.returns.expect("checked")));
+                    self.emit(Op::CoerceReturn(self.returns.expect("checked")));
                     self.emit(Op::Return);
                 } else {
                     self.emit(Op::ReturnNothing { cost: 1 });

@@ -502,9 +502,7 @@ impl<'a> Vm<'a> {
             ExpressionKind::RawCode(text) => {
                 Value::Integer(semantics::raw_code_literal(text).map_err(|f| self.fault(f))?)
             }
-            ExpressionKind::Real(text) => {
-                Value::Real(semantics::real_literal(text).map_err(|f| self.fault(f))?)
-            }
+            ExpressionKind::Real(text) => Value::Real(semantics::real_literal(text)),
             ExpressionKind::String(text) => Value::string(&semantics::decode_escapes(text)),
             ExpressionKind::Boolean(b) => Value::Boolean(*b),
             ExpressionKind::Null => Value::Null,
@@ -525,7 +523,8 @@ impl<'a> Vm<'a> {
                 match (operator, value) {
                     (UnaryOperator::Not, Value::Boolean(b)) => Value::Boolean(!b),
                     (UnaryOperator::Minus, Value::Integer(i)) => Value::Integer(i.wrapping_neg()),
-                    (UnaryOperator::Minus, Value::Real(r)) => Value::Real(-r),
+                    // Flips the sign bit (SPEC-0004).
+                    (UnaryOperator::Minus, Value::Real(r)) => Value::Real(r ^ 0x8000_0000),
                     (UnaryOperator::Plus, value @ (Value::Integer(_) | Value::Real(_))) => value,
                     (_, value) => return Err(self.error(format!("bad operand {value:?}"))),
                 }
@@ -559,7 +558,7 @@ impl<'a> Vm<'a> {
         let r = self.evaluate(locals, right)?;
         let value = match (operator, l, r) {
             (Equal, l, r) => Value::Boolean(semantics::equal(&l, &r)),
-            (NotEqual, l, r) => Value::Boolean(!semantics::equal(&l, &r)),
+            (NotEqual, l, r) => Value::Boolean(semantics::not_equal(&l, &r)),
             (Add, Value::String(a), b @ (Value::String(_) | Value::Null))
             | (Add, b @ Value::Null, Value::String(a)) => {
                 let a = a.as_deref().unwrap_or("");
@@ -581,10 +580,9 @@ impl<'a> Vm<'a> {
                     return Err(self.error(format!("bad operands {l:?} and {r:?}")));
                 };
                 match op {
-                    Less => Value::Boolean(a < b),
-                    LessEqual => Value::Boolean(a <= b),
-                    Greater => Value::Boolean(a > b),
-                    GreaterEqual => Value::Boolean(a >= b),
+                    Less | LessEqual | Greater | GreaterEqual => {
+                        Value::Boolean(semantics::real_order(op, a, b))
+                    }
                     _ => Value::Real(semantics::real_op(op, a, b).map_err(|f| self.fault(f))?),
                 }
             }
@@ -593,9 +591,10 @@ impl<'a> Vm<'a> {
     }
 }
 
-fn as_real(value: &Value) -> Option<f32> {
+/// Real operand as a bit pattern; integers are promoted with `I2R`.
+fn as_real(value: &Value) -> Option<u32> {
     match value {
-        Value::Integer(i) => Some(*i as f32),
+        Value::Integer(i) => Some(ow3_math::i2r(*i)),
         Value::Real(r) => Some(*r),
         _ => None,
     }
@@ -654,7 +653,7 @@ native Run takes code f returns nothing
                 let Value::Real(r) = args[0] else {
                     unreachable!()
                 };
-                Ok(Some(Value::string(&format!("{r:.3}"))))
+                Ok(Some(Value::string(&format!("{:.3}", f32::from_bits(r)))))
             }),
         );
         natives.register(

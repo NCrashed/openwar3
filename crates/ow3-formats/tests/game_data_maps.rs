@@ -27,8 +27,19 @@ fn maps() -> Vec<PathBuf> {
         for entry in std::fs::read_dir(&dir).unwrap().flatten() {
             let path = entry.path();
             if path.is_dir() {
+                // Analysts' black-box test maps may be malformed on purpose;
+                // specs state what the game does with them.
+                if path.file_name().is_some_and(|n| n == "Test-ow3") {
+                    continue;
+                }
                 stack.push(path);
-            } else if is_map(&path) {
+            } else if is_map(&path)
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("ow3-")
+            {
                 out.push(path);
             }
         }

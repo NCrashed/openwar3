@@ -7,6 +7,7 @@
 //! later stages.
 
 pub mod ast;
+pub mod bytecode;
 pub mod check;
 pub mod lexer;
 mod parser;

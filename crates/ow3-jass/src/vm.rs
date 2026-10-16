@@ -1,11 +1,15 @@
-//! Tree-walking interpreter for checked scripts.
+//! Interpreter for checked scripts, running compiled instructions on
+//! threads that can be suspended.
 //!
 //! Natives are provided by the embedder through [`Natives`]. Loading fails
 //! when a declared native has no implementation or its implementation has
 //! a different signature (SPEC-0001).
 //!
-//! Operations are counted with the costs of SPEC-0005, per thread.
-//! Not modelled yet: sleeps and scheduling of threads.
+//! Operations are counted with the costs of SPEC-0005: every thread may run
+//! [`OPERATION_LIMIT`] of them, and the count restarts when it resumes
+//! after a sleep. A native puts the running thread to sleep with
+//! [`Vm::sleep`]; the thread then stops after that native returns, and the
+//! embedder resumes it later with [`Vm::resume`].
 
 use std::collections::HashMap;
 use std::fmt;
@@ -13,15 +17,17 @@ use std::rc::Rc;
 
 use crate::Position;
 use crate::ast::*;
+use crate::bytecode::{Code, Compiler, Op};
 use crate::check::{Program, Type};
 use crate::semantics::{self, Fault, Value};
 
-/// Implementation of a native. Receives the interpreter, so that it can call
-/// back into scripts, and the arguments already converted to the declared
-/// parameter types. Returns `None` for natives that return nothing.
-/// Operations a thread may execute (SPEC-0005).
+/// Operations a thread may execute between sleeps (SPEC-0005).
 pub const OPERATION_LIMIT: u64 = 300_000;
 
+/// Implementation of a native. Receives the interpreter, so that it can call
+/// back into scripts or put the thread to sleep, and the arguments already
+/// converted to the declared parameter types. Returns `None` for natives
+/// that return nothing.
 pub type NativeFn = Rc<dyn Fn(&mut Vm, &[Value]) -> Result<Option<Value>, RuntimeError>>;
 
 /// Native implementations by name, each with the JASS declaration it
@@ -87,52 +93,102 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-enum Body<'a> {
+enum Body {
     Native(NativeFn),
-    Script(&'a Function),
+    Script(Rc<Code>),
 }
 
 /// Storage of one variable with its declared type. A scalar holds `None`
 /// until it is first assigned.
+#[derive(Clone, Debug)]
 enum Slot {
     Scalar(Option<Value>, Type),
     Array(Vec<Value>, Type),
 }
 
-type Locals<'a> = HashMap<&'a str, Slot>;
+impl Slot {
+    fn new(t: Type, array: bool) -> Slot {
+        if array {
+            Slot::Array(Vec::new(), t)
+        } else {
+            Slot::Scalar(None, t)
+        }
+    }
+}
 
-enum Flow {
-    Next,
-    Exit,
-    Return(Option<Value>),
+#[derive(Debug)]
+struct Frame {
+    function: usize,
+    code: Rc<Code>,
+    pc: usize,
+    locals: Vec<Slot>,
+    /// The bottom frame of a spawned thread: a single call of the thread's
+    /// function, whose result ends the thread.
+    entry: bool,
+}
+
+/// A script thread: its call frames, value stack and operation count. It
+/// can be suspended at a sleep and resumed later.
+#[derive(Debug, Default)]
+pub struct Thread {
+    frames: Vec<Frame>,
+    stack: Vec<Value>,
+    /// Operations since the thread started or last resumed.
+    pub operations: u64,
+}
+
+impl Thread {
+    pub fn is_finished(&self) -> bool {
+        self.frames.is_empty()
+    }
+}
+
+/// How a run of a thread ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The thread's function returned, with its value.
+    Finished(Option<Value>),
+    /// A native asked the thread to sleep for this many seconds (a real's
+    /// bit pattern). Resume it with [`Vm::resume`].
+    Sleep(u32),
 }
 
 pub struct Vm<'a> {
     program: &'a Program,
-    bodies: Vec<Body<'a>>,
+    bodies: Vec<Body>,
     globals: Vec<Slot>,
-    global_index: HashMap<&'a str, usize>,
     array_size: usize,
-    /// Operations executed so far in all threads (SPEC-0005 costs).
+    /// Operations executed so far in all threads.
     pub operations: u64,
-    /// Operations executed by the current thread since it started or last
-    /// resumed.
-    pub thread_operations: u64,
+    /// Operations of the running thread, kept here while it runs.
+    thread_operations: u64,
     /// A thread stops with an error when it would execute more operations
     /// than this. The game's limit is [`OPERATION_LIMIT`].
     pub operation_limit: Option<u64>,
+    /// Set by a native through [`Vm::sleep`].
+    pending_sleep: Option<u32>,
     /// Function and position being executed, for error messages.
-    current: (String, Position),
+    current: (usize, Position),
 }
 
 impl<'a> Vm<'a> {
-    /// Binds natives and runs the global initialisers in declaration order.
+    /// Compiles the scripts, binds natives and runs the global
+    /// initialisers in declaration order.
     pub fn load(
         program: &'a Program,
         scripts: &[&'a Script],
         natives: &Natives,
     ) -> Result<Vm<'a>, LoadError> {
-        let mut script_functions: HashMap<&str, &'a Function> = HashMap::new();
+        let compiler = Compiler::new(program);
+        let compile_error = |e: crate::bytecode::CompileError| {
+            LoadError(format!(
+                "{}:{}: {}",
+                e.position.line,
+                e.position.column,
+                fault_message(e.fault)
+            ))
+        };
+        let mut script_functions: HashMap<&str, &Function> = HashMap::new();
         for script in scripts {
             for function in &script.functions {
                 script_functions.insert(&function.signature.name, function);
@@ -141,7 +197,10 @@ impl<'a> Vm<'a> {
         let mut bodies = Vec::with_capacity(program.functions.len());
         for info in &program.functions {
             if !info.native {
-                bodies.push(Body::Script(script_functions[info.name.as_str()]));
+                let function = script_functions[info.name.as_str()];
+                bodies.push(Body::Script(
+                    compiler.compile_function(function).map_err(compile_error)?,
+                ));
                 continue;
             }
             let implementation = match natives.entries.get(&info.name) {
@@ -182,15 +241,18 @@ impl<'a> Vm<'a> {
         let mut vm = Vm {
             program,
             bodies,
-            globals: Vec::with_capacity(program.globals.len()),
-            global_index: HashMap::new(),
+            globals: program
+                .globals
+                .iter()
+                .map(|g| Slot::new(g.value_type, g.array))
+                .collect(),
             array_size: 8192,
             operations: 0,
             thread_operations: 0,
-            operation_limit: Some(OPERATION_LIMIT),
-            current: ("<globals>".into(), Position { line: 0, column: 0 }),
+            operation_limit: None,
+            pending_sleep: None,
+            current: (0, Position { line: 0, column: 0 }),
         };
-        let mut no_locals = Locals::new();
         for script in scripts {
             for declaration in &script.declarations {
                 let Declaration::Globals(globals) = declaration else {
@@ -198,34 +260,32 @@ impl<'a> Vm<'a> {
                 };
                 for global in globals {
                     let variable = &global.variable;
-                    let t = program.global(&variable.name).expect("checked").value_type;
-                    let slot = if variable.array {
-                        Slot::Array(Vec::new(), t)
-                    } else {
-                        let value = match &variable.initial {
-                            Some(initial) => Some(
-                                vm.evaluate(&mut no_locals, initial)
-                                    .map_err(|e| {
-                                        LoadError(format!("initialising '{}': {e}", variable.name))
-                                    })?
-                                    .coerce(t),
-                            ),
-                            None => None,
-                        };
-                        Slot::Scalar(value, t)
+                    let Some(initial) = &variable.initial else {
+                        continue;
                     };
+                    let index = compiler.global_index(&variable.name).expect("checked");
+                    let t = program.globals[index].value_type;
+                    let code = Rc::new(
+                        compiler
+                            .compile_expression(initial)
+                            .map_err(compile_error)?,
+                    );
+                    let value = vm
+                        .evaluate_detached(code)
+                        .map_err(|e| LoadError(format!("initialising '{}': {e}", variable.name)))?
+                        .coerce(t);
                     if variable.name == "JASS_MAX_ARRAY_SIZE" {
-                        if let Slot::Scalar(Some(Value::Integer(n)), _) = slot {
+                        if let Value::Integer(n) = value {
                             vm.array_size = n.max(0) as usize;
                         }
                     }
-                    vm.global_index.insert(&variable.name, vm.globals.len());
-                    vm.globals.push(slot);
+                    vm.globals[index] = Slot::Scalar(Some(value), t);
                 }
             }
         }
-        // Global initialisers do not count toward the first thread.
-        vm.thread_operations = 0;
+        // Global initialisers do not count toward any thread.
+        vm.operations = 0;
+        vm.operation_limit = Some(OPERATION_LIMIT);
         Ok(vm)
     }
 
@@ -236,13 +296,54 @@ impl<'a> Vm<'a> {
     /// Current value of a scalar global, or `None` if it is unknown, an
     /// array or not yet assigned.
     pub fn global(&self, name: &str) -> Option<&Value> {
-        match &self.globals[*self.global_index.get(name)?] {
+        let index = self.program.globals.iter().position(|g| g.name == name)?;
+        match &self.globals[index] {
             Slot::Scalar(value, _) => value.as_ref(),
             Slot::Array(..) => None,
         }
     }
 
-    /// Runs a function or native by name in a new thread.
+    /// Asks the running thread to sleep for `duration` seconds once the
+    /// calling native returns. For natives such as `TriggerSleepAction`.
+    pub fn sleep(&mut self, duration: u32) {
+        self.pending_sleep = Some(duration);
+    }
+
+    /// A new thread that will run a function, not started yet.
+    pub fn spawn(&self, index: usize, arguments: Vec<Value>) -> Thread {
+        let mut thread = Thread::default();
+        thread.stack.extend(arguments);
+        // The first resume calls the function with the arguments on the
+        // stack, from an entry frame.
+        thread.frames.push(Frame {
+            function: index,
+            code: Rc::new(Code {
+                ops: vec![Op::Call {
+                    function: index,
+                    arguments: self.program.functions[index].parameters.len(),
+                }],
+                positions: vec![Position { line: 0, column: 0 }],
+                slots: Vec::new(),
+                slot_names: Vec::new(),
+                parameters: 0,
+            }),
+            pc: 0,
+            locals: Vec::new(),
+            entry: true,
+        });
+        thread
+    }
+
+    /// Runs a thread until it finishes or sleeps. A thread resumed after a
+    /// sleep starts a fresh operation count (SPEC-0005).
+    pub fn resume(&mut self, thread: &mut Thread) -> Result<Outcome, RuntimeError> {
+        if thread.operations > 0 {
+            thread.operations = 0;
+        }
+        self.run(thread)
+    }
+
+    /// Runs a function by name in a new thread to its end. A sleep ends it.
     pub fn call_by_name(
         &mut self,
         name: &str,
@@ -252,141 +353,105 @@ impl<'a> Vm<'a> {
             .program
             .function_index(name)
             .ok_or_else(|| self.error(format!("unknown function '{name}'")))?;
-        self.run_thread(index, arguments)
+        match self.start_thread(index, arguments)? {
+            (Outcome::Finished(value), _) => Ok(value),
+            (Outcome::Sleep(_), _) => Ok(None),
+        }
     }
 
     /// Runs a function in a new thread with its own operation budget, as
-    /// `ExecuteFunc` does (SPEC-0005). The calling thread's budget is
-    /// restored afterwards, whatever the outcome.
-    pub fn run_thread(
+    /// `ExecuteFunc` does (SPEC-0005). The running thread's budget is kept.
+    /// When the new thread sleeps, it is returned so that it can be resumed.
+    pub fn start_thread(
         &mut self,
         index: usize,
         arguments: Vec<Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
-        let caller = std::mem::replace(&mut self.thread_operations, 0);
-        let result = self.call(index, arguments);
-        self.thread_operations = caller;
-        result
+    ) -> Result<(Outcome, Thread), RuntimeError> {
+        let mut thread = self.spawn(index, arguments);
+        let outcome = self.run(&mut thread)?;
+        Ok((outcome, thread))
     }
 
-    /// Restarts the current thread's operation budget, as resuming after a
-    /// sleep does (SPEC-0005).
-    pub fn reset_thread_budget(&mut self) {
-        self.thread_operations = 0;
-    }
-
-    /// Calls a function or native by its index in the program, for example
-    /// the one a `code` value refers to, within the current thread. For a
-    /// script function this charges the cost of running it (SPEC-0005);
-    /// the caller's side of a call is charged by the calling expression.
+    /// Calls a function or native within the running thread and its budget,
+    /// for callbacks run by natives. A sleep inside the callback ends the
+    /// callback (SPEC-0005); use [`Vm::call_outcome`] to tell.
     pub fn call(
         &mut self,
         index: usize,
         arguments: Vec<Value>,
     ) -> Result<Option<Value>, RuntimeError> {
-        let info = &self.program.functions[index];
-        if arguments.len() != info.parameters.len() {
-            return Err(self.error(format!(
-                "'{}' takes {} arguments, not {}",
-                info.name,
-                info.parameters.len(),
-                arguments.len()
-            )));
+        match self.call_outcome(index, arguments)? {
+            Outcome::Finished(value) => Ok(value),
+            Outcome::Sleep(_) => Ok(None),
         }
-        let parameters = info.parameters.clone();
-        let returns = info.returns;
-        let arguments: Vec<Value> = arguments
-            .into_iter()
-            .zip(&parameters)
-            .map(|(value, &t)| value.coerce(t))
-            .collect();
-        let function = match &self.bodies[index] {
-            Body::Native(f) => {
-                let f = f.clone();
-                return f(self, &arguments);
-            }
-            Body::Script(function) => *function,
-        };
-        let saved = std::mem::replace(
-            &mut self.current,
-            (function.signature.name.clone(), function.position),
-        );
-        let mut locals = Locals::new();
-        // One operation per parameter.
-        self.charge(parameters.len() as u64)?;
-        for ((parameter, value), &t) in function
-            .signature
-            .parameters
-            .iter()
-            .zip(arguments)
-            .zip(&parameters)
-        {
-            locals.insert(&parameter.name, Slot::Scalar(Some(value), t));
-        }
-        for local in &function.locals {
-            let t = self.program.type_named(&local.type_name).expect("checked");
-            // One operation per declaration, and c(e) + 1 for an initial value.
-            self.charge(1)?;
-            let slot = if local.array {
-                Slot::Array(Vec::new(), t)
-            } else {
-                let value = match &local.initial {
-                    Some(initial) => {
-                        let value = self.evaluate(&mut locals, initial)?;
-                        self.charge_conversion(&value, t)?;
-                        self.charge(1)?;
-                        Some(value.coerce(t))
-                    }
-                    None => None,
-                };
-                Slot::Scalar(value, t)
-            };
-            locals.insert(&local.name, slot);
-        }
-        let result = match self.block(&mut locals, &function.body)? {
-            Flow::Return(value) => value.map(|v| v.coerce(returns.expect("checked"))),
-            Flow::Next | Flow::Exit => {
-                // Reaching `endfunction` costs as much as a bare `return`.
-                self.charge(2)?;
-                None
-            }
-        };
-        self.current = saved;
-        Ok(result)
+    }
+
+    /// Like [`Vm::call`], but tells whether the callback ended at a sleep.
+    pub fn call_outcome(
+        &mut self,
+        index: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Outcome, RuntimeError> {
+        let mut thread = self.spawn(index, arguments);
+        thread.operations = self.thread_operations;
+        let outcome = self.run(&mut thread);
+        self.thread_operations = thread.operations;
+        outcome
+    }
+
+    /// Evaluates a compiled expression outside any thread.
+    fn evaluate_detached(&mut self, code: Rc<Code>) -> Result<Value, RuntimeError> {
+        let mut thread = Thread::default();
+        thread.frames.push(Frame {
+            function: usize::MAX,
+            code,
+            pc: 0,
+            locals: Vec::new(),
+            entry: false,
+        });
+        let saved = self.operation_limit.take();
+        let result = self.execute(&mut thread, true);
+        self.operation_limit = saved;
+        result?;
+        thread
+            .stack
+            .pop()
+            .ok_or_else(|| self.error("initialiser left no value"))
+    }
+
+    /// Runs a thread with its operation count, restoring the interrupted
+    /// thread's state afterwards.
+    fn run(&mut self, thread: &mut Thread) -> Result<Outcome, RuntimeError> {
+        let saved_operations = std::mem::replace(&mut self.thread_operations, thread.operations);
+        let saved_current = self.current;
+        let saved_sleep = self.pending_sleep.take();
+        let result = self.execute(thread, false);
+        thread.operations = self.thread_operations;
+        self.thread_operations = saved_operations;
+        self.current = saved_current;
+        self.pending_sleep = saved_sleep;
+        result
     }
 
     fn error(&self, message: impl Into<String>) -> RuntimeError {
+        let function = self
+            .program
+            .functions
+            .get(self.current.0)
+            .map_or_else(|| "<globals>".to_owned(), |f| f.name.clone());
         RuntimeError {
             message: message.into(),
-            function: self.current.0.clone(),
+            function,
             position: self.current.1,
         }
     }
 
     fn fault(&self, fault: Fault) -> RuntimeError {
-        self.error(match fault {
-            Fault::DivisionByZero => "division by zero".to_owned(),
-            Fault::DivisionOverflow => "integer division overflow".to_owned(),
-            Fault::InvalidLiteral(text) => format!("invalid literal {text}"),
-        })
+        self.error(fault_message(fault))
     }
 
-    fn block(
-        &mut self,
-        locals: &mut Locals<'a>,
-        statements: &'a [Statement],
-    ) -> Result<Flow, RuntimeError> {
-        for statement in statements {
-            match self.statement(locals, statement)? {
-                Flow::Next => {}
-                flow => return Ok(flow),
-            }
-        }
-        Ok(Flow::Next)
-    }
-
-    /// Counts `n` operations of the current thread (SPEC-0005) and stops it
-    /// when that exceeds the limit.
+    /// Counts `n` operations of the running thread and stops it when that
+    /// exceeds the limit.
     fn charge(&mut self, n: u64) -> Result<(), RuntimeError> {
         self.operations += n;
         self.thread_operations += n;
@@ -399,145 +464,6 @@ impl<'a> Vm<'a> {
         Ok(())
     }
 
-    /// One operation when an integer is used where a real is expected.
-    fn charge_conversion(&mut self, value: &Value, target: Type) -> Result<(), RuntimeError> {
-        if matches!(value, Value::Integer(_)) && target == Type::Real {
-            self.charge(1)?;
-        }
-        Ok(())
-    }
-
-    fn statement(
-        &mut self,
-        locals: &mut Locals<'a>,
-        statement: &'a Statement,
-    ) -> Result<Flow, RuntimeError> {
-        self.current.1 = statement.position;
-        match &statement.kind {
-            StatementKind::Set { name, index, value } => {
-                let index = match index {
-                    Some(index) => Some(self.integer(locals, index)?),
-                    None => None,
-                };
-                let value = self.evaluate(locals, value)?;
-                let target = self.variable_type(locals, name);
-                self.charge_conversion(&value, target)?;
-                // `set v = e` costs c(e) + 1, `set a[i] = e` c(i) + c(e) + 3.
-                self.charge(if index.is_some() { 3 } else { 1 })?;
-                self.store(locals, name, index, value)?;
-            }
-            StatementKind::Call(call) => {
-                self.call_expression(locals, call)?;
-            }
-            StatementKind::If {
-                branches,
-                otherwise,
-            } => return self.if_chain(locals, branches, otherwise.as_deref(), false),
-            StatementKind::Loop(body) => {
-                // 1 on entry, then c(S) + 1 per pass.
-                self.charge(1)?;
-                loop {
-                    match self.block(locals, body)? {
-                        Flow::Next => self.charge(1)?,
-                        Flow::Exit => break,
-                        flow @ Flow::Return(_) => return Ok(flow),
-                    }
-                }
-            }
-            StatementKind::ExitWhen(condition) => {
-                let exit = self.boolean(locals, condition)?;
-                self.charge(1)?;
-                if exit {
-                    return Ok(Flow::Exit);
-                }
-            }
-            StatementKind::Return(value) => {
-                let value = match value {
-                    Some(value) => {
-                        let value = self.evaluate(locals, value)?;
-                        if let Some(returns) = self.current_returns() {
-                            self.charge_conversion(&value, returns)?;
-                        }
-                        Some(value)
-                    }
-                    None => None,
-                };
-                self.charge(2)?;
-                return Ok(Flow::Return(value));
-            }
-        }
-        Ok(Flow::Next)
-    }
-
-    /// `if` with the costs of SPEC-0005. An `elseif` chain is an `if` whose
-    /// `else` holds the rest of the chain; the last `elseif` (`nested`)
-    /// acts as an `if` with an empty `else`.
-    fn if_chain(
-        &mut self,
-        locals: &mut Locals<'a>,
-        branches: &'a [(Expression, Vec<Statement>)],
-        otherwise: Option<&'a [Statement]>,
-        nested: bool,
-    ) -> Result<Flow, RuntimeError> {
-        let ((condition, then), rest) = branches.split_first().expect("at least one branch");
-        let taken = self.boolean(locals, condition)?;
-        let has_else = !rest.is_empty() || otherwise.is_some() || nested;
-        let else_empty = rest.is_empty() && otherwise.is_none_or(<[Statement]>::is_empty);
-        if !has_else {
-            // `if c then S endif`: c(c) when S is empty, otherwise c(c) + 1
-            // when false and c(c) + c(S) + 2 when true.
-            if then.is_empty() {
-                return Ok(Flow::Next);
-            }
-            self.charge(1)?;
-            if !taken {
-                return Ok(Flow::Next);
-            }
-            let flow = self.block(locals, then)?;
-            if matches!(flow, Flow::Next) {
-                self.charge(1)?;
-            }
-            return Ok(flow);
-        }
-        if then.is_empty() && else_empty {
-            return Ok(Flow::Next);
-        }
-        // c(c) + c(branch) + 2 for the branch taken. The cost of an empty
-        // `then` with a non-empty `else` is not measured yet (SPEC-0005).
-        self.charge(1)?;
-        let flow = if taken {
-            self.block(locals, then)?
-        } else if !rest.is_empty() {
-            self.if_chain(locals, rest, otherwise, true)?
-        } else {
-            self.block(locals, otherwise.unwrap_or(&[]))?
-        };
-        if matches!(flow, Flow::Next) {
-            self.charge(1)?;
-        }
-        Ok(flow)
-    }
-
-    /// Declared type of a variable visible here.
-    fn variable_type(&mut self, locals: &mut Locals<'a>, name: &str) -> Type {
-        match self.slot(locals, name) {
-            Slot::Scalar(_, t) | Slot::Array(_, t) => *t,
-        }
-    }
-
-    fn current_returns(&self) -> Option<Type> {
-        self.program
-            .function(&self.current.0)
-            .and_then(|f| f.returns)
-    }
-
-    fn slot<'s>(&'s mut self, locals: &'s mut Locals<'a>, name: &str) -> &'s mut Slot {
-        match locals.get_mut(name) {
-            Some(slot) => slot,
-            None => &mut self.globals[self.global_index[name]],
-        }
-    }
-
     fn check_index(&self, index: i32) -> Result<usize, RuntimeError> {
         if index < 0 || index as usize >= self.array_size {
             return Err(self.error(format!("array index {index} out of range")));
@@ -545,190 +471,251 @@ impl<'a> Vm<'a> {
         Ok(index as usize)
     }
 
-    fn store(
-        &mut self,
-        locals: &mut Locals<'a>,
-        name: &str,
-        index: Option<i32>,
-        value: Value,
-    ) -> Result<(), RuntimeError> {
-        let index = index.map(|i| self.check_index(i)).transpose()?;
-        match self.slot(locals, name) {
-            Slot::Scalar(slot, t) => *slot = Some(value.coerce(*t)),
-            Slot::Array(elements, t) => {
-                let index = index.expect("checked");
-                if elements.len() <= index {
-                    elements.resize(index + 1, Value::default_of(*t));
+    /// The main loop. `detached` evaluates a lone expression and stops at
+    /// its end instead of at a return.
+    fn execute(&mut self, thread: &mut Thread, detached: bool) -> Result<Outcome, RuntimeError> {
+        loop {
+            let Some(frame) = thread.frames.last_mut() else {
+                return Ok(Outcome::Finished(thread.stack.pop()));
+            };
+            if frame.pc >= frame.code.ops.len() {
+                // The entry frame ends after a native thread function
+                // returns; a detached expression ends with its value.
+                debug_assert!(frame.entry || detached);
+                let value = if frame.entry {
+                    thread.stack.pop()
+                } else {
+                    None
+                };
+                thread.frames.clear();
+                return Ok(Outcome::Finished(value));
+            }
+            let code = frame.code.clone();
+            let in_entry = frame.entry;
+            let pc = frame.pc;
+            frame.pc += 1;
+            self.current = (frame.function, code.positions[pc]);
+            match &code.ops[pc] {
+                Op::Push(value) => {
+                    self.charge(1)?;
+                    thread.stack.push(value.clone());
                 }
-                elements[index] = value.coerce(*t);
-            }
-        }
-        Ok(())
-    }
-
-    fn read(
-        &mut self,
-        locals: &mut Locals<'a>,
-        name: &str,
-        index: Option<i32>,
-    ) -> Result<Value, RuntimeError> {
-        let index = index.map(|i| self.check_index(i)).transpose()?;
-        match self.slot(locals, name) {
-            Slot::Scalar(Some(value), _) => Ok(value.clone()),
-            Slot::Scalar(None, _) => {
-                Err(self.error(format!("read of uninitialised variable '{name}'")))
-            }
-            Slot::Array(elements, t) => {
-                let index = index.expect("checked");
-                Ok(elements
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| Value::default_of(*t)))
-            }
-        }
-    }
-
-    fn call_expression(
-        &mut self,
-        locals: &mut Locals<'a>,
-        call: &'a Call,
-    ) -> Result<Option<Value>, RuntimeError> {
-        let index = self.program.function_index(&call.name).expect("checked");
-        let info = &self.program.functions[index];
-        let (parameters, native) = (info.parameters.clone(), info.native);
-        // (c(a) + 1) per argument, then 1 for the call.
-        let mut arguments = Vec::with_capacity(call.arguments.len());
-        for (argument, &t) in call.arguments.iter().zip(&parameters) {
-            let value = self.evaluate(locals, argument)?;
-            self.charge_conversion(&value, t)?;
-            self.charge(1)?;
-            arguments.push(value);
-        }
-        self.charge(1)?;
-        let position = self.current.1;
-        let result = self.call(index, arguments)?;
-        self.current.1 = position;
-        // A script function with arguments takes one more operation to drop
-        // them after it returns; a native does not.
-        if !native && !parameters.is_empty() {
-            self.charge(1)?;
-        }
-        Ok(result)
-    }
-
-    fn integer(&mut self, locals: &mut Locals<'a>, e: &'a Expression) -> Result<i32, RuntimeError> {
-        match self.evaluate(locals, e)? {
-            Value::Integer(i) => Ok(i),
-            other => Err(self.error(format!("expected an integer, got {other:?}"))),
-        }
-    }
-
-    fn boolean(
-        &mut self,
-        locals: &mut Locals<'a>,
-        e: &'a Expression,
-    ) -> Result<bool, RuntimeError> {
-        match self.evaluate(locals, e)? {
-            Value::Boolean(b) => Ok(b),
-            other => Err(self.error(format!("expected a boolean, got {other:?}"))),
-        }
-    }
-
-    fn evaluate(
-        &mut self,
-        locals: &mut Locals<'a>,
-        e: &'a Expression,
-    ) -> Result<Value, RuntimeError> {
-        // Literals, variables and `function f` cost 1; `a[i]`, `-e` and
-        // `not e` cost one more than their operand. Calls and binary
-        // operators charge their own costs; parentheses cost nothing.
-        if matches!(
-            e.kind,
-            ExpressionKind::Integer(_)
-                | ExpressionKind::RawCode(_)
-                | ExpressionKind::Real(_)
-                | ExpressionKind::String(_)
-                | ExpressionKind::Boolean(_)
-                | ExpressionKind::Null
-                | ExpressionKind::FunctionReference(_)
-                | ExpressionKind::Variable(_)
-        ) {
-            self.charge(1)?;
-        }
-        Ok(match &e.kind {
-            ExpressionKind::Integer(text) => {
-                Value::Integer(semantics::integer_literal(text).map_err(|f| self.fault(f))?)
-            }
-            ExpressionKind::RawCode(text) => {
-                Value::Integer(semantics::raw_code_literal(text).map_err(|f| self.fault(f))?)
-            }
-            ExpressionKind::Real(text) => Value::Real(semantics::real_literal(text)),
-            ExpressionKind::String(text) => Value::string(&semantics::decode_escapes(text)),
-            ExpressionKind::Boolean(b) => Value::Boolean(*b),
-            ExpressionKind::Null => Value::Null,
-            ExpressionKind::FunctionReference(name) => {
-                Value::Code(Some(self.program.function_index(name).expect("checked")))
-            }
-            ExpressionKind::Variable(name) => self.read(locals, name, None)?,
-            ExpressionKind::Index { name, index } => {
-                let index = self.integer(locals, index)?;
-                self.charge(1)?;
-                self.read(locals, name, Some(index))?
-            }
-            ExpressionKind::Call(call) => self
-                .call_expression(locals, call)?
-                .ok_or_else(|| self.error(format!("'{}' returned no value", call.name)))?,
-            ExpressionKind::Parenthesized(inner) => self.evaluate(locals, inner)?,
-            ExpressionKind::Unary { operator, operand } => {
-                let value = self.evaluate(locals, operand)?;
-                self.charge(1)?;
-                match (operator, value) {
-                    (UnaryOperator::Not, Value::Boolean(b)) => Value::Boolean(!b),
-                    (UnaryOperator::Minus, Value::Integer(i)) => Value::Integer(i.wrapping_neg()),
-                    // Flips the sign bit (SPEC-0004).
-                    (UnaryOperator::Minus, Value::Real(r)) => Value::Real(r ^ 0x8000_0000),
-                    (UnaryOperator::Plus, value @ (Value::Integer(_) | Value::Real(_))) => value,
-                    (_, value) => return Err(self.error(format!("bad operand {value:?}"))),
+                Op::LoadLocal(slot) => {
+                    self.charge(1)?;
+                    let value = read(&thread.frames.last().expect("frame").locals[*slot], None)
+                        .ok_or_else(|| self.uninitialised(*slot, &code))?;
+                    thread.stack.push(value);
+                }
+                Op::LoadGlobal(index) => {
+                    self.charge(1)?;
+                    let value = read(&self.globals[*index], None)
+                        .ok_or_else(|| self.uninitialised_global(*index))?;
+                    thread.stack.push(value);
+                }
+                Op::LoadLocalIndexed(slot) => {
+                    let index = self.pop_index(thread)?;
+                    self.charge(1)?;
+                    let slot = &thread.frames.last().expect("frame").locals[*slot];
+                    thread
+                        .stack
+                        .push(read(slot, Some(index)).expect("arrays read"));
+                }
+                Op::LoadGlobalIndexed(global) => {
+                    let index = self.pop_index(thread)?;
+                    self.charge(1)?;
+                    thread
+                        .stack
+                        .push(read(&self.globals[*global], Some(index)).expect("arrays read"));
+                }
+                Op::Unary(operator) => {
+                    let value = pop(thread);
+                    self.charge(1)?;
+                    let result = match (operator, value) {
+                        (UnaryOperator::Not, Value::Boolean(b)) => Value::Boolean(!b),
+                        (UnaryOperator::Minus, Value::Integer(i)) => {
+                            Value::Integer(i.wrapping_neg())
+                        }
+                        // Flips the sign bit (SPEC-0004).
+                        (UnaryOperator::Minus, Value::Real(r)) => Value::Real(r ^ 0x8000_0000),
+                        (UnaryOperator::Plus, value @ (Value::Integer(_) | Value::Real(_))) => {
+                            value
+                        }
+                        (_, value) => return Err(self.error(format!("bad operand {value:?}"))),
+                    };
+                    thread.stack.push(result);
+                }
+                Op::Binary(operator) => {
+                    let r = pop(thread);
+                    let l = pop(thread);
+                    let mixed = matches!(
+                        (&l, &r),
+                        (Value::Integer(_), Value::Real(_)) | (Value::Real(_), Value::Integer(_))
+                    );
+                    self.charge(if mixed { 4 } else { 3 })?;
+                    let value = self.binary(*operator, l, r)?;
+                    thread.stack.push(value);
+                }
+                Op::ShortCircuit { and_, end } => {
+                    let left = matches!(pop(thread), Value::Boolean(true));
+                    if left != *and_ {
+                        self.charge(3)?;
+                        thread.stack.push(Value::Boolean(left));
+                        thread.frames.last_mut().expect("frame").pc = *end;
+                    } else {
+                        self.charge(2)?;
+                    }
+                }
+                Op::Coerce(t) => {
+                    let value = pop(thread);
+                    if matches!(value, Value::Integer(_)) && *t == Type::Real {
+                        self.charge(1)?;
+                    }
+                    thread.stack.push(value.coerce(*t));
+                }
+                Op::StoreLocal(slot) => {
+                    let value = pop(thread);
+                    self.charge(1)?;
+                    let slot = &mut thread.frames.last_mut().expect("frame").locals[*slot];
+                    store(slot, None, value);
+                }
+                Op::StoreGlobal(index) => {
+                    let value = pop(thread);
+                    self.charge(1)?;
+                    store(&mut self.globals[*index], None, value);
+                }
+                Op::StoreLocalIndexed(slot) => {
+                    let value = pop(thread);
+                    let index = self.pop_index(thread)?;
+                    self.charge(3)?;
+                    let slot = &mut thread.frames.last_mut().expect("frame").locals[*slot];
+                    store(slot, Some(index), value);
+                }
+                Op::StoreGlobalIndexed(global) => {
+                    let value = pop(thread);
+                    let index = self.pop_index(thread)?;
+                    self.charge(3)?;
+                    store(&mut self.globals[*global], Some(index), value);
+                }
+                Op::Arg => self.charge(1)?,
+                Op::Call {
+                    function,
+                    arguments,
+                } => {
+                    // Starting a thread is not a call in its code.
+                    if !in_entry {
+                        self.charge(1)?;
+                    }
+                    let split = thread.stack.len() - arguments;
+                    let arguments: Vec<Value> = thread.stack.split_off(split);
+                    let info = &self.program.functions[*function];
+                    if arguments.len() != info.parameters.len() {
+                        return Err(self.error(format!(
+                            "'{}' takes {} arguments, not {}",
+                            info.name,
+                            info.parameters.len(),
+                            arguments.len()
+                        )));
+                    }
+                    let arguments: Vec<Value> = arguments
+                        .into_iter()
+                        .zip(&info.parameters)
+                        .map(|(value, &t)| value.coerce(t))
+                        .collect();
+                    match &self.bodies[*function] {
+                        Body::Native(f) => {
+                            let f = f.clone();
+                            let result = f(self, &arguments)?;
+                            if let Some(value) = result {
+                                thread.stack.push(value);
+                            }
+                            if let Some(duration) = self.pending_sleep.take() {
+                                return Ok(Outcome::Sleep(duration));
+                            }
+                        }
+                        Body::Script(callee) => {
+                            let callee = callee.clone();
+                            // One operation per parameter.
+                            self.charge(callee.parameters as u64)?;
+                            let mut locals: Vec<Slot> =
+                                callee.slots.iter().map(|&(t, a)| Slot::new(t, a)).collect();
+                            for (slot, value) in locals.iter_mut().zip(arguments) {
+                                store(slot, None, value);
+                            }
+                            thread.frames.push(Frame {
+                                function: *function,
+                                code: callee,
+                                pc: 0,
+                                locals,
+                                entry: false,
+                            });
+                        }
+                    }
+                }
+                Op::Pop => {
+                    pop(thread);
+                }
+                Op::Charge(n) => self.charge(u64::from(*n))?,
+                Op::JumpIfFalse(target) => {
+                    let condition = pop(thread);
+                    self.charge(1)?;
+                    if condition != Value::Boolean(true) {
+                        thread.frames.last_mut().expect("frame").pc = *target;
+                    }
+                }
+                Op::Jump { target, cost } => {
+                    self.charge(u64::from(*cost))?;
+                    thread.frames.last_mut().expect("frame").pc = *target;
+                }
+                Op::ExitWhen(target) => {
+                    let condition = pop(thread);
+                    self.charge(1)?;
+                    if condition == Value::Boolean(true) {
+                        thread.frames.last_mut().expect("frame").pc = *target;
+                    }
+                }
+                Op::Return | Op::ReturnNothing => {
+                    let value = matches!(code.ops[pc], Op::Return).then(|| pop(thread));
+                    self.charge(2)?;
+                    let frame = thread.frames.pop().expect("frame");
+                    // Returning to the entry frame ends the thread.
+                    let entry = thread.frames.last().is_some_and(|caller| caller.entry);
+                    if entry {
+                        thread.frames.clear();
+                        return Ok(Outcome::Finished(value));
+                    }
+                    // A script function with arguments costs one more
+                    // operation in its caller when it returns.
+                    if frame.code.parameters > 0 {
+                        self.charge(1)?;
+                    }
+                    if let Some(value) = value {
+                        thread.stack.push(value);
+                    }
                 }
             }
-            ExpressionKind::Binary {
-                operator,
-                left,
-                right,
-            } => self.binary(locals, *operator, left, right)?,
-        })
+        }
     }
 
-    fn binary(
-        &mut self,
-        locals: &mut Locals<'a>,
-        operator: BinaryOperator,
-        left: &'a Expression,
-        right: &'a Expression,
-    ) -> Result<Value, RuntimeError> {
+    fn pop_index(&self, thread: &mut Thread) -> Result<usize, RuntimeError> {
+        match pop(thread) {
+            Value::Integer(i) => self.check_index(i),
+            other => Err(self.error(format!("expected an integer index, got {other:?}"))),
+        }
+    }
+
+    fn uninitialised(&self, slot: usize, code: &Code) -> RuntimeError {
+        let name = &code.slot_names[slot];
+        self.error(format!("read of uninitialised variable '{name}'"))
+    }
+
+    fn uninitialised_global(&self, index: usize) -> RuntimeError {
+        let name = &self.program.globals[index].name;
+        self.error(format!("read of uninitialised variable '{name}'"))
+    }
+
+    fn binary(&self, operator: BinaryOperator, l: Value, r: Value) -> Result<Value, RuntimeError> {
         use BinaryOperator::*;
-        // `and` and `or` skip the right operand when the left decides. They
-        // cost c(l) + 3 when the left decides, c(l) + c(r) + 2 otherwise.
-        if matches!(operator, And | Or) {
-            let l = self.boolean(locals, left)?;
-            let decided = matches!((operator, l), (And, false) | (Or, true));
-            if decided {
-                self.charge(3)?;
-                return Ok(Value::Boolean(l));
-            }
-            self.charge(2)?;
-            return Ok(Value::Boolean(self.boolean(locals, right)?));
-        }
-        // c(l) + c(r) + 3, plus 1 for an integer operand converted to real.
-        let l = self.evaluate(locals, left)?;
-        let r = self.evaluate(locals, right)?;
-        for (value, other) in [(&l, &r), (&r, &l)] {
-            if matches!(value, Value::Integer(_)) && matches!(other, Value::Real(_)) {
-                self.charge(1)?;
-            }
-        }
-        self.charge(3)?;
-        let value = match (operator, l, r) {
+        Ok(match (operator, l, r) {
             (Equal, l, r) => Value::Boolean(semantics::equal(&l, &r)),
             (NotEqual, l, r) => Value::Boolean(semantics::not_equal(&l, &r)),
             (Add, Value::String(a), b @ (Value::String(_) | Value::Null))
@@ -758,8 +745,49 @@ impl<'a> Vm<'a> {
                     _ => Value::Real(semantics::real_op(op, a, b).map_err(|f| self.fault(f))?),
                 }
             }
-        };
-        Ok(value)
+        })
+    }
+}
+
+fn fault_message(fault: Fault) -> String {
+    match fault {
+        Fault::DivisionByZero => "division by zero".to_owned(),
+        Fault::DivisionOverflow => "integer division overflow".to_owned(),
+        Fault::InvalidLiteral(text) => format!("invalid literal {text}"),
+    }
+}
+
+fn pop(thread: &mut Thread) -> Value {
+    thread
+        .stack
+        .pop()
+        .expect("compiled code keeps the stack balanced")
+}
+
+/// Reads a scalar (`None` if never assigned) or an array element (default
+/// value if never assigned).
+fn read(slot: &Slot, index: Option<usize>) -> Option<Value> {
+    match slot {
+        Slot::Scalar(value, _) => value.clone(),
+        Slot::Array(elements, t) => Some(
+            elements
+                .get(index.expect("checked"))
+                .cloned()
+                .unwrap_or_else(|| Value::default_of(*t)),
+        ),
+    }
+}
+
+fn store(slot: &mut Slot, index: Option<usize>, value: Value) {
+    match slot {
+        Slot::Scalar(stored, t) => *stored = Some(value.coerce(*t)),
+        Slot::Array(elements, t) => {
+            let index = index.expect("checked");
+            if elements.len() <= index {
+                elements.resize(index + 1, Value::default_of(*t));
+            }
+            elements[index] = value.coerce(*t);
+        }
     }
 }
 
@@ -1135,5 +1163,212 @@ native CreateTimer takes nothing returns timer
         ] {
             assert_eq!(passes(extra), predicted(cost), "{extra}");
         }
+    }
+}
+
+#[cfg(test)]
+mod thread_tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    const COMMON: &str = "\
+native Sleep takes real d returns nothing
+native Log takes integer i returns nothing
+native Spawn takes code f returns nothing
+native Callback takes code f returns nothing
+";
+
+    struct Setup {
+        common: Script,
+        script: Script,
+    }
+
+    fn setup(source: &str) -> Setup {
+        Setup {
+            common: crate::parse(COMMON).unwrap(),
+            script: crate::parse(source).unwrap(),
+        }
+    }
+
+    /// Natives that log integers, sleep, start threads and run callbacks.
+    /// Threads started by `Spawn` that go to sleep are kept in `parked`.
+    fn natives(log: Rc<RefCell<Vec<i32>>>, parked: Rc<RefCell<Vec<Thread>>>) -> Natives {
+        let mut natives = Natives::default();
+        natives.register(
+            "native Sleep takes real d returns nothing",
+            Rc::new(|vm, args| {
+                let Value::Real(d) = args[0] else {
+                    unreachable!()
+                };
+                vm.sleep(d);
+                Ok(None)
+            }),
+        );
+        natives.register(
+            "native Log takes integer i returns nothing",
+            Rc::new(move |_, args| {
+                let Value::Integer(i) = args[0] else {
+                    unreachable!()
+                };
+                log.borrow_mut().push(i);
+                Ok(None)
+            }),
+        );
+        natives.register(
+            "native Spawn takes code f returns nothing",
+            Rc::new(move |vm, args| {
+                let Value::Code(Some(f)) = args[0] else {
+                    unreachable!()
+                };
+                if let (Outcome::Sleep(_), thread) = vm.start_thread(f, Vec::new())? {
+                    parked.borrow_mut().push(thread);
+                }
+                Ok(None)
+            }),
+        );
+        natives.register(
+            "native Callback takes code f returns nothing",
+            Rc::new(|vm, args| {
+                let Value::Code(Some(f)) = args[0] else {
+                    unreachable!()
+                };
+                vm.call(f, Vec::new())?;
+                vm.call(f, Vec::new())?;
+                Ok(None)
+            }),
+        );
+        natives
+    }
+
+    #[test]
+    fn a_thread_sleeps_and_resumes_where_it_stopped() {
+        let s = setup(
+            "function Main takes nothing returns integer
+                local integer i = 1
+                call Log(i)
+                call Sleep(0.5)
+                set i = i + 1
+                call Log(i)
+                call Sleep(1)
+                return i * 10
+            endfunction",
+        );
+        let program = crate::check::check(&[&s.common, &s.script]).unwrap();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let natives = natives(log.clone(), Rc::default());
+        let mut vm = Vm::load(&program, &[&s.common, &s.script], &natives).unwrap();
+        let main = program.function_index("Main").unwrap();
+        let mut thread = vm.spawn(main, Vec::new());
+        assert_eq!(
+            vm.resume(&mut thread).unwrap(),
+            Outcome::Sleep(0.5f32.to_bits())
+        );
+        assert_eq!(*log.borrow(), [1]);
+        assert_eq!(
+            vm.resume(&mut thread).unwrap(),
+            Outcome::Sleep(1.0f32.to_bits())
+        );
+        assert_eq!(*log.borrow(), [1, 2]);
+        assert_eq!(
+            vm.resume(&mut thread).unwrap(),
+            Outcome::Finished(Some(Value::Integer(20)))
+        );
+        assert!(thread.is_finished());
+    }
+
+    /// Verification of SPEC-0005: 10000 passes of a 19-operation loop body,
+    /// then a sleep, four times, about 760000 operations in all.
+    #[test]
+    fn the_budget_restarts_after_each_sleep() {
+        let s = setup(
+            "globals
+                integer g = 0
+            endglobals
+            function Main takes nothing returns nothing
+                local integer round = 0
+                local integer i
+                loop
+                    exitwhen round == 4
+                    set i = 0
+                    loop
+                        exitwhen i == 10000
+                        set i = i + 1
+                        set g = g + 1
+                    endloop
+                    call Sleep(0)
+                    set round = round + 1
+                endloop
+            endfunction",
+        );
+        let program = crate::check::check(&[&s.common, &s.script]).unwrap();
+        let natives = natives(Rc::default(), Rc::default());
+        let mut vm = Vm::load(&program, &[&s.common, &s.script], &natives).unwrap();
+        let mut thread = vm.spawn(program.function_index("Main").unwrap(), Vec::new());
+        let mut sleeps = 0;
+        while let Outcome::Sleep(_) = vm.resume(&mut thread).unwrap() {
+            sleeps += 1;
+        }
+        assert_eq!(sleeps, 4);
+        assert_eq!(vm.global("g"), Some(&Value::Integer(40_000)));
+        assert!(vm.operations > OPERATION_LIMIT * 2, "{}", vm.operations);
+    }
+
+    #[test]
+    fn started_threads_sleep_on_their_own_and_callbacks_end_at_a_sleep() {
+        let s = setup(
+            "function Worker takes nothing returns nothing
+                call Log(10)
+                call Sleep(1)
+                call Log(11)
+            endfunction
+            function Each takes nothing returns nothing
+                call Log(20)
+                call Sleep(1)
+                call Log(21)
+            endfunction
+            function Main takes nothing returns nothing
+                call Spawn(function Worker)
+                call Log(1)
+                call Callback(function Each)
+                call Log(2)
+            endfunction",
+        );
+        let program = crate::check::check(&[&s.common, &s.script]).unwrap();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let parked = Rc::new(RefCell::new(Vec::new()));
+        let natives = natives(log.clone(), parked.clone());
+        let mut vm = Vm::load(&program, &[&s.common, &s.script], &natives).unwrap();
+        vm.call_by_name("Main", Vec::new()).unwrap();
+        // The worker sleeps while Main goes on; each callback ends at its
+        // sleep and the next one still runs (SPEC-0005).
+        assert_eq!(*log.borrow(), [10, 1, 20, 20, 2]);
+        let mut worker = parked.borrow_mut().pop().expect("worker sleeps");
+        assert_eq!(vm.resume(&mut worker).unwrap(), Outcome::Finished(None));
+        assert_eq!(*log.borrow(), [10, 1, 20, 20, 2, 11]);
+    }
+
+    /// An error in a started thread ends that thread; the caller decides
+    /// what to do, as ExecuteFunc continues (SPEC-0005).
+    #[test]
+    fn errors_end_only_the_started_thread() {
+        let s = setup(
+            "function Bad takes nothing returns nothing
+                call Log(1 / 0)
+            endfunction
+            function Main takes nothing returns nothing
+                call Log(1)
+            endfunction",
+        );
+        let program = crate::check::check(&[&s.common, &s.script]).unwrap();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let natives = natives(log.clone(), Rc::default());
+        let mut vm = Vm::load(&program, &[&s.common, &s.script], &natives).unwrap();
+        let bad = program.function_index("Bad").unwrap();
+        let err = vm.start_thread(bad, Vec::new()).unwrap_err();
+        assert_eq!(err.message, "division by zero");
+        assert_eq!(err.function, "Bad");
+        vm.call_by_name("Main", Vec::new()).unwrap();
+        assert_eq!(*log.borrow(), [1]);
     }
 }

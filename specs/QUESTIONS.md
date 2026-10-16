@@ -47,3 +47,20 @@ position fields. Not yet confirmed:
   not destructible;
 - what the `z` field of special doodads means;
 - how `item_table` and `dropped_item_sets` interact when both are set.
+
+## Object modifications (`war3map.w3u` and related files)
+
+All object files of the shipped maps parse to their last byte, every
+modified field exists in the game's metadata tables, and each metadata type
+is always stored as the same value type. Not yet confirmed:
+
+- **End marker.** Current editors write 0 or the object's code after each
+  value; files of format version 1 also hold codes of unrelated objects
+  there. Does the game read this field at all?
+- **Versions 1 and 2** have the same layout in the shipped maps. Does the
+  game treat them differently?
+- **Data column** of ability, doodad and upgrade fields: confirm that 1
+  means `DataA` and how 0 is used.
+- **Precedence** when the original table changes a field that the map's
+  SLK or INI files also set, and how levels beyond an object's level count
+  are handled.

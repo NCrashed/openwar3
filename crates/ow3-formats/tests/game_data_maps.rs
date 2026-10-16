@@ -4,11 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
+use ow3_formats::binary::RawCode;
 use ow3_formats::map::doodads::Doodads;
 use ow3_formats::map::info::MapInfo;
+use ow3_formats::map::objects::{ObjectKind, ObjectModifications, Value};
 use ow3_formats::map::strings::TriggerStrings;
 use ow3_formats::map::terrain::Terrain;
 use ow3_formats::mpq::Archive;
+use ow3_formats::slk::Table;
 
 fn maps() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b/Maps");
@@ -193,5 +196,135 @@ fn every_doodad_file_parses_completely() {
         outside.is_empty(),
         "{}",
         outside[..outside.len().min(20)].join("\n")
+    );
+}
+
+#[test]
+fn every_object_modification_file_parses_completely() {
+    if maps().is_empty() {
+        return;
+    }
+    let mut failures = Vec::new();
+    let mut files = 0;
+    let mut modifications = 0;
+    for kind in ObjectKind::ALL {
+        for_each_map_file(kind.file_name(), |path, data| {
+            files += 1;
+            match ObjectModifications::parse(data, kind) {
+                Ok(parsed) => {
+                    modifications += parsed
+                        .original
+                        .iter()
+                        .chain(&parsed.custom)
+                        .map(|o| o.modifications.len())
+                        .sum::<usize>();
+                }
+                Err(err) => {
+                    failures.push(format!("{} {}: {err}", path.display(), kind.file_name()))
+                }
+            }
+        });
+    }
+    eprintln!("parsed {files} object files with {modifications} modifications");
+    assert!(files > 50, "only {files} object files");
+    assert!(
+        failures.is_empty(),
+        "{} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Field codes of the game's object metadata table for a kind, with the
+/// value of their `type` column.
+fn metadata_fields(kind: ObjectKind) -> Option<std::collections::BTreeMap<RawCode, String>> {
+    let table = match kind {
+        ObjectKind::Units | ObjectKind::Items => "Units\\UnitMetaData.slk",
+        ObjectKind::Destructibles => "Units\\DestructableMetaData.slk",
+        ObjectKind::Doodads => "Doodads\\DoodadMetaData.slk",
+        ObjectKind::Abilities => "Units\\AbilityMetaData.slk",
+        ObjectKind::Buffs => "Units\\AbilityBuffMetaData.slk",
+        ObjectKind::Upgrades => "Units\\UpgradeMetaData.slk",
+    };
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b/War3Patch.mpq");
+    let data = Archive::open_path(path).ok()?.read(table).ok()?;
+    let table = Table::parse(&data).unwrap();
+    let type_column = table.column("type").expect("type column");
+    let mut fields = std::collections::BTreeMap::new();
+    for row in 2..=table.last_row() {
+        if let (Some(id), Some(ty)) = (table.get(row, 1), table.get(row, type_column)) {
+            // Codes shorter than four characters, such as `Crs`, are stored
+            // in object files padded with zero bytes.
+            let id = id.raw().as_bytes();
+            if id.is_empty() || id.len() > 4 {
+                continue;
+            }
+            let mut bytes = [0u8; 4];
+            bytes[..id.len()].copy_from_slice(id);
+            fields.insert(RawCode(bytes), ty.raw().to_owned());
+        }
+    }
+    Some(fields)
+}
+
+#[test]
+fn every_modified_field_exists_in_game_metadata() {
+    if maps().is_empty() {
+        return;
+    }
+    let mut unknown = Vec::new();
+    let mut types: std::collections::BTreeMap<(String, &'static str), usize> = Default::default();
+    for kind in ObjectKind::ALL {
+        let fields = metadata_fields(kind).expect("metadata table");
+        for_each_map_file(kind.file_name(), |path, data| {
+            let parsed = ObjectModifications::parse(data, kind).unwrap();
+            for modification in parsed
+                .original
+                .iter()
+                .chain(&parsed.custom)
+                .flat_map(|o| &o.modifications)
+            {
+                let Some(meta_type) = fields.get(&modification.field) else {
+                    unknown.push(format!(
+                        "{} {}: {}",
+                        path.display(),
+                        kind.file_name(),
+                        modification.field
+                    ));
+                    continue;
+                };
+                let value_type = match modification.value {
+                    Value::Integer(_) => "integer",
+                    Value::Real(_) => "real",
+                    Value::Unreal(_) => "unreal",
+                    Value::String(_) => "string",
+                };
+                *types.entry((meta_type.clone(), value_type)).or_default() += 1;
+            }
+        });
+    }
+    // Each metadata type is always stored with the same value type.
+    let mut stored_as: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (meta, value) in types.keys() {
+        stored_as.entry(meta.as_str()).or_default().push(value);
+    }
+    let ambiguous: Vec<_> = stored_as
+        .iter()
+        .filter(|(_, values)| values.len() > 1)
+        .collect();
+    assert!(
+        ambiguous.is_empty(),
+        "metadata types stored in several ways: {ambiguous:?}"
+    );
+    assert_eq!(stored_as["real"], ["real"]);
+    assert_eq!(stored_as["unreal"], ["unreal"]);
+    assert_eq!(stored_as["int"], ["integer"]);
+    assert_eq!(stored_as["string"], ["string"]);
+    assert!(
+        unknown.is_empty(),
+        "{} unknown fields:\n{}",
+        unknown.len(),
+        unknown[..unknown.len().min(20)].join("\n")
     );
 }

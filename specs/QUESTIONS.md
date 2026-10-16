@@ -152,3 +152,26 @@ Choices where the spec is silent:
 - **Callbacks** that natives run through `code` values (`ForGroup` and the
   like) run in the calling thread and use its budget; whether they get a
   budget of their own is not specified.
+
+## Game time (`ow3-sim`)
+
+The timer queue follows SPEC-0002 and reproduces its tests T1c and T3c
+within the resolution of the 1000 s reference clock (2^-14 s). Choices
+where the spec is silent:
+
+- **Timeout limits.** 0.0001 is the float nearest to it (`0x38D1B717`) and
+  `sub(300.0, 0.001)` uses the float nearest to 0.001 (`0x3A83126F`). Are
+  these the engine's constants?
+- **Order inside a chunk.** The chunk's ticks run first, then the sleep
+  check that ends it. At full speed this puts checks at game times 0.1, 0.2,
+  ... as the spec says.
+- **Threads due at the same check** resume in the order they went to sleep.
+- **Pause.** Pausing takes effect at the next chunk. Test PZ resumes a
+  thread at game time 1.025 after pausing at 1.0, which suggests the game
+  keeps running for one more chunk after `PauseGame(true)`; when exactly
+  does a pause take effect?
+- **One-second sleep.** The resume rule gives 1.1 s for
+  `TriggerSleepAction(1.0)` started at a check, and the speed ratios give
+  0.88 and 0.66 s at the lower speeds. The speed test SP measured 1.2, 0.92
+  and 0.75 s. Was that sleep started between checks, or does the rule miss
+  something?

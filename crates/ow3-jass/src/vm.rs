@@ -4,8 +4,8 @@
 //! when a declared native has no implementation or its implementation has
 //! a different signature (SPEC-0001).
 //!
-//! Not modelled yet: threads, sleeps and the operation limit of the game.
-//! [`Vm::operation_limit`] only guards against runaway loops.
+//! Operations are counted with the costs of SPEC-0005, per thread.
+//! Not modelled yet: sleeps and scheduling of threads.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -19,6 +19,9 @@ use crate::semantics::{self, Fault, Value};
 /// Implementation of a native. Receives the interpreter, so that it can call
 /// back into scripts, and the arguments already converted to the declared
 /// parameter types. Returns `None` for natives that return nothing.
+/// Operations a thread may execute (SPEC-0005).
+pub const OPERATION_LIMIT: u64 = 300_000;
+
 pub type NativeFn = Rc<dyn Fn(&mut Vm, &[Value]) -> Result<Option<Value>, RuntimeError>>;
 
 /// Native implementations by name, each with the JASS declaration it
@@ -110,9 +113,13 @@ pub struct Vm<'a> {
     globals: Vec<Slot>,
     global_index: HashMap<&'a str, usize>,
     array_size: usize,
-    /// Statements executed so far.
+    /// Operations executed so far in all threads (SPEC-0005 costs).
     pub operations: u64,
-    /// Stop with an error after this many statements.
+    /// Operations executed by the current thread since it started or last
+    /// resumed.
+    pub thread_operations: u64,
+    /// A thread stops with an error when it would execute more operations
+    /// than this. The game's limit is [`OPERATION_LIMIT`].
     pub operation_limit: Option<u64>,
     /// Function and position being executed, for error messages.
     current: (String, Position),
@@ -179,7 +186,8 @@ impl<'a> Vm<'a> {
             global_index: HashMap::new(),
             array_size: 8192,
             operations: 0,
-            operation_limit: None,
+            thread_operations: 0,
+            operation_limit: Some(OPERATION_LIMIT),
             current: ("<globals>".into(), Position { line: 0, column: 0 }),
         };
         let mut no_locals = Locals::new();
@@ -216,6 +224,8 @@ impl<'a> Vm<'a> {
                 }
             }
         }
+        // Global initialisers do not count toward the first thread.
+        vm.thread_operations = 0;
         Ok(vm)
     }
 
@@ -223,7 +233,16 @@ impl<'a> Vm<'a> {
         self.program
     }
 
-    /// Calls a function or native by name.
+    /// Current value of a scalar global, or `None` if it is unknown, an
+    /// array or not yet assigned.
+    pub fn global(&self, name: &str) -> Option<&Value> {
+        match &self.globals[*self.global_index.get(name)?] {
+            Slot::Scalar(value, _) => value.as_ref(),
+            Slot::Array(..) => None,
+        }
+    }
+
+    /// Runs a function or native by name in a new thread.
     pub fn call_by_name(
         &mut self,
         name: &str,
@@ -233,11 +252,33 @@ impl<'a> Vm<'a> {
             .program
             .function_index(name)
             .ok_or_else(|| self.error(format!("unknown function '{name}'")))?;
-        self.call(index, arguments)
+        self.run_thread(index, arguments)
+    }
+
+    /// Runs a function in a new thread with its own operation budget, as
+    /// `ExecuteFunc` does (SPEC-0005). The calling thread's budget is
+    /// restored afterwards, whatever the outcome.
+    pub fn run_thread(
+        &mut self,
+        index: usize,
+        arguments: Vec<Value>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let caller = std::mem::replace(&mut self.thread_operations, 0);
+        let result = self.call(index, arguments);
+        self.thread_operations = caller;
+        result
+    }
+
+    /// Restarts the current thread's operation budget, as resuming after a
+    /// sleep does (SPEC-0005).
+    pub fn reset_thread_budget(&mut self) {
+        self.thread_operations = 0;
     }
 
     /// Calls a function or native by its index in the program, for example
-    /// the one a `code` value refers to.
+    /// the one a `code` value refers to, within the current thread. For a
+    /// script function this charges the cost of running it (SPEC-0005);
+    /// the caller's side of a call is charged by the calling expression.
     pub fn call(
         &mut self,
         index: usize,
@@ -271,6 +312,8 @@ impl<'a> Vm<'a> {
             (function.signature.name.clone(), function.position),
         );
         let mut locals = Locals::new();
+        // One operation per parameter.
+        self.charge(parameters.len() as u64)?;
         for ((parameter, value), &t) in function
             .signature
             .parameters
@@ -282,11 +325,18 @@ impl<'a> Vm<'a> {
         }
         for local in &function.locals {
             let t = self.program.type_named(&local.type_name).expect("checked");
+            // One operation per declaration, and c(e) + 1 for an initial value.
+            self.charge(1)?;
             let slot = if local.array {
                 Slot::Array(Vec::new(), t)
             } else {
                 let value = match &local.initial {
-                    Some(initial) => Some(self.evaluate(&mut locals, initial)?.coerce(t)),
+                    Some(initial) => {
+                        let value = self.evaluate(&mut locals, initial)?;
+                        self.charge_conversion(&value, t)?;
+                        self.charge(1)?;
+                        Some(value.coerce(t))
+                    }
                     None => None,
                 };
                 Slot::Scalar(value, t)
@@ -295,7 +345,11 @@ impl<'a> Vm<'a> {
         }
         let result = match self.block(&mut locals, &function.body)? {
             Flow::Return(value) => value.map(|v| v.coerce(returns.expect("checked"))),
-            Flow::Next | Flow::Exit => None,
+            Flow::Next | Flow::Exit => {
+                // Reaching `endfunction` costs as much as a bare `return`.
+                self.charge(2)?;
+                None
+            }
         };
         self.current = saved;
         Ok(result)
@@ -331,13 +385,24 @@ impl<'a> Vm<'a> {
         Ok(Flow::Next)
     }
 
-    fn count_operation(&mut self) -> Result<(), RuntimeError> {
-        self.operations += 1;
+    /// Counts `n` operations of the current thread (SPEC-0005) and stops it
+    /// when that exceeds the limit.
+    fn charge(&mut self, n: u64) -> Result<(), RuntimeError> {
+        self.operations += n;
+        self.thread_operations += n;
         if self
             .operation_limit
-            .is_some_and(|limit| self.operations > limit)
+            .is_some_and(|limit| self.thread_operations > limit)
         {
             return Err(self.error("operation limit reached"));
+        }
+        Ok(())
+    }
+
+    /// One operation when an integer is used where a real is expected.
+    fn charge_conversion(&mut self, value: &Value, target: Type) -> Result<(), RuntimeError> {
+        if matches!(value, Value::Integer(_)) && target == Type::Real {
+            self.charge(1)?;
         }
         Ok(())
     }
@@ -348,7 +413,6 @@ impl<'a> Vm<'a> {
         statement: &'a Statement,
     ) -> Result<Flow, RuntimeError> {
         self.current.1 = statement.position;
-        self.count_operation()?;
         match &statement.kind {
             StatementKind::Set { name, index, value } => {
                 let index = match index {
@@ -356,6 +420,10 @@ impl<'a> Vm<'a> {
                     None => None,
                 };
                 let value = self.evaluate(locals, value)?;
+                let target = self.variable_type(locals, name);
+                self.charge_conversion(&value, target)?;
+                // `set v = e` costs c(e) + 1, `set a[i] = e` c(i) + c(e) + 3.
+                self.charge(if index.is_some() { 3 } else { 1 })?;
                 self.store(locals, name, index, value)?;
             }
             StatementKind::Call(call) => {
@@ -364,39 +432,103 @@ impl<'a> Vm<'a> {
             StatementKind::If {
                 branches,
                 otherwise,
-            } => {
-                for (condition, body) in branches {
-                    if self.boolean(locals, condition)? {
-                        return self.block(locals, body);
+            } => return self.if_chain(locals, branches, otherwise.as_deref(), false),
+            StatementKind::Loop(body) => {
+                // 1 on entry, then c(S) + 1 per pass.
+                self.charge(1)?;
+                loop {
+                    match self.block(locals, body)? {
+                        Flow::Next => self.charge(1)?,
+                        Flow::Exit => break,
+                        flow @ Flow::Return(_) => return Ok(flow),
                     }
                 }
-                if let Some(body) = otherwise {
-                    return self.block(locals, body);
-                }
             }
-            StatementKind::Loop(body) => loop {
-                // Counted per iteration too, so that an empty loop is caught.
-                self.count_operation()?;
-                match self.block(locals, body)? {
-                    Flow::Next => {}
-                    Flow::Exit => break,
-                    flow @ Flow::Return(_) => return Ok(flow),
-                }
-            },
             StatementKind::ExitWhen(condition) => {
-                if self.boolean(locals, condition)? {
+                let exit = self.boolean(locals, condition)?;
+                self.charge(1)?;
+                if exit {
                     return Ok(Flow::Exit);
                 }
             }
             StatementKind::Return(value) => {
                 let value = match value {
-                    Some(value) => Some(self.evaluate(locals, value)?),
+                    Some(value) => {
+                        let value = self.evaluate(locals, value)?;
+                        if let Some(returns) = self.current_returns() {
+                            self.charge_conversion(&value, returns)?;
+                        }
+                        Some(value)
+                    }
                     None => None,
                 };
+                self.charge(2)?;
                 return Ok(Flow::Return(value));
             }
         }
         Ok(Flow::Next)
+    }
+
+    /// `if` with the costs of SPEC-0005. An `elseif` chain is an `if` whose
+    /// `else` holds the rest of the chain; the last `elseif` (`nested`)
+    /// acts as an `if` with an empty `else`.
+    fn if_chain(
+        &mut self,
+        locals: &mut Locals<'a>,
+        branches: &'a [(Expression, Vec<Statement>)],
+        otherwise: Option<&'a [Statement]>,
+        nested: bool,
+    ) -> Result<Flow, RuntimeError> {
+        let ((condition, then), rest) = branches.split_first().expect("at least one branch");
+        let taken = self.boolean(locals, condition)?;
+        let has_else = !rest.is_empty() || otherwise.is_some() || nested;
+        let else_empty = rest.is_empty() && otherwise.is_none_or(<[Statement]>::is_empty);
+        if !has_else {
+            // `if c then S endif`: c(c) when S is empty, otherwise c(c) + 1
+            // when false and c(c) + c(S) + 2 when true.
+            if then.is_empty() {
+                return Ok(Flow::Next);
+            }
+            self.charge(1)?;
+            if !taken {
+                return Ok(Flow::Next);
+            }
+            let flow = self.block(locals, then)?;
+            if matches!(flow, Flow::Next) {
+                self.charge(1)?;
+            }
+            return Ok(flow);
+        }
+        if then.is_empty() && else_empty {
+            return Ok(Flow::Next);
+        }
+        // c(c) + c(branch) + 2 for the branch taken. The cost of an empty
+        // `then` with a non-empty `else` is not measured yet (SPEC-0005).
+        self.charge(1)?;
+        let flow = if taken {
+            self.block(locals, then)?
+        } else if !rest.is_empty() {
+            self.if_chain(locals, rest, otherwise, true)?
+        } else {
+            self.block(locals, otherwise.unwrap_or(&[]))?
+        };
+        if matches!(flow, Flow::Next) {
+            self.charge(1)?;
+        }
+        Ok(flow)
+    }
+
+    /// Declared type of a variable visible here.
+    fn variable_type(&mut self, locals: &mut Locals<'a>, name: &str) -> Type {
+        match self.slot(locals, name) {
+            Slot::Scalar(_, t) | Slot::Array(_, t) => *t,
+        }
+    }
+
+    fn current_returns(&self) -> Option<Type> {
+        self.program
+            .function(&self.current.0)
+            .and_then(|f| f.returns)
     }
 
     fn slot<'s>(&'s mut self, locals: &'s mut Locals<'a>, name: &str) -> &'s mut Slot {
@@ -461,15 +593,27 @@ impl<'a> Vm<'a> {
         locals: &mut Locals<'a>,
         call: &'a Call,
     ) -> Result<Option<Value>, RuntimeError> {
-        let mut arguments = Vec::with_capacity(call.arguments.len());
-        for argument in &call.arguments {
-            arguments.push(self.evaluate(locals, argument)?);
-        }
         let index = self.program.function_index(&call.name).expect("checked");
+        let info = &self.program.functions[index];
+        let (parameters, native) = (info.parameters.clone(), info.native);
+        // (c(a) + 1) per argument, then 1 for the call.
+        let mut arguments = Vec::with_capacity(call.arguments.len());
+        for (argument, &t) in call.arguments.iter().zip(&parameters) {
+            let value = self.evaluate(locals, argument)?;
+            self.charge_conversion(&value, t)?;
+            self.charge(1)?;
+            arguments.push(value);
+        }
+        self.charge(1)?;
         let position = self.current.1;
-        let result = self.call(index, arguments);
+        let result = self.call(index, arguments)?;
         self.current.1 = position;
-        result
+        // A script function with arguments takes one more operation to drop
+        // them after it returns; a native does not.
+        if !native && !parameters.is_empty() {
+            self.charge(1)?;
+        }
+        Ok(result)
     }
 
     fn integer(&mut self, locals: &mut Locals<'a>, e: &'a Expression) -> Result<i32, RuntimeError> {
@@ -495,6 +639,22 @@ impl<'a> Vm<'a> {
         locals: &mut Locals<'a>,
         e: &'a Expression,
     ) -> Result<Value, RuntimeError> {
+        // Literals, variables and `function f` cost 1; `a[i]`, `-e` and
+        // `not e` cost one more than their operand. Calls and binary
+        // operators charge their own costs; parentheses cost nothing.
+        if matches!(
+            e.kind,
+            ExpressionKind::Integer(_)
+                | ExpressionKind::RawCode(_)
+                | ExpressionKind::Real(_)
+                | ExpressionKind::String(_)
+                | ExpressionKind::Boolean(_)
+                | ExpressionKind::Null
+                | ExpressionKind::FunctionReference(_)
+                | ExpressionKind::Variable(_)
+        ) {
+            self.charge(1)?;
+        }
         Ok(match &e.kind {
             ExpressionKind::Integer(text) => {
                 Value::Integer(semantics::integer_literal(text).map_err(|f| self.fault(f))?)
@@ -512,6 +672,7 @@ impl<'a> Vm<'a> {
             ExpressionKind::Variable(name) => self.read(locals, name, None)?,
             ExpressionKind::Index { name, index } => {
                 let index = self.integer(locals, index)?;
+                self.charge(1)?;
                 self.read(locals, name, Some(index))?
             }
             ExpressionKind::Call(call) => self
@@ -520,6 +681,7 @@ impl<'a> Vm<'a> {
             ExpressionKind::Parenthesized(inner) => self.evaluate(locals, inner)?,
             ExpressionKind::Unary { operator, operand } => {
                 let value = self.evaluate(locals, operand)?;
+                self.charge(1)?;
                 match (operator, value) {
                     (UnaryOperator::Not, Value::Boolean(b)) => Value::Boolean(!b),
                     (UnaryOperator::Minus, Value::Integer(i)) => Value::Integer(i.wrapping_neg()),
@@ -545,17 +707,27 @@ impl<'a> Vm<'a> {
         right: &'a Expression,
     ) -> Result<Value, RuntimeError> {
         use BinaryOperator::*;
-        // `and` and `or` skip the right operand when the left decides.
+        // `and` and `or` skip the right operand when the left decides. They
+        // cost c(l) + 3 when the left decides, c(l) + c(r) + 2 otherwise.
         if matches!(operator, And | Or) {
             let l = self.boolean(locals, left)?;
-            return Ok(Value::Boolean(match (operator, l) {
-                (And, false) => false,
-                (Or, true) => true,
-                _ => self.boolean(locals, right)?,
-            }));
+            let decided = matches!((operator, l), (And, false) | (Or, true));
+            if decided {
+                self.charge(3)?;
+                return Ok(Value::Boolean(l));
+            }
+            self.charge(2)?;
+            return Ok(Value::Boolean(self.boolean(locals, right)?));
         }
+        // c(l) + c(r) + 3, plus 1 for an integer operand converted to real.
         let l = self.evaluate(locals, left)?;
         let r = self.evaluate(locals, right)?;
+        for (value, other) in [(&l, &r), (&r, &l)] {
+            if matches!(value, Value::Integer(_)) && matches!(other, Value::Real(_)) {
+                self.charge(1)?;
+            }
+        }
+        self.charge(3)?;
         let value = match (operator, l, r) {
             (Equal, l, r) => Value::Boolean(semantics::equal(&l, &r)),
             (NotEqual, l, r) => Value::Boolean(semantics::not_equal(&l, &r)),
@@ -878,5 +1050,90 @@ native Run takes code f returns nothing
             vm.call_by_name("I2S", vec![Value::Integer(1)]).unwrap(),
             Some(Value::String(None))
         );
+    }
+}
+
+#[cfg(test)]
+mod operation_cost_tests {
+    use super::*;
+
+    const COMMON: &str = "\
+type agent extends handle
+type timer extends agent
+native CreateTimer takes nothing returns timer
+";
+
+    /// Runs `Body` in a fresh thread until the operation limit stops it and
+    /// returns how many passes stored to `g`, as in SPEC-0005's
+    /// verification.
+    fn passes(extra: &str) -> i32 {
+        let source = format!(
+            "globals
+                integer g = 0
+                integer x = 0
+            endglobals
+            function F takes integer a returns nothing
+            endfunction
+            function Body takes nothing returns nothing
+                local integer lx = 0
+                set g = 0
+                loop
+                    set g = g + 1
+                    {extra}
+                endloop
+            endfunction"
+        );
+        let common = crate::parse(COMMON).unwrap();
+        let script = crate::parse(&source).unwrap();
+        let program = crate::check::check(&[&common, &script]).unwrap();
+        let natives = Natives::default().stub_missing();
+        let mut vm = Vm::load(&program, &[&common, &script], &natives).unwrap();
+        let err = vm.call_by_name("Body", Vec::new()).unwrap_err();
+        assert_eq!(err.message, "operation limit reached");
+        let Some(Value::Integer(g)) = vm.global("g") else {
+            panic!("g is not an integer")
+        };
+        *g
+    }
+
+    /// `N = floor(299988 / C) + 1` passes for a loop body of cost `C`.
+    fn predicted(cost: i32) -> i32 {
+        299_988 / cost + 1
+    }
+
+    #[test]
+    fn spec_0005_loop_measurements() {
+        assert_eq!(passes(""), 42_856);
+        assert_eq!(predicted(7), 42_856);
+        assert_eq!(passes("set x = 1"), 33_333);
+        assert_eq!(passes("call F(1)"), 21_428);
+        assert_eq!(passes("call CreateTimer()"), 37_499);
+    }
+
+    #[test]
+    fn statement_and_expression_costs() {
+        // Each body adds a statement of known cost to the plain loop (7).
+        for (extra, cost) in [
+            ("set x = (1 + 2) * 3", 7 + 10),
+            ("set x = -x", 7 + 3),
+            ("if true then\nset x = 1\nendif", 7 + 5),
+            ("if false then\nset x = 1\nendif", 7 + 2),
+            ("if false then\nendif", 7 + 1),
+            ("if true then\nset x = 1\nelse\nset x = 2\nendif", 7 + 5),
+            ("if false then\nset x = 1\nelse\nset x = 2\nendif", 7 + 5),
+            (
+                "if false then\nset x = 1\nelseif true then\nset x = 2\nendif",
+                7 + 8,
+            ),
+            (
+                "if false then\nset x = 1\nelseif false then\nset x = 2\nendif",
+                7 + 6,
+            ),
+            ("exitwhen false", 7 + 2),
+            ("if true and false then\nendif", 7 + 4),
+            ("if false and true then\nendif", 7 + 4),
+        ] {
+            assert_eq!(passes(extra), predicted(cost), "{extra}");
+        }
     }
 }

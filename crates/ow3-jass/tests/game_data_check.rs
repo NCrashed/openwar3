@@ -205,7 +205,7 @@ fn map_entry_points_run_with_stub_natives() {
                 continue;
             }
         };
-        vm.operation_limit = Some(5_000_000);
+        // Each entry point is a thread with the game's budget (SPEC-0005).
         for entry in ["config", "main"] {
             if let Err(err) = vm.call_by_name(entry, Vec::new()) {
                 failures.push(format!("{name} {entry}: {err}"));
@@ -214,7 +214,7 @@ fn map_entry_points_run_with_stub_natives() {
         statements += vm.operations;
         ran += 1;
     }
-    eprintln!("ran config and main of {ran} maps, {statements} statements");
+    eprintln!("ran config and main of {ran} maps, {statements} operations");
     assert!(ran > 100);
     assert!(
         failures.is_empty(),

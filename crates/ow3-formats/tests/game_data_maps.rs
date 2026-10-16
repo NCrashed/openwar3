@@ -451,3 +451,27 @@ fn every_region_camera_and_sound_file_parses_completely() {
         failures.join("\n")
     );
 }
+
+/// Edge case of SPEC-0003: entry 681 of this map is a header followed by
+/// `#VALUE!`; it shows as empty text and does not affect the entries after it.
+#[test]
+fn death_sheep_malformed_entry_matches_spec_0003() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../game-data/1.27b/Maps/Scenario/(1)TheDeathSheep.w3m");
+    if !path.exists() {
+        eprintln!("skipping: {} not found", path.display());
+        return;
+    }
+    let data = Archive::open_path(&path)
+        .unwrap()
+        .read("war3map.wts")
+        .unwrap();
+    let strings = TriggerStrings::parse(&data).unwrap();
+    assert_eq!(strings.display("TRIGSTR_681"), "");
+    for n in 682..=684 {
+        assert!(
+            !strings.display(&format!("TRIGSTR_{n}")).is_empty(),
+            "entry {n}"
+        );
+    }
+}

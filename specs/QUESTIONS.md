@@ -7,15 +7,11 @@ it is answered.
 
 ## Trigger strings (`war3map.wts`)
 
-- **Header without a body.** `(1)TheDeathSheep.w3m` has `STRING 681`
-  followed by a bare `#VALUE!` line instead of `{ ... }`. What does the game
-  show for `TRIGSTR_681`, and does the bare line affect the entries after it?
-  Until answered: the entry is undefined and parsing resumes at the next
-  `STRING` header.
-- **Repeated numbers.** If a number appears twice, which text does the game
-  use? Until answered: the later one.
-- **Unresolved references.** What does the game show for a `TRIGSTR_<n>`
-  whose number is not defined? Until answered: the caller gets no text.
+Answered by SPEC-0003; its own open questions are listed there. One more:
+
+- **Malformed first definition.** If a number first appears as a header
+  without a body and later with a braced body, which text is shown? Until
+  answered: the empty text of the first, malformed definition.
 
 ## Map info (`war3map.w3i`)
 

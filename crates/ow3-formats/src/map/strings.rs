@@ -11,9 +11,11 @@
 //! }
 //! ```
 //!
-//! The text is kept exactly as stored, including its line breaks.
+//! The text is kept exactly as stored, including its line breaks. How the
+//! game resolves references follows SPEC-0003.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -48,13 +50,14 @@ pub struct TriggerStrings {
 }
 
 impl TriggerStrings {
-    /// When a number appears twice, the later text is kept.
+    /// When a number appears twice, the first definition is kept (SPEC-0003).
     ///
-    /// Some shipped maps have a `STRING <number>` header followed by a bare
-    /// line instead of a braced body. Such entries are left undefined and
-    /// listed by [`TriggerStrings::without_body`]; the lines up to the next
-    /// header are skipped. How the game treats either case has not been
-    /// checked.
+    /// A `STRING <number>` header followed by a line other than `{`, as in
+    /// one shipped map, defines the entry with empty text (SPEC-0003). Such
+    /// numbers are also listed by [`TriggerStrings::without_body`], and the
+    /// lines up to the next header are skipped. Whether such an entry counts
+    /// as the first definition of a repeated number is not specified; here
+    /// it does.
     pub fn parse(data: &[u8]) -> Result<TriggerStrings> {
         let text = std::str::from_utf8(data).map_err(|_| Error::InvalidUtf8)?;
         let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
@@ -94,6 +97,7 @@ impl TriggerStrings {
             };
             if opening != Some("{") {
                 without_body.push(number);
+                strings.entry(number).or_insert_with(String::new);
                 skipping = true;
                 continue;
             }
@@ -114,7 +118,9 @@ impl TriggerStrings {
             }
             // The line break before the closing brace is not part of the text.
             body.truncate(trim_line_end(&body).len());
-            strings.insert(number, body);
+            if let Entry::Vacant(slot) = strings.entry(number) {
+                slot.insert(body);
+            }
         }
         Ok(TriggerStrings {
             strings,
@@ -139,15 +145,32 @@ impl TriggerStrings {
         self.strings.is_empty()
     }
 
-    /// Text for a `TRIGSTR_<number>` reference, or `None` when `value` is not
-    /// a reference or the number is not defined.
+    /// Text of the entry a `TRIGSTR_<number>` reference names, or `None`
+    /// when `value` is not a reference or the number is not defined.
     pub fn resolve(&self, value: &str) -> Option<&str> {
-        let digits = value.strip_prefix(REFERENCE_PREFIX)?;
-        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
-        }
-        self.get(digits.parse().ok()?)
+        self.get(reference_number(value)?)
     }
+
+    /// The text the game shows for `value` (SPEC-0003): only a string that
+    /// is a whole reference is replaced, and a reference to an undefined
+    /// number shows as empty text. Everything else is shown as it is.
+    pub fn display<'a>(&'a self, value: &'a str) -> &'a str {
+        match reference_number(value) {
+            Some(number) => self.get(number).unwrap_or(""),
+            None => value,
+        }
+    }
+}
+
+/// Number of a whole-string `TRIGSTR_<digits>` reference, read as a decimal
+/// integer so that leading zeros do not matter. Numbers that do not fit in
+/// 32 bits are not treated as references (SPEC-0003, open question 5).
+fn reference_number(value: &str) -> Option<u32> {
+    let digits = value.strip_prefix(REFERENCE_PREFIX)?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn trim_line_end(line: &str) -> &str {
@@ -177,14 +200,34 @@ mod tests {
 
     /// Shape found in a shipped map: a header followed by a bare value.
     #[test]
-    fn header_without_body_is_undefined_and_skipped() {
+    fn header_without_body_is_empty_and_skipped() {
         let data =
             "STRING 1\r\n{\r\nA\r\n}\r\n\r\nSTRING 2\r\n#VALUE!\r\n\r\nSTRING 3\r\n{\r\nC\r\n}\r\n";
         let strings = TriggerStrings::parse(data.as_bytes()).unwrap();
         assert_eq!(strings.get(1), Some("A"));
-        assert_eq!(strings.get(2), None);
+        assert_eq!(strings.get(2), Some(""));
         assert_eq!(strings.get(3), Some("C"));
         assert_eq!(strings.without_body(), [2]);
+    }
+
+    /// Test map W1 from the verification section of SPEC-0003.
+    #[test]
+    fn spec_0003_test_map_w1() {
+        let data = "STRING 900\r\n{\r\nfirst 900\r\n}\r\n\r\n\
+            STRING 900\r\n{\r\nsecond 900\r\n}\r\n\r\n\
+            STRING 901\r\n#VALUE!\r\n\r\n\
+            STRING 902\r\n{\r\ntext 902\r\n}\r\n\r\n\
+            STRING 904\r\n{\r\nline one\r\nline two\r\n}\r\n";
+        let strings = TriggerStrings::parse(data.as_bytes()).unwrap();
+        assert_eq!(strings.display("TRIGSTR_900"), "first 900");
+        assert_eq!(strings.display("TRIGSTR_901"), "");
+        assert_eq!(strings.display("TRIGSTR_902"), "text 902");
+        assert_eq!(strings.display("TRIGSTR_903"), "");
+        assert_eq!(strings.display("TRIGSTR_904"), "line one\r\nline two");
+        assert_eq!(strings.display("TRIGSTR_0902"), "text 902");
+        // Only a whole-string reference is replaced.
+        assert_eq!(strings.display("[TRIGSTR_902]"), "[TRIGSTR_902]");
+        assert_eq!(strings.display("Lost Temple"), "Lost Temple");
     }
 
     #[test]

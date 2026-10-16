@@ -44,6 +44,15 @@ native Filter takes code func returns filterfunc
 native And takes boolexpr operandA, boolexpr operandB returns boolexpr
 native Or takes boolexpr operandA, boolexpr operandB returns boolexpr
 native Not takes boolexpr operand returns boolexpr
+native DestroyBoolExpr takes boolexpr e returns nothing
+type trigger extends agent
+type triggercondition extends agent
+native CreateTrigger takes nothing returns trigger
+native TriggerAddCondition takes trigger whichTrigger, boolexpr condition returns triggercondition
+native TriggerEvaluate takes trigger whichTrigger returns boolean
+native GetHandleId takes handle h returns integer
+native ExecuteFunc takes string funcName returns nothing
+native ForceClear takes force whichForce returns nothing
 "#;
 
 /// Runs `main` of `script` after the declarations and returns the output.
@@ -54,7 +63,11 @@ fn run(script: &str) -> Vec<String> {
     let program = ow3_jass::check::check(&refs).unwrap();
     let mut game = Game::load(&program, &refs).unwrap();
     game.run("main");
-    assert!(game.state.borrow().errors.is_empty());
+    let errors = game.state.borrow().errors.clone();
+    assert!(
+        errors.iter().all(|e| e.message.contains("ExecuteFunc")),
+        "{errors:?}"
+    );
     game.output()
 }
 
@@ -149,6 +162,70 @@ endfunction
             "1", "3", "4", "-", // Or skips Odd when Big holds
             "1", "2", "-", // counted
             "2", "4", "empty",
+        ]
+    );
+}
+
+/// SPEC-0006: boolexprs, trigger conditions, handle ids, forces and
+/// `ExecuteFunc`.
+#[test]
+fn spec_0006_rules() {
+    let output = run(&format!(
+        "globals\n    integer calls = 0\nendglobals\n{PRINT}{}",
+        r#"
+function Yes takes nothing returns boolean
+    set calls = calls + 1
+    return true
+endfunction
+function No takes nothing returns boolean
+    set calls = calls + 1
+    return false
+endfunction
+function Show takes nothing returns nothing
+    call Print(I2S(GetPlayerId(GetEnumPlayer())))
+endfunction
+function Takes takes integer i returns nothing
+    call Print("never")
+endfunction
+function Returns takes nothing returns integer
+    call Print("returns ran")
+    return 1
+endfunction
+function main takes nothing returns nothing
+    local trigger t = CreateTrigger()
+    local force f = CreateForce()
+    if Condition(function Yes) == Filter(function Yes) then
+        call Print("same boolexpr")
+    endif
+    call TriggerAddCondition(t, Condition(function No))
+    call TriggerAddCondition(t, Condition(function Yes))
+    if not TriggerEvaluate(t) then
+        call Print("false after " + I2S(calls) + " calls")
+    endif
+    call ForceEnumPlayers(f, And(Condition(function Yes), null))
+    call ForForce(f, function Show)
+    call ForceEnumPlayers(f, null)
+    call ForForce(f, function Show)
+    call Print("player 0 id " + I2S(GetHandleId(Player(0))))
+    call ExecuteFunc("returns")
+    call ExecuteFunc("Returns")
+    call ExecuteFunc("Takes")
+    call Print("not reached")
+endfunction
+"#
+    ));
+    assert_eq!(
+        output,
+        [
+            "same boolexpr",
+            // Both conditions run although the first is false.
+            "false after 2 calls",
+            // And with a null operand is false: the force stays empty.
+            // ForceEnumPlayers(f, null) leaves out the neutral players.
+            "0",
+            "player 0 id 1048584",
+            // The name is case-sensitive; the result is discarded.
+            "returns ran",
         ]
     );
 }

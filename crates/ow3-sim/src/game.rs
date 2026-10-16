@@ -44,9 +44,11 @@ macro_rules! native {
 mod enumerate;
 pub mod players;
 
-/// PROVISIONAL: the first handle number. Scripts usually see differences
-/// between handles, which do not depend on it.
+/// The first handle id (SPEC-0006).
 const FIRST_HANDLE: u32 = 0x0010_0000;
+/// PROVISIONAL: ids the game takes before the players, so that `Player(0)`
+/// is 0x100008 as in SPEC-0006; the 16 players follow in order.
+const RESERVED_HANDLES: u32 = 8;
 
 /// What a handle refers to.
 #[derive(Clone, Debug)]
@@ -110,8 +112,16 @@ pub struct Unit {
 #[derive(Clone, Debug, Default)]
 pub struct Timer {
     queued: Option<TimerId>,
-    /// The timeout given to `TimerStart`, raised to at least 0.0001.
+    /// The timeout given to `TimerStart`, raised to at least 0.0001: what
+    /// `TimerGetTimeout` reads and the period of a periodic timer.
     timeout: u32,
+    /// Length of the current run: the timeout, or after `ResumeTimer` the
+    /// time that was left at the pause (SPEC-0002).
+    run: u32,
+    /// The part of the run in the queue now, and the parts before it. A
+    /// run under 120 s is one part.
+    part: u32,
+    done: u32,
     /// Parts of a long timer still to queue after the current one: whole
     /// 120 s parts, then the last part (SPEC-0002).
     parts_left: u32,
@@ -175,6 +185,9 @@ pub struct State {
     pub setup: players::Setup,
     /// PROVISIONAL: random numbers, until the game's generator is specified.
     pub random: Random,
+    /// The boolexpr made by `Condition` or `Filter` for each function: the
+    /// same function gives the same handle (SPEC-0006).
+    conditions: HashMap<usize, u32>,
     /// Units in the order they were created.
     units: Vec<u32>,
     /// Destructables in the order they were placed or created.
@@ -196,7 +209,7 @@ pub struct State {
 
 impl State {
     fn new() -> Self {
-        State {
+        let mut state = State {
             clock: FrameClock::new(),
             timers: TimerQueue::new(),
             objects: HashMap::new(),
@@ -206,14 +219,19 @@ impl State {
             units: Vec::new(),
             destructables: Vec::new(),
             world_bounds: [0; 4],
-            next_handle: FIRST_HANDLE,
+            conditions: HashMap::new(),
+            next_handle: FIRST_HANDLE + RESERVED_HANDLES,
             output: Vec::new(),
             preload: Vec::new(),
             errors: Vec::new(),
             context: Context::default(),
             sleep_time: 0,
             parked: Vec::new(),
+        };
+        for id in 0..players::SLOTS {
+            state.player_handle(id);
         }
+        state
     }
 
     fn create(&mut self, object: Object) -> u32 {
@@ -275,10 +293,11 @@ impl State {
         }
     }
 
-    /// Starts or restarts a timer in the queue. A timeout of 120 s or more
-    /// is run as parts (SPEC-0002).
-    fn start_timer(&mut self, handle: u32, timeout: u32) {
-        let (n, rest) = split_timeout(raise_timeout(timeout));
+    /// Starts a run of `length` seconds. A run of 120 s or more is queued
+    /// as parts (SPEC-0002).
+    fn start_timer(&mut self, handle: u32, length: u32) {
+        let length = raise_timeout(length);
+        let (n, rest) = split_timeout(length);
         let (first, parts_left, last_part) = if n == 0 {
             (rest, 0, None)
         } else {
@@ -289,6 +308,9 @@ impl State {
             timer.queued = Some(id);
             timer.paused = None;
             timer.started = true;
+            timer.run = length;
+            timer.part = first;
+            timer.done = 0;
             timer.parts_left = parts_left;
             timer.last_part = last_part;
         }
@@ -308,6 +330,8 @@ impl State {
         } else {
             return false;
         };
+        timer.done = add(timer.done, timer.part);
+        timer.part = part;
         let id = self.timers.start(part, handle);
         if let Some(timer) = self.timer(Some(handle)) {
             timer.queued = Some(id);
@@ -325,8 +349,10 @@ impl State {
     /// `TimerGetRemaining`: `sub(e, q)` of a running timer, the saved value
     /// of a paused one, 0 otherwise (SPEC-0002).
     ///
-    /// PROVISIONAL: a long timer adds the parts still to run, so that the
-    /// whole timeout is reported; the exact operations are not specified.
+    /// PROVISIONAL: a long timer reads the length of its run minus the
+    /// parts done and the time spent in the current part, which keeps
+    /// `TimerGetElapsed` exact as in test PZ; the game's operations are not
+    /// specified.
     fn remaining(&mut self, handle: Option<u32>) -> u32 {
         let now = self.timers.time();
         let Some(timer) = self.timer(handle) else {
@@ -335,18 +361,33 @@ impl State {
         if let Some(paused) = timer.paused {
             return paused;
         }
-        let (queued, parts_left, last_part) = (timer.queued, timer.parts_left, timer.last_part);
+        let (queued, run, part, done) = (timer.queued, timer.run, timer.part, timer.done);
+        let long = timer.parts_left > 0 || timer.last_part.is_some() || done != 0;
         let Some(expiry) = queued.and_then(|id| self.timers.expiry(id)) else {
             return 0;
         };
-        let mut remaining = sub(expiry, now);
-        if parts_left > 0 {
-            remaining = add(remaining, mul(i2r(parts_left as i32), LONG_PART));
+        let left = sub(expiry, now);
+        if long {
+            sub(run, add(done, sub(part, left)))
+        } else {
+            left
         }
-        if let Some(rest) = last_part {
-            remaining = add(remaining, rest);
-        }
-        remaining
+    }
+
+    /// `TimerGetElapsed`: the run length minus the remaining time while it
+    /// runs, the timeout minus the saved time while paused, the timeout
+    /// once expired, and 0 before the first start (SPEC-0002).
+    fn elapsed(&mut self, handle: Option<u32>) -> u32 {
+        let remaining = self.remaining(handle);
+        let Some(timer) = self.timer(handle).filter(|t| t.started) else {
+            return 0;
+        };
+        let base = if timer.queued.is_some() {
+            timer.run
+        } else {
+            timer.timeout
+        };
+        sub(base, remaining)
     }
 }
 
@@ -493,14 +534,7 @@ impl<'a> Game<'a> {
             let Some(timer) = state.timer(Some(handle)) else {
                 return;
             };
-            let (periodic, timeout) = (timer.periodic, timer.timeout);
-            let (callback, trigger) = (timer.callback, timer.fires_trigger);
-            // PROVISIONAL: a periodic timer is restarted before its callback
-            // runs, with the queue time at its expiry (SPEC-0002).
-            if periodic {
-                state.start_timer(handle, timeout);
-            }
-            (callback, trigger)
+            (timer.callback, timer.fires_trigger)
         };
         if let Some(trigger) = trigger {
             fire_trigger(&mut self.vm, &self.state, trigger);
@@ -511,6 +545,18 @@ impl<'a> Game<'a> {
             };
             // A timer callback that sleeps ends at the sleep (SPEC-0005).
             run_new_thread(&mut self.vm, &self.state, callback, context, false);
+        }
+        // A periodic timer starts again after its callback, one period
+        // after the expiry that fired, unless the callback started,
+        // destroyed or paused it (SPEC-0002). The queue time is still that
+        // expiry.
+        let mut state = self.state.borrow_mut();
+        let restart = state
+            .timer(Some(handle))
+            .filter(|t| t.periodic && t.queued.is_none() && t.paused.is_none())
+            .map(|t| t.timeout);
+        if let Some(period) = restart {
+            state.start_timer(handle, period);
         }
     }
 
@@ -634,9 +680,12 @@ fn evaluate_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) -> bo
         triggering_trigger: Some(trigger),
         ..state.borrow().context
     };
-    conditions
+    // SPEC-0006: every condition is evaluated, also after a false one.
+    let results: Vec<bool> = conditions
         .into_iter()
-        .all(|condition| test_boolexpr(vm, state, Some(condition), context))
+        .map(|condition| test_boolexpr(vm, state, Some(condition), context))
+        .collect();
+    results.into_iter().all(|ok| ok)
 }
 
 /// Runs a boolean function in its own thread: true only if it returns
@@ -653,10 +702,20 @@ fn run_test(vm: &mut Vm, state: &Rc<RefCell<State>>, function: usize, context: C
     }
 }
 
-/// Tests a boolexpr. PROVISIONAL: `null`, also as an operand, is true;
-/// `And` and `Or` test left to right and stop as soon as the result is
-/// known.
+/// Tests a boolexpr given to a native; a `null` filter accepts everything.
 fn test_boolexpr(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    expr: Option<u32>,
+    context: Context,
+) -> bool {
+    expr.is_none() || test_operand(vm, state, expr, context)
+}
+
+/// Tests a boolexpr operand. `And` and `Or` test the right operand only
+/// when the left one does not decide; a `null` or destroyed operand of
+/// `And` is false (SPEC-0006). PROVISIONAL: also of `Or` and `Not`.
+fn test_operand(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
     expr: Option<u32>,
@@ -664,17 +723,17 @@ fn test_boolexpr(
 ) -> bool {
     let object = expr.and_then(|h| state.borrow().objects.get(&h).cloned());
     let Some(Object::BoolExpr(expr)) = object else {
-        return true;
+        return false;
     };
     match expr {
         BoolExpr::Function(function) => run_test(vm, state, function, context),
         BoolExpr::And(a, b) => {
-            test_boolexpr(vm, state, a, context) && test_boolexpr(vm, state, b, context)
+            test_operand(vm, state, a, context) && test_operand(vm, state, b, context)
         }
         BoolExpr::Or(a, b) => {
-            test_boolexpr(vm, state, a, context) || test_boolexpr(vm, state, b, context)
+            test_operand(vm, state, a, context) || test_operand(vm, state, b, context)
         }
-        BoolExpr::Not(a) => !test_boolexpr(vm, state, a, context),
+        BoolExpr::Not(a) => !test_operand(vm, state, a, context),
     }
 }
 
@@ -819,16 +878,9 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         state,
         "native TimerGetElapsed takes timer whichTimer returns real",
         |vm, state, args| {
-            // A timer never started reads 0 (SPEC-0002); `sub(0, 0)` would
-            // give -0.0. An expired one-shot timer has remaining 0, so its
-            // elapsed time is its timeout.
-            let mut state = state.borrow_mut();
-            let remaining = state.remaining(handle(&args[0]));
-            let Some(timer) = state.timer(handle(&args[0])).filter(|t| t.started) else {
-                return Ok(Some(Value::Real(0)));
-            };
-            let timeout = timer.timeout;
-            Ok(Some(Value::Real(sub(timeout, remaining))))
+            Ok(Some(Value::Real(
+                state.borrow_mut().elapsed(handle(&args[0])),
+            )))
         }
     );
     native!(
@@ -895,25 +947,32 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             Ok(None)
         }
     );
-    let functions: HashMap<String, usize> = program
+    // Script functions by name, with whether they take parameters.
+    let functions: HashMap<String, (usize, bool)> = program
         .functions
         .iter()
         .enumerate()
-        .filter(|(_, f)| !f.native && f.parameters.is_empty())
-        .map(|(i, f)| (f.name.clone(), i))
+        .filter(|(_, f)| !f.native)
+        .map(|(i, f)| (f.name.clone(), (i, !f.parameters.is_empty())))
         .collect();
     native!(
         add,
         state,
         "native ExecuteFunc takes string funcName returns nothing",
         |vm, state, args| {
-            // PROVISIONAL: an unknown name, or a function that takes arguments,
-            // does nothing.
-            if let Some(&function) = string(&args[0]).and_then(|name| functions.get(name)) {
-                let context = state.borrow().context;
-                run_new_thread(vm, state, function, context, true);
+            // SPEC-0006: the name is case-sensitive, an unknown name does
+            // nothing, and a returned value is discarded. PROVISIONAL: a
+            // function with parameters ends the caller (the game showed no
+            // further output).
+            match string(&args[0]).and_then(|name| functions.get(name)) {
+                Some(&(_, true)) => Err(vm.fail("ExecuteFunc of a function with parameters")),
+                Some(&(function, false)) => {
+                    let context = state.borrow().context;
+                    run_new_thread(vm, state, function, context, true);
+                    Ok(None)
+                }
+                None => Ok(None),
             }
-            Ok(None)
         }
     );
 
@@ -974,17 +1033,28 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             ))))
         }
     );
-    // PROVISIONAL: each call makes a new boolexpr.
+    // The same function gives the same boolexpr, through either native
+    // (SPEC-0006). PROVISIONAL: after `DestroyBoolExpr` a new one is made.
     for declaration in [
         "native Condition takes code func returns conditionfunc",
         "native Filter takes code func returns filterfunc",
     ] {
         native!(add, state, declaration, |vm, state, args| {
-            Ok(Some(Value::Handle(code(&args[0]).map(|function| {
-                state
-                    .borrow_mut()
-                    .create(Object::BoolExpr(BoolExpr::Function(function)))
-            }))))
+            let Some(function) = code(&args[0]) else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let mut state = state.borrow_mut();
+            let existing = state
+                .conditions
+                .get(&function)
+                .copied()
+                .filter(|h| matches!(state.objects.get(h), Some(Object::BoolExpr(_))));
+            let h = existing.unwrap_or_else(|| {
+                let h = state.create(Object::BoolExpr(BoolExpr::Function(function)));
+                state.conditions.insert(function, h);
+                h
+            });
+            Ok(Some(Value::Handle(Some(h))))
         });
     }
     native!(
@@ -1213,30 +1283,20 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         "native S2I takes string s returns integer",
         |vm, state, args| { Ok(Some(Value::Integer(s2i(string(&args[0]).unwrap_or(""))))) }
     );
-    // PROVISIONAL: three decimals for R2S, and Rust's formatting of the
-    // nearest decimal for both.
+    // R2S and R2SW as SPEC-0004 describes them.
     native!(
         add,
         state,
         "native R2S takes real r returns string",
-        |vm, state, args| {
-            Ok(Some(Value::string(&format!(
-                "{:.3}",
-                f32::from_bits(real(&args[0]))
-            ))))
-        }
+        |vm, state, args| { Ok(Some(Value::string(&ow3_math::r2sw(real(&args[0]), 0, 3)))) }
     );
     native!(
         add,
         state,
         "native R2SW takes real r, integer width, integer precision returns string",
         |vm, state, args| {
-            let (width, precision) = (
-                integer(&args[1]).max(0) as usize,
-                integer(&args[2]).max(0) as usize,
-            );
-            let value = f32::from_bits(real(&args[0]));
-            Ok(Some(Value::string(&format!("{value:width$.precision$}"))))
+            let text = ow3_math::r2sw(real(&args[0]), integer(&args[1]), integer(&args[2]));
+            Ok(Some(Value::string(&text)))
         }
     );
     native!(

@@ -476,3 +476,58 @@ fn w2c_resolving_natives() {
         ],
     );
 }
+
+/// SPEC-0005 and SPEC-0006 compiler tests: maps the game rejects, and what
+/// the accepted ones print.
+#[test]
+fn c_compiler_maps() {
+    let dir = game_data().join("Maps/Test-ow3");
+    if !dir.exists() {
+        return;
+    }
+    for name in [
+        "c-NM-underscore-end.w3x",
+        "c-NM-underscore-start.w3x",
+        "c-NU-return-null-int.w3x",
+        "c-NU-set-bool-null.w3x",
+        "c-NU-set-int-null.w3x",
+        "c-NU-set-real-null.w3x",
+        "c-SN-global-eq-function.w3x",
+        "c-CP-int-eq-bool.w3x",
+        "c-OR-call-before-decl.w3x",
+        "c-OR-funcref-before-decl.w3x",
+        "c-OR-global-init-func.w3x",
+        "c-OR-global-init-later.w3x",
+        "c-RB-early-handle-int.w3x",
+        "c-RB-early-string-int.w3x",
+        "c-RW-debug.w3x",
+    ] {
+        let rejected =
+            Map::load(&game_data(), &dir.join(name)).map_or(true, |m| m.check().is_err());
+        assert!(rejected, "{name} should not load");
+    }
+    for (name, lines) in [
+        ("c-LC-repeat-diff.w3x", &["LC diff = 2.500"][..]),
+        (
+            "c-LC-local-is-param-difftype.w3x",
+            &["LC local=param difftype = 9.500"],
+        ),
+        ("c-NU-arg-int-null.w3x", &["NU arg null = 0"]),
+        ("c-NU-native-int-null.w3x", &["NU I2S(null) = 0"]),
+        ("c-CP-unit-eq-player.w3x", &["CP unit==player: false"]),
+        ("c-CP-int-eq-real.w3x", &["CP 1==1.0: true"]),
+        ("c-NL-string-lf.w3x", &["NL len = 3"]),
+        ("c-CR-line-ending.w3x", &["CR x=2"]),
+        ("c-NM-digit-start.w3x", &["NM x1 = 4"]),
+        (
+            "c-EF-unknown.w3x",
+            &["EF before unknown", "EF after unknown"],
+        ),
+        ("c-EF-params.w3x", &["EF before params"]),
+    ] {
+        let Some(output) = run(name, 3.0) else {
+            continue;
+        };
+        assert_lines(&output, lines);
+    }
+}

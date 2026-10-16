@@ -102,7 +102,8 @@ fn melee_map_setup() {
     let state = game.state.borrow();
     let setup = &state.setup;
     assert_eq!(setup.local_player, 0);
-    assert_eq!(setup.present(), [0]);
+    assert_eq!(setup.present(), [0, 12, 13, 14, 15]);
+    assert_eq!(setup.enumerable(), [0]);
     assert_eq!(setup.player_count, 2);
     for player in &map.info.players {
         let (x, y) = setup.start_locations[&player.number];

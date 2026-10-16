@@ -1,15 +1,17 @@
 //! Player slots, start locations, alliances and the map's names: what the
 //! lobby and the map's `config` function set up.
 //!
+//! The neutral slots 12..15 are always playing (SPEC-0006).
+//!
 //! PROVISIONAL, listed in specs/QUESTIONS.md: without a lobby, the game is
 //! single player. The local player is the first user slot of
-//! `war3map.w3i` (player 0 without a map); the slots in the game are the
-//! local player's and the computer slots. Slots start from `war3map.w3i`:
-//! controller from the slot type, race (human for a selectable race),
-//! name with trigger strings resolved, start location by player number,
-//! team by force. Slots the map does not list are users for 0..11 and
-//! neutral for 12..15, named "Player <n>". A player is an ally of itself
-//! and of the players it gives `ALLIANCE_PASSIVE`.
+//! `war3map.w3i` (player 0 without a map); the other slots playing are
+//! the computer slots, of the map or set by `config`. Slots start from
+//! `war3map.w3i`: controller from the slot type, race (human for a
+//! selectable race), name with trigger strings resolved, start location by
+//! player number, team by force. Slots the map does not list are users for
+//! 0..11 and neutral for 12..15, named "Player <n>". A player is an ally of
+//! itself and of the players it gives `ALLIANCE_PASSIVE`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +25,8 @@ use super::{Object, State, converted, handle, integer, real, string};
 use crate::map::Map;
 
 pub const SLOTS: i32 = 16;
+/// Players 0..11; 12..15 are the neutral players.
+pub const PLAYABLE: i32 = 12;
 
 const CONTROL_USER: i32 = 0;
 const CONTROL_COMPUTER: i32 = 1;
@@ -67,7 +71,7 @@ impl Setup {
     pub fn single_player() -> Setup {
         let slots = (0..SLOTS)
             .map(|id| Slot {
-                present: id == 0,
+                present: id == 0 || id >= PLAYABLE,
                 controller: if id < 12 {
                     CONTROL_USER
                 } else {
@@ -146,8 +150,18 @@ impl Setup {
         setup
     }
 
+    /// Players whose slot is playing.
     pub fn present(&self) -> Vec<i32> {
         (0..SLOTS)
+            .filter(|&id| self.slots[id as usize].present)
+            .collect()
+    }
+
+    /// What `ForceEnumPlayers` puts in a force: the players 0..11 whose
+    /// slot is playing, users and computers; the neutral players 12..15
+    /// are left out although their slots are playing (SPEC-0006).
+    pub fn enumerable(&self) -> Vec<i32> {
+        (0..PLAYABLE)
             .filter(|&id| self.slots[id as usize].present)
             .collect()
     }
@@ -352,8 +366,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let mut state = state.borrow_mut();
             let id = player(&state, &args[0]);
+            let local = state.setup.local_player;
             if let (Some(slot), Some(value)) = (state.setup.slot(id), value) {
                 *field(slot) = value;
+                // PROVISIONAL: in single player a slot that `config` gives
+                // to a computer plays, and another user slot stays empty.
+                if setter.contains("SetPlayerController") && id < Some(PLAYABLE) {
+                    slot.present = id == Some(local) || value == CONTROL_COMPUTER;
+                }
             }
             Ok(None)
         });

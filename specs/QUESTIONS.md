@@ -96,46 +96,33 @@ sound of a region names a sound of the same map. Not yet confirmed:
 
 ## JASS syntax (`ow3-jass`)
 
-Precedence, literals and escapes are answered by SPEC-0005. Still open:
+Precedence, literals, escapes, names, line endings and reserved words are
+answered by SPEC-0005. Still open:
 
-- **Reserved words.** The parser reserves the six built-in type names
-  (`integer`, `real`, `boolean`, `string`, `handle`, `code`) as well as the
-  keywords; SPEC-0001 confirms this only for `code` as a parameter name.
 - **Unary `+`.** SPEC-0005 lists `not` and unary `-`; the parser also
-  accepts unary `+`. Does the game?
+  accepts unary `+` (test map `c-UP-unary-plus` loads and prints
+  `UP +5 = 5`). Does the game?
 - **Raw codes of five or more characters.** SPEC-0005 rejects 2 and 3
   characters; the parser rejects every length other than 1 and 4.
-- **Lines.** Are string literals across line breaks accepted, and is a
-  carriage return alone a line break?
-- **Names.** May names start or end with an underscore?
+- **`false` as a name** is rejected like `true`, which SPEC-0005 assumes.
 
 ## JASS names and types (`ow3-jass::check`)
 
 `common.j` with `Blizzard.j`, all shipped map scripts and all but seven AI
-scripts pass the checker. Two map test scripts for SPEC-0001 fail with the
-native name clash that spec describes. Not yet confirmed:
+scripts pass the checker with the rules of SPEC-0005. Still open:
 
 - **Outdated AI scripts.** `Scripts\demo.ai`, `h04_orange.ai` and the five
   `orc03*.ai` call `common.ai` functions with older signatures (for example
   `CampaignAI` with one argument, while `common.ai` takes `integer farms,
   code heroes`) or use undeclared names. Does the game ever compile them,
   and against which `common.ai`?
-- **`null` as an integer.** `(6)BomberCommand.w3x` returns `null` from an
-  integer function and the map is shipped, so the checker accepts `null`
-  where an integer is expected. Is that true everywhere (arguments,
-  assignments, `real`, `boolean`), and what value results?
-- **Repeated locals.** The same map declares `local real rHeight` twice in
-  one function. The checker accepts a repeated local of the same type. Is
-  a different type accepted, and can a local repeat a parameter's name?
-- **Order of declarations.** The checker requires a function to be
-  declared above the code that calls it or refers to it with `function`,
-  and a global above the global initialiser that uses it.
-- **Shared names.** May a global share its name with a function, or a local
-  with a global (the checker allows both)?
-- **Comparisons.** The checker allows `==` and `!=` between any two handle
-  types and between `null` and handle, string or code values.
-- **Code values.** Can `function F` refer to a native, or to a function
-  that takes parameters?
+- **`null` as an initial value.** SPEC-0005 accepts `null` for an integer
+  or real in arguments and in a `return` that is not the last statement,
+  and rejects it in `set`. The checker also rejects it as the initial value
+  of a local or global integer or real. Is that right?
+- **Last statement.** A `return null` counts as the last statement only at
+  the top level of the function body, not inside an `if` that ends the
+  function.
 
 ## JASS operation costs (`ow3-jass::vm`)
 
@@ -144,101 +131,98 @@ the costs it adds for conversions, `if` with an empty branch and a bare
 `return`. Choices where the spec is silent:
 
 - **Global initialisers** run before any thread and are not counted.
-- **Callbacks** that natives run through `code` values: see "Forces, groups
-  and enumerations" below.
+- **Nested threads.** Threads started by natives inside other threads
+  (`ExecuteFunc`, `TriggerExecute`, `TriggerEvaluate`, `ForGroup`, ...)
+  may nest 100 deep; one more fails in the caller. What does the game do
+  with deep nesting, for example a trigger that runs itself with
+  `TriggerExecute` without sleeping?
 
 ## Game time (`ow3-sim`)
 
 The timer queue follows SPEC-0002 and reproduces its tests T1c and T3c
 within the resolution of the 1000 s reference clock (2^-14 s). The test
 maps T3c, SP, PQ (SQ), PZ, LT and RD run as scripts in `ow3-sim` and match
-the spec. Choices where the spec is silent:
+the spec, as does a script test of periodic restarts, `TimerStart` and
+`DestroyTimer` in the callback, and pause and resume. Choices where the
+spec is silent:
 
 - **Order inside a chunk.** The chunk's ticks run first, then the sleep
   check that ends it. At full speed this puts checks at game times 0.1, 0.2,
   ... as the spec says.
 - **Threads due at the same check** resume in the order they went to sleep.
-- **`fmod` for long timers.** Answered: SPEC-0004 now defines it in
-  "Fractional part and remainder" (not in this repository yet). Until it
-  arrives we use `mul(sub(t, floor(t)), 120.0)` with `t = div(timeout,
-  120.0)`, which lacks the final correction.
-- **`TimerGetRemaining` of a long timer.** We add the parts still to run to
-  `sub(e, q)` with `add` and `mul(i2r(parts), 120.0)`. How does the game
-  compute it?
-- **Pausing a long timer.** `ResumeTimer` splits the saved remaining time
-  again by the same rule. Is that right?
-- **Never-started timer.** `sub(0, 0)` gives -0.0 under SPEC-0004, so we
-  return 0 directly for `TimerGetElapsed` of a timer never started. What
-  does `R2S` print for -0.0?
-- **Periodic restart.** A periodic timer is queued again before its
-  callback runs, with the queue time at its expiry. Is it before or after
-  the callback, and does `TimerStart` in the callback replace it?
-- **`DestroyTimer`** of a running timer removes it from the queue. Does a
-  destroyed timer whose callback is running still fire later if periodic?
+- **`TimerGetRemaining` of a long timer** is the length of the run minus
+  the parts done and the time spent in the current part, all in engine
+  arithmetic. This keeps `TimerGetElapsed` of the 1000 s clock in test PZ
+  at exactly 1.0000, which adding up the remaining parts did not (it read
+  1.0001 with the exact `fmod`). Which operations does the game use?
+- **`TimerGetTimeout` after `ResumeTimer`** still reads the timeout given
+  to `TimerStart`, while `TimerGetElapsed` counts from the resume, and a
+  periodic timer goes on with its original period. Is that so?
+- **`PauseTimer` inside the timer's own callback** does nothing, since the
+  timer is not in the queue then; the periodic timer restarts after the
+  callback. Is that so?
 - **Script execution time.** Our scripts take no real time, so test CU
   (stall) cannot be reproduced from the script; catch-up is tested by
   adding real time directly.
 
-## Triggers and natives (`ow3-sim::game`)
+## Handles and natives (`ow3-sim::game`)
 
-Provisional choices in the scheduler and natives, used by the test maps:
+SPEC-0006 is followed for `Condition` and `Filter`, `And`, trigger
+conditions, callbacks and `ExecuteFunc`. Choices where the specs are
+silent:
 
-- **Handles** of objects are numbered from `0x100000` upwards in creation
-  order. A `Convert*` value is not an object: its handle id is the integer
-  itself (answered by test B1, `GetHandleId(GetGameSpeed())` gives 2).
-  Players from `Player` are objects created on first use. Is the first
-  object handle always `0x100000`, and are ids of destroyed objects reused?
-- **Conditions** run in their own threads, in the order added, and stop at
-  the first false; a condition that sleeps or ends by an error counts as
-  false. Is that the game's order and short-circuit?
-- **`Condition` and `Filter`** return a new boolexpr on every call. Does the
-  game return the same handle for the same function?
-- **`ExecuteFunc`** of an unknown name or of a function with parameters
-  does nothing. What does the game do?
-- **`R2S` and `R2SW`** print with Rust's rounding (`{:.3}` and width and
-  precision). What are the exact rules, especially rounding of halves,
-  large values and -0.0?
+- **Handle ids.** Eight ids are taken before the players, so `Player(0)` is
+  0x100008, and the 16 players follow in order. Other ids the game takes
+  before `main` are not reproduced (the first `Location` of a 12-player
+  melee map is 0x10118C in the game). Ids of destroyed objects are never
+  reused: SPEC-0006 describes reuse that depends on variables no longer
+  referring to the object, which needs reference tracking we do not have.
+- **`Or` and `Not` with a `null` or destroyed operand** count it as false,
+  like `And` (SPEC-0006 open question 5).
+- **`Condition` after `DestroyBoolExpr`** of the shared boolexpr makes a new
+  one.
+- **`ExecuteFunc` of a function with parameters** ends the calling thread
+  (SPEC-0006 open question 2).
+- **`SubString`** uses byte positions clamped to the string, and an end
+  before the start gives "". **`StringCase`** changes ASCII letters only.
+  What does the game do with positions out of range and with non-ASCII
+  text?
+- **Random numbers.** `GetRandomInt` and `GetRandomReal` use a stand-in
+  generator so that scripts see varied values: maps that wait
+  `PolledWait(GetRandomReal(20, 45))` and then run their own trigger again
+  recursed without end while the stub returned 0. We need the game's
+  generator: algorithm, seed at game start, `SetRandomSeed`, and how
+  bounds (inclusive, swapped) are handled. This matters for replays and
+  multiplayer.
 
 ## Forces, groups and enumerations (`ow3-sim::game::enumerate`)
 
-Tests B1, B6 and L5 match SPEC-0005 (callbacks and filters that sleep end
-at the sleep, the enumeration goes on). Units are placeholders with owner,
-type, position, facing and a dead flag until units are specified. Choices
-where the specs are silent:
+Tests B1, B6 and L5 match SPEC-0005 and SPEC-0006. Units are placeholders
+with owner, type, position, facing and a dead flag until units are
+specified. Choices where the specs are silent:
 
-- **Budget and errors.** Each callback and each filter runs in a thread of
-  its own, with its own operation budget, and an error ends only that
-  callback. Is that so, or do they share the caller's budget?
-- **A filter that sleeps** counts as false, like a condition. Is the unit
-  or player then left out?
-- **Order.** `ForForce` goes by increasing player id; `ForGroup` in the
-  order units were added; `GroupEnum*` in the order units were created.
-- **Clearing.** `GroupEnum*` and `ForceEnumPlayers*` clear the group or
-  force first. Does `ForceEnumPlayers` clear?
-- **`ForceEnumPlayers` with a `null` filter** adds every player whose slot
-  is playing; see "Map loading and player slots" for which slots those
-  are.
+- **`ForGroup` order** is the order units were added, and `GroupEnum*`
+  filters run in the order units were created. SPEC-0006 shows other
+  orders (open question 1).
 - **Changes during `ForGroup`.** It works on a copy of the group taken at
-  the start and skips handles that no longer refer to units. What happens
-  when the callback adds or removes units, or a unit is removed from the
-  game while still in a group?
-- **Range and rect tests.** A unit is in range when
+  the start, so units added are not visited (as in SPEC-0006), and skips
+  handles that no longer refer to units. A removed unit leaves its groups
+  at once; SPEC-0006 says it stays briefly.
+- **Range and rect tests** use engine arithmetic:
   `add(mul(dx, dx), mul(dy, dy)) <= mul(r, r)` with `dx = sub(x_u, x)`, and
-  in a rect when `min <= x_u <= max` on both axes. Does the range include
-  the unit's collision size, and which operations does the game use?
+  `min <= x_u <= max` on both axes (SPEC-0006 open question 3).
 - **Dead units** are enumerated by `GroupEnum*` until they are removed.
 - **Counted variants** stop after `countLimit` units or players have been
   added; a limit of 0 or less adds none.
-- **`And`, `Or`, `Not`** test left to right and stop as soon as the result
-  is known; a `null` operand or a destroyed boolexpr counts as true. Each
-  call makes a new boolexpr.
-- **`Player(n)`** gives `null` outside 0..15.
 - **`EnumDestructablesInRect`** first tests every destructable in the rect
   with the filter, then runs the action for those that passed, in the
   order of `war3map.doo`. Or does it run the action right after each
-  filter? A destructable is in the rect when `min <= x <= max`.
+  filter?
+- **`ForceEnumAllies` and `ForceEnumEnemies`** take the same players as
+  `ForceEnumPlayers`, split by `IsPlayerAlly`.
 - **Not yet:** `EnumItemsInRect`, `GroupEnumUnitsOfType` (needs unit
-  names), `GroupEnumUnitsSelected` and death events.
+  names), `GroupEnumUnitsSelected`, `IsUnitInRangeXY` (needs collision
+  sizes) and death events.
 
 ## Map loading and player slots (`ow3-sim::map`, `game::players`)
 
@@ -253,10 +237,11 @@ anything yet:
   replace `Scripts\common.j` and `Scripts\Blizzard.j` with its own copies.
   Is that the game's order, and does the game accept such copies?
 - **Who plays in single player.** The local player is the first user slot
-  of `war3map.w3i`; the slots in the game are the local player's and every
-  computer slot. Other user slots are empty. Is that what the game does
-  for a map started from the single player menu, for melee maps and for
-  maps with fixed player settings?
+  of `war3map.w3i`. Computer slots of the map play, and so does a slot
+  that `config` gives to a computer with `SetPlayerController`; other user
+  slots are empty. The neutral slots 12..15 always play (SPEC-0006). Is
+  that what the game does for melee maps and for maps with fixed player
+  settings?
 - **Slots before `config`.** Controller from the `war3map.w3i` slot type
   (user, computer, neutral, rescuable), race from the slot (human when the
   race is selectable), name from the slot with trigger strings resolved,
@@ -275,23 +260,3 @@ anything yet:
 - **Destructables** are the `war3map.doo` entries whose type is in
   `Units\DestructableData.slk` or is a custom destructable of the map.
   Are other placed doodads ever enumerated?
-- **Real literals in `config`.** By SPEC-0004 and SPEC-0005 a literal reads
-  like `S2R`, so `DefineStartLocation(0, -8384.0, 1792.0)` gives
-  `GetStartLocationY(0) = 1792.0001` (`0x44E00001`). Can this be confirmed
-  in the game?
-- **Random numbers.** `GetRandomInt` and `GetRandomReal` use a stand-in
-  generator so that scripts see varied values: maps that wait
-  `PolledWait(GetRandomReal(20, 45))` and then run their own trigger again
-  recursed without end while the stub returned 0. We need the game's
-  generator: algorithm, seed at game start, `SetRandomSeed`, and how
-  bounds (inclusive, swapped) are handled. This matters for replays and
-  multiplayer.
-- **Nested threads.** Threads started by natives inside other threads
-  (`ExecuteFunc`, `TriggerExecute`, `TriggerEvaluate`, `ForGroup`, ...)
-  may nest 100 deep; one more fails in the caller. What does the game do
-  with deep nesting, for example a trigger that runs itself with
-  `TriggerExecute` without sleeping?
-- **`SubString`** uses byte positions clamped to the string, and an end
-  before the start gives "". **`StringCase`** changes ASCII letters only.
-  What does the game do with positions out of range and with non-ASCII
-  text?

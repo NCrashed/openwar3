@@ -46,20 +46,15 @@ pub fn raise_timeout(timeout: u32) -> u32 {
     }
 }
 
-/// Splits a timeout (already raised) into `n` parts of 120 s and a last
-/// part `R` (SPEC-0002). With `n = 0` the timer is queued whole.
-///
-/// PROVISIONAL: `fmod` is not defined in SPEC-0004 yet. It is taken as
-/// `mul(sub(t, floor(t)), 120)` with `t = div(timeout, 120)`, which gives
-/// the documented `R = 69.99998` for 310 s.
+/// Splits a timeout (already raised) into `n = trunc(timeout) / 120` parts
+/// of 120 s and a last part `R = fmod(timeout, 120)`, at least 0.0001
+/// (SPEC-0002, SPEC-0004). With `n = 0` the timer is queued whole.
 pub fn split_timeout(timeout: u32) -> (u32, u32) {
     let n = (ow3_math::r2i(timeout).max(0) / 120) as u32;
     if n == 0 {
         return (0, timeout);
     }
-    let t = ow3_math::div(timeout, LONG_PART);
-    let rest = ow3_math::mul(sub(t, ow3_math::floor(t)), LONG_PART);
-    (n, raise_timeout(rest))
+    (n, raise_timeout(ow3_math::fmod(timeout, LONG_PART)))
 }
 
 /// Identifies one start of a timer. A timer started again gets a new id.

@@ -275,7 +275,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     return Ok(None);
                 };
                 players.clear();
-                let present = state.setup.present();
+                let present = state.setup.enumerable();
                 present
                     .into_iter()
                     .map(|id| state.player_handle(id))
@@ -548,7 +548,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 players.clear();
                 let present: Vec<i32> = state
                     .setup
-                    .present()
+                    .enumerable()
                     .into_iter()
                     .filter(|&id| state.setup.is_ally(of, id) == allies)
                     .collect();

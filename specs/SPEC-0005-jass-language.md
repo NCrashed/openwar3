@@ -146,7 +146,7 @@ Expressions:
 | `-e`, `not e` | c(e) + 1 |
 | `l op r` for `+ - * /` (also string `+`) and `== != < <= > >=` | c(l) + c(r) + 3 |
 | `( e )` | c(e) |
-| integer value used where a real is expected (implicit conversion) | c(e) + 1 |
+| integer value used where a real is expected (implicit conversion, see below) | c(e) + 1 |
 | `l and r`, `l` true | c(l) + c(r) + 2 |
 | `l and r`, `l` false | c(l) + 3 |
 | `l or r`, `l` false | c(l) + c(r) + 2 |
@@ -159,8 +159,18 @@ Running a function `f` once costs:
 - 1 per parameter;
 - per `local` declaration: 1, plus c(e) + 1 if it has an initial value `= e`;
 - the statements executed in its body;
-- at the end: `return e` costs c(e) + 2; `return` without a value and
-  reaching `endfunction` cost 2.
+- at the end: `return e` costs c(e) + 2; `return` without a value costs
+  1; reaching `endfunction` costs 2.
+
+Implicit integer to real conversion (+1) is applied to the integer value:
+
+- stored into a real variable (also an integer literal: `set r = 5`);
+- passed as a real argument to a function or a native (also a literal);
+- returned from a function that returns real;
+- as the integer operand of an arithmetic operator or comparison whose
+  other operand is real (`i + r`, `r + i`, `i < r`, `r == i`);
+- for an integer expression stored into a real, once, after the whole
+  expression (`set r = i + j` converts the sum).
 
 Statements:
 
@@ -172,6 +182,10 @@ Statements:
 | `if c then S endif`, `S` not empty, `c` true | c(c) + c(S) + 2 |
 | `if c then S endif`, `S` not empty, `c` false | c(c) + 1 |
 | `if c then endif` (empty), and `if c then else endif` (both empty) | c(c) |
+| `if c then else S2 endif` (empty `then`), `c` true | c(c) + 2 |
+| same, `c` false | c(c) + c(S2) + 2 |
+| `if c then S1 else endif` (empty `else`), `c` true | c(c) + c(S1) + 2 |
+| same, `c` false | c(c) + 2 |
 | `if c then S1 else S2 endif`, `c` true | c(c) + c(S1) + 2 |
 | `if c then S1 else S2 endif`, `c` false | c(c) + c(S2) + 2 |
 | `if c1 then S1 elseif c2 then S2 endif`, `c1` true | c(c1) + c(S1) + 2 |
@@ -221,9 +235,7 @@ returns `integer`) is rejected: the map does not load.
 
 ## Open questions
 
-1. Costs of constructs not measured yet: `if` with an empty `then` and a
-   non-empty `else`, and the exact place of implicit integer to real
-   conversions in mixed expressions (assumed at the integer operand).
+None for operation costs.
 
 ## Sources
 

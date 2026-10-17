@@ -40,6 +40,8 @@ pub struct UnitType {
     pub hero_life_regen: u32,
     /// Mana regeneration per second.
     pub mana_regen: u32,
+    /// How the unit turns (`orientInterp` of `UnitData.slk`, SPEC-0013).
+    pub orient_interp: u8,
 }
 
 /// When a type regenerates life (`regenType`).
@@ -185,6 +187,14 @@ impl ObjectData {
                     ..UnitType::default()
                 },
             );
+        }
+        for (id, values) in rows(archives, "Units\\UnitData.slk", "unitID", &["orientInterp"])? {
+            if let Some(unit) = data.units.get_mut(&id) {
+                unit.orient_interp = values[0]
+                    .as_deref()
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+            }
         }
         // The balance numbers of every type (SPEC-0009, SPEC-0013).
         let mut balance = BTreeMap::new();

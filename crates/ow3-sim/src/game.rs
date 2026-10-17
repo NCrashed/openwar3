@@ -46,6 +46,7 @@ macro_rules! native {
 mod boards;
 pub use boards::Button;
 mod enumerate;
+mod facing;
 pub mod players;
 mod widgets;
 
@@ -134,9 +135,12 @@ pub struct Unit {
     type_id: i32,
     x: u32,
     y: u32,
+    /// In radians (SPEC-0013, see [`facing`]).
     facing: u32,
-    /// A facing given to `SetUnitFacing`, reached on the next tick.
-    turning_to: Option<u32>,
+    /// A turn started by `SetUnitFacing`.
+    turn: Option<facing::Turn>,
+    /// `orientInterp` of the type.
+    orient_interp: u8,
     life: Regenerating,
     mana: Regenerating,
     alive: bool,
@@ -147,34 +151,42 @@ pub struct Unit {
 }
 
 /// A regenerating value (life or mana) as SPEC-0013 computes it: the
-/// value set last, the tick it was set at and the rate per second; the
-/// current value is `add(base, mul(rate, mul(i2r(n), dt)))` after `n`
-/// ticks, at most `max`. All bit patterns of reals.
+/// value set last, the game time elapsed since then and the rate per
+/// second; the current value is `add(base, mul(rate, elapsed))`, at most
+/// `max`. All bit patterns of reals.
+///
+/// The elapsed time grows by `dt` every tick. A hero's regeneration
+/// starts 0.0001 s after it is created, so its first step adds
+/// `sub(dt, 0.0001)`. This reproduces the footman and paladin life
+/// samples bit for bit; PROVISIONAL: the paladin mana samples differ by
+/// one unit of the last place at 3 of 60 ticks.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Regenerating {
     base: u32,
-    since: u64,
+    elapsed: u32,
     rate: u32,
     max: u32,
+    /// The start is delayed by the shortest timer timeout.
+    delayed: bool,
 }
 
 impl Regenerating {
-    fn full(max: u32, rate: u32, tick: u64) -> Regenerating {
+    fn full(max: u32, rate: u32) -> Regenerating {
         Regenerating {
             base: max,
-            since: tick,
+            elapsed: 0,
             rate,
             max,
+            delayed: false,
         }
     }
 
-    /// The value at `tick`.
-    pub fn at(&self, tick: u64) -> u32 {
-        let n = i32::try_from(tick.saturating_sub(self.since)).unwrap_or(i32::MAX);
-        let value = if self.rate == 0 || n == 0 {
+    /// The current value.
+    pub fn value(&self) -> u32 {
+        let value = if self.rate == 0 || self.elapsed == 0 {
             self.base
         } else {
-            add(self.base, mul(self.rate, mul(i2r(n), crate::timers::TICK)))
+            add(self.base, mul(self.rate, self.elapsed))
         };
         if f32::from_bits(value) > f32::from_bits(self.max) {
             self.max
@@ -183,8 +195,23 @@ impl Regenerating {
         }
     }
 
-    /// Sets the value at `tick`, limited to `0..=max`.
-    fn set(&mut self, value: u32, tick: u64) {
+    /// One tick of game time.
+    fn advance(&mut self) {
+        if self.rate == 0 {
+            return;
+        }
+        let step = if std::mem::take(&mut self.delayed) {
+            sub(crate::timers::TICK, crate::timers::MIN_TIMEOUT)
+        } else {
+            crate::timers::TICK
+        };
+        if self.value() != self.max {
+            self.elapsed = add(self.elapsed, step);
+        }
+    }
+
+    /// Sets the value, limited to `0..=max`.
+    fn set(&mut self, value: u32) {
         let v = f32::from_bits(value);
         self.base = if v > f32::from_bits(self.max) {
             self.max
@@ -193,7 +220,7 @@ impl Regenerating {
         } else {
             value
         };
-        self.since = tick;
+        self.elapsed = 0;
     }
 }
 
@@ -303,7 +330,7 @@ pub struct State {
     pub data: ObjectData,
     /// Simulation ticks so far.
     pub ticks: u64,
-    /// Units given a new facing, in the order of the calls.
+    /// Units turning, in the order of the calls.
     turning: Vec<u32>,
     /// Interface strings for `GetLocalizedString` (SPEC-0010).
     localized: BTreeMap<String, String>,
@@ -671,16 +698,32 @@ impl<'a> Game<'a> {
     fn tick(&mut self) {
         {
             let mut state = self.state.borrow_mut();
+            let state = &mut *state;
             state.ticks += 1;
-            // A unit told to face somewhere faces there from the next tick.
-            // PROVISIONAL: the turn rate is not specified (SPEC-0013).
-            for h in std::mem::take(&mut state.turning) {
-                if let Some(Object::Unit(unit)) = state.objects.get_mut(&h)
-                    && let Some(facing) = unit.turning_to.take()
+            let tick = state.ticks;
+            // Life and mana regenerate every tick (SPEC-0013).
+            for h in &state.units {
+                if let Some(Object::Unit(unit)) = state.objects.get_mut(h)
+                    && unit.alive
                 {
-                    unit.facing = facing;
+                    unit.life.advance();
+                    unit.mana.advance();
                 }
             }
+            state.turning.retain(|h| {
+                let Some(Object::Unit(unit)) = state.objects.get_mut(h) else {
+                    return false;
+                };
+                let Some(turn) = unit.turn.as_mut() else {
+                    return false;
+                };
+                let (facing, going) = turn.advance(unit.facing, tick);
+                unit.facing = facing;
+                if !going {
+                    unit.turn = None;
+                }
+                going
+            });
         }
         let mut tick = self.state.borrow_mut().timers.begin_tick();
         loop {
@@ -1826,25 +1869,53 @@ mod tests {
 
     #[test]
     fn footman_regeneration_matches_samples() {
-        // SetUnitState(u, UNIT_STATE_LIFE, 100) at tick 7, 0.25 per second.
-        let mut life = Regenerating::full(0x43D2_0000, 0x3E80_0000, 0);
-        life.set(0x42C8_0000, 7);
+        // SetUnitState(u, UNIT_STATE_LIFE, 100), 0.25 per second.
+        let mut life = Regenerating::full(0x43D2_0000, 0x3E80_0000);
+        life.set(0x42C8_0000);
+        assert_eq!(life.value(), 0x42C8_0000);
         let samples = samples();
         assert_eq!(samples.len(), 60);
         for [n, footman, _, _] in samples {
-            assert_eq!(life.at(7 + u64::from(n)), footman, "tick {n}");
+            life.advance();
+            assert_eq!(life.value(), footman, "tick {n}");
         }
-        assert_eq!(life.at(7), 0x42C8_0000);
+    }
+
+    /// A paladin (strength 22, intelligence 17) set to life 100 and mana
+    /// 10 as it is created: its regeneration starts 0.0001 s late.
+    #[test]
+    fn paladin_regeneration_matches_samples() {
+        let per_point = 0x3D4C_CCCD;
+        let mut life = Regenerating::full(0x4422_8000, add(0x3E80_0000, mul(i2r(22), per_point)));
+        let mut mana = Regenerating::full(0x437F_0000, mul(i2r(17), per_point));
+        life.delayed = true;
+        mana.delayed = true;
+        life.set(0x42C8_0000);
+        mana.set(0x4120_0000);
+        let mut mana_misses = 0;
+        for [n, _, paladin_life, paladin_mana] in samples() {
+            life.advance();
+            mana.advance();
+            assert_eq!(life.value(), paladin_life, "tick {n}");
+            // PROVISIONAL: one unit of the last place off at a few ticks.
+            let off = mana.value().abs_diff(paladin_mana);
+            assert!(off <= 1, "tick {n}");
+            mana_misses += usize::from(off != 0);
+        }
+        assert!(mana_misses <= 3);
     }
 
     #[test]
     fn regenerating_limits() {
-        let mut mana = Regenerating::full(0x4320_0000, 0x3F80_0000, 0);
-        mana.set(0xC2C8_0000, 0);
-        assert_eq!(mana.at(0), 0);
-        mana.set(0x4400_0000, 0);
-        assert_eq!(mana.at(0), 0x4320_0000);
-        mana.set(0x431F_0000, 0);
-        assert_eq!(mana.at(1_000), 0x4320_0000);
+        let mut mana = Regenerating::full(0x4320_0000, 0x3F80_0000);
+        mana.set(0xC2C8_0000);
+        assert_eq!(mana.value(), 0);
+        mana.set(0x4400_0000);
+        assert_eq!(mana.value(), 0x4320_0000);
+        mana.set(0x431F_0000);
+        for _ in 0..1_000 {
+            mana.advance();
+        }
+        assert_eq!(mana.value(), 0x4320_0000);
     }
 }

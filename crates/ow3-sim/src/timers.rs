@@ -12,7 +12,7 @@ pub const TICK: u32 = 0x3BA3_D70A;
 /// 300.0: timer times never exceed it.
 const WRAP: u32 = 0x4396_0000;
 /// Smallest timeout, the float nearest to 0.0001.
-const MIN_TIMEOUT: u32 = 0x38D1_B717;
+pub(crate) const MIN_TIMEOUT: u32 = 0x38D1_B717;
 /// The float nearest to 0.001, subtracted from 300 for the largest timeout.
 const MAX_TIMEOUT_MARGIN: u32 = 0x3A83_126F;
 /// After the wrap, a queue time smaller than this in magnitude becomes 0.

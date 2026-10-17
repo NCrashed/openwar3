@@ -14,8 +14,7 @@
 //!
 //! PROVISIONAL, listed in specs/QUESTIONS.md: `KillUnit` has no killing
 //! unit; setting the hit points of a destructable to less than 0 kills
-//! like 0; `SetUnitFacing` takes effect on the next tick; life
-//! regeneration limited to night, day or blight never runs.
+//! like 0; life regeneration limited to night, day or blight never runs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,8 +27,8 @@ use ow3_math::{add, floor, mul, sub};
 use crate::data::{RegenType, UnitType, is_hero};
 
 use super::{
-    Context, Destructable, Item, Object, Regenerating, State, Unit, converted, fire_trigger,
-    handle, integer, real, string, test_boolexpr,
+    Context, Destructable, Item, Object, Regenerating, State, Unit, converted, facing,
+    fire_trigger, handle, integer, real, string, test_boolexpr,
 };
 
 const EVENT_PLAYER_UNIT_DEATH: i32 = 20;
@@ -110,21 +109,23 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
     } else {
         data.hero_life_regen
     };
-    let tick = state.ticks;
-    let mut mana = Regenerating::full(data.max_mana, data.mana_regen, tick);
-    mana.set(data.start_mana, tick);
-    // Positions snap to a quarter, facings are degrees in 0..360
-    // (SPEC-0013).
+    let mut life = Regenerating::full(data.hp, life_rate);
+    let mut mana = Regenerating::full(data.max_mana, data.mana_regen);
+    mana.set(data.start_mana);
+    // A hero's regeneration starts 0.0001 s after it is created.
+    life.delayed = is_hero(type_id);
+    mana.delayed = is_hero(type_id);
+    // Positions snap to a quarter (SPEC-0013).
     let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
-    let facing = f32::from_bits(at[2]).rem_euclid(360.0).to_bits();
     let unit = Unit {
         owner,
         type_id,
         x: snap(at[0]),
         y: snap(at[1]),
-        facing,
-        turning_to: None,
-        life: Regenerating::full(data.hp, life_rate, tick),
+        facing: facing::from_degrees(at[2]),
+        turn: None,
+        orient_interp: data.orient_interp,
+        life,
         mana,
         alive: true,
         hidden: false,
@@ -252,11 +253,10 @@ fn set_unit_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: 
         return;
     }
     let mut state = state.borrow_mut();
-    let tick = state.ticks;
     if let Some(u) = unit_mut(&mut state, h)
         && u.alive
     {
-        u.life.set(life, tick);
+        u.life.set(life);
     }
 }
 
@@ -397,7 +397,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         ),
         (
             "constant native GetUnitFacing takes unit whichUnit returns real",
-            |u: &Unit| u.facing,
+            |u: &Unit| facing::to_degrees(u.facing),
         ),
     ] {
         native!(add, state, declaration, |vm, state, args| {
@@ -435,9 +435,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let state = state.borrow();
             let value = match (state.unit(handle(&args[0])), handle(&args[1])) {
                 (Some(u), Some(s)) => match s as i32 {
-                    UNIT_STATE_LIFE if u.alive => u.life.at(state.ticks),
+                    UNIT_STATE_LIFE if u.alive => u.life.value(),
                     UNIT_STATE_MAX_LIFE => u.life.max,
-                    UNIT_STATE_MANA => u.mana.at(state.ticks),
+                    UNIT_STATE_MANA => u.mana.value(),
                     UNIT_STATE_MAX_MANA => u.mana.max,
                     _ => 0,
                 },
@@ -521,7 +521,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let life = match handle(&args[0]).and_then(|h| state.objects.get(&h)) {
-                Some(Object::Unit(u)) if u.alive => u.life.at(state.ticks),
+                Some(Object::Unit(u)) if u.alive => u.life.value(),
                 Some(Object::Destructable(d)) => d.life,
                 _ => 0,
             };
@@ -674,15 +674,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing",
         |vm, state, args| {
-            // PROVISIONAL (SPEC-0013 open question 2): the unit turns at an
-            // unknown rate; the new facing is reached on the next tick.
             let mut state = state.borrow_mut();
             let Some(h) = handle(&args[0]) else {
                 return Ok(None);
             };
+            let tick = state.ticks;
             if let Some(u) = unit_mut(&mut state, Some(h)) {
-                u.turning_to = Some(real(&args[1]));
-                state.turning.push(h);
+                let was_turning = u.turn.is_some();
+                u.turn = Some(facing::Turn::new(real(&args[1]), tick, u.orient_interp));
+                if !was_turning {
+                    state.turning.push(h);
+                }
             }
             Ok(None)
         }
@@ -749,11 +751,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 Some(UNIT_STATE_LIFE) => set_unit_life(vm, state, h, value),
                 Some(UNIT_STATE_MANA) => {
                     let mut state = state.borrow_mut();
-                    let tick = state.ticks;
                     if let Some(u) = unit_mut(&mut state, h)
                         && u.alive
                     {
-                        u.mana.set(value, tick);
+                        u.mana.set(value);
                     }
                 }
                 // SPEC-0013: the maxima cannot be set.

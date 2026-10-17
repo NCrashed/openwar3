@@ -255,13 +255,22 @@ where the spec is silent:
   yet, so `regenHP` of a type whose `regenType` is `night`, `day` or
   `blight` never applies; only a hero's strength part does. The map's
   `uhrt` field is not read.
-- **The first regeneration step of a hero** (SPEC-0013 open question 1)
-  is the same as the following ones: heroes regenerate like the footman
-  samples, by `add(v0, mul(rate, mul(i2r(n), dt)))`, and do not match the
-  paladin columns of `SPEC-0013-regen-samples.tsv` bit for bit.
-- **`SetUnitFacing`** (SPEC-0013 open question 2) sets the new facing at
-  the next tick; the turn rate and the conversion that makes 33.3 read as
-  33.299995 are not known, and `CreateUnit` stores the facing exactly.
+- **Regeneration arithmetic.** The elapsed time is a sum of `dt` per
+  tick, and a hero's first step after creation is `sub(dt, 0.0001)`. This
+  matches the footman and paladin life columns of
+  `SPEC-0013-regen-samples.tsv` bit for bit; the paladin mana column
+  differs by one unit of the last place at 3 of 60 ticks (with the rate
+  `mul(i2r(17), 0.05)`). `mul(i2r(n), dt)` minus 0.0001 instead misses one
+  life value. How the game computes the elapsed time and the hero mana
+  rate is open.
+- **`SetHeroStr`** and the other attribute setters are not implemented
+  yet, so a strength change does not restart life regeneration.
+- **Turning near the target** (SPEC-0013 open question 1): the unit
+  reaches the target once it is no more than a step away, while the game
+  shortens the last steps. `orientInterp` 2 and 5..8 turn like 0, and 3
+  has no maximum step.
+- **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
+  2) sees regeneration like any other thread.
 - **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the
   unit at the snapped point whatever is there. `SetUnitY` below
   `minY - 32` and `CreateUnit` far outside the world, which hang the

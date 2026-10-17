@@ -81,6 +81,18 @@ flags use other models (open question 1).
    missing one. The model used is `n = cvar mod count`.
 6. The ground of a tile with a cliff model is not drawn (the model
    brings its own ground).
+7. **Texture.** The cliff texture is `<texDir>\<texFile>.blp` of the cliff
+   type in `CliffTypes.slk` (`ReplaceableTextures\Cliff\Cliff0` or
+   `Cliff1`) for every tileset. The files `<letter>_Cliff0.blp` and
+   `<letter>_Cliff1.blp` of `War3.mpq` are not used: a test map with
+   tileset N or I that imported `Cliff0`/`Cliff1` in red and green and
+   `N_`/`I_` versions in other colours showed red and green cliffs in
+   both tilesets, and with only the `N_`/`I_` versions imported the
+   cliffs looked exactly as without any import. Cliffs of different
+   tilesets differ only through the tileset's lighting.
+   The snow along the top edge of `CNsn` cliffs (white) is not part of
+   `Cliff1` (it stayed white when `Cliff1` was replaced by solid green);
+   where it comes from is open question 5.
 
 ### Ramps
 
@@ -149,6 +161,8 @@ before.
    follow the ground heights of the corners.
 3. The clamping of small raised areas above.
 4. Water texture animation and shorelines.
+5. How the ground texture of the tileset (for `CNsn` the snow) is applied
+   to the parts of cliff models next to the upper and lower ground.
 
 ## Sources
 

@@ -358,12 +358,11 @@ cells, opacity of the full tile). Still open:
 Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 `ow3-render::water` and the viewer. Choices where the spec is silent:
 
-- **Cliff texture.** The model's replaceable texture 11 is
-  `texDir\texFile.blp` of the cliff type in `CliffTypes.slk`. The game
-  archives also have `ReplaceableTextures\Cliff\<letter>_Cliff0.blp` and
-  `_Cliff1.blp` for some tilesets (A, B, C, D, F, G, N, Q, V, W, X, Y),
-  none for I, J, K, O or Z; when these are used is not known. Cliffs on
-  an Icecrown map show grass this way.
+- **Cliff tops** (SPEC-0014 open question 5). The texture is
+  `texDir\texFile.blp` as rule 7 says, and the whole model is drawn with
+  it, so the top edge shows the grass of `Cliff1` where the game shows
+  the tileset's ground (snow on Northrend and Icecrown). Tilesets differ
+  in lighting, which the viewer does not model.
 - **Cliff placement** (SPEC-0014 open question 2). The shipped models
   span x -128..0, y 0..128 and raise the corner of the name's BL letter
   at (0, 0), BR at (0, 128), TR at (-128, 128), TL at (-128, 0); the

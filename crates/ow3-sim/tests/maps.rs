@@ -45,6 +45,7 @@ fn every_map_loads_and_runs() {
     maps(&game_data().join("Maps"), &mut found);
     found.sort();
     let mut failures = Vec::new();
+    let mut stubs: std::collections::BTreeMap<String, (usize, u64)> = Default::default();
     for path in &found {
         let name = path
             .strip_prefix(game_data())
@@ -68,6 +69,11 @@ fn every_map_loads_and_runs() {
         let mut game = Game::load_map(&program, &map).unwrap();
         game.start();
         game.advance_seconds(30.0);
+        for (native, calls) in game.vm.stub_calls() {
+            let entry = stubs.entry(native.to_owned()).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += calls;
+        }
         let state = game.state.borrow();
         eprintln!(
             "{name}: {} destructables, {} lines, {} thread errors{}",
@@ -81,6 +87,14 @@ fn every_map_loads_and_runs() {
         );
     }
     eprintln!("{} maps", found.len());
+    // Natives that are still stubs, by the number of maps that call them.
+    let mut by_maps: Vec<(&String, &(usize, u64))> = stubs.iter().collect();
+    by_maps.sort_by_key(|(name, (maps, calls))| {
+        (std::cmp::Reverse(*maps), std::cmp::Reverse(*calls), *name)
+    });
+    for (name, (maps, calls)) in by_maps {
+        eprintln!("stub {name}: {maps} maps, {calls} calls");
+    }
     assert!(failures.is_empty(), "{failures:#?}");
 }
 

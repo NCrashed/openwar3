@@ -11,7 +11,7 @@
 //! [`Vm::sleep`]; the thread then stops after that native returns, and the
 //! embedder resumes it later with [`Vm::resume`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::rc::Rc;
 
@@ -174,6 +174,9 @@ pub struct Vm<'a> {
     pending_sleep: Option<u32>,
     /// Threads running now, one inside the other.
     nesting: u32,
+    /// Calls of stubbed natives (see [`Natives::stub_missing`]) by function
+    /// index.
+    stub_calls: BTreeMap<usize, u64>,
     /// Function and position being executed, for error messages.
     current: (usize, Position),
 }
@@ -232,8 +235,11 @@ impl<'a> Vm<'a> {
                 }
                 None if natives.stub_missing => {
                     let returns = info.returns;
-                    Rc::new(move |_: &mut Vm, _: &[Value]| Ok(returns.map(Value::default_of)))
-                        as NativeFn
+                    let index = bodies.len();
+                    Rc::new(move |vm: &mut Vm, _: &[Value]| {
+                        *vm.stub_calls.entry(index).or_default() += 1;
+                        Ok(returns.map(Value::default_of))
+                    }) as NativeFn
                 }
                 None => {
                     return Err(LoadError(format!(
@@ -259,6 +265,7 @@ impl<'a> Vm<'a> {
             operation_limit: None,
             pending_sleep: None,
             nesting: 0,
+            stub_calls: BTreeMap::new(),
             current: (0, Position { line: 0, column: 0 }),
         };
         for script in scripts {
@@ -315,6 +322,14 @@ impl<'a> Vm<'a> {
     /// calling native returns. For natives such as `TriggerSleepAction`.
     pub fn sleep(&mut self, duration: u32) {
         self.pending_sleep = Some(duration);
+    }
+
+    /// How often each stubbed native was called, by name, for finding the
+    /// natives that scripts use and that are not implemented yet.
+    pub fn stub_calls(&self) -> impl Iterator<Item = (&str, u64)> + '_ {
+        self.stub_calls
+            .iter()
+            .map(|(&i, &n)| (self.program.functions[i].name.as_str(), n))
     }
 
     /// An error that ends the running thread, at its current position, for

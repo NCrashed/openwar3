@@ -160,3 +160,44 @@ fn clock_runs() {
     }
     assert_eq!(format!("{:.5}", game.time_of_day()), "9.04987");
 }
+
+/// The exact values of SPEC-0017: 0x4100CDD2 at the first tick after 1 s,
+/// and 12.499916 2000 ticks after the clock is set to 12.
+#[test]
+fn clock_bits() {
+    let script = ow3_jass::parse(
+        r#"
+type agent extends handle
+type fgamestate extends handle
+type timer extends agent
+native ConvertFGameState takes integer i returns fgamestate
+native SetFloatGameState takes fgamestate whichFloatGameState, real value returns nothing
+native CreateTimer takes nothing returns timer
+native TimerStart takes timer whichTimer, real timeout, boolean periodic, code handlerFunc returns nothing
+function Noon takes nothing returns nothing
+    call SetFloatGameState(ConvertFGameState(2), 12.0)
+endfunction
+function main takes nothing returns nothing
+    call TimerStart(CreateTimer(), 10.0, false, function Noon)
+endfunction
+"#,
+    )
+    .unwrap();
+    let refs = [&script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    game.run("main");
+    while game.ticks() < 201 {
+        game.step();
+    }
+    assert_eq!(game.time_of_day().to_bits(), 0x4100_CDD2);
+    // The timer sets 12.0 during some tick; 2000 ticks later:
+    let mut set_at = None;
+    while set_at.is_none_or(|t| game.ticks() < t + 2000) {
+        game.step();
+        if set_at.is_none() && game.time_of_day() < 12.001 && game.time_of_day() >= 12.0 {
+            set_at = Some(game.ticks());
+        }
+    }
+    assert_eq!(format!("{:.6}", game.time_of_day()), "12.499916");
+}

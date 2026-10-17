@@ -265,12 +265,12 @@ where the spec is silent:
   rate is open.
 - **`SetHeroStr`** and the other attribute setters are not implemented
   yet, so a strength change does not restart life regeneration.
-- **Turning near the target** (SPEC-0013 open question 1): the unit
-  reaches the target once it is no more than a step away, while the game
-  shortens the last steps. The first and largest steps of
-  `orientInterp` 2 and 5..8 are those of 0 and 3 has no maximum step
-  until SPEC-0013 itself (with those values and the closed forms of 3, 7
-  and 8) is in `specs/`; the braking follows the table of each type.
+- **Turning** (SPEC-0013 open question 1): `orientInterp` 3, 7 and 8 brake by the
+  closed form, the others by their table; 2 has no largest step (at
+  least 0.285 in the spec). The first change after `SetUnitFacing` comes
+  3 ticks after the call; the spec saw 3 to 6 by the phase of the
+  unit's update cycle, which `SetUnitFacing` does not follow here, and
+  the call does not change the heading of a walking unit.
 - **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
   2) sees regeneration like any other thread.
 - **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the

@@ -14,9 +14,8 @@
 //! remaining angle (SPEC-0018); with less than 0.001 radians left the
 //! facing takes its target.
 //!
-//! PROVISIONAL: `orientInterp` values other than 0, 1, 3 and 4 take the
-//! first and largest steps of 0, and 3 has no maximum; each type brakes
-//! by its own table.
+//! Values 3, 7 and 8 brake by the closed form of SPEC-0013, the others by
+//! their table.
 
 use ow3_math::{add, frac, mul, recip, sub};
 
@@ -53,17 +52,22 @@ pub fn to_degrees(radians: u32) -> u32 {
 }
 
 /// The first step and the largest step of `orientInterp`, in radians.
+///
+/// PROVISIONAL: the largest step of 2 was not reached within 180 degrees
+/// (at least 0.285), so it has none here.
 pub(super) fn steps(orient_interp: u8) -> (u32, u32) {
-    match orient_interp {
-        // 0.03, 0.1
-        1 => (0x3CF5_C28F, 0x3DCC_CCCD),
-        // 0.005, none measured
-        3 => (0x3BA3_D70A, PI),
-        // 0.04, 0.15
-        4 => (0x3D23_D70A, 0x3E19_999A),
-        // 0.07, 0.2
-        _ => (0x3D8F_5C29, 0x3E4C_CCCD),
-    }
+    let (s, m) = match orient_interp {
+        1 => (0.03f32, 0.1f32),
+        2 => return (0.015f32.to_bits(), PI),
+        3 => (0.005, 0.1),
+        4 => (0.04, 0.15),
+        5 => (0.05, 0.18),
+        6 => (0.1, 0.3),
+        7 => (0.003, 0.08),
+        8 => (0.001, 0.05),
+        _ => (0.07, 0.2),
+    };
+    (s.to_bits(), m.to_bits())
 }
 
 /// A turn in progress.
@@ -155,6 +159,21 @@ fn brake(remaining: u32, orient_interp: u8) -> Option<u32> {
     Some(add(y0, mul(sub(y1, y0), t)))
 }
 
+/// The brake of `orientInterp` 3, 7 and 8 for `r` radians left, with `m`
+/// the largest step (SPEC-0013): `sqrt(C r)`, times `r / m` below `m`,
+/// with `C = m^2 / 1.2` (3 and 7) or `m^2 / 1.4` (8). The square root is
+/// the correctly rounded one of IEEE 754.
+fn closed_brake(r: u32, m: u32, orient_interp: u8) -> u32 {
+    let divisor = if orient_interp == 8 { 1.4f32 } else { 1.2f32 };
+    let c = ow3_math::div(mul(m, m), divisor.to_bits());
+    let b = real(mul(c, r)).sqrt().to_bits();
+    if real(r) < real(m) {
+        mul(b, ow3_math::div(r, m))
+    } else {
+        b
+    }
+}
+
 /// Below this many radians left the facing takes the heading (0.001).
 const SNAP: u32 = 0x3A83_126F;
 
@@ -179,8 +198,11 @@ pub(super) fn follow(facing: u32, heading: u32, w: u32, orient_interp: u8) -> (u
     if real(step) > real(largest) {
         step = largest;
     }
-    if let Some(b) = brake(mul(r, RADIANS_TO_DEGREES), orient_interp) {
-        let b = mul(b, DEGREES_TO_RADIANS);
+    let b = match orient_interp {
+        3 | 7 | 8 => Some(closed_brake(r, largest, orient_interp)),
+        _ => brake(mul(r, RADIANS_TO_DEGREES), orient_interp).map(|b| mul(b, DEGREES_TO_RADIANS)),
+    };
+    if let Some(b) = b {
         if real(b) < real(step) {
             step = b;
         }
@@ -217,6 +239,20 @@ mod tests {
             (10000.7, 280.700_65),
         ] {
             assert_eq!(read(set), got, "{set}");
+        }
+    }
+
+    /// The closed form of `orientInterp` 3, 7 and 8 against their tables.
+    #[test]
+    fn closed_brake_matches_table() {
+        for kind in [3u8, 7, 8] {
+            let (_, m) = steps(kind);
+            let mut worst = 0.0f32;
+            for &(r, step) in brake_table(kind) {
+                let b = closed_brake(mul(r, DEGREES_TO_RADIANS), m, kind);
+                worst = worst.max((real(mul(b, RADIANS_TO_DEGREES)) - real(step)).abs());
+            }
+            assert!(worst < 0.002, "{kind}: {worst} degrees");
         }
     }
 

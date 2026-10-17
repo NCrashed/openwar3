@@ -84,26 +84,81 @@ restart mana regeneration in the same way is an inference, not tested.
   360 -> 359.99997 (not reduced: `mul(360, pi/180)` is just below 2 pi),
   400 -> 40.000019, -90 -> 270.0, -0.001 -> 359.99899, -1000.25 ->
   79.749939, 10000.7 -> 280.70065.
-- `SetUnitFacing` turns the unit over time. `GetUnitFacing` changes only
-  every 6 ticks (0.03 s), the first time 3 ticks after the call. The
-  turn speed is set by the `orientInterp` column of `Units\UnitData.slk`,
-  not by `turnRate` (custom types with `turnRate` 0.1 to 3.0 turned
-  exactly like the footman; `uloc` with `turnRate` 0.2 turns like the
-  footman, which has 0.6, because both have `orientInterp` 0). Measured
-  turn per update, in radians, while far from the target: it starts at
-  `s`, grows by `s` per update and then stays at the maximum `m`:
+- `SetUnitFacing` sets the unit's heading (SPEC-0018) at once; the
+  facing that `GetUnitFacing` returns then turns towards it over time.
+  `GetUnitFacing` changes only at the unit's updates, every 6 ticks
+  (0.03 s); the first change came 3 to 6 ticks after the call, depending
+  on the phase of the update cycle. The turn speed is set by the
+  `orientInterp` column of `Units\UnitData.slk` (field `uori`), not by
+  `turnRate` (custom types with `turnRate` 0.1 to 3.0 turned exactly
+  like the footman; `uloc` with `turnRate` 0.2 turns like the footman,
+  which has 0.6, because both have `orientInterp` 0).
 
-  | `orientInterp` | Units tested | `s` | `m` |
-  |---|---|---|---|
-  | 0 | `hfoo`, `uloc` | 0.07 | 0.2 |
-  | 1 | `hmtt`, `hgry` | 0.03 | 0.1 |
-  | 3 | `nadk` | 0.005 | not reached in 2 s |
-  | 4 | `hkni`, `Hamg` | 0.04 | 0.15 |
+### Facing turn rule
 
-  Near the target the steps shrink and the facing snaps to the target
-  once less than about 0.001 radians remain (footman, 0 -> 180: last
-  values 179.954, then 180.0 after 0.705 s). The exact rule of this final
-  phase is open.
+At every update, let `r` be the angle from the facing to the heading
+(the shorter way, after the heading's own turn of that update), and `w`
+the facing step of the previous update (0 when the facing was at rest).
+
+1. If `r` is below about 0.001 radians (snaps were seen up to 0.0573
+   degrees, none at 0.0612), the facing is set to the heading and `w`
+   becomes 0.
+2. Otherwise the facing turns towards the heading by
+
+       step = min(w + s, m, B(r))
+
+   and `w` becomes `step`.
+
+`s` (acceleration) and `m` (maximum step) per update, in radians, by
+`orientInterp` (all nine values measured with footman copies that
+differ only in `uori`; 0 to 5 are used by the game's units):
+
+| `orientInterp` | `s` | `m` | Example units |
+|---|---|---|---|
+| 0 | 0.07 | 0.2 | `hfoo`, `hpea`, `hmil` |
+| 1 | 0.03 | 0.1 | `hmtt`, `hgry`, `hmtm` |
+| 2 | 0.015 | at least 0.285 (not reached within 180 degrees) | `hgyr`, `hsor` |
+| 3 | 0.005 | 0.1 | ships (`hbot`, `hdes`), `nadk` |
+| 4 | 0.04 | 0.15 | `hkni`, `Hamg` |
+| 5 | 0.05 | 0.18 | `ogru`, `Hpal` |
+| 6 | 0.1 | 0.3 | - |
+| 7 | 0.003 | 0.08 | - |
+| 8 | 0.001 | 0.05 | - |
+
+`B` is a braking limit that depends only on `r` and the `orientInterp`
+value. It is given as a measured table, `SPEC-0013-facing-brake.tsv`
+(columns `orient_interp`, `remaining_deg`, `step_deg`, in degrees):
+for each value, points from 0.057 degrees up to the largest remaining
+angle at which the brake was ever the smallest of the three terms
+(11.4 degrees for 0, 11.1 for 1, 18.1 for 2, 68 for 3, 68 for 4, 66 for
+5, 45 for 6, 66 for 7, 80 for 8). Above that range `B` never limited the
+step in any test, including full-speed turns of up to 180 degrees, so
+it can be taken as unlimited there. Interpolate linearly in
+`log r` / `log step`.
+
+For `orientInterp` 3, 7 and 8 the table follows a closed form, with `r`
+and the step in radians:
+
+    B(r) = sqrt(C * r)            if r >= m
+    B(r) = sqrt(C * r) * r / m    if r < m
+
+with `C` = 0.0083333 (3), 0.0053333 (7) and 0.0017857 (8), that is
+`m^2 / 1.2` for 3 and 7 and `m^2 / 1.4` for 8: a constant
+deceleration of `C / 2` per update while far from the end, then a
+faster fade. (`step^2 / r` is constant to six digits over the whole
+first range.) For the other values the brake has a different shape and
+only the table is available.
+
+The rule with these tables reproduces, at every update, the facing of
+495 measured turns (55 target angles from 0.3 to 180 degrees for each
+`orientInterp` value) within 0.002 degrees, apart from 11 single updates
+(a snap decided differently right at the threshold, and gaps in the
+table for `orientInterp` 6). It also reproduces the facing that chases
+a slowly turning heading during movement (SPEC-0018).
+
+Footman, 0 -> 180 degrees: steps of 0.07, 0.14, then 0.2 radians, the
+brake from about 7.5 degrees before the end, last values 179.954, then
+180.0 after 0.705 s.
 
 ### Position
 
@@ -129,8 +184,8 @@ restart mana regeneration in the same way is an inference, not tested.
 
 ## Open questions
 
-1. The turning rule near the target, and the parameters of the other
-   `orientInterp` values (2, 5..8).
+1. A closed form of the brake for `orientInterp` 0, 1, 2, 4, 5 and 6,
+   and `m` for value 2.
 2. A thread resumed after `TriggerSleepAction` that sets life and starts
    a 0.005 s periodic timer reads no regeneration at the first expiry
    (all unit types), unlike a thread run from a timer trigger.

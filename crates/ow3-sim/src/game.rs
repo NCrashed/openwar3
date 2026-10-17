@@ -153,6 +153,8 @@ pub struct Unit {
     movement: Option<movement::Moving>,
     /// The tick the unit was created at.
     born: u64,
+    /// The earliest tick of its next hit, a cooldown after the last one.
+    weapon_ready: u64,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,

@@ -318,3 +318,37 @@ fn attack_order_stops_a_walking_unit() {
         assert_eq!(at(tick), at(order), "tick {tick}");
     }
 }
+
+/// The chase of SPEC-0019: a footman after a target walking away at 150
+/// swings from farther than the static limit of 152 (178 to 218 in the
+/// game), since it swings once its goal point is in reach, and goes on
+/// hitting as it catches up again.
+#[test]
+fn chase_a_target_walking_away() {
+    let orders = "call IssuePointOrder(t, \"move\", 6000, -2000)\n    call IssueTargetOrder(a, \"attack\", t)";
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)\n    set t = CreateUnit(Player(15), 'hpea', -2700, -2000, 0)",
+        orders,
+        |d| {
+            target_type(d, 31.0);
+            d.units.get_mut(&code(b"hpea")).unwrap().speed = 150f32.to_bits();
+        },
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 3000);
+    // Ticks of damage, and the distance when each swing began (dmgpt1 0.5 s
+    // before the damage).
+    let hits: Vec<u64> = path
+        .windows(2)
+        .filter(|w| w[1].1[1].life < w[0].1[1].life)
+        .map(|w| w[1].0)
+        .collect();
+    assert!(hits.len() >= 3, "{hits:?}");
+    let distance = |tick: u64| {
+        let u = &path.iter().find(|p| p.0 == tick).unwrap().1;
+        u[1].x - u[0].x
+    };
+    let first = distance(hits[0] - 100);
+    assert!((160.0..235.0).contains(&first), "{first}");
+}

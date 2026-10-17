@@ -7,8 +7,13 @@
 //! next ones `cool1` apart, until the target dies or the unit gets another
 //! order.
 //!
-//! PROVISIONAL: hits come after the timers of their tick, and the attacker
-//! does not follow a target that moves away.
+//! After a hit, an attacker whose target has left its reach chases it
+//! again (SPEC-0019); its next hit comes no earlier than `cool1` after
+//! the last one.
+//!
+//! PROVISIONAL: hits come after the timers of their tick; the chase
+//! resumes at the hit, since the role of the backswing is open
+//! (SPEC-0016), and without the pause of one update 66 ticks later.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -81,7 +86,7 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.attack = Some(Attacking {
             target,
-            next: tick + damage_point,
+            next: (tick + damage_point).max(u.weapon_ready),
             order_id,
         });
     }
@@ -110,12 +115,11 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let primary = data.filter(|_| is_hero(type_id)).map_or(0, |t| t.primary);
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-                        u.attack = Some(Attacking {
-                            next: a.next + ticks(weapon.cooldown),
-                            ..a
-                        });
+                        let next = a.next + ticks(weapon.cooldown);
+                        u.attack = Some(Attacking { next, ..a });
+                        u.weapon_ready = next;
                     }
-                    Some((a.target, amount, weapon.attack_type))
+                    Some((a.target, amount, weapon.attack_type, a.order_id))
                 }
                 Some(a) if a.next <= tick => {
                     // The target is gone.
@@ -127,7 +131,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 _ => None,
             }
         };
-        if let Some((target, amount, attack_type)) = hit {
+        if let Some((target, amount, attack_type, order_id)) = hit {
             super::widgets::damage_widget(
                 vm,
                 state,
@@ -137,6 +141,12 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 attack_type,
                 DAMAGE_TYPE_NORMAL,
             );
+            // A target that has left the attacker's reach is chased.
+            let mut s = state.borrow_mut();
+            let attacking = matches!(s.objects.get(&h), Some(Object::Unit(u)) if u.alive && u.attack.is_some_and(|a| a.target == target));
+            if attacking && standing(&s, target) && !super::movement::reaches(&s, h, target) {
+                super::movement::chase(&mut s, h, target, order_id);
+            }
         }
     }
     let mut s = state.borrow_mut();

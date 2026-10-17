@@ -128,6 +128,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         attack: None,
         movement: None,
         born: state.ticks,
+        weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
         mana,

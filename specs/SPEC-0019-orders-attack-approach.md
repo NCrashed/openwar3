@@ -161,13 +161,22 @@ The attacker does not steer at the target's current position. It walks
 to a **goal point**, the target's position at the time the goal was last
 taken, and the goal is taken again only from time to time:
 
-- The goal is taken when the chase starts (after the reaction delay),
-  and again whenever a countdown runs out. After each new goal the
-  countdown is set to `round(0.33 * d)` (with 0.33 the real
-  `s2r("0.33")`), clamped to 16 .. 132, where `d` is the distance from
-  the attacker to the new goal. The tests fit `d` in world units and the
-  countdown in ticks, but the timing is reproduced only to within about
-  30 ticks (see Open questions).
+- The goal is renewed on a fixed schedule: a countdown, counted in the
+  attacker's updates, is set after each renewal to
+  `round(0.33 * d)` clamped to 16 .. 132 (with 0.33 the real `s2r("0.33")`;
+  `d` is the distance from the attacker to the new goal
+  in units of 32). The goal changes when the countdown has run out, so
+  for distances below 48 units of 32 (1536) the goal changes every 17
+  updates, 102 ticks. This was measured in 6 chases of targets walking
+  across at 120 to 240 from 600 to 900 away: every change of direction
+  came 102 ticks (plus or minus 2) after the previous one.
+- The new goal is **not** the target's position at the time of the
+  change: it is the target's position some time before, between 2 and
+  about 60 ticks in the tests, and at some changes (at distances from
+  255 to 586) the attacker instead aims at the target's current
+  position at every tick until the next change. Both depend on when
+  the path to the new goal is ready; this belongs to path finding, which
+  is not specified yet.
 - The attacker **arrives** when it is within the range test above of
   the goal point (not of the target). It then stops and swings at once,
   so a swing at a target that walks away starts from farther than the
@@ -225,10 +234,11 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 1. Whether other orders and the acquisition of targets use the reaction
    delay as well.
-2. The exact timing of new goals in a chase (the countdown above
-   reproduces the swing times only to within about 30 ticks), the
-   one-update pause 66 ticks after a chase resumes, and when a moved
-   target makes the attacker take a new goal at once.
+2. Which past position of the target a new chase goal takes, and when
+   the attacker follows the target's current position instead (both
+   depend on path finding); the one-update pause 66 ticks after a chase
+   resumes; when a moved target makes the attacker take a new goal at
+   once.
 3. Attack-move with enemies, the timing of acquisition scans after the
    first one, retaliation, `minRange`.
 4. Queued orders, group orders, formation movement.

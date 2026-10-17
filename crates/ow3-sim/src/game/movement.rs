@@ -140,6 +140,9 @@ pub struct Moving {
     /// The tick of an attack order and its reaction delay in seconds: the
     /// unit acts on the order from its first update after the delay.
     reaction: Option<(u64, u32)>,
+    /// Updates until an attacker renews its goal point; `None` before
+    /// the first goal of a chase.
+    chase: Option<u32>,
 }
 
 impl Moving {
@@ -200,6 +203,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             target,
             restart: m.walking || m.restart,
             reaction: None,
+            chase: None,
             ..m
         },
         None => Moving {
@@ -217,6 +221,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: false,
             skip: false,
             reaction: None,
+            chase: None,
         },
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -453,23 +458,29 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.walking = false;
                 m.skip = true;
             }
-            // An attacker walks to where its target stands now.
+            // An attacker walks to its goal point, where the target stood
+            // when the goal was last renewed, and is in reach when the
+            // goal is.
             let mut in_reach = false;
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
-                        m.target = at;
+                        let here = relative([u.x, u.y], min);
+                        match m.chase {
+                            Some(left) if left > 0 => m.chase = Some(left - 1),
+                            _ => {
+                                m.target = at;
+                                m.chase = Some(countdown(here, relative(at, min)));
+                            }
+                        }
                         let other = match state.objects.get(&target) {
                             Some(Object::Unit(t)) => {
                                 state.data.units.get(&t.type_id).map_or(0, |d| d.collision)
                             }
                             _ => 0,
                         };
-                        in_reach = in_range(
-                            relative([u.x, u.y], min),
-                            relative(at, min),
-                            add(reach, mul(other, CELL)),
-                        );
+                        in_reach =
+                            in_range(here, relative(m.target, min), add(reach, mul(other, CELL)));
                     }
                     _ => {
                         m.arrived = true;
@@ -557,6 +568,42 @@ fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
     let d2 = add(mul(dx, dx), mul(dy, dy));
     let r2 = mul(r, r);
     real_of(d2) < real_of(r2) || real_of(sub(d2, r2)).abs() < real_of(RANGE_SLACK)
+}
+
+/// The updates until a chase renews its goal after taking the goal `b`
+/// from `a` (SPEC-0019): `round(0.33 d)` with `d` in cells, clamped to
+/// 16..132. The square root is the correctly rounded one of IEEE 754.
+fn countdown(a: [u32; 2], b: [u32; 2]) -> u32 {
+    let (dx, dy) = (mul(sub(b[0], a[0]), CELL), mul(sub(b[1], a[1]), CELL));
+    let d = real_of(add(mul(dx, dx), mul(dy, dy))).sqrt();
+    let x = real_of(mul(ow3_math::s2r("0.33"), d.to_bits()));
+    ((x + 0.5).floor() as u32).clamp(16, 132)
+}
+
+/// Whether unit `h` reaches `target` from where both stand now.
+pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let collision = |u: &super::Unit| state.data.units.get(&u.type_id).map(|t| (t, t.collision));
+    let (Some(u), Some(at)) = (state.unit(Some(h)), position_of(state, target)) else {
+        return false;
+    };
+    let Some((data, own)) = collision(u) else {
+        return false;
+    };
+    let other = state
+        .unit(Some(target))
+        .and_then(collision)
+        .map_or(0, |c| c.1);
+    let range = data.weapon.as_ref().map_or(0, |w| w.range);
+    let reach = add(add(mul(range, CELL), mul(own, CELL)), mul(other, CELL));
+    in_range(relative([u.x, u.y], min), relative(at, min), reach)
+}
+
+/// Unit `h` takes up its attack on `target` again, walking after it.
+pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
+    if let Some(at) = position_of(state, target) {
+        order(state, h, Order::Attack { target }, order_id, at);
+    }
 }
 
 /// 0.001, the slack of the range test.

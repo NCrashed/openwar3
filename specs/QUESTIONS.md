@@ -443,9 +443,15 @@ the spec is silent:
   stops are not explained by any form of the test).
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
   a point, `attack` on a target, `stop` and `holdposition`. The reaction
-  delay applies to `attack` on a target only (open question 1). The
-  chase with goal points and its countdown is not implemented yet:
-  attackers aim at the target's position at every update.
+  delay applies to `attack` on a target only (open question 1).
+- **Chasing** (SPEC-0019 open question 2): the goal point is the
+  target's position at the update the countdown runs out, without the
+  lag of 2 to 60 ticks or the direct following that depend on path
+  finding; a moved target does not renew the goal at once. After a hit
+  the attacker chases a target out of reach at once (the backswing is
+  not modelled) and without the pause 66 ticks later. A unit that
+  reaches its goal before its weapon is ready stands until `cool1` after
+  the last hit.
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's. Attackers
   do not follow targets that move; destructables and items have

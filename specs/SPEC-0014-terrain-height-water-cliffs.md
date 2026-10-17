@@ -82,6 +82,56 @@ flags use other models (open question 1).
 6. The ground of a tile with a cliff model is not drawn (the model
    brings its own ground).
 
+### Ramps
+
+Ramps are made of points with the ramp flag (1). Each corner point of a
+tile gets a letter; the tile's pattern is its four letters in the order
+TL, TR, BR, BL.
+
+**"Upper" points.** Look at the up to four tiles that have the point as a
+corner, and at all ramp points among their corners. If those ramp points
+do not all have the same level, the point is upper when its own level
+equals their highest level.
+
+**Letters.**
+
+- A point without the ramp flag: `B` if it is upper, else `A`.
+- A ramp point that is upper: `H`.
+- Other ramp points, with `N` the point and its 8 neighbours (those
+  inside the map):
+  - invalid (no letter) when all 9 exist, are ramp points and have the
+    same level, or when the levels of the ramp points in `N` differ by
+    more than 1;
+  - "vertical" when the neighbours south and north are both ramp points
+    with different levels; "horizontal" likewise for west and east;
+  - `spread` = highest minus lowest level over all points of `N`;
+  - both vertical and horizontal: `S` if `spread <= 1`, else invalid;
+  - exactly one of them: `R` if `spread <= 1`, else invalid;
+  - neither: `S` if all 9 exist and are ramp points, else `L`.
+
+**Ramp models.** A tile whose pattern is one of the following gets a ramp
+model, which also covers a second tile at the given offset:
+
+| Pattern | Second tile | Pattern | Second tile |
+|---|---|---|---|
+| `HRAA`, `HRAB` | (x+1, y) | `RHAA`, `RHBA` | (x-1, y) |
+| `AARH`, `BARH` | (x+1, y) | `AAHR`, `ABHR` | (x-1, y) |
+| `AHRA`, `BHRA` | (x, y-1) | `ARHA`, `ARHB` | (x, y+1) |
+| `HAAR`, `HBAR` | (x, y-1) | `RAAH`, `RABH` | (x, y+1) |
+
+The model is
+`Doodads\Terrain\<rampModelDir>\<rampModelDir><pattern with R replaced by L>0.mdx`
+(`rampModelDir` from `CliffTypes.slk`, `CliffTrans` or `CityCliffTrans`),
+variation always 0: `HRAA` -> `CliffTransHLAA0.mdx`, `RABH` ->
+`CliffTransLABH0.mdx`. Neither tile draws its ground.
+
+In `(4)LostTemple.w3m` these rules give 58 ramp models with 14 different
+names, all of which exist in the game archives. Replacing
+`CliffTransLABH0.mdx` and `CliffTransALHB0.mdx` in a copy of the map
+changed exactly the two predicted places (tile (33, 30) with second tile
+(33, 31), and tile (24, 32) with (24, 33)); every other ramp looked as
+before.
+
 ## Edge cases
 
 - With small raised areas (3 x 3 points of level 7..15 inside level 2),
@@ -91,7 +141,10 @@ flags use other models (open question 1).
 
 ## Open questions
 
-1. Ramps (`CliffTrans` models, letters `H`, `L`, `X`, two-tile models).
+1. Ramps: which cliff type a ramp model uses, whether tiles with an `R`
+   or `S` corner that start no ramp model get cliff models, and what the
+   `CliffTrans` models with `X` or `C` in their names are for (no pattern
+   above produces them).
 2. Placement of the cliff model (origin, height) and how its vertices
    follow the ground heights of the corners.
 3. The clamping of small raised areas above.

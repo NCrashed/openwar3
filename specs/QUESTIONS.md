@@ -381,12 +381,11 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
   depth colour and blended with its alpha, drawn after the models without
   writing depth. No animation, no shorelines.
-- **Two square holes** in the cliffs of the north-east of
-  `(4)LostTemple.w3x`, and a dark gap beside the ramp at tile (33, 30),
-  are still visible with the rules of SPEC-0014 for ramps. Every tile
-  without ground has model triangles over it, every cliff model of the
-  map is drawn with all its parts, and the map has no single-tile pits
-  or small water patches; the cause is not found yet.
+- **A dark gap beside the ramp** at tile (33, 30) of
+  `(4)LostTemple.w3x` is still visible with the rules of SPEC-0014 for
+  ramps; every tile without ground has model triangles over it. (What
+  looked like two holes in the north-east cliffs are snow ground tiles
+  between cliff models, as the rules give.)
 
 ## Math natives (`ow3-math::natives`)
 

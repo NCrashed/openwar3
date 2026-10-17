@@ -57,3 +57,15 @@ impl ArchiveChain {
         map.contains(name).then(|| map.read(name).ok()).flatten()
     }
 }
+
+impl ArchiveChain {
+    /// The first copy of `name` in the game archives, skipping the map.
+    pub fn read_game_file(&mut self, name: &str) -> Option<Vec<u8>> {
+        let skip = usize::from(self.has_map);
+        self.archives
+            .iter_mut()
+            .skip(skip)
+            .find(|a| a.contains(name))
+            .and_then(|a| a.read(name).ok())
+    }
+}

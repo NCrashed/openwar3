@@ -5,7 +5,7 @@
 //!
 //! Leaderboard rows, `GetLocalizedString` and dialog clicks follow
 //! SPEC-0010. Buttons are clicked through [`super::Game::click_button`];
-//! a dialog shown to the local player stops game time.
+//! a dialog shown to the local player stops game time and sleeps.
 //!
 //! PROVISIONAL, listed in specs/QUESTIONS.md: sorting keeps the order of
 //! equal rows; rows and columns of a multiboard are not limited; each

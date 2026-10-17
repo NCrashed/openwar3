@@ -195,7 +195,8 @@ pub const STRING_FILES: [&str; 4] = [
 fn localized_strings(archives: &mut Archives) -> BTreeMap<String, String> {
     let mut strings = BTreeMap::new();
     for file in STRING_FILES {
-        if let Some(data) = archives.read(file) {
+        // A map cannot add or change these strings (SPEC-0010).
+        if let Some(data) = archives.read_game_file(file) {
             let text = String::from_utf8_lossy(&data);
             strings.extend(ow3_formats::fdf::string_lists(&text));
         }

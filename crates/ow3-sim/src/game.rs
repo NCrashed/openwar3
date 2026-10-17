@@ -1564,6 +1564,74 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     );
 
+    // Math natives (SPEC-0011), bit for bit.
+    type Unary = fn(u32) -> u32;
+    let unary: [(&str, Unary); 9] = [
+        (
+            "native Deg2Rad takes real degrees returns real",
+            ow3_math::natives::deg2rad,
+        ),
+        (
+            "native Rad2Deg takes real radians returns real",
+            ow3_math::natives::rad2deg,
+        ),
+        (
+            "native Sin takes real radians returns real",
+            ow3_math::natives::sin,
+        ),
+        (
+            "native Cos takes real radians returns real",
+            ow3_math::natives::cos,
+        ),
+        (
+            "native Tan takes real radians returns real",
+            ow3_math::natives::tan,
+        ),
+        (
+            "native Asin takes real y returns real",
+            ow3_math::natives::asin,
+        ),
+        (
+            "native Acos takes real x returns real",
+            ow3_math::natives::acos,
+        ),
+        (
+            "native Atan takes real x returns real",
+            ow3_math::natives::atan,
+        ),
+        (
+            "native SquareRoot takes real x returns real",
+            ow3_math::natives::square_root,
+        ),
+    ];
+    for (declaration, f) in unary {
+        native!(add, state, declaration, |vm, state, args| {
+            Ok(Some(Value::Real(f(real(&args[0])))))
+        });
+    }
+    native!(
+        add,
+        state,
+        "native Atan2 takes real y, real x returns real",
+        |vm, state, args| {
+            Ok(Some(Value::Real(ow3_math::natives::atan2(
+                real(&args[0]),
+                real(&args[1]),
+            ))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native Pow takes real x, real power returns real",
+        |vm, state, args| {
+            Ok(Some(Value::Real(ow3_math::natives::pow(
+                real(&args[0]),
+                real(&args[1]),
+            ))))
+        }
+    );
+
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);

@@ -155,6 +155,10 @@ endfunction
 function D2 takes nothing returns nothing
     call Print("d2")
 endfunction
+function Sleeper takes nothing returns nothing
+    call TriggerSleepAction(2.0)
+    call Print("slept")
+endfunction
 function Expired takes nothing returns nothing
     call Print("timer expired")
 endfunction
@@ -186,12 +190,13 @@ function main takes nothing returns nothing
     call TriggerAddAction(tr, function D2)
     set t = CreateTimer()
     call TimerStart(t, 2.0, false, function Expired)
+    call ExecuteFunc("Sleeper")
     call DialogDisplay(Player(0), d, true)
 endfunction
 "#;
 
-/// SPEC-0010: leaderboard rows, the order and responses of a click, and
-/// game time stopped while a dialog is open.
+/// SPEC-0010: leaderboard rows, the order and responses of a click, and a
+/// dialog that stops game time and sleeps while it is open.
 #[test]
 fn spec_0010_rows_clicks_and_pause() {
     let declarations = format!(
@@ -205,6 +210,8 @@ native DialogDisplay takes player whichPlayer, dialog whichDialog, boolean flag 
 native GetTriggerEventId takes nothing returns eventid
 native CreateTimer takes nothing returns timer
 native TimerStart takes timer whichTimer, real timeout, boolean periodic, code handlerFunc returns nothing
+native ExecuteFunc takes string funcName returns nothing
+native TriggerSleepAction takes real timeout returns nothing
 "
     );
     let declarations = ow3_jass::parse(&declarations).unwrap();
@@ -234,7 +241,9 @@ native TimerStart takes timer whichTimer, real timeout, boolean periodic, code h
         [
             "d2",
             "b1 button 0 dialog 0 player 0 event 90",
-            "timer expired"
+            "timer expired",
+            // The sleep clock stopped too: the thread resumes after.
+            "slept"
         ]
     );
 }

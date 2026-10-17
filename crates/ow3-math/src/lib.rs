@@ -6,6 +6,8 @@
 
 use std::sync::OnceLock;
 
+pub mod natives;
+
 const SIGN: u32 = 0x8000_0000;
 const FRACTION: u32 = 0x007F_FFFF;
 /// 1.0

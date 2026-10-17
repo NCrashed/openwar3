@@ -263,12 +263,6 @@ maps call in 30 s (after `config` and `main`); the most common ones that
 scripts read back are now implemented. Choices where no spec says
 anything yet:
 
-- **Math natives.** `Sin`, `Cos`, `Atan2`, `SquareRoot` and `Pow` are called
-  by maps and are still stubs. The simulation must be deterministic, so
-  they cannot use the processor's or the platform's functions. We need
-  their exact results, in the way SPEC-0004 describes the arithmetic
-  (bit patterns, test vectors). The same holds for any other native that
-  computes with reals (`GetRectCenterX`, distances, angles).
 - **Tech, player and game states** are kept as scripts set them: nothing
   changes them on its own (no research, income, upkeep or day and night).
   A tech without a limit reads -1, everything else 0 until set. What does
@@ -298,17 +292,13 @@ anything yet:
 
 Texts are stored with trigger strings resolved (SPEC-0003). Leaderboard
 rows, `GetLocalizedString` and dialog clicks follow SPEC-0010, and a
-dialog shown to the local player stops game time. Choices where the
-specs are silent:
+dialog shown to the local player stops game time and sleeps. Choices
+where the specs are silent:
 
-- **Sorting** keeps the order of equal rows (SPEC-0010 open question 3).
-- **String lists.** `GetLocalizedString` reads `GlobalStrings.fdf`,
-  `InfoPanelStrings.fdf`, `DateStrings.fdf` and `NetworkStrings.fdf` of
-  `UI\FrameDef`, through the archive order of SPEC-0008; a later entry
-  replaces an earlier one, also across files (open questions 1 and 2).
-  Are other files of `UI\FrameDef` read too?
-- **The dialog pause** stops ticks like `PauseGame`; the sleep clock goes
-  on. Does a sleeping thread resume while a dialog is open?
+- **Sorting** keeps the order of equal rows (SPEC-0010 open question 2).
+- **String lists.** `GetLocalizedString` reads the four string files of
+  `UI\FrameDef` from the game archives only (SPEC-0010); when a key
+  appears twice, the later entry is kept (open question 1).
 - **Multiboards** have no limit on rows and columns; each
   `MultiboardGetItem` makes a new handle.
 
@@ -335,3 +325,16 @@ from the game data itself or chosen:
 - **Not drawn yet:** cliffs (models), water surface and its colour, blight,
   boundary as the game shows it, doodads and units. Water is a blue tint
   on points with the water flag (0x4); points with flag 0x8 are darkened.
+
+## Math natives (`ow3-math::natives`)
+
+The eleven natives of SPEC-0011 reproduce all 12474 lines of
+`SPEC-0011-vectors.tsv`, including the 174 measured in the game.
+
+- **A typo in SPEC-0011.** Under "Asin and Acos", step 1 reads
+  `n = f2i(x * 2^30)` "(the pattern of `x` plus `15 * 2^23`)". Adding
+  `15 * 2^23` multiplies by 2^15; the vectors need 2^30, that is
+  `30 * 2^23` (`15 * 2^24`), which is what the code does. Please correct
+  the spec.
+- **`Pow` with an integer exponent of 2^31 or more** returns 0 instead of
+  hanging; also `expp` with such an integer part.

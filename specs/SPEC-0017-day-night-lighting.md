@@ -56,6 +56,14 @@ The time of day `h` (hours, `GAME_STATE_TIME_OF_DAY`, 0 <= h < 24) is
 the animation time `t = 333 + 2500 * h` ms of the sequence, so the
 24-hour day spans the whole sequence.
 
+A game starts at 8:00 and the clock advances one hour per 20 s of game
+time: measured 8.05000 after 1 s, 8.54996 after 11 s and 9.04987 after
+21 s (the small shortfall suggests a per-step addition in floats; the
+exact step was not determined). At 8:00 the Lordaeron light is already
+the constant day value, almost neutral white `(246, 246, 253)`: a strong
+blue tint on a map that uses the Lordaeron model at the start does not
+come from the light.
+
 A track value at `t`:
 
 - before the first key: the first key's value; after the last key: the

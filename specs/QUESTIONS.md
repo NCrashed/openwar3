@@ -316,8 +316,11 @@ SPEC-0007. Choices where the specs are silent:
   update steps of the unit), later hits `cool1` apart, rounded to
   whole ticks; hits come after the timers of their tick. Units do not
   move, turn, acquire targets or check their range.
-- **Custom unit types** keep the weapon of their base type: the weapon
-  fields of `war3map.w3u` are not read.
+- **Custom unit types** start from their base type as the map has
+  changed it (`war3map.w3u` changes to standard types are applied
+  first); whether the game starts them from the unchanged base is not
+  known. The viewer draws them with `umdl` and `usca` or the base
+  type's look.
 - **State at game start.** The game generators start as after
   `SetRandomSeed(0)`, like the script generator.
 

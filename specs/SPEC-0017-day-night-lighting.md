@@ -57,9 +57,33 @@ the animation time `t = 333 + 2500 * h` ms of the sequence, so the
 24-hour day spans the whole sequence.
 
 A game starts at 8:00 and the clock advances one hour per 20 s of game
-time: measured 8.05000 after 1 s, 8.54996 after 11 s and 9.04987 after
-21 s (the small shortfall suggests a per-step addition in floats; the
-exact step was not determined). At 8:00 the Lordaeron light is already
+time. It changes at every tick and is computed from a base hour and the
+game time elapsed since that base was set, in the engine arithmetic of
+SPEC-0004:
+
+    h = add(B, mul(sub(G, G0), 0x3D4CCCCD))      (0x3D4CCCCD = 0.05)
+
+- `G` is the game time, the sum of the tick length `0x3BA3D70A` added
+  once per tick from the start of the game (`add`, so it truncates;
+  it does not wrap at 300 s like the timer queue of SPEC-0002).
+- At the start `B` = 8.0 and `G0` = 0.
+- `SetFloatGameState(GAME_STATE_TIME_OF_DAY, x)` sets `B` = `x` and
+  `G0` = the current `G`.
+- When `h` reaches 24 it starts again from 0. Taking `B = sub(h, 24.0)`
+  and `G0` = the current `G` at that tick reproduces the samples after
+  midnight to within 2e-6 hours, not bit for bit; the exact arithmetic
+  of the wrap is open.
+
+Measured: 1200 of 1200 consecutive ticks after 1 s of game time bit for
+bit (8.050249 at the first, `0x4100CDD2`); after setting 12.0, the 12
+ticks right after the call bit for bit and samples up to 230 s later
+bit for bit up to one tick of the test's own counter (its 0.005 s
+timer slipped by a tick now and then). There was no jump at 300 s of
+game time. The truncation in `G` makes the clock
+run a little slow: 2000 ticks after a reset to 12.0 the formula gives
+12.499916, not 12.5.
+
+At 8:00 the Lordaeron light is already
 the constant day value, almost neutral white `(246, 246, 253)`: a strong
 blue tint on a map that uses the Lordaeron model at the start does not
 come from the light.

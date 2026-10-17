@@ -107,6 +107,23 @@ impl<'a> Reader<'a> {
         Ok(self.array::<1>()?[0])
     }
 
+    pub fn u16(&mut self) -> Result<u16> {
+        self.array().map(u16::from_le_bytes)
+    }
+
+    /// A string in a field of `len` bytes, ending at the first NUL. Bytes
+    /// that are not UTF-8 become U+FFFD.
+    pub fn fixed_string(&mut self, len: usize) -> Result<String> {
+        let bytes = self.bytes(len)?;
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(len);
+        Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+    }
+
+    /// Bytes left to read.
+    pub fn remaining(&self) -> usize {
+        self.data.len() - self.position
+    }
+
     pub fn u32(&mut self) -> Result<u32> {
         self.array().map(u32::from_le_bytes)
     }

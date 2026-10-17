@@ -91,6 +91,8 @@ struct Animated {
     sequence: usize,
     /// The first sequence named Death, or the Stand sequence.
     death: usize,
+    /// The first sequence named Attack, if any.
+    attack: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
     palette: Vec<u32>,
     /// The first matrix of variant 0; variant `v` follows `v` blocks
@@ -105,6 +107,17 @@ struct AlphaSource {
     geoset: usize,
     material: usize,
     layer: usize,
+}
+
+/// What a unit is doing, for its animation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitPose {
+    /// Its Stand sequence, in the phase of its variant.
+    Stand,
+    /// Milliseconds since its death.
+    Death(i32),
+    /// Milliseconds since the start of its swing.
+    Attack(i32),
 }
 
 /// The animated models of a scene, posed each frame.
@@ -135,6 +148,10 @@ impl Animation {
                     .iter()
                     .position(|s| s.name.to_ascii_lowercase().starts_with("death"))
                     .unwrap_or(sequence);
+                let attack = model
+                    .sequences
+                    .iter()
+                    .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
                     .keys()
@@ -146,6 +163,7 @@ impl Animation {
                     model,
                     sequence,
                     death,
+                    attack,
                     palette,
                     bone_base,
                 });
@@ -166,24 +184,36 @@ impl Animation {
         animated.bone_base + (variant % VARIANTS as u32) * animated.palette.len() as u32
     }
 
-    /// The bone matrices of model `index` `elapsed` milliseconds into its
-    /// Death sequence, holding its last frame.
-    pub fn death_pose(&self, index: usize, elapsed: i32) -> Vec<Mat4> {
+    /// The bone matrices of model `index` in `pose`: `elapsed`
+    /// milliseconds into its Death sequence, holding the last frame, or into
+    /// its Attack sequence. `None` for an attack past the end of the
+    /// sequence or a model without one: the unit stands then.
+    pub fn unit_pose(&self, index: usize, pose: UnitPose) -> Option<Vec<Mat4>> {
         let animated = &self.models[index];
-        let mut moment = Moment::start(&animated.model, animated.death);
-        let length = moment.interval[1] - moment.interval[0];
-        moment.frame += elapsed.clamp(0, length.max(0));
+        let (sequence, elapsed) = match pose {
+            UnitPose::Stand => return None,
+            UnitPose::Death(elapsed) => (animated.death, elapsed),
+            UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
+        };
+        let mut moment = Moment::start(&animated.model, sequence);
+        let length = (moment.interval[1] - moment.interval[0]).max(0);
+        if matches!(pose, UnitPose::Attack(_)) && elapsed > length {
+            return None;
+        }
+        moment.frame += elapsed.clamp(0, length);
         let pose = Pose::new(&animated.model, moment);
-        animated
-            .palette
-            .iter()
-            .map(|id| {
-                pose.matrices
-                    .get(id)
-                    .copied()
-                    .unwrap_or(ow3_render::animation::IDENTITY)
-            })
-            .collect()
+        Some(
+            animated
+                .palette
+                .iter()
+                .map(|id| {
+                    pose.matrices
+                        .get(id)
+                        .copied()
+                        .unwrap_or(ow3_render::animation::IDENTITY)
+                })
+                .collect(),
+        )
     }
 
     /// The parts of model `index` for player `team`, with alpha slots.

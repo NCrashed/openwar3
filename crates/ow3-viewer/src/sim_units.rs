@@ -14,10 +14,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use ow3_formats::mpq::ArchiveChain;
-use ow3_sim::game::Game;
+use ow3_sim::game::{Game, UnitView};
 use ow3_sim::map::Map;
 
 use crate::camera::Mat4;
+use crate::models::UnitPose;
 use crate::objects::Placement;
 
 /// Milliseconds of game time per tick.
@@ -29,8 +30,8 @@ pub struct UnitDraw {
     pub model: String,
     pub team: u8,
     pub matrix: Mat4,
-    /// Milliseconds since its death, for a dead unit.
-    pub dead_for: Option<i32>,
+    /// What it is doing.
+    pub pose: UnitPose,
     /// The unit's handle, which picks its phase.
     pub handle: u32,
 }
@@ -90,11 +91,92 @@ impl Sim {
                     model: placement.model,
                     team: placement.team,
                     handle: u.handle,
-                    dead_for: u
-                        .died_at
-                        .map(|t| (now.saturating_sub(t) * TICK_MS).min(i32::MAX as u64) as i32),
+                    pose: pose(&u, now),
                 })
             })
             .collect()
+    }
+}
+
+/// Ticks as milliseconds.
+fn millis(ticks: u64) -> i32 {
+    (ticks * TICK_MS).min(i32::MAX as u64) as i32
+}
+
+/// What unit `u` is doing at tick `now`: dead, swinging or standing. A
+/// swing starts its weapon's damage point before each hit, so that the
+/// hit lands at that point of the Attack sequence.
+///
+/// PROVISIONAL: the swing plays the Attack sequence at its own speed from
+/// that moment; the game's link between the animation and `dmgpt1` is not
+/// specified.
+fn pose(u: &UnitView, now: u64) -> UnitPose {
+    if let Some(died) = u.died_at {
+        return UnitPose::Death(millis(now.saturating_sub(died)));
+    }
+    let Some(attack) = u.attack else {
+        return UnitPose::Stand;
+    };
+    let swing = attack.next_hit.saturating_sub(attack.damage_point);
+    let start = if now >= swing {
+        swing
+    } else {
+        swing.saturating_sub(attack.cooldown)
+    };
+    if now >= start {
+        UnitPose::Attack(millis(now - start))
+    } else {
+        UnitPose::Stand
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ow3_sim::game::AttackView;
+
+    fn unit(attack: Option<AttackView>, died_at: Option<u64>) -> UnitView {
+        UnitView {
+            handle: 1,
+            type_id: 0,
+            owner: 0,
+            x: 0.0,
+            y: 0.0,
+            facing: 0.0,
+            alive: died_at.is_none(),
+            hidden: false,
+            died_at,
+            attack,
+        }
+    }
+
+    /// A weapon with a damage point of 0.66 s and a cooldown of 1.5 s,
+    /// ordered at tick 100: its first hit at tick 232.
+    #[test]
+    fn swings_end_at_their_hits() {
+        let attack = AttackView {
+            target: 2,
+            next_hit: 232,
+            cooldown: 300,
+            damage_point: 132,
+        };
+        let u = unit(Some(attack), None);
+        // The swing starts with the order and reaches the hit after 0.66 s.
+        assert_eq!(pose(&u, 100), UnitPose::Attack(0));
+        assert_eq!(pose(&u, 232), UnitPose::Attack(660));
+        // After the hit the next one is 300 ticks on; until its swing
+        // starts the last swing goes on (and the renderer lets the unit
+        // stand once the Attack sequence is over).
+        let after = unit(
+            Some(AttackView {
+                next_hit: 532,
+                ..attack
+            }),
+            None,
+        );
+        assert_eq!(pose(&after, 300), UnitPose::Attack(1000));
+        assert_eq!(pose(&after, 400), UnitPose::Attack(0));
+        assert_eq!(pose(&unit(None, None), 5), UnitPose::Stand);
+        assert_eq!(pose(&unit(None, Some(10)), 30), UnitPose::Death(100));
     }
 }

@@ -30,6 +30,24 @@ pub struct Attacking {
     next: u64,
 }
 
+impl Attacking {
+    /// The attack as a viewer sees it, for a unit of type `type_id`.
+    pub(super) fn view(&self, state: &State, type_id: i32) -> super::AttackView {
+        let weapon = state
+            .data
+            .units
+            .get(&type_id)
+            .and_then(|t| t.weapon.clone())
+            .unwrap_or_default();
+        super::AttackView {
+            target: self.target,
+            next_hit: self.next,
+            cooldown: ticks(weapon.cooldown),
+            damage_point: ticks(weapon.damage_point),
+        }
+    }
+}
+
 /// Seconds as a whole number of ticks of 0.005 s, at least one.
 fn ticks(seconds: u32) -> u64 {
     (f64::from(f32::from_bits(seconds)) * 200.0)

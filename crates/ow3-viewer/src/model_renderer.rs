@@ -152,9 +152,9 @@ pub struct ModelRenderer {
     bind_groups: BTreeMap<(String, bool), wgpu::BindGroup>,
     /// The instance buffer and model of each unit model and team.
     unit_groups: BTreeMap<(String, u8), (usize, usize)>,
-    /// The model and time since death of each dead unit, whose matrices
-    /// follow those of the variants.
-    deaths: Vec<(usize, i32)>,
+    /// The matrices of units in a pose of their own (dying, swinging),
+    /// after those of the variants.
+    unit_bones: Vec<crate::camera::Mat4>,
     bone_capacity: u32,
     alpha_capacity: u32,
 }
@@ -351,7 +351,7 @@ impl ModelRenderer {
             samplers,
             bind_groups: BTreeMap::new(),
             unit_groups: BTreeMap::new(),
-            deaths: Vec::new(),
+            unit_bones: Vec::new(),
             bone_capacity: animation.bone_count(),
             alpha_capacity: animation.alpha_count(),
         };
@@ -472,20 +472,20 @@ impl ModelRenderer {
             };
             drawn.push((unit, buffer, model));
         }
-        // Dead units get their own matrices after those of the variants.
-        self.deaths.clear();
-        let mut next = self.animation.bone_count();
+        // Dying and swinging units get their own matrices after those of
+        // the variants.
+        self.unit_bones.clear();
+        let first = self.animation.bone_count();
         let mut lists: BTreeMap<usize, Vec<Instance>> = self
             .unit_groups
             .values()
             .map(|&(buffer, _)| (buffer, Vec::new()))
             .collect();
         for (unit, buffer, model) in drawn {
-            let bone_base = match unit.dead_for {
-                Some(elapsed) => {
-                    self.deaths.push((model, elapsed));
-                    let base = next;
-                    next += self.animation.palette_len(model);
+            let bone_base = match self.animation.unit_pose(model, unit.pose) {
+                Some(matrices) => {
+                    let base = first + self.unit_bones.len() as u32;
+                    self.unit_bones.extend(matrices);
                     base
                 }
                 None => self.animation.variant_base(model, unit.handle),
@@ -503,9 +503,7 @@ impl ModelRenderer {
     /// Poses the models `elapsed` milliseconds into their animations.
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, elapsed: i32) {
         let mut bones = self.animation.bones(elapsed);
-        for &(model, dead_for) in &self.deaths {
-            bones.extend(self.animation.death_pose(model, dead_for));
-        }
+        bones.extend_from_slice(&self.unit_bones);
         let alphas = self.animation.alphas(elapsed);
         let (bone_count, alpha_count) = (bones.len() as u32, alphas.len() as u32);
         if bone_count > self.bone_capacity || alpha_count > self.alpha_capacity {

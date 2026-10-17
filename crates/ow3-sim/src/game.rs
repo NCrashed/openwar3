@@ -171,6 +171,19 @@ pub struct UnitView {
     pub hidden: bool,
     /// The tick of its death.
     pub died_at: Option<u64>,
+    /// The attack it is making.
+    pub attack: Option<AttackView>,
+}
+
+/// An attack in progress, in ticks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttackView {
+    pub target: u32,
+    /// The tick of the next hit.
+    pub next_hit: u64,
+    /// Ticks between hits, and from the start of a swing to its hit.
+    pub cooldown: u64,
+    pub damage_point: u64,
 }
 
 /// A regenerating value (life or mana) as SPEC-0013 computes it: the
@@ -858,6 +871,7 @@ impl<'a> Game<'a> {
                     alive: u.alive,
                     hidden: u.hidden,
                     died_at: u.died_at,
+                    attack: u.attack.map(|a| a.view(&state, u.type_id)),
                 }),
                 _ => None,
             })

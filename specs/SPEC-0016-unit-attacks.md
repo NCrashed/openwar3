@@ -38,18 +38,30 @@ For weapon 1 of the attacker:
    `DAMAGE_TYPE_NORMAL`: armor and the type multiplier apply, the floor
    applies, `EVENT_UNIT_DAMAGED` triggers see the result.
 
-Example (custom map, `SetRandomSeed(777)`): a knight against medium armor
-10 did 29.0625, 30.0, 29.0625, 29.0625, 30.0, 27.1875 (raw 31, 32, 31,
-31, 32, 29 times 0.625 times 1.5).
+Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
+`f = 0x3F1FFFFF` as in SPEC-0015), bit patterns of `GetEventDamage()`:
+
+| Attacker | Raw sums | Results |
+|---|---|---|
+| knight (x 1.5) | 31 32 31 31 32 29 | `41E87FFE` `41EFFFFE` `41E87FFE` `41E87FFE` `41EFFFFE` `41D97FFE` (29.062496, 29.999996, ..., 27.187496) |
+| paladin (x 1.0) | 28 30 30 29 31 26 | `418BFFFF` `4195FFFF` `4195FFFF` `4190FFFF` `419AFFFF` `4181FFFF` (17.499998, ...) |
+| rifleman (x 0.75) | 21 22 21 21 22 19 | `411D7FFE` `4124FFFE` `411D7FFE` `411D7FFE` `4124FFFE` `410E7FFE` (9.843748, ...) |
 
 ### Timing
 
 - Consecutive hits on a target that does not move are exactly `cool1`
   apart (1.5 s for the custom knight, measured from game time at each
   damage event).
-- The first hit after an attack order, with the attacker in range and
-  facing the target, came 0.73 to 0.94 s after the order for the knight
-  (`dmgpt1` 0.66); the rule for this delay is open.
+- The first hit after an attack order (attacker created next to the
+  target 0.3 s before, order given from a timer callback) came 140 to
+  191 ticks after the order for the knight (`dmgpt1` 0.66). Hits fall
+  on the unit's update steps (every 6 ticks, 0.03 s). With the same seed
+  the delay varied by at most 6 ticks; with different seeds the values
+  fell into about four levels (around 140-146, 152-158, 170-176,
+  184-189 ticks). Between the seed and the first hit exactly one output
+  of game generator 9 and two of generator 2 (the dice) were drawn, and
+  nothing else (generator states read from process memory for 7 seeds).
+  How that one output of generator 9 sets the delay is open.
 
 ## Edge cases
 
@@ -59,11 +71,15 @@ Example (custom map, `SetRandomSeed(777)`): a knight against medium armor
 
 ## Open questions
 
-1. The delay before the first hit and the role of `dmgpt1`, `backSw1`,
-   turning and acquisition.
+1. The delay before the first hit (see Timing) and the role of `dmgpt1`,
+   `backSw1`, turning and acquisition.
 2. Weapon 2, splash, upgrades (`dmgUp1`, `DmgUpg`), projectiles and
    missing (`MissDamageReduction`).
 3. Which systems other than attacks draw from generators 0..44.
+4. How real numbers in `.slk` files are read. For `MiscGame.txt` it is
+   `s2r` of SPEC-0004; for `.slk` values no measurement has told `s2r`
+   from the IEEE nearest value yet (`"1.5"` would give 1.5000001 with
+   `s2r`).
 
 ## Sources
 

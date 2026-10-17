@@ -89,6 +89,8 @@ pub struct Group {
 struct Animated {
     model: Model,
     sequence: usize,
+    /// The first sequence named Death, or the Stand sequence.
+    death: usize,
     /// The object ids of the bones, in the order of their matrices.
     palette: Vec<u32>,
     /// The first matrix of variant 0; variant `v` follows `v` blocks
@@ -109,12 +111,89 @@ struct AlphaSource {
 #[derive(Clone, Debug, Default)]
 pub struct Animation {
     models: Vec<Animated>,
+    /// The index of each model path tried, `None` if it cannot be read.
+    paths: BTreeMap<String, Option<usize>>,
     /// Slot 0 is always 1.
     alphas: Vec<AlphaSource>,
     bone_count: u32,
 }
 
 impl Animation {
+    /// The index of the model at `path`, read from `chain` and given its
+    /// bone matrices the first time.
+    pub fn model(&mut self, chain: &mut ArchiveChain, path: &str) -> Option<usize> {
+        if let Some(index) = self.paths.get(path) {
+            return *index;
+        }
+        let index = chain
+            .read(path)
+            .and_then(|d| Model::parse(&d).ok())
+            .map(|model| {
+                let sequence = ow3_render::model::stand_index(&model);
+                let death = model
+                    .sequences
+                    .iter()
+                    .position(|s| s.name.to_ascii_lowercase().starts_with("death"))
+                    .unwrap_or(sequence);
+                let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
+                    .matrices
+                    .keys()
+                    .copied()
+                    .collect();
+                let bone_base = self.bone_count.max(1);
+                self.bone_count = bone_base + (palette.len() * VARIANTS) as u32;
+                self.models.push(Animated {
+                    model,
+                    sequence,
+                    death,
+                    palette,
+                    bone_base,
+                });
+                self.models.len() - 1
+            });
+        self.paths.insert(path.to_owned(), index);
+        index
+    }
+
+    /// The bones of model `index`.
+    pub fn palette_len(&self, index: usize) -> u32 {
+        self.models[index].palette.len() as u32
+    }
+
+    /// The first bone matrix of variant `variant` of model `index`.
+    pub fn variant_base(&self, index: usize, variant: u32) -> u32 {
+        let animated = &self.models[index];
+        animated.bone_base + (variant % VARIANTS as u32) * animated.palette.len() as u32
+    }
+
+    /// The bone matrices of model `index` `elapsed` milliseconds into its
+    /// Death sequence, holding its last frame.
+    pub fn death_pose(&self, index: usize, elapsed: i32) -> Vec<Mat4> {
+        let animated = &self.models[index];
+        let mut moment = Moment::start(&animated.model, animated.death);
+        let length = moment.interval[1] - moment.interval[0];
+        moment.frame += elapsed.clamp(0, length.max(0));
+        let pose = Pose::new(&animated.model, moment);
+        animated
+            .palette
+            .iter()
+            .map(|id| {
+                pose.matrices
+                    .get(id)
+                    .copied()
+                    .unwrap_or(ow3_render::animation::IDENTITY)
+            })
+            .collect()
+    }
+
+    /// The parts of model `index` for player `team`, with alpha slots.
+    pub fn unit_parts(&mut self, index: usize, team: u8) -> Vec<Part> {
+        let model = self.models[index].model.clone();
+        let palette = self.models[index].palette.clone();
+        let paths = ow3_render::model::texture_paths(&model, &[], team);
+        animated_parts(&model, index, &palette, &paths, &mut self.alphas)
+    }
+
     /// Bone matrices: the identity first, then every model's variants.
     pub fn bone_count(&self) -> u32 {
         self.bone_count.max(1)
@@ -319,7 +398,7 @@ pub fn parts(model: &Model, textures: &[Option<String>]) -> Vec<Part> {
 type GroupKey = (String, Option<(u32, String)>, u8);
 
 /// translate(position) * rotate around z (angle) * scale.
-fn placement_matrix(p: &Placement) -> Mat4 {
+pub(crate) fn placement_matrix(p: &Placement) -> Mat4 {
     let (s, c) = p.angle.sin_cos();
     let [sx, sy, sz] = p.scale;
     [
@@ -341,31 +420,9 @@ pub fn load(
         bone_count: 1,
         ..Animation::default()
     };
-    // The index of each model in `animation.models`, or `None`.
-    let mut indices: BTreeMap<String, Option<usize>> = BTreeMap::new();
     let mut groups: BTreeMap<GroupKey, Group> = BTreeMap::new();
     for placement in placements {
-        let index = *indices.entry(placement.model.clone()).or_insert_with(|| {
-            let model = chain
-                .read(&placement.model)
-                .and_then(|d| Model::parse(&d).ok())?;
-            let sequence = ow3_render::model::stand_index(&model);
-            let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
-                .matrices
-                .keys()
-                .copied()
-                .collect();
-            let bone_base = animation.bone_count;
-            animation.bone_count += (palette.len() * VARIANTS) as u32;
-            animation.models.push(Animated {
-                model,
-                sequence,
-                palette,
-                bone_base,
-            });
-            Some(animation.models.len() - 1)
-        });
-        let Some(index) = index else {
+        let Some(index) = animation.model(chain, &placement.model) else {
             continue;
         };
         let animated = &animation.models[index];

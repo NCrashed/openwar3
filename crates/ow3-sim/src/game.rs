@@ -148,8 +148,26 @@ pub struct Unit {
     alive: bool,
     hidden: bool,
     user_data: i32,
+    /// The tick the unit died at.
+    died_at: Option<u64>,
     /// Gold of a mine.
     resources: i32,
+}
+
+/// A unit as [`Game::units`] shows it, for drawing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnitView {
+    pub handle: u32,
+    pub type_id: i32,
+    pub owner: i32,
+    pub x: f32,
+    pub y: f32,
+    /// In radians, counterclockwise from east.
+    pub facing: f32,
+    pub alive: bool,
+    pub hidden: bool,
+    /// The tick of its death.
+    pub died_at: Option<u64>,
 }
 
 /// A regenerating value (life or mana) as SPEC-0013 computes it: the
@@ -811,6 +829,40 @@ impl<'a> Game<'a> {
     }
 
     /// Texts shown to the local player so far.
+    /// The units that exist, in the order they were created, as a viewer
+    /// sees them.
+    pub fn units(&self) -> Vec<UnitView> {
+        let state = self.state.borrow();
+        state
+            .units
+            .iter()
+            .filter_map(|&handle| match state.objects.get(&handle) {
+                Some(Object::Unit(u)) => Some(UnitView {
+                    handle,
+                    type_id: u.type_id,
+                    owner: u.owner,
+                    x: f32::from_bits(u.x),
+                    y: f32::from_bits(u.y),
+                    facing: f32::from_bits(u.facing),
+                    alive: u.alive,
+                    hidden: u.hidden,
+                    died_at: u.died_at,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Game ticks so far (0.005 s of game time each).
+    pub fn ticks(&self) -> u64 {
+        self.state.borrow().ticks
+    }
+
+    /// The ground height at (`x`, `y`) as `GetLocationZ` gives it.
+    pub fn ground_z(&self, x: f32, y: f32) -> f32 {
+        f32::from_bits(self.state.borrow().heights.at(x.to_bits(), y.to_bits()))
+    }
+
     pub fn output(&self) -> Vec<String> {
         self.state.borrow().output.clone()
     }

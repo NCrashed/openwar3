@@ -129,6 +129,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         life,
         mana,
         alive: true,
+        died_at: None,
         hidden: false,
         user_data: 0,
         resources: 0,
@@ -227,9 +228,11 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
 fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, killer: Option<u32>) {
     let killed = {
         let mut state = state.borrow_mut();
+        let tick = state.ticks;
         match unit_mut(&mut state, h) {
             Some(unit) if unit.alive => {
                 unit.alive = false;
+                unit.died_at = Some(tick);
                 unit.life.base = 0;
                 unit.life.rate = 0;
                 unit.mana.rate = 0;

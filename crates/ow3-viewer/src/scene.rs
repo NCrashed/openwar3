@@ -42,7 +42,9 @@ fn water_texture(chain: &mut ArchiveChain, path: &str) -> Image {
 }
 
 impl Scene {
-    pub fn load(game_data: &Path, map: &Path) -> Result<Scene, String> {
+    /// With `without_units`, the units placed in the editor are left out
+    /// for the simulation to place.
+    pub fn load(game_data: &Path, map: &Path, without_units: bool) -> Result<Scene, String> {
         let mut chain =
             ArchiveChain::open(game_data, map).map_err(|e| format!("{}: {e}", map.display()))?;
         let data = chain
@@ -60,7 +62,7 @@ impl Scene {
             (mesh, water_texture(&mut chain, &kind.texture))
         });
         let water = water.filter(|(mesh, _)| !mesh.indices.is_empty());
-        let placements = crate::objects::placements(&mut chain);
+        let placements = crate::objects::placements(&mut chain, without_units);
         let (mut groups, mut model_textures, animation) = models::load(&mut chain, &placements);
         model_textures.extend(models::textures(&mut chain, &cliffs.groups));
         groups.extend(cliffs.groups);

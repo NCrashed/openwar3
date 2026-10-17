@@ -8,4 +8,5 @@ pub mod models;
 pub mod objects;
 pub mod renderer;
 pub mod scene;
+pub mod sim_units;
 pub mod terrain_mesh;

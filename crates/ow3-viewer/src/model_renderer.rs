@@ -6,8 +6,11 @@ use std::collections::BTreeMap;
 use ow3_render::image::Image;
 use wgpu::util::DeviceExt;
 
-use crate::models::{Animation, Group, Instance, ModelVertex};
+use ow3_formats::mpq::ArchiveChain;
+
+use crate::models::{Animation, Group, Instance, ModelVertex, Part};
 use crate::renderer::{DEPTH_FORMAT, upload_texture};
+use crate::sim_units::UnitDraw;
 
 const SHADER: &str = r#"
 struct Globals {
@@ -135,12 +138,25 @@ struct GpuPart {
 
 pub struct ModelRenderer {
     pipelines: BTreeMap<Kind, wgpu::RenderPipeline>,
-    instance_buffers: Vec<(wgpu::Buffer, u32)>,
+    instance_buffers: Vec<Instances>,
     parts: Vec<GpuPart>,
     animation: Animation,
     bones: wgpu::Buffer,
     alphas: wgpu::Buffer,
     animation_bind_group: wgpu::BindGroup,
+    animation_layout: wgpu::BindGroupLayout,
+    texture_layout: wgpu::BindGroupLayout,
+    /// Repeating and clamping samplers.
+    samplers: [wgpu::Sampler; 2],
+    /// Texture bind groups by path and clamping.
+    bind_groups: BTreeMap<(String, bool), wgpu::BindGroup>,
+    /// The instance buffer and model of each unit model and team.
+    unit_groups: BTreeMap<(String, u8), (usize, usize)>,
+    /// The model and time since death of each dead unit, whose matrices
+    /// follow those of the variants.
+    deaths: Vec<(usize, i32)>,
+    bone_capacity: u32,
+    alpha_capacity: u32,
 }
 
 impl ModelRenderer {
@@ -322,81 +338,197 @@ impl ModelRenderer {
             sampler(wgpu::AddressMode::Repeat),
             sampler(wgpu::AddressMode::ClampToEdge),
         ];
-        let mut bind_groups = BTreeMap::new();
-        for (path, image) in textures {
-            let view = upload_texture(device, queue, image);
-            for (clamp, sampler) in [false, true].into_iter().zip(&samplers) {
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("model texture"),
-                    layout: &texture_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                });
-                bind_groups.insert((path.clone(), clamp), bind_group);
-            }
-        }
-        let mut instance_buffers = Vec::with_capacity(groups.len());
-        let mut parts = Vec::new();
-        for group in groups {
-            let instances = instance_buffers.len();
-            instance_buffers.push((
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("instances"),
-                    contents: bytemuck::cast_slice(&group.instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                group.instances.len() as u32,
-            ));
-            for part in &group.parts {
-                let Some(bind_group) = bind_groups.get(&(part.texture.clone(), part.clamp)) else {
-                    continue;
-                };
-                parts.push(GpuPart {
-                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("model vertices"),
-                        contents: bytemuck::cast_slice(&part.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("model indices"),
-                        contents: bytemuck::cast_slice(&part.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
-                    count: part.indices.len() as u32,
-                    bind_group: bind_group.clone(),
-                    kind: kind(part.filter_mode),
-                    instances,
-                });
-            }
-        }
-        // Opaque parts first, then the blended kinds over them.
-        parts.sort_by_key(|p| p.kind);
-        let renderer = ModelRenderer {
+        let mut renderer = ModelRenderer {
             pipelines,
-            instance_buffers,
-            parts,
+            instance_buffers: Vec::new(),
+            parts: Vec::new(),
             animation: animation.clone(),
             bones,
             alphas,
             animation_bind_group,
+            animation_layout,
+            texture_layout,
+            samplers,
+            bind_groups: BTreeMap::new(),
+            unit_groups: BTreeMap::new(),
+            deaths: Vec::new(),
+            bone_capacity: animation.bone_count(),
+            alpha_capacity: animation.alpha_count(),
         };
-        renderer.update(queue, 0);
+        for (path, image) in textures {
+            renderer.add_texture(device, queue, path, image);
+        }
+        for group in groups {
+            renderer.add_group(device, &group.parts, &group.instances);
+        }
+        renderer.update(device, queue, 0);
         renderer
     }
 
+    /// Uploads a texture, for both samplers.
+    fn add_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: &str,
+        image: &Image,
+    ) {
+        let view = upload_texture(device, queue, image);
+        for (clamp, sampler) in [false, true].into_iter().zip(&self.samplers) {
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("model texture"),
+                layout: &self.texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+            self.bind_groups
+                .insert((path.to_owned(), clamp), bind_group);
+        }
+    }
+
+    /// Adds the parts of a model with their instances; the index of its
+    /// instance buffer.
+    fn add_group(
+        &mut self,
+        device: &wgpu::Device,
+        parts: &[Part],
+        instances: &[Instance],
+    ) -> usize {
+        let index = self.instance_buffers.len();
+        self.instance_buffers
+            .push(Instances::new(device, instances, instances.len()));
+        for part in parts {
+            let Some(bind_group) = self.bind_groups.get(&(part.texture.clone(), part.clamp)) else {
+                continue;
+            };
+            self.parts.push(GpuPart {
+                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("model vertices"),
+                    contents: bytemuck::cast_slice(&part.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("model indices"),
+                    contents: bytemuck::cast_slice(&part.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                count: part.indices.len() as u32,
+                bind_group: bind_group.clone(),
+                kind: kind(part.filter_mode),
+                instances: index,
+            });
+        }
+        // Opaque parts first, then the blended kinds over them.
+        self.parts.sort_by_key(|p| p.kind);
+        index
+    }
+
+    /// Places the units of the simulation for the next frame, loading the
+    /// models of new kinds from `chain`.
+    pub fn set_units(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ArchiveChain,
+        units: &[UnitDraw],
+    ) {
+        // Models and groups first: they may add bone matrices.
+        let mut drawn = Vec::with_capacity(units.len());
+        for unit in units {
+            let Some(model) = self.animation.model(chain, &unit.model) else {
+                continue;
+            };
+            let key = (unit.model.clone(), unit.team);
+            let buffer = match self.unit_groups.get(&key) {
+                Some(&(buffer, _)) => buffer,
+                None => {
+                    let parts = self.animation.unit_parts(model, unit.team);
+                    for part in &parts {
+                        if self
+                            .bind_groups
+                            .contains_key(&(part.texture.clone(), false))
+                        {
+                            continue;
+                        }
+                        if let Some(image) = chain
+                            .read(&part.texture)
+                            .and_then(|d| ow3_formats::blp::decode(&d).ok())
+                        {
+                            self.add_texture(device, queue, &part.texture, &Image::from(image));
+                        }
+                    }
+                    let buffer = self.add_group(device, &parts, &[]);
+                    self.unit_groups.insert(key, (buffer, model));
+                    buffer
+                }
+            };
+            drawn.push((unit, buffer, model));
+        }
+        // Dead units get their own matrices after those of the variants.
+        self.deaths.clear();
+        let mut next = self.animation.bone_count();
+        let mut lists: BTreeMap<usize, Vec<Instance>> = self
+            .unit_groups
+            .values()
+            .map(|&(buffer, _)| (buffer, Vec::new()))
+            .collect();
+        for (unit, buffer, model) in drawn {
+            let bone_base = match unit.dead_for {
+                Some(elapsed) => {
+                    self.deaths.push((model, elapsed));
+                    let base = next;
+                    next += self.animation.palette_len(model);
+                    base
+                }
+                None => self.animation.variant_base(model, unit.handle),
+            };
+            lists.entry(buffer).or_default().push(Instance {
+                matrix: unit.matrix,
+                bone_base,
+            });
+        }
+        for (buffer, instances) in lists {
+            self.instance_buffers[buffer].write(device, queue, &instances);
+        }
+    }
+
     /// Poses the models `elapsed` milliseconds into their animations.
-    pub fn update(&self, queue: &wgpu::Queue, elapsed: i32) {
-        let bones = self.animation.bones(elapsed);
-        queue.write_buffer(&self.bones, 0, bytemuck::cast_slice(&bones));
+    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, elapsed: i32) {
+        let mut bones = self.animation.bones(elapsed);
+        for &(model, dead_for) in &self.deaths {
+            bones.extend(self.animation.death_pose(model, dead_for));
+        }
         let alphas = self.animation.alphas(elapsed);
+        let (bone_count, alpha_count) = (bones.len() as u32, alphas.len() as u32);
+        if bone_count > self.bone_capacity || alpha_count > self.alpha_capacity {
+            self.bone_capacity = self.bone_capacity.max(bone_count * 2);
+            self.alpha_capacity = self.alpha_capacity.max(alpha_count * 2);
+            self.bones = storage_buffer(device, "bones", u64::from(self.bone_capacity) * 64);
+            self.alphas = storage_buffer(device, "alphas", u64::from(self.alpha_capacity) * 4);
+            self.animation_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("animation"),
+                layout: &self.animation_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.bones.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.alphas.as_entire_binding(),
+                    },
+                ],
+            });
+        }
+        queue.write_buffer(&self.bones, 0, bytemuck::cast_slice(&bones));
         queue.write_buffer(&self.alphas, 0, bytemuck::cast_slice(&alphas));
     }
 
@@ -405,16 +537,66 @@ impl ModelRenderer {
         pass.set_bind_group(2, &self.animation_bind_group, &[]);
         let mut current = None;
         for part in &self.parts {
+            let instances = &self.instance_buffers[part.instances];
+            if instances.count == 0 {
+                continue;
+            }
             if current != Some(part.kind) {
                 pass.set_pipeline(&self.pipelines[&part.kind]);
                 current = Some(part.kind);
             }
-            let (instances, count) = &self.instance_buffers[part.instances];
             pass.set_bind_group(1, &part.bind_group, &[]);
             pass.set_vertex_buffer(0, part.vertices.slice(..));
-            pass.set_vertex_buffer(1, instances.slice(..));
+            pass.set_vertex_buffer(1, instances.buffer.slice(..));
             pass.set_index_buffer(part.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..part.count, 0, 0..*count);
+            pass.draw_indexed(0..part.count, 0, 0..instances.count);
         }
+    }
+}
+
+fn storage_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size.max(64),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The instances of one model, in a buffer that grows when needed.
+struct Instances {
+    buffer: wgpu::Buffer,
+    count: u32,
+    capacity: usize,
+}
+
+impl Instances {
+    fn new(device: &wgpu::Device, instances: &[Instance], capacity: usize) -> Instances {
+        let capacity = capacity.max(instances.len()).max(1);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instances"),
+            size: (capacity * std::mem::size_of::<Instance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        {
+            let bytes: &[u8] = bytemuck::cast_slice(instances);
+            buffer.slice(..).get_mapped_range_mut()[..bytes.len()].copy_from_slice(bytes);
+        }
+        buffer.unmap();
+        Instances {
+            buffer,
+            count: instances.len() as u32,
+            capacity,
+        }
+    }
+
+    fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, instances: &[Instance]) {
+        if instances.len() > self.capacity {
+            *self = Instances::new(device, instances, instances.len() * 2);
+            return;
+        }
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(instances));
+        self.count = instances.len() as u32;
     }
 }

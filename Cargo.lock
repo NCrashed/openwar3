@@ -1260,6 +1260,7 @@ dependencies = [
  "bytemuck",
  "ow3-formats",
  "ow3-render",
+ "ow3-sim",
  "pollster",
  "wgpu",
  "winit",

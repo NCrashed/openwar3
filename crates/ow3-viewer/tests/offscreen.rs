@@ -15,7 +15,7 @@ fn renders_a_map_offscreen() {
         eprintln!("skipping: {} not found", map.display());
         return;
     }
-    let scene = Scene::load(&game_data, &map).unwrap();
+    let scene = Scene::load(&game_data, &map, false).unwrap();
     let (device, queue) = match pollster::block_on(renderer::headless_device()) {
         Ok(gpu) => gpu,
         Err(e) => {

@@ -102,7 +102,9 @@ fn model_path(look: &Look, variation: i32) -> String {
 }
 
 /// The objects of the map in `chain`.
-pub fn placements(chain: &mut ArchiveChain) -> Vec<Placement> {
+/// With `without_units`, the units of `war3mapUnits.doo` are left out (the
+/// simulation places them); its items stay.
+pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placement> {
     let mut looks: BTreeMap<RawCode, Look> = BTreeMap::new();
     for (id, v) in table(
         chain,
@@ -153,6 +155,7 @@ pub fn placements(chain: &mut ArchiveChain) -> Vec<Placement> {
             },
         );
     }
+    let unit_ids: std::collections::BTreeSet<RawCode> = unit_looks.keys().copied().collect();
     for (id, v) in table(chain, "Units\\ItemData.slk", "itemID", &["file"]) {
         unit_looks.insert(
             id,
@@ -189,6 +192,9 @@ pub fn placements(chain: &mut ArchiveChain) -> Vec<Placement> {
         .and_then(|d| PlacedUnits::parse(&d).ok())
     {
         for u in &units.units {
+            if without_units && unit_ids.contains(&u.kind) {
+                continue;
+            }
             let Some(look) = unit_looks.get(&u.kind) else {
                 continue;
             };
@@ -204,6 +210,28 @@ pub fn placements(chain: &mut ArchiveChain) -> Vec<Placement> {
         }
     }
     placements
+}
+
+/// The model and scale of every unit type of `Units\unitUI.slk`, by raw
+/// code value.
+pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, (String, f32)> {
+    table(
+        chain,
+        "Units\\unitUI.slk",
+        "unitUIID",
+        &["file", "modelScale"],
+    )
+    .into_iter()
+    .map(|(id, v)| {
+        let look = Look {
+            file: v[0].clone(),
+            variations: 1,
+            replaceable: None,
+            scale: number(&v[1], 1.0),
+        };
+        (i32::from_be_bytes(id.0), (model_path(&look, 0), look.scale))
+    })
+    .collect()
 }
 
 #[cfg(test)]

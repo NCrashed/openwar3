@@ -1,10 +1,12 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim]`
 //!
-//! Shows a map's ground in a window: arrows or WASD move, the mouse wheel
-//! or +/- zooms, Q/E turn, R/F tilt, Escape quits. With `--screenshot`
-//! the view is drawn into a PNG file without a window, on a GPU or the
-//! software Vulkan driver. Game archives come from `game-data/1.27b` or
-//! the directory in `OW3_GAME_DATA`.
+//! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
+//! zooms, Q/E turn, R/F tilt, Escape quits. The map's script runs in the
+//! simulation, which places the units (`--no-sim`: the units placed in the
+//! editor instead). With `--screenshot` the view `--time` seconds in is
+//! drawn into a PNG file without a window, on a GPU or the software Vulkan
+//! driver. Game archives come from `game-data/1.27b` or the directory in
+//! `OW3_GAME_DATA`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -13,6 +15,7 @@ use std::sync::Arc;
 use ow3_viewer::camera::Camera;
 use ow3_viewer::renderer::{self, Renderer};
 use ow3_viewer::scene::Scene;
+use ow3_viewer::sim_units::Sim;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -26,6 +29,8 @@ struct Options {
     camera: Option<Vec<f32>>,
     /// Seconds into the animations of a screenshot.
     time: f32,
+    /// Draw the units placed in the editor instead of running the script.
+    no_sim: bool,
 }
 
 fn options() -> Result<Options, String> {
@@ -36,6 +41,7 @@ fn options() -> Result<Options, String> {
         size: (1280, 720),
         camera: None,
         time: 0.0,
+        no_sim: false,
     };
     let mut map = None;
     while let Some(arg) = args.next() {
@@ -55,6 +61,7 @@ fn options() -> Result<Options, String> {
                 let numbers: Result<Vec<f32>, _> = v.split(',').map(|n| n.trim().parse()).collect();
                 options.camera = Some(numbers.map_err(|_| "bad --camera")?);
             }
+            "--no-sim" => options.no_sim = true,
             "--time" => {
                 options.time = value("--time")?.trim().parse().map_err(|_| "bad --time")?;
             }
@@ -62,7 +69,7 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>]")?;
+    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim]")?;
     Ok(options)
 }
 
@@ -79,13 +86,29 @@ fn camera(scene: &Scene, values: Option<&[f32]>) -> Camera {
     camera
 }
 
-fn screenshot(scene: &Scene, options: &Options, out: &PathBuf) -> Result<(), String> {
+fn screenshot(
+    scene: &Scene,
+    sim: Option<&mut Sim>,
+    options: &Options,
+    out: &PathBuf,
+) -> Result<(), String> {
     let (device, queue) = pollster::block_on(renderer::headless_device())?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let renderer = Renderer::new(&device, &queue, format, scene);
+    let mut renderer = Renderer::new(&device, &queue, format, scene);
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
-    renderer.animate(&queue, (options.time * 1000.0) as i32);
+    if let Some(sim) = sim {
+        // The simulation takes at most a few seconds of real time at once.
+        let mut left = (f64::from(options.time) * 1e6) as u64;
+        while left > 0 {
+            let step = left.min(1_000_000);
+            sim.advance(step);
+            left -= step;
+        }
+        let units = sim.draws();
+        renderer.set_units(&device, &queue, &mut sim.chain, &units);
+    }
+    renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
     image
@@ -113,6 +136,9 @@ struct App {
     gpu: Option<Gpu>,
     /// When the animations started.
     started: std::time::Instant,
+    /// The running map, if its script runs.
+    sim: Option<Sim>,
+    last_frame: std::time::Instant,
     error: Option<String>,
 }
 
@@ -237,15 +263,28 @@ impl ApplicationHandler for App {
                 redraw = true;
             }
             WindowEvent::RedrawRequested => {
-                if let Some(gpu) = &self.gpu {
+                if let Some(gpu) = &mut self.gpu {
                     match gpu.surface.get_current_texture() {
                         Ok(frame) => {
                             let view = frame
                                 .texture
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let aspect = gpu.config.width as f32 / gpu.config.height as f32;
+                            let now = std::time::Instant::now();
+                            if let Some(sim) = &mut self.sim {
+                                let micros = now.duration_since(self.last_frame).as_micros();
+                                sim.advance(micros as u64);
+                                let units = sim.draws();
+                                gpu.renderer.set_units(
+                                    &gpu.device,
+                                    &gpu.queue,
+                                    &mut sim.chain,
+                                    &units,
+                                );
+                            }
+                            self.last_frame = now;
                             let elapsed = self.started.elapsed().as_millis() as i32;
-                            gpu.renderer.animate(&gpu.queue, elapsed);
+                            gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
                             gpu.renderer.draw(
                                 &gpu.device,
                                 &gpu.queue,
@@ -280,7 +319,19 @@ fn main() -> ExitCode {
     };
     let game_data = std::env::var_os("OW3_GAME_DATA")
         .map_or_else(|| PathBuf::from("game-data/1.27b"), PathBuf::from);
-    let scene = match Scene::load(&game_data, &options.map) {
+    // Without a simulation the units placed in the editor stand in.
+    let mut sim = if options.no_sim {
+        None
+    } else {
+        match Sim::start(&game_data, &options.map) {
+            Ok(sim) => Some(sim),
+            Err(e) => {
+                eprintln!("the map's script does not run ({e}); showing the placed units");
+                None
+            }
+        }
+    };
+    let scene = match Scene::load(&game_data, &options.map, sim.is_some()) {
         Ok(scene) => scene,
         Err(e) => {
             eprintln!("{e}");
@@ -288,7 +339,7 @@ fn main() -> ExitCode {
         }
     };
     if let Some(out) = &options.screenshot {
-        return match screenshot(&scene, &options, out) {
+        return match screenshot(&scene, sim.as_mut(), &options, out) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -303,6 +354,8 @@ fn main() -> ExitCode {
         size: options.size,
         gpu: None,
         started: std::time::Instant::now(),
+        sim,
+        last_frame: std::time::Instant::now(),
         error: None,
     };
     let event_loop = match EventLoop::new() {

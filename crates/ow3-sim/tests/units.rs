@@ -108,3 +108,31 @@ fn unit_states_facing_and_position() {
         ]
     );
 }
+
+/// What a viewer sees: units in creation order with their position,
+/// facing in radians and death.
+#[test]
+fn unit_views() {
+    let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
+    let script = ow3_jass::parse(
+        r#"
+function main takes nothing returns nothing
+    local unit u = CreateUnit(Player(0), 'hfoo', 100, 200, 90)
+    call CreateUnit(Player(1), 'hkni', -50, 0, 0)
+    call SetUnitState(u, ConvertUnitState(0), 0)
+endfunction
+"#,
+    )
+    .unwrap();
+    let refs = [&declarations, &script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    game.run("main");
+    let units = game.units();
+    assert_eq!(units.len(), 2);
+    let (a, b) = (units[0], units[1]);
+    assert_eq!((a.x, a.y, a.owner), (100.0, 200.0, 0));
+    assert!((a.facing - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    assert!(!a.alive && a.died_at.is_some());
+    assert!(b.alive && b.died_at.is_none() && b.owner == 1);
+}

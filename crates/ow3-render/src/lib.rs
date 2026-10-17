@@ -1,6 +1,8 @@
-//! Rendering of maps. For now: a top-down image of the terrain, built
-//! from the ground textures of the tileset, for checking the terrain data
-//! and as a base for a map view.
+//! Rendering of maps and models. For now: a top-down image of the
+//! terrain, built from the ground textures of the tileset, and still
+//! images of models in their rest pose, for checking the data and as a
+//! base for a map view.
 
 pub mod image;
+pub mod model;
 pub mod terrain;

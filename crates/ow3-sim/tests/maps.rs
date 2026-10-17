@@ -38,58 +38,86 @@ fn maps(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
+/// What one map gave: its report line and the stub natives it called, or
+/// why it failed.
+type Outcome = Result<(String, Vec<(String, u64)>), String>;
+
+fn run_map(path: &Path) -> Outcome {
+    let name = path
+        .strip_prefix(game_data())
+        .unwrap()
+        .display()
+        .to_string();
+    let started = std::time::Instant::now();
+    let map = Map::load(&game_data(), path).map_err(|e| format!("{name}: {e}"))?;
+    let program = map.check().map_err(|e| format!("{name}: {e}"))?;
+    let mut game = Game::load_map(&program, &map).unwrap();
+    game.start().map_err(|e| format!("{name}: {e}"))?;
+    game.advance_seconds(30.0);
+    let stubs = game
+        .vm
+        .stub_calls()
+        .map(|(native, calls)| (native.to_owned(), calls))
+        .collect();
+    let state = game.state.borrow();
+    let line = format!(
+        "{name}: {:.2} s, {} destructables, {} lines, {} thread errors{}",
+        started.elapsed().as_secs_f64(),
+        map.destructables.len(),
+        state.output.len(),
+        state.errors.len(),
+        state
+            .errors
+            .first()
+            .map_or(String::new(), |e| format!(" (first: {e})")),
+    );
+    Ok((line, stubs))
+}
+
 #[test]
 #[ignore]
 fn every_map_loads_and_runs() {
     let mut found = Vec::new();
     maps(&game_data().join("Maps"), &mut found);
     found.sort();
+    // The maps run on all cores; each thread takes the next map.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut outcomes: Vec<(usize, Outcome)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(path) = found.get(i) else {
+                            break done;
+                        };
+                        done.push((i, run_map(path)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
+    });
+    outcomes.sort_by_key(|(i, _)| *i);
     let mut failures = Vec::new();
     let mut stubs: std::collections::BTreeMap<String, (usize, u64)> = Default::default();
-    for path in &found {
-        let name = path
-            .strip_prefix(game_data())
-            .unwrap()
-            .display()
-            .to_string();
-        let started = std::time::Instant::now();
-        let map = match Map::load(&game_data(), path) {
-            Ok(map) => map,
-            Err(e) => {
-                failures.push(format!("{name}: {e}"));
-                continue;
+    for (_, outcome) in outcomes {
+        match outcome {
+            Ok((line, called)) => {
+                eprintln!("{line}");
+                for (native, calls) in called {
+                    let entry = stubs.entry(native).or_insert((0, 0));
+                    entry.0 += 1;
+                    entry.1 += calls;
+                }
             }
-        };
-        let program = match map.check() {
-            Ok(program) => program,
-            Err(e) => {
-                failures.push(format!("{name}: {e}"));
-                continue;
-            }
-        };
-        let mut game = Game::load_map(&program, &map).unwrap();
-        if let Err(e) = game.start() {
-            failures.push(format!("{name}: {e}"));
-            continue;
+            Err(failure) => failures.push(failure),
         }
-        game.advance_seconds(30.0);
-        for (native, calls) in game.vm.stub_calls() {
-            let entry = stubs.entry(native.to_owned()).or_insert((0, 0));
-            entry.0 += 1;
-            entry.1 += calls;
-        }
-        let state = game.state.borrow();
-        eprintln!(
-            "{name}: {:.2} s, {} destructables, {} lines, {} thread errors{}",
-            started.elapsed().as_secs_f64(),
-            map.destructables.len(),
-            state.output.len(),
-            state.errors.len(),
-            state
-                .errors
-                .first()
-                .map_or(String::new(), |e| format!(" (first: {e})")),
-        );
     }
     eprintln!("{} maps", found.len());
     // Natives that are still stubs, by the number of maps that call them.

@@ -19,7 +19,7 @@
 //! the caller.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+
 use std::fmt;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -116,83 +116,118 @@ pub struct Table {
     /// Size from the `B` record, if present. Cells may lie outside it.
     pub declared_rows: u32,
     pub declared_columns: u32,
-    cells: BTreeMap<(u32, u32), Value>,
+    /// Sorted by position, one cell per position.
+    cells: Vec<((u32, u32), Value)>,
+}
+
+/// A positive decimal coordinate after its letter.
+fn coordinate(field: &[u8], line: usize) -> Result<u32> {
+    let digits = &field[1..];
+    let mut n: u32 = 0;
+    for &b in digits {
+        if !b.is_ascii_digit() {
+            return Err(Error::InvalidCoordinate { line });
+        }
+        n = n
+            .checked_mul(10)
+            .and_then(|n| n.checked_add(u32::from(b - b'0')))
+            .ok_or(Error::InvalidCoordinate { line })?;
+    }
+    if digits.is_empty() || n == 0 {
+        return Err(Error::InvalidCoordinate { line });
+    }
+    Ok(n)
 }
 
 impl Table {
     pub fn parse(data: &[u8]) -> Result<Table> {
+        // One check for the whole file; the line is found only on error.
+        if let Err(e) = std::str::from_utf8(data) {
+            let line = data[..e.valid_up_to()]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count()
+                + 1;
+            return Err(Error::InvalidUtf8 { line });
+        }
         let mut table = Table::default();
         let (mut row, mut column) = (1u32, 1u32);
         for (index, line) in data.split(|&b| b == b'\n').enumerate() {
             let number = index + 1;
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            let line =
-                std::str::from_utf8(line).map_err(|_| Error::InvalidUtf8 { line: number })?;
-            let fields = split_fields(line);
-            let kind = fields.first().map(Cow::as_ref).unwrap_or("");
+            let mut fields = Fields::new(line);
+            let kind = fields.next().unwrap_or_default();
             if index == 0 {
-                if kind != "ID" {
+                if kind.as_ref() != b"ID" {
                     return Err(Error::NotSylk);
                 }
                 continue;
             }
-            let coordinate = |field: &str| {
-                field[1..]
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|&n| n > 0)
-                    .ok_or(Error::InvalidCoordinate { line: number })
-            };
-            match kind {
-                "E" => break,
-                "B" => {
-                    for field in &fields[1..] {
-                        match field.as_bytes().first() {
-                            Some(b'X') => table.declared_columns = coordinate(field)?,
-                            Some(b'Y') => table.declared_rows = coordinate(field)?,
+            match kind.as_ref() {
+                b"E" => break,
+                b"B" => {
+                    for field in fields {
+                        match field.first() {
+                            Some(b'X') => table.declared_columns = coordinate(&field, number)?,
+                            Some(b'Y') => table.declared_rows = coordinate(&field, number)?,
                             _ => {}
                         }
                     }
                 }
-                "C" | "F" => {
+                kind @ (b"C" | b"F") => {
                     let mut value = None;
-                    for field in &fields[1..] {
-                        match field.as_bytes().first() {
-                            Some(b'X') => column = coordinate(field)?,
-                            Some(b'Y') => row = coordinate(field)?,
-                            Some(b'K') if kind == "C" => value = Some(Value::parse(&field[1..])),
+                    for field in fields {
+                        match field.first() {
+                            Some(b'X') => column = coordinate(&field, number)?,
+                            Some(b'Y') => row = coordinate(&field, number)?,
+                            Some(b'K') if kind == b"C" => {
+                                // Valid UTF-8 as a whole, and split at ASCII
+                                // bytes only.
+                                let text = std::str::from_utf8(&field[1..]).unwrap_or_default();
+                                value = Some(Value::parse(text));
+                            }
                             _ => {}
                         }
                     }
                     if let Some(value) = value {
-                        table.cells.insert((row, column), value);
+                        table.cells.push(((row, column), value));
                     }
                 }
                 _ => {}
             }
         }
+        // A later cell at the same position replaces an earlier one.
+        table.cells.reverse();
+        table.cells.sort_by_key(|&(at, _)| at);
+        table.cells.dedup_by_key(|&mut (at, _)| at);
         Ok(table)
     }
 
+    fn find(&self, at: (u32, u32)) -> std::result::Result<usize, usize> {
+        self.cells.binary_search_by_key(&at, |&(at, _)| at)
+    }
+
     pub fn get(&self, row: u32, column: u32) -> Option<&Value> {
-        self.cells.get(&(row, column))
+        self.find((row, column)).ok().map(|i| &self.cells[i].1)
     }
 
     /// All cells in row-major order.
     pub fn cells(&self) -> impl Iterator<Item = ((u32, u32), &Value)> {
-        self.cells.iter().map(|(&at, value)| (at, value))
+        self.cells.iter().map(|(at, value)| (*at, value))
     }
 
     /// Highest row that has a cell.
     pub fn last_row(&self) -> u32 {
-        self.cells.keys().next_back().map_or(0, |&(row, _)| row)
+        self.cells.last().map_or(0, |&((row, _), _)| row)
     }
 
     /// Cells of one row by column.
     pub fn row(&self, row: u32) -> impl Iterator<Item = (u32, &Value)> {
-        self.cells
-            .range((row, 0)..=(row, u32::MAX))
-            .map(|(&(_, column), value)| (column, value))
+        let start = self.find((row, 0)).unwrap_or_else(|i| i);
+        self.cells[start..]
+            .iter()
+            .take_while(move |&&((r, _), _)| r == row)
+            .map(|((_, column), value)| (*column, value))
     }
 
     /// Column of the first cell in row 1 whose text equals `name`.
@@ -203,27 +238,55 @@ impl Table {
     }
 }
 
-/// Splits a record into fields at `;`, treating `;;` as a literal `;`.
+/// The fields of a record, split at `;`, with `;;` as a literal `;`.
 /// Fields borrow from the line unless they contain an escaped semicolon.
-fn split_fields(line: &str) -> Vec<Cow<'_, str>> {
-    if !line.contains(";;") {
-        return line.split(';').map(Cow::Borrowed).collect();
+struct Fields<'a> {
+    rest: Option<&'a [u8]>,
+}
+
+impl<'a> Fields<'a> {
+    fn new(line: &'a [u8]) -> Fields<'a> {
+        Fields { rest: Some(line) }
     }
-    let mut fields = vec![String::new()];
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == ';' {
-            if chars.peek() == Some(&';') {
-                chars.next();
-                fields.last_mut().unwrap().push(';');
-            } else {
-                fields.push(String::new());
+}
+
+impl<'a> Iterator for Fields<'a> {
+    type Item = Cow<'a, [u8]>;
+
+    fn next(&mut self) -> Option<Cow<'a, [u8]>> {
+        let rest = self.rest?;
+        let mut owned: Option<Vec<u8>> = None;
+        let mut start = 0;
+        let mut i = 0;
+        while i < rest.len() {
+            if rest[i] == b';' {
+                if rest.get(i + 1) == Some(&b';') {
+                    let buffer = owned.get_or_insert_with(Vec::new);
+                    buffer.extend_from_slice(&rest[start..=i]);
+                    i += 2;
+                    start = i;
+                    continue;
+                }
+                self.rest = Some(&rest[i + 1..]);
+                return Some(match owned {
+                    Some(mut buffer) => {
+                        buffer.extend_from_slice(&rest[start..i]);
+                        Cow::Owned(buffer)
+                    }
+                    None => Cow::Borrowed(&rest[..i]),
+                });
             }
-        } else {
-            fields.last_mut().unwrap().push(ch);
+            i += 1;
         }
+        self.rest = None;
+        Some(match owned {
+            Some(mut buffer) => {
+                buffer.extend_from_slice(&rest[start..]);
+                Cow::Owned(buffer)
+            }
+            None => Cow::Borrowed(rest),
+        })
     }
-    fields.into_iter().map(Cow::Owned).collect()
 }
 
 #[cfg(test)]
@@ -295,6 +358,24 @@ mod tests {
         );
         assert_eq!(
             Table::parse(b"ID;P\nC;Y1;X1;K\"\xFF\"\n"),
+            Err(Error::InvalidUtf8 { line: 2 })
+        );
+    }
+
+    /// A later cell at the same position wins; `;;` is a literal `;`.
+    #[test]
+    fn repeated_cells_and_escapes() {
+        let data = b"ID;P\nC;Y1;X1;K\"first\"\nC;Y1;X1;K\"a;;b\"\nC;Y1;X2;K1\nE\n";
+        let table = Table::parse(data).unwrap();
+        assert_eq!(table.get(1, 1), Some(&text("a;b")));
+        assert_eq!(table.cells().count(), 2);
+        assert_eq!(table.row(1).map(|(c, _)| c).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            Table::parse(b"ID;P\nC;Y0;X1;K1\n"),
+            Err(Error::InvalidCoordinate { line: 2 })
+        );
+        assert_eq!(
+            Table::parse(b"ID;P\nC;Y1;X1;K\"\xff\"\n"),
             Err(Error::InvalidUtf8 { line: 2 })
         );
     }

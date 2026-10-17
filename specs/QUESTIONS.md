@@ -355,6 +355,11 @@ cells, opacity of the full tile). Still open:
 Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 `ow3-render::water` and the viewer. Choices where the spec is silent:
 
+- **Green cliffs on Icecrown.** With rule 7 the cliffs of
+  `(4)LostTemple.w3x` (tileset I, types `CIsn` and `CIrb`) show the
+  grass and dirt of the plain `Cliff1` and `Cliff0` on the models, which
+  does not look like the game. Something that gives cliff models of
+  these tilesets their look is missing from the spec (asked).
 - **Ground next to cliffs** (SPEC-0014 open question 5). Where cliff
   tiles of different types share a point, the later tile (by rows from
   the south) gives the ground; a `groundTile` missing from the map's

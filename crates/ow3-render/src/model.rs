@@ -10,30 +10,45 @@ use ow3_formats::mpq::ArchiveChain;
 use crate::animation::{Moment, Pose, track_or};
 use crate::image::Image;
 
-/// Replaceable texture 1: team colour; 2: team glow (player 0, red).
-const TEAM_COLOR: &str = "ReplaceableTextures\\TeamColor\\TeamColor00.blp";
-const TEAM_GLOW: &str = "ReplaceableTextures\\TeamGlow\\TeamGlow00.blp";
+/// The texture paths of a model's entries, or `None` where the object
+/// using the model gives none. Replaceable texture 1 is the team colour and
+/// 2 the team glow of player `team`; others (trees, cliffs and so on) come
+/// from `replacements`, by replaceable id.
+pub fn texture_paths(
+    model: &Model,
+    replacements: &[(u32, String)],
+    team: u8,
+) -> Vec<Option<String>> {
+    model
+        .textures
+        .iter()
+        .map(|t| match t.replaceable_id {
+            0 => Some(t.path.clone()),
+            1 => Some(format!(
+                "ReplaceableTextures\\TeamColor\\TeamColor{team:02}.blp"
+            )),
+            2 => Some(format!(
+                "ReplaceableTextures\\TeamGlow\\TeamGlow{team:02}.blp"
+            )),
+            id => replacements
+                .iter()
+                .find(|(r, _)| *r == id)
+                .map(|(_, p)| p.clone()),
+        })
+        .collect()
+}
 
-/// The texture of each entry of `model.textures`, or `None`. Replaceable
-/// textures other than team colour and glow (trees, cliffs and so on)
-/// come from the object that uses the model; `replacements` gives their
-/// paths by replaceable id.
+/// The texture of each entry of `model.textures` for player 0, or `None`
+/// (see [`texture_paths`]).
 pub fn textures(
     chain: &mut ArchiveChain,
     model: &Model,
     replacements: &[(u32, String)],
 ) -> Vec<Option<Image>> {
-    model
-        .textures
-        .iter()
-        .map(|t| {
-            let path = match t.replaceable_id {
-                0 => t.path.clone(),
-                1 => TEAM_COLOR.to_owned(),
-                2 => TEAM_GLOW.to_owned(),
-                id => replacements.iter().find(|(r, _)| *r == id)?.1.clone(),
-            };
-            let data = chain.read(&path)?;
+    texture_paths(model, replacements, 0)
+        .into_iter()
+        .map(|path| {
+            let data = chain.read(&path?)?;
             ow3_formats::blp::decode(&data).ok().map(Image::from)
         })
         .collect()

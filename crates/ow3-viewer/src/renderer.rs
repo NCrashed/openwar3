@@ -5,7 +5,9 @@ use ow3_render::image::Image;
 use wgpu::util::DeviceExt;
 
 use crate::camera::{Camera, Mat4};
-use crate::terrain_mesh::{Layer, Vertex};
+use crate::model_renderer::ModelRenderer;
+use crate::scene::Scene;
+use crate::terrain_mesh::Vertex;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Colour of the sky behind the map.
@@ -83,6 +85,7 @@ pub struct Renderer {
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     layers: Vec<GpuLayer>,
+    models: ModelRenderer,
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -114,7 +117,7 @@ fn mip_chain(image: &Image) -> Vec<Image> {
     levels
 }
 
-fn upload_texture(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image) -> wgpu::TextureView {
+pub(crate) fn upload_texture(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image) -> wgpu::TextureView {
     let levels = mip_chain(image);
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ground atlas"),
@@ -178,8 +181,7 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
-        layers: &[Layer],
-        textures: &[Option<Image>],
+        scene: &Scene,
     ) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground"),
@@ -289,15 +291,16 @@ impl Renderer {
             mipmap_filter: wgpu::FilterMode::Linear,
             ..wgpu::SamplerDescriptor::default()
         });
-        let mut views = Vec::with_capacity(textures.len());
-        for texture in textures {
+        let mut views = Vec::with_capacity(scene.textures.len());
+        for texture in &scene.textures {
             views.push(
                 texture
                     .as_ref()
                     .map(|image| upload_texture(device, queue, image)),
             );
         }
-        let layers = layers
+        let layers = scene
+            .layers
             .iter()
             .filter_map(|layer| {
                 let view = views.get(layer.texture)?.as_ref()?;
@@ -332,12 +335,21 @@ impl Renderer {
                 })
             })
             .collect();
+        let models = ModelRenderer::new(
+            device,
+            queue,
+            format,
+            &globals_layout,
+            &scene.groups,
+            &scene.model_textures,
+        );
         Renderer {
             opaque,
             blended,
             globals,
             globals_bind_group,
             layers,
+            models,
         }
     }
 
@@ -401,6 +413,8 @@ impl Renderer {
                 pass.set_index_buffer(layer.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..layer.count, 0, 0..1);
             }
+            pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            self.models.draw(&mut pass);
         }
         queue.submit([encoder.finish()]);
     }

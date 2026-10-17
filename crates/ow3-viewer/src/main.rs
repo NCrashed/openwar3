@@ -76,7 +76,7 @@ fn camera(scene: &Scene, values: Option<&[f32]>) -> Camera {
 fn screenshot(scene: &Scene, options: &Options, out: &PathBuf) -> Result<(), String> {
     let (device, queue) = pollster::block_on(renderer::headless_device())?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let renderer = Renderer::new(&device, &queue, format, &scene.layers, &scene.textures);
+    let renderer = Renderer::new(&device, &queue, format, scene);
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
@@ -140,13 +140,7 @@ impl App {
         }
         surface.configure(&device, &config);
         let depth = renderer::depth_view(&device, config.width, config.height);
-        let renderer = Renderer::new(
-            &device,
-            &queue,
-            config.format,
-            &self.scene.layers,
-            &self.scene.textures,
-        );
+        let renderer = Renderer::new(&device, &queue, config.format, &self.scene);
         Ok(Gpu {
             window,
             surface,

@@ -14,19 +14,17 @@
 //!
 //! Orders (SPEC-0019): `move`, `patrol` (between the target and where the
 //! order was given), `attack` and `smart` to a point (like `move`), `attack`
-//! on a target (after the reaction delay, walk until the centres are
-//! within `rangeN1` and both collision sizes, then turn until the heading
-//! is within 0.2 radians of the target and attack), `stop` and
-//! `holdposition` (end the motion at once). A new order given to a unit
-//! that is moving takes effect at its next update, and its first motion
-//! comes a tick late.
+//! on a target (stand for the reaction delay, then walk until the target
+//! passes the range test, then turn until the heading is within 0.2
+//! radians of the target and attack), `stop` and `holdposition` (end the
+//! motion at once). Other new orders given to a unit that is moving take
+//! effect at its next update, and its first motion comes a tick late.
 //!
 //! PROVISIONAL: units go straight at their target (no path finding, no
 //! collisions, no small heading wobble, SPEC-0018 open question 2); the
 //! arrival test compares squared distances in cells (open question 1);
-//! the first update comes 6 ticks after the order; a moving unit that gets
-//! an attack order goes on as before during the delay; attackers do not
-//! chase targets that move.
+//! the first update comes 6 ticks after the order; attackers walk to the
+//! target's position at each update, without the goal points of a chase.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -232,6 +230,76 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     true
 }
 
+/// `IssuePointOrder(h, name, target)`: what the native returns.
+pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
+    let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
+    match (name, here) {
+        ("move", _) => order(state, h, Order::Point, ORDER_MOVE, target),
+        ("attack", _) => order(state, h, Order::Point, ORDER_ATTACK, target),
+        ("patrol", Some(home)) => order(state, h, Order::Patrol { home }, ORDER_PATROL, target),
+        // The unit obeys, but the native gives false (SPEC-0019).
+        ("smart", _) => {
+            order(state, h, Order::Point, ORDER_SMART, target);
+            false
+        }
+        _ => false,
+    }
+}
+
+/// `IssueTargetOrder(h, name, target)`: only `attack` so far.
+pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    if name != "attack" {
+        return false;
+    }
+    let armed = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| t.weapon.is_some());
+    match position_of(state, target) {
+        Some(at) if armed && target != h && super::attack::standing(state, target) => {
+            // The reaction delay (SPEC-0019).
+            let delay = mul(
+                state.game_random[REACTION].fraction(),
+                state.combat.reaction_delay,
+            );
+            let tick = state.ticks;
+            let min = [state.world_bounds[0], state.world_bounds[1]];
+            let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
+            // A walking unit stops at once and stands during the delay.
+            if let (true, Some(Object::Unit(u))) = (done, state.objects.get_mut(&h)) {
+                let here = relative([u.x, u.y], min);
+                if let Some(m) = u.movement.as_mut() {
+                    m.reaction = Some((tick, delay));
+                    m.walking = false;
+                    m.restart = false;
+                    m.skip = false;
+                    m.velocity = [0, 0];
+                    m.origin = here;
+                    m.ticks = 0;
+                }
+            }
+            done
+        }
+        _ => false,
+    }
+}
+
+/// `IssueImmediateOrder(h, name)`: `stop` and `holdposition`.
+pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
+    match name {
+        "stop" | "holdposition" => halt(state, h),
+        _ => false,
+    }
+}
+
+/// Whether units of `a` and `b` are enemies of each other.
+pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
+    match (state.unit(Some(a)), state.unit(Some(b))) {
+        (Some(a), Some(b)) => enemies(state, a.owner, b.owner),
+        _ => false,
+    }
+}
+
 /// `stop` and `holdposition`: the unit stands where it is now.
 fn halt(state: &mut State, h: u32) -> bool {
     let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -259,21 +327,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Boolean(false)));
             };
             let target = [real(&args[2]), real(&args[3])];
-            let mut state = state.borrow_mut();
-            let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
-            let done = match (name, here) {
-                ("move", _) => order(&mut state, h, Order::Point, ORDER_MOVE, target),
-                ("attack", _) => order(&mut state, h, Order::Point, ORDER_ATTACK, target),
-                ("patrol", Some(home)) => {
-                    order(&mut state, h, Order::Patrol { home }, ORDER_PATROL, target)
-                }
-                // The unit obeys, but the native gives false (SPEC-0019).
-                ("smart", _) => {
-                    order(&mut state, h, Order::Point, ORDER_SMART, target);
-                    false
-                }
-                _ => false,
-            };
+            let done = point_order(&mut state.borrow_mut(), h, name, target);
             Ok(Some(Value::Boolean(done)))
         }
     );
@@ -282,35 +336,12 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native IssueTargetOrder takes unit whichUnit, string order, widget targetWidget returns boolean",
         |vm, state, args| {
-            let (Some(h), Some("attack"), Some(target)) =
+            let (Some(h), Some(name), Some(target)) =
                 (handle(&args[0]), string(&args[1]), handle(&args[2]))
             else {
                 return Ok(Some(Value::Boolean(false)));
             };
-            let mut state = state.borrow_mut();
-            let armed = state
-                .unit(Some(h))
-                .and_then(|u| state.data.units.get(&u.type_id))
-                .is_some_and(|t| t.weapon.is_some());
-            let at = position_of(&state, target);
-            let done = match at {
-                Some(at) if armed && target != h && super::attack::standing(&state, target) => {
-                    // The reaction delay (SPEC-0019).
-                    let delay = mul(
-                        state.game_random[REACTION].fraction(),
-                        state.combat.reaction_delay,
-                    );
-                    let tick = state.ticks;
-                    let done = order(&mut state, h, Order::Attack { target }, ORDER_ATTACK, at);
-                    if let (true, Some(Object::Unit(u))) = (done, state.objects.get_mut(&h)) {
-                        if let Some(m) = u.movement.as_mut() {
-                            m.reaction = Some((tick, delay));
-                        }
-                    }
-                    done
-                }
-                _ => false,
-            };
+            let done = target_order(&mut state.borrow_mut(), h, name, target);
             Ok(Some(Value::Boolean(done)))
         }
     );
@@ -320,7 +351,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "native IssueImmediateOrder takes unit whichUnit, string order returns boolean",
         |vm, state, args| {
             let done = match (handle(&args[0]), string(&args[1])) {
-                (Some(h), Some("stop" | "holdposition")) => halt(&mut state.borrow_mut(), h),
+                (Some(h), Some(name)) => immediate_order(&mut state.borrow_mut(), h, name),
                 _ => false,
             };
             Ok(Some(Value::Boolean(done)))
@@ -386,9 +417,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let turn_rate = data.map_or(PI, |t| t.turn_rate);
         let window = mul(data.map_or(0, |t| t.prop_window), DEGREES);
         let orient = data.map_or(0, |t| t.orient_interp);
+        // Range and collision size in cells.
         let reach = data.map_or(0, |t| {
             let range = t.weapon.as_ref().map_or(0, |w| w.range);
-            add(range, t.collision)
+            add(mul(range, CELL), mul(t.collision, CELL))
         });
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
@@ -408,7 +440,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         }
         m.next_update = tick + UPDATE;
         let mut begin_attack = None;
-        // Still in the reaction delay: the unit goes on as before.
+        // Still in the reaction delay: the unit stands.
         let waiting = m.reaction.is_some_and(|(from, delay)| {
             let waited = mul(i2r((tick - from) as i32), crate::timers::TICK);
             real_of(waited) < real_of(delay)
@@ -433,12 +465,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             }
                             _ => 0,
                         };
-                        let limit = add(reach, other);
-                        let here = relative([u.x, u.y], min);
-                        let goal = relative(at, min);
-                        let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
-                        let distance = real_of(add(mul(dx, dx), mul(dy, dy)));
-                        in_reach = distance <= real_of(limit) * real_of(limit);
+                        in_reach = in_range(
+                            relative([u.x, u.y], min),
+                            relative(at, min),
+                            add(reach, mul(other, CELL)),
+                        );
                     }
                     _ => {
                         m.arrived = true;
@@ -511,6 +542,25 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
 }
+
+/// The range test of SPEC-0019 between the points `a` and `b`, with
+/// `reach` the range and both collision sizes in cells: the squared
+/// distance in cells below `R * R` or within 0.001 of it, with `R` at
+/// least 0.49.
+fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
+    let r = if real_of(reach) < real_of(ARRIVAL) {
+        ARRIVAL
+    } else {
+        reach
+    };
+    let (dx, dy) = (mul(sub(b[0], a[0]), CELL), mul(sub(b[1], a[1]), CELL));
+    let d2 = add(mul(dx, dx), mul(dy, dy));
+    let r2 = mul(r, r);
+    real_of(d2) < real_of(r2) || real_of(sub(d2, r2)).abs() < real_of(RANGE_SLACK)
+}
+
+/// 0.001, the slack of the range test.
+const RANGE_SLACK: u32 = 0x3A83_126F;
 
 /// The start rule of SPEC-0018 at an update: the heading turns towards
 /// `direction`, and the unit walks along the new heading once the heading

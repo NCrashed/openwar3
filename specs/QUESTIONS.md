@@ -443,9 +443,9 @@ the spec is silent:
   stops are not explained by any form of the test).
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
   a point, `attack` on a target, `stop` and `holdposition`. The reaction
-  delay applies to `attack` on a target only (open question 1); a unit
-  that is walking when it gets such an order goes on along its old
-  heading until the delay ends, which the spec does not cover.
+  delay applies to `attack` on a target only (open question 1). The
+  chase with goal points and its countdown is not implemented yet:
+  attackers aim at the target's position at every update.
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's. Attackers
   do not follow targets that move; destructables and items have

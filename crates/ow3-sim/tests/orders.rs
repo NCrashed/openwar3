@@ -293,3 +293,28 @@ fn reaction_delay_waits_an_update() {
         .0;
     assert_eq!(hit - ORDER_TICK, 138 + 6);
 }
+
+/// SPEC-0019: a walking unit given an attack order stops at once and
+/// stands for its reaction delay (seed 777: 0.0329 s, past one update).
+#[test]
+fn attack_order_stops_a_walking_unit() {
+    let orders = "call IssuePointOrder(a, \"move\", -1000, -2000)\n    call TimerStart(CreateTimer(), 0.3, false, function Attack)\n---\nfunction Attack takes nothing returns nothing\n    call SetRandomSeed(777)\n    call IssueTargetOrder(a, \"attack\", t)\nendfunction";
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)\n    set t = CreateUnit(Player(15), 'hpea', -2600, -1000, 0)",
+        orders,
+        |d| target_type(d, 16.0),
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 400);
+    let at = |tick: u64| {
+        let u = &path.iter().find(|p| p.0 == tick).unwrap().1[0];
+        (u.x, u.y)
+    };
+    // The 0.3 s timer fires 60 ticks after the move order.
+    let order = ORDER_TICK + 60;
+    assert!(at(order).0 > at(order - 1).0, "walking before");
+    for tick in order + 1..=order + 12 {
+        assert_eq!(at(tick), at(order), "tick {tick}");
+    }
+}

@@ -141,26 +141,52 @@ were one tick off because of the test's own counting timer). With seed
 seed. A unit that walks to its target for longer than its delay shows no
 extra wait at the swing.
 
-### Chasing a moving target (observations)
+During the delay the unit does nothing: a footman walking east that got
+an attack order on a target to the north stopped at once (the position
+did not change from the order on) and stood 10 to 53 ticks, depending
+on the seed, before it turned towards the target. It does not keep its
+old course.
 
-Footman attacking a footman copy that walks (without attacking) at a set
-speed, started 300 away; the target's heading pointed along its walk
-from the start. The rule behind these numbers is open; what holds in
-every test:
+### Range test
 
-- **The attacker starts walking after its reaction delay** (previous
-  section): its first motion came 4 to 46 ticks after the order, in
-  steps of 6.
-- **The attacker does not head for the target's current position at
-  first.** In the first part of the approach its steps aim at the
-  target's position at the time of the order. Later (once it is within
-  about 170 of that point in the tests) it aims at the target's current
-  position, updated at every update (seen in the one crossing case
-  analysed this way). After a pause between swings it
-  aims again at a point the target had passed some time before.
-- **A swing starts farther away than the static limit** when the
-  target moves. Distance between the centres at the update the
-  attacker stopped to swing (the static limit is 152):
+Whether a unit is in range of its target is decided in the movement
+system's units of 32 (SPEC-0018), in the engine arithmetic of
+SPEC-0004: with `R = range / 32 + c_a / 32 + c_t / 32` (at least
+0.49) and `d2` the squared distance between the two centres divided by
+32, the target is in range if `d2 < R * R` or `|d2 - R * R| < 0.001`.
+
+### Chasing a moving target
+
+The attacker does not steer at the target's current position. It walks
+to a **goal point**, the target's position at the time the goal was last
+taken, and the goal is taken again only from time to time:
+
+- The goal is taken when the chase starts (after the reaction delay),
+  and again whenever a countdown runs out. After each new goal the
+  countdown is set to `round(0.33 * d)` (with 0.33 the real
+  `s2r("0.33")`), clamped to 16 .. 132, where `d` is the distance from
+  the attacker to the new goal. The tests fit `d` in world units and the
+  countdown in ticks, but the timing is reproduced only to within about
+  30 ticks (see Open questions).
+- The attacker **arrives** when it is within the range test above of
+  the goal point (not of the target). It then stops and swings at once,
+  so a swing at a target that walks away starts from farther than the
+  static limit: from 178 to 218 behind a target walking away at 150
+  (start distances 200 to 650, 9 tests), 214 at 180, 239 at 210, 251 at
+  240 (static limit 152).
+- **A started swing always hits:** the damage comes `dmgpt1` after the
+  swing started, however far the target walked meanwhile (up to 374
+  between the centres at the damage).
+- After the backswing the chase goes on at once (it does not wait for
+  the cooldown). 66 ticks after it resumes, the attacker stands still
+  for one update and goes on: this was seen after every swing in every
+  test (more than 15 cases). Behind targets it could not reach (speed
+  270) it stood for one update at intervals of 96 to 102 ticks.
+- A target moved with `SetUnitPosition` by 40 or more while the attacker
+  walked made the attacker go straight to the new place (it took a new
+  goal at once); moved by 20 it did not, the attacker stopped near the
+  old place and swung from 166.6.
+- Distances at which the first swing started, for comparison:
 
   | Target speed | Walking away | Walking across |
   |---|---|---|
@@ -170,20 +196,6 @@ every test:
   | 240 | 251.4 | 176.6 |
   | 270 | never caught | 213.9 |
   | 300 | never caught | 234.2 |
-
-  At other updates the attacker stopped for one update without
-  swinging and walked on (for example at 255.7 behind a target at 240,
-  at 267 to 284 behind a target at 270), which looks like a new path
-  being made.
-- **A started swing always hits:** the damage was done `dmgpt1` after
-  the swing started, however far the target had walked meanwhile (up to
-  374 between the centres at the damage).
-- After the backswing the attacker walks again; it does not wait for the
-  cooldown to end before walking.
-- A target that is moved by `SetUnitPosition` 20 farther while the
-  attacker walks was hit from 166.6 (the attacker stopped near the old
-  point and swung); moved 40 or more, the attacker went on to the new
-  position without stopping and swung from within the static limit.
 
 ### Acquisition by idle units (first results)
 
@@ -213,8 +225,10 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 1. Whether other orders and the acquisition of targets use the reaction
    delay as well.
-2. The chase rule: when the attacker takes a new aim point, when it
-   swings at a moving target, and the stop-and-go at about 250 to 280.
+2. The exact timing of new goals in a chase (the countdown above
+   reproduces the swing times only to within about 30 ticks), the
+   one-update pause 66 ticks after a chase resumes, and when a moved
+   target makes the attacker take a new goal at once.
 3. Attack-move with enemies, the timing of acquisition scans after the
    first one, retaliation, `minRange`.
 4. Queued orders, group orders, formation movement.

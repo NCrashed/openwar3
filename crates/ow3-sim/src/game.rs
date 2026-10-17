@@ -903,7 +903,6 @@ impl<'a> Game<'a> {
         }
     }
 
-    /// Texts shown to the local player so far.
     /// The units that exist, in the order they were created, as a viewer
     /// sees them.
     pub fn units(&self) -> Vec<UnitView> {
@@ -966,6 +965,28 @@ impl<'a> Game<'a> {
         f32::from_bits(self.state.borrow().heights.at(x.to_bits(), y.to_bits()))
     }
 
+    /// Orders a player gives, as the natives `IssuePointOrder`,
+    /// `IssueTargetOrder` and `IssueImmediateOrder` with the same names
+    /// would; each returns what the native returns.
+    pub fn issue_point_order(&mut self, unit: u32, order: &str, x: f32, y: f32) -> bool {
+        let target = [x.to_bits(), y.to_bits()];
+        movement::point_order(&mut self.state.borrow_mut(), unit, order, target)
+    }
+
+    pub fn issue_target_order(&mut self, unit: u32, order: &str, target: u32) -> bool {
+        movement::target_order(&mut self.state.borrow_mut(), unit, order, target)
+    }
+
+    pub fn issue_immediate_order(&mut self, unit: u32, order: &str) -> bool {
+        movement::immediate_order(&mut self.state.borrow_mut(), unit, order)
+    }
+
+    /// Whether units `a` and `b` belong to enemies.
+    pub fn hostile(&self, a: u32, b: u32) -> bool {
+        movement::hostile(&self.state.borrow(), a, b)
+    }
+
+    /// Texts shown to the local player so far.
     pub fn output(&self) -> Vec<String> {
         self.state.borrow().output.clone()
     }

@@ -1,0 +1,130 @@
+//! `UnitDamageTarget` and the damaged event (SPEC-0015), without game
+//! data: every unit has 1 hit point, armor 0, and every multiplier is 1.
+
+use ow3_sim::game::Game;
+
+const DECLARATIONS: &str = r#"
+type agent extends handle
+type event extends agent
+type player extends agent
+type widget extends agent
+type unit extends widget
+type trigger extends agent
+type triggeraction extends handle
+type eventid extends handle
+type unitevent extends eventid
+type attacktype extends handle
+type damagetype extends handle
+type weapontype extends handle
+native Player takes integer number returns player
+native DisplayTextToPlayer takes player toPlayer, real x, real y, string message returns nothing
+native R2S takes real r returns string
+native I2S takes integer i returns string
+native GetHandleId takes handle h returns integer
+native ConvertUnitEvent takes integer i returns unitevent
+native ConvertAttackType takes integer i returns attacktype
+native ConvertDamageType takes integer i returns damagetype
+native ConvertWeaponType takes integer i returns weapontype
+native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit
+native GetWidgetLife takes widget whichWidget returns real
+native CreateTrigger takes nothing returns trigger
+native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
+native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unitevent whichEvent returns event
+native GetTriggerUnit takes nothing returns unit
+native GetTriggerEventId takes nothing returns eventid
+native GetEventDamage takes nothing returns real
+native GetEventDamageSource takes nothing returns unit
+native GetKillingUnit takes nothing returns unit
+native UnitDamageTarget takes unit whichUnit, widget target, real amount, boolean attack, boolean ranged, attacktype attackType, damagetype damageType, weapontype weaponType returns boolean
+"#;
+
+const SCRIPT: &str = r#"
+globals
+    unit source = null
+    unit target = null
+endglobals
+function Print takes string s returns nothing
+    call DisplayTextToPlayer(Player(0), 0, 0, s)
+endfunction
+function Damaged takes nothing returns nothing
+    local string from = "other"
+    if GetEventDamageSource() == source then
+        set from = "source"
+    endif
+    call Print("damaged " + R2S(GetEventDamage()) + " life " + R2S(GetWidgetLife(GetTriggerUnit())) + " from " + from + " event " + I2S(GetHandleId(GetTriggerEventId())))
+endfunction
+function Died takes nothing returns nothing
+    if GetKillingUnit() == source then
+        call Print("killed by the source")
+    endif
+endfunction
+function Hit takes real amount returns nothing
+    local boolean done = UnitDamageTarget(source, target, amount, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0))
+    if done then
+        call Print("done, life " + R2S(GetWidgetLife(target)))
+    else
+        call Print("not done")
+    endif
+endfunction
+function main takes nothing returns nothing
+    local trigger damaged = CreateTrigger()
+    local trigger died = CreateTrigger()
+    set source = CreateUnit(Player(0), 'hfoo', 0, 0, 0)
+    set target = CreateUnit(Player(1), 'hfoo', 100, 0, 0)
+    call TriggerRegisterUnitEvent(damaged, target, ConvertUnitEvent(52))
+    call TriggerAddAction(damaged, function Damaged)
+    call TriggerRegisterUnitEvent(died, target, ConvertUnitEvent(53))
+    call TriggerAddAction(died, function Died)
+    call Hit(0.5)
+    call Hit(0.2)
+    call Hit(1)
+    if not UnitDamageTarget(null, source, 1, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0)) then
+        call Print("no source")
+    endif
+endfunction
+"#;
+
+#[test]
+fn damage_and_events() {
+    let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
+    let script = ow3_jass::parse(SCRIPT).unwrap();
+    let refs = [&declarations, &script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    game.run("main");
+    assert!(game.state.borrow().errors.is_empty());
+    assert_eq!(
+        game.output(),
+        [
+            "damaged 0.500 life 1.000 from source event 52",
+            "done, life 0.500",
+            // 0.3 left: 0.405 or less is death, with the source as killer.
+            "damaged 0.200 life 0.500 from source event 52",
+            "killed by the source",
+            "done, life 0.000",
+            "not done",
+            "no source",
+        ]
+    );
+}
+
+/// The two copies of the constants differ in spell damage against heroes
+/// (SPEC-0015): 0.70 for melee maps, 0.75 for the others.
+#[test]
+fn melee_and_custom_constants() {
+    let game_data = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    if !game_data.join("War3Patch.mpq").exists() {
+        return;
+    }
+    let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
+    let hero = 5;
+    let spells = 0;
+    let melee = ow3_sim::combat::Combat::load(&mut archives, true);
+    let custom = ow3_sim::combat::Combat::load(&mut archives, false);
+    assert_eq!(melee.bonus[spells][hero], 0x3F33_3334);
+    assert_eq!(custom.bonus[spells][hero], 0.75f32.to_bits());
+    assert_eq!(melee.defense_armor, 0x3D75_C290);
+    // 100 pierce damage against medium armor 10: 46.88 as R2SW shows it.
+    let d = custom.damage(100f32.to_bits(), 10f32.to_bits(), 1, 2, 4);
+    assert_eq!(f32::from_bits(d), 46.874_992);
+}

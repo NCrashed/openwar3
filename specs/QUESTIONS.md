@@ -278,6 +278,28 @@ where the spec is silent:
 - **A destructable placed with 0 percent life** is alive and enumerated
   (SPEC-0009 open question 2).
 
+## Damage and armor (`ow3-sim::combat`, `game::widgets`)
+
+`UnitDamageTarget`, `EVENT_UNIT_DAMAGED`, `GetEventDamage` and
+`GetEventDamageSource` follow SPEC-0015. Choices where the spec is silent:
+
+- **The worked example** of SPEC-0015 gives 46.875; the formula with
+  `DefenseArmor` = `0x3D75C290` gives 46.874992, which `R2SW` shows as
+  46.88. The implementation keeps the formula.
+- **Constants** are read from the game archives only; a `MiscGame.txt`
+  imported into a map is not used. Without the file every multiplier is
+  1, `DefenseArmor` 0.06 and the agility constants 0.
+- **Targets** other than units take no damage, and `UnitDamageTarget`
+  returns false for them. A unit that dies of the damage has the source
+  as its killing unit.
+- **Life after the damaged triggers.** The damage is taken from the life
+  the target has after its `EVENT_UNIT_DAMAGED` triggers have run.
+- **Hero armor** uses the agility of the type (`AGI`), without levels or
+  attribute changes, as `add(add(def, AgiDefenseBase),
+  mul(AgiDefenseBonus, agility))`.
+- **Unknown armor types** count as `none`. Ethereal units, magic immunity
+  and missed attacks (open question 1) are not handled.
+
 ## Natives that keep state for scripts (`game::players`, `game::widgets`)
 
 The ignored test `maps` counts the stubbed natives that the 191 installed

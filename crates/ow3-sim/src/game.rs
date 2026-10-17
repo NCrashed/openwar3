@@ -280,6 +280,9 @@ struct Context {
     triggering_widget: Option<u32>,
     clicked_button: Option<u32>,
     clicked_dialog: Option<u32>,
+    /// `GetEventDamage` and `GetEventDamageSource` (SPEC-0015).
+    event_damage: Option<u32>,
+    damage_source: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -338,6 +341,8 @@ pub struct State {
     world_bounds: [u32; 4],
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
+    /// Damage constants (SPEC-0015).
+    combat: crate::combat::Combat,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
     camera_bounds: [u32; 4],
     next_handle: u32,
@@ -377,6 +382,7 @@ impl State {
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             heights: crate::heights::Heights::default(),
+            combat: crate::combat::Combat::default(),
             camera_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
@@ -573,6 +579,7 @@ impl<'a> Game<'a> {
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
         state.heights = map.heights.clone();
+        state.combat = map.combat.clone();
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();
         state.localized = map.localized.clone();

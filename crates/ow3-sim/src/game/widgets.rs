@@ -32,6 +32,7 @@ use super::{
 };
 
 const EVENT_PLAYER_UNIT_DEATH: i32 = 20;
+const EVENT_UNIT_DAMAGED: i32 = 52;
 const EVENT_UNIT_DEATH: i32 = 53;
 const EVENT_WIDGET_DEATH: i32 = 89;
 const UNIT_STATE_LIFE: i32 = 0;
@@ -221,12 +222,9 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
     }
 }
 
-/// Sets the hit points of a living destructable; 0 or less kills it and
-/// runs its death events (SPEC-0009). PROVISIONAL: also for values below 0
-/// and for `SetWidgetLife`.
 /// Kills a living unit: it reads life 0 and stops regenerating, and the
 /// triggers of its death run before this returns.
-fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>) {
+fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, killer: Option<u32>) {
     let killed = {
         let mut state = state.borrow_mut();
         match unit_mut(&mut state, h) {
@@ -241,15 +239,22 @@ fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>) {
         }
     };
     if let (true, Some(h)) = (killed, h) {
-        died(vm, state, h, None);
+        died(vm, state, h, killer);
     }
 }
 
 /// `SetUnitState(u, UNIT_STATE_LIFE, life)` and `SetWidgetLife` of a unit
-/// (SPEC-0013): limited to the maximum, and 0.405 or less kills.
-fn set_unit_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
+/// (SPEC-0013): limited to the maximum, and 0.405 or less kills, by
+/// `killer` if there is one.
+fn set_unit_life(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: Option<u32>,
+    life: u32,
+    killer: Option<u32>,
+) {
     if f32::from_bits(life) <= DEATH_LIFE {
-        kill_unit(vm, state, h);
+        kill_unit(vm, state, h, killer);
         return;
     }
     let mut state = state.borrow_mut();
@@ -258,6 +263,79 @@ fn set_unit_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: 
     {
         u.life.set(life);
     }
+}
+
+/// `UnitDamageTarget` of a unit (SPEC-0015): the damage after armor and
+/// the attack type, the `EVENT_UNIT_DAMAGED` triggers of the target while
+/// it still has its old life, then the life lowered, which may kill it
+/// with `source` as the killer. False without a source or a living target.
+///
+/// PROVISIONAL: targets other than units are not damaged; ethereal and
+/// magic immune units are treated like the others.
+fn damage_unit(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    source: Option<u32>,
+    target: Option<u32>,
+    amount: u32,
+    attack_type: i32,
+    damage_type: i32,
+) -> bool {
+    let (damage, registrations) = {
+        let state = state.borrow();
+        let (Some(_), Some(unit)) = (state.unit(source), state.unit(target)) else {
+            return false;
+        };
+        if !unit.alive {
+            return false;
+        }
+        let data = state
+            .data
+            .units
+            .get(&unit.type_id)
+            .cloned()
+            .unwrap_or_default();
+        let armor = if is_hero(unit.type_id) {
+            state.combat.hero_armor(data.armor, data.agility)
+        } else {
+            data.armor
+        };
+        let damage = state
+            .combat
+            .damage(amount, armor, data.armor_type, attack_type, damage_type);
+        (damage, state.events.clone())
+    };
+    let Some(target) = target else {
+        return false;
+    };
+    for registration in &registrations {
+        if let Registration::Unit {
+            trigger,
+            unit,
+            event: EVENT_UNIT_DAMAGED,
+        } = *registration
+            && unit == target
+        {
+            let context = Context {
+                event_id: Some(EVENT_UNIT_DAMAGED),
+                triggering_unit: Some(target),
+                triggering_widget: Some(target),
+                event_damage: Some(damage),
+                damage_source: source,
+                ..Context::default()
+            };
+            fire_trigger(vm, state, trigger, context);
+        }
+    }
+    let life = state
+        .borrow()
+        .unit(Some(target))
+        .filter(|u| u.alive)
+        .map(|u| u.life.value());
+    if let Some(life) = life {
+        set_unit_life(vm, state, Some(target), sub(life, damage), source);
+    }
+    true
 }
 
 /// A coordinate as the engine stores it, relative to the world's lower
@@ -280,6 +358,9 @@ fn inside(v: u32, min: u32, max: u32) -> u32 {
     }
 }
 
+/// Sets the hit points of a living destructable; 0 or less kills it and
+/// runs its death events (SPEC-0009). PROVISIONAL: also for values below 0
+/// and for `SetWidgetLife`.
 fn set_destructable_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
     let killed = {
         let mut state = state.borrow_mut();
@@ -366,7 +447,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native KillUnit takes unit whichUnit returns nothing",
         |vm, state, args| {
-            kill_unit(vm, state, handle(&args[0]));
+            kill_unit(vm, state, handle(&args[0]), None);
             Ok(None)
         }
     );
@@ -537,7 +618,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let life = real(&args[1]);
             let is_unit = state.borrow().unit(h).is_some();
             if is_unit {
-                set_unit_life(vm, state, h, life);
+                set_unit_life(vm, state, h, life, None);
             } else {
                 set_destructable_life(vm, state, h, life);
             }
@@ -748,7 +829,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let h = handle(&args[0]);
             let value = real(&args[2]);
             match handle(&args[1]).map(|s| s as i32) {
-                Some(UNIT_STATE_LIFE) => set_unit_life(vm, state, h, value),
+                Some(UNIT_STATE_LIFE) => set_unit_life(vm, state, h, value, None),
                 Some(UNIT_STATE_MANA) => {
                     let mut state = state.borrow_mut();
                     if let Some(u) = unit_mut(&mut state, h)
@@ -1013,6 +1094,41 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "constant native GetKillingUnit takes nothing returns unit",
         |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.killing_unit))) }
+    );
+    native!(
+        add,
+        state,
+        "native UnitDamageTarget takes unit whichUnit, widget target, real amount, boolean attack, boolean ranged, attacktype attackType, damagetype damageType, weapontype weaponType returns boolean",
+        |vm, state, args| {
+            let attack = handle(&args[5]).map_or(-1, |h| h as i32);
+            let damage = handle(&args[6]).map_or(-1, |h| h as i32);
+            let done = damage_unit(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[1]),
+                real(&args[2]),
+                attack,
+                damage,
+            );
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetEventDamage takes nothing returns real",
+        |vm, state, args| {
+            Ok(Some(Value::Real(
+                state.borrow().context.event_damage.unwrap_or(0),
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetEventDamageSource takes nothing returns unit",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.damage_source))) }
     );
     native!(
         add,

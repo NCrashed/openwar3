@@ -42,6 +42,21 @@ pub struct UnitType {
     pub mana_regen: u32,
     /// How the unit turns (`orientInterp` of `UnitData.slk`, SPEC-0013).
     pub orient_interp: u8,
+    /// Armor value (`def`), armor type (`defType`, an index into
+    /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
+    /// SPEC-0015.
+    pub armor: u32,
+    pub armor_type: usize,
+    pub agility: u32,
+}
+
+/// The index of an armor type name; unknown names count as "none".
+fn armor_type(name: &str) -> usize {
+    let name = name.trim().to_ascii_lowercase();
+    crate::combat::ARMOR_TYPES
+        .iter()
+        .position(|t| *t == name)
+        .unwrap_or(crate::combat::ARMOR_TYPES.len() - 1)
 }
 
 /// When a type regenerates life (`regenType`).
@@ -140,6 +155,35 @@ fn real(text: Option<&String>) -> u32 {
 /// asked for that it sets.
 type Custom = (i32, i32, Vec<Option<u32>>);
 
+/// The text that the map's custom types of `kind` set for `field`, by id.
+fn custom_text(
+    archives: &mut Archives,
+    kind: ObjectKind,
+    field: &[u8; 4],
+) -> Result<BTreeMap<i32, String>, MapError> {
+    let Some(data) = archives.read_map_file(kind.file_name()) else {
+        return Ok(BTreeMap::new());
+    };
+    let mods = ObjectModifications::parse(&data, kind)
+        .map_err(|e| MapError(format!("{}: {e}", kind.file_name())))?;
+    Ok(mods
+        .custom
+        .iter()
+        .filter_map(|d| {
+            let text = d
+                .modifications
+                .iter()
+                .rev()
+                .find(|m| m.field.0 == *field)
+                .and_then(|m| match &m.value {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                })?;
+            Some((raw_code_value(d.id?), text))
+        })
+        .collect())
+}
+
 /// The map's custom types of `kind`: new id, base id and the values of
 /// `fields` it sets.
 fn custom(
@@ -212,6 +256,9 @@ impl ObjectData {
                 "regenMana",
                 "regenType",
                 "isbldg",
+                "def",
+                "defType",
+                "AGI",
             ],
         )? {
             let b = Balance {
@@ -227,6 +274,9 @@ impl ObjectData {
             if let Some(unit) = data.units.get_mut(&id) {
                 apply(unit, id, &b);
                 unit.building = values[8].as_deref() == Some("1");
+                unit.armor = real(values[9].as_ref());
+                unit.armor_type = armor_type(values[10].as_deref().unwrap_or(""));
+                unit.agility = real(values[11].as_ref());
             }
             balance.insert(id, b);
         }
@@ -245,9 +295,10 @@ impl ObjectData {
         // or none for a hero, and takes its balance numbers from its base
         // unless it sets them (SPEC-0009, SPEC-0013). PROVISIONAL: a
         // custom regeneration type (`uhrt`) is not read.
-        let fields: [&[u8; 4]; 7] = [
-            b"uhpm", b"ustr", b"uint", b"umpm", b"umpi", b"uhpr", b"umpr",
+        let fields: [&[u8; 4]; 9] = [
+            b"uhpm", b"ustr", b"uint", b"umpm", b"umpi", b"uhpr", b"umpr", b"udef", b"uagi",
         ];
+        let armor_types = custom_text(archives, ObjectKind::Units, b"udty")?;
         for (id, base, values) in custom(archives, ObjectKind::Units, &fields)? {
             let mut unit = data.units.get(&base).cloned().unwrap_or_default();
             unit.name = (!is_hero(id))
@@ -268,6 +319,11 @@ impl ObjectData {
                 }
             }
             apply(&mut unit, id, &b);
+            unit.armor = values[7].unwrap_or(unit.armor);
+            unit.agility = values[8].unwrap_or(unit.agility);
+            if let Some(name) = armor_types.get(&id) {
+                unit.armor_type = armor_type(name);
+            }
             data.units.insert(id, unit);
         }
         for (id, base, values) in custom(archives, ObjectKind::Destructibles, &[b"bhps"])? {

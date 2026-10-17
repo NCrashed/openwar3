@@ -75,6 +75,8 @@ pub struct Map {
     pub world_bounds: Bounds,
     /// Ground heights (SPEC-0014).
     pub heights: crate::heights::Heights,
+    /// Damage constants (SPEC-0015).
+    pub combat: crate::combat::Combat,
     /// Unit, destructable and item types.
     pub data: ObjectData,
     /// The string lists of the interface files, for `GetLocalizedString`.
@@ -133,6 +135,8 @@ impl Map {
             max_y: terrain.origin_y + (terrain.height.saturating_sub(1)) as f32 * CELL,
         };
         let heights = crate::heights::Heights::new(&terrain);
+        // The melee flag of war3map.w3i chooses the constants (SPEC-0015).
+        let combat = crate::combat::Combat::load(archives, info.flags & 0x04 != 0);
         let data = ObjectData::load(archives)?;
         let localized = localized_strings(archives);
         let destructables = destructables(archives, &data)?;
@@ -143,6 +147,7 @@ impl Map {
             destructables,
             world_bounds,
             heights,
+            combat,
             data,
             localized,
         })

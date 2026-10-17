@@ -26,6 +26,8 @@ pub struct UnitType {
     pub name: Option<String>,
     /// Hit points, as a bit pattern of a real.
     pub hp: u32,
+    /// A building (`isbldg` in `UnitBalance.slk`).
+    pub building: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -123,12 +125,19 @@ impl ObjectData {
                 UnitType {
                     name: values[0].clone().filter(|n| !n.is_empty()),
                     hp: 0,
+                    building: false,
                 },
             );
         }
-        for (id, values) in rows(archives, "Units\\UnitBalance.slk", "unitBalanceID", &["HP"])? {
+        for (id, values) in rows(
+            archives,
+            "Units\\UnitBalance.slk",
+            "unitBalanceID",
+            &["HP", "isbldg"],
+        )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.hp = real(values[0].as_ref());
+                unit.building = values[1].as_deref() == Some("1");
             }
         }
         for (id, values) in rows(
@@ -143,11 +152,11 @@ impl ObjectData {
             data.items.insert(id, real(values[0].as_ref()));
         }
         for (id, base, hp) in custom(archives, ObjectKind::Units, b"uhpm")? {
-            let mut unit = data
-                .units
-                .get(&base)
-                .cloned()
-                .unwrap_or(UnitType { name: None, hp: 0 });
+            let mut unit = data.units.get(&base).cloned().unwrap_or(UnitType {
+                name: None,
+                hp: 0,
+                building: false,
+            });
             unit.hp = hp.unwrap_or(unit.hp);
             data.units.insert(id, unit);
         }

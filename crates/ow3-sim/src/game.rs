@@ -70,6 +70,8 @@ pub enum Object {
     Unit(Unit),
     Destructable(Destructable),
     Item(Item),
+    /// An object of a kind the simulation does not model yet.
+    Opaque,
     Location {
         x: u32,
         y: u32,
@@ -125,6 +127,10 @@ pub struct Unit {
     life: u32,
     max_life: u32,
     alive: bool,
+    hidden: bool,
+    user_data: i32,
+    /// Gold of a mine.
+    resources: i32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -225,6 +231,8 @@ pub struct State {
     pub data: ObjectData,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
     world_bounds: [u32; 4],
+    /// Camera bounds as bit patterns: min x, min y, max x, max y.
+    camera_bounds: [u32; 4],
     next_handle: u32,
     /// Texts shown to the local player, in order.
     pub output: Vec<String>,
@@ -253,6 +261,7 @@ impl State {
             events: Vec::new(),
             data: ObjectData::default(),
             world_bounds: [0; 4],
+            camera_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
             output: Vec::new(),
@@ -445,6 +454,7 @@ impl<'a> Game<'a> {
         state.setup = players::Setup::from_map(map);
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
+        state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();
         for d in &map.destructables {
             // PROVISIONAL: placed with the life percentage of the editor.
@@ -591,6 +601,27 @@ impl<'a> Game<'a> {
             };
             // A timer callback that sleeps ends at the sleep (SPEC-0005).
             run_new_thread(&mut self.vm, &self.state, callback, context, false);
+        }
+        // PROVISIONAL: triggers registered for the expiry run after the
+        // callback, in the order they were registered.
+        let triggers: Vec<u32> = self
+            .state
+            .borrow()
+            .events
+            .iter()
+            .filter_map(|r| match *r {
+                widgets::Registration::TimerExpire { trigger, timer } if timer == handle => {
+                    Some(trigger)
+                }
+                _ => None,
+            })
+            .collect();
+        for trigger in triggers {
+            let context = Context {
+                expired_timer: Some(handle),
+                ..Context::default()
+            };
+            fire_trigger(&mut self.vm, &self.state, trigger, context);
         }
         // A periodic timer starts again after its callback, one period
         // after the expiry that fired, unless the callback started,
@@ -1207,6 +1238,50 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     }
 
+    // Camera bounds, from which Blizzard.j derives the playable area.
+    // PROVISIONAL: the bounds are the smallest and largest coordinates of
+    // the four points given to `SetCameraBounds` (before that, of the
+    // eight values in `war3map.w3i`), and every camera margin is 0, so
+    // the playable area is the bounds the map's `main` passes.
+    native!(
+        add,
+        state,
+        "native SetCameraBounds takes real x1, real y1, real x2, real y2, real x3, real y3, real x4, real y4 returns nothing",
+        |vm, state, args| {
+            let values: Vec<u32> = args.iter().map(real).collect();
+            state.borrow_mut().camera_bounds = bounds_of(&values);
+            Ok(None)
+        }
+    );
+    for (declaration, index) in [
+        (
+            "constant native GetCameraBoundMinX takes nothing returns real",
+            0,
+        ),
+        (
+            "constant native GetCameraBoundMinY takes nothing returns real",
+            1,
+        ),
+        (
+            "constant native GetCameraBoundMaxX takes nothing returns real",
+            2,
+        ),
+        (
+            "constant native GetCameraBoundMaxY takes nothing returns real",
+            3,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            Ok(Some(Value::Real(state.borrow().camera_bounds[index])))
+        });
+    }
+    native!(
+        add,
+        state,
+        "native GetCameraMargin takes integer whichMargin returns real",
+        |vm, state, args| { Ok(Some(Value::Real(0))) }
+    );
+
     // Game speed and pause (SPEC-0002).
     native!(
         add,
@@ -1428,6 +1503,51 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
+
+    // PROVISIONAL: natives that make an object the simulation does not
+    // model yet (sounds, dialogs, quests, boards, effects and the like)
+    // return a new handle instead of null, so that scripts that test the
+    // result against null behave as in the game.
+    let constructor = |name: &str| {
+        name.contains("Create")
+            || name.starts_with("Add")
+            || name.starts_with("Init")
+            || name.starts_with("DialogAdd")
+    };
+    for function in &program.functions {
+        if !function.native
+            || !matches!(function.returns, Some(Type::Handle(_)))
+            || !constructor(&function.name)
+            || natives.contains(&function.name)
+        {
+            continue;
+        }
+        let parameters: Vec<String> = function
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| format!("{} a{i}", program.type_name(t)))
+            .collect();
+        let declaration = format!(
+            "native {} takes {} returns {}",
+            function.name,
+            if parameters.is_empty() {
+                "nothing".to_owned()
+            } else {
+                parameters.join(", ")
+            },
+            program.type_name(function.returns.expect("checked")),
+        );
+        let state = state.clone();
+        natives.register(
+            &declaration,
+            Rc::new(move |_: &mut Vm, _: &[Value]| {
+                Ok(Some(Value::Handle(Some(
+                    state.borrow_mut().create(Object::Opaque),
+                ))))
+            }),
+        );
+    }
 }
 
 /// `S2I` (SPEC-0005): leading spaces, an optional sign, decimal digits up to
@@ -1481,4 +1601,26 @@ impl Random {
         let fraction = mul(i2r((self.next() >> 40) as i32), 0x3380_0000);
         add(low, mul(sub(high, low), fraction))
     }
+}
+
+/// Smallest and largest x and y of points given as `x1, y1, x2, y2, ...`
+/// (bit patterns of reals): min x, min y, max x, max y.
+fn bounds_of(values: &[u32]) -> [u32; 4] {
+    let pick = |axis: usize, smaller: bool| {
+        values
+            .iter()
+            .skip(axis)
+            .step_by(2)
+            .copied()
+            .reduce(|a, b| {
+                let b_wins = if smaller {
+                    f32::from_bits(b) < f32::from_bits(a)
+                } else {
+                    f32::from_bits(b) > f32::from_bits(a)
+                };
+                if b_wins { b } else { a }
+            })
+            .unwrap_or(0)
+    };
+    [pick(0, true), pick(1, true), pick(0, false), pick(1, false)]
 }

@@ -105,7 +105,7 @@ fn in_range(unit: &Unit, x: u32, y: u32, radius: u32) -> bool {
     f(add(mul(dx, dx), mul(dy, dy))) <= f(mul(radius, radius))
 }
 
-fn location(state: &State, handle: Option<u32>) -> Option<(u32, u32)> {
+pub(super) fn location(state: &State, handle: Option<u32>) -> Option<(u32, u32)> {
     match state.objects.get(&handle?)? {
         Object::Location { x, y } => Some((*x, *y)),
         _ => None,
@@ -807,6 +807,33 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             destroy(state, handle(&args[0]), |o| {
                 matches!(o, Object::Rect { .. })
             });
+            Ok(None)
+        }
+    );
+    // PROVISIONAL: the centre is `mul(add(min, max), 0.5)`.
+    for (declaration, axis) in [
+        ("native GetRectCenterX takes rect whichRect returns real", 0),
+        ("native GetRectCenterY takes rect whichRect returns real", 1),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let bounds = rect(&state.borrow(), handle(&args[0]));
+            let centre =
+                bounds.map_or(0, |b| mul(ow3_math::add(b[axis], b[axis + 2]), 0x3F00_0000));
+            Ok(Some(Value::Real(centre)))
+        });
+    }
+    native!(
+        add,
+        state,
+        "native MoveLocation takes location whichLocation, real newX, real newY returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(Object::Location { x, y }) =
+                handle(&args[0]).and_then(|h| state.objects.get_mut(&h))
+            {
+                *x = real(&args[1]);
+                *y = real(&args[2]);
+            }
             Ok(None)
         }
     );

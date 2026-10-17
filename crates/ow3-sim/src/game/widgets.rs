@@ -45,6 +45,8 @@ pub enum Registration {
         event: i32,
         filter: Option<u32>,
     },
+    /// `TriggerRegisterTimerExpireEvent`.
+    TimerExpire { trigger: u32, timer: u32 },
     /// `TriggerRegisterDeathEvent` of a unit, destructable or item.
     Death { trigger: u32, widget: u32 },
 }
@@ -87,6 +89,9 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         life: max_life,
         max_life,
         alive: true,
+        hidden: false,
+        user_data: 0,
+        resources: 0,
     };
     let h = state.create(Object::Unit(unit));
     state.units.push(h);
@@ -439,6 +444,265 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         }
     );
 
+    // More about units: creation at a location, position, owner, state
+    // and data kept for scripts. PROVISIONAL: positions are not limited
+    // to the map, `SetUnitState` changes hit points but never kills, and
+    // `changeColor` of `SetUnitOwner` is ignored.
+    native!(
+        add,
+        state,
+        "native CreateUnitAtLoc takes player id, integer unitid, location whichLocation, real face returns unit",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let owner = state.player_id(handle(&args[0]));
+            let at = super::enumerate::location(&state, handle(&args[2]));
+            let (Some(owner), Some((x, y))) = (owner, at) else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let h = create_unit(&mut state, owner, integer(&args[1]), [x, y, real(&args[3])]);
+            Ok(Some(Value::Handle(h)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetUnitLoc takes unit whichUnit returns location",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let at = state.unit(handle(&args[0])).map(|u| (u.x, u.y));
+            Ok(Some(Value::Handle(
+                at.map(|(x, y)| state.create(Object::Location { x, y })),
+            )))
+        }
+    );
+    type Move = fn(&mut Unit, &[Value], &State);
+    let moves: [(&str, Move); 6] = [
+        (
+            "native SetUnitX takes unit whichUnit, real newX returns nothing",
+            |u, args, _| u.x = real(&args[1]),
+        ),
+        (
+            "native SetUnitY takes unit whichUnit, real newY returns nothing",
+            |u, args, _| u.y = real(&args[1]),
+        ),
+        (
+            "native SetUnitPosition takes unit whichUnit, real newX, real newY returns nothing",
+            |u, args, _| {
+                u.x = real(&args[1]);
+                u.y = real(&args[2]);
+            },
+        ),
+        (
+            "native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing",
+            |u, args, _| u.facing = real(&args[1]),
+        ),
+        (
+            "native SetUnitUserData takes unit whichUnit, integer data returns nothing",
+            |u, args, _| u.user_data = integer(&args[1]),
+        ),
+        (
+            "native ShowUnit takes unit whichUnit, boolean show returns nothing",
+            |u, args, _| u.hidden = args[1] != Value::Boolean(true),
+        ),
+    ];
+    for (declaration, apply) in moves {
+        native!(add, state, declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(Object::Unit(mut unit)) =
+                handle(&args[0]).and_then(|h| state.objects.get(&h).cloned())
+            {
+                apply(&mut unit, args, &state);
+                if let Some(u) = unit_mut(&mut state, handle(&args[0])) {
+                    *u = unit;
+                }
+            }
+            Ok(None)
+        });
+    }
+    native!(
+        add,
+        state,
+        "native SetUnitPositionLoc takes unit whichUnit, location whichLocation returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let at = super::enumerate::location(&state, handle(&args[1]));
+            if let (Some((x, y)), Some(u)) = (at, unit_mut(&mut state, handle(&args[0]))) {
+                u.x = x;
+                u.y = y;
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native GetUnitUserData takes unit whichUnit returns integer",
+        |vm, state, args| {
+            let data = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .map_or(0, |u| u.user_data);
+            Ok(Some(Value::Integer(data)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native IsUnitHidden takes unit whichUnit returns boolean",
+        |vm, state, args| {
+            let hidden = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .is_some_and(|u| u.hidden);
+            Ok(Some(Value::Boolean(hidden)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetUnitOwner takes unit whichUnit, player whichPlayer, boolean changeColor returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let owner = state.player_id(handle(&args[1]));
+            if let (Some(owner), Some(u)) = (owner, unit_mut(&mut state, handle(&args[0]))) {
+                u.owner = owner;
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetUnitState takes unit whichUnit, unitstate whichUnitState, real newVal returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let which = handle(&args[1]).map(|s| s as i32);
+            let value = real(&args[2]);
+            if let Some(u) = unit_mut(&mut state, handle(&args[0]))
+                && u.alive
+            {
+                match which {
+                    Some(UNIT_STATE_LIFE) => u.life = value,
+                    Some(UNIT_STATE_MAX_LIFE) => u.max_life = value,
+                    _ => {}
+                }
+            }
+            Ok(None)
+        }
+    );
+    for (declaration, adds) in [
+        (
+            "native SetResourceAmount takes unit whichUnit, integer amount returns nothing",
+            false,
+        ),
+        (
+            "native AddResourceAmount takes unit whichUnit, integer amount returns nothing",
+            true,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(u) = unit_mut(&mut state, handle(&args[0])) {
+                let amount = integer(&args[1]);
+                u.resources = if adds {
+                    u.resources.wrapping_add(amount)
+                } else {
+                    amount
+                };
+            }
+            Ok(None)
+        });
+    }
+    native!(
+        add,
+        state,
+        "native GetResourceAmount takes unit whichUnit returns integer",
+        |vm, state, args| {
+            let amount = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .map_or(0, |u| u.resources);
+            Ok(Some(Value::Integer(amount)))
+        }
+    );
+    for (declaration, buildings) in [
+        (
+            "constant native GetPlayerUnitCount takes player whichPlayer, boolean includeIncomplete returns integer",
+            false,
+        ),
+        (
+            "constant native GetPlayerStructureCount takes player whichPlayer, boolean includeIncomplete returns integer",
+            true,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let state = state.borrow();
+            let owner = state.player_id(handle(&args[0]));
+            let count = state
+                .units
+                .iter()
+                .filter_map(|&u| state.unit(Some(u)))
+                .filter(|u| u.alive && Some(u.owner) == owner)
+                .filter(|u| {
+                    !buildings || state.data.units.get(&u.type_id).is_some_and(|t| t.building)
+                })
+                .count();
+            Ok(Some(Value::Integer(count as i32)))
+        });
+    }
+
+    // Destructables made by scripts.
+    // x and y are the second and third arguments in all three.
+    for (declaration, dead) in [
+        (
+            "native CreateDestructable takes integer objectid, real x, real y, real face, real scale, integer variation returns destructable",
+            false,
+        ),
+        (
+            "native CreateDestructableZ takes integer objectid, real x, real y, real z, real face, real scale, integer variation returns destructable",
+            false,
+        ),
+        (
+            "native CreateDeadDestructable takes integer objectid, real x, real y, real face, real scale, integer variation returns destructable",
+            true,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let type_id = integer(&args[0]);
+            let max_life = match state.data.destructables.get(&type_id) {
+                Some(&hp) => hp,
+                None if state.data.destructables.is_empty() => UNKNOWN_LIFE,
+                None => return Ok(Some(Value::Handle(None))),
+            };
+            let h = state.create(Object::Destructable(Destructable {
+                type_id,
+                x: real(&args[1]),
+                y: real(&args[2]),
+                life: if dead { 0 } else { max_life },
+                max_life,
+                alive: !dead,
+            }));
+            state.destructables.push(h);
+            Ok(Some(Value::Handle(Some(h))))
+        });
+    }
+    native!(
+        add,
+        state,
+        "native RemoveDestructable takes destructable d returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(h) = handle(&args[0])
+                && matches!(state.objects.get(&h), Some(Object::Destructable(_)))
+            {
+                state.objects.remove(&h);
+                state.destructables.retain(|&d| d != h);
+            }
+            Ok(None)
+        }
+    );
+
     // Items.
     native!(
         add,
@@ -533,6 +797,20 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 filter: handle(&args[3]),
             };
             Ok(Some(register_event(state, registration)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native TriggerRegisterTimerExpireEvent takes trigger whichTrigger, timer t returns event",
+        |vm, state, args| {
+            let (Some(trigger), Some(timer)) = (handle(&args[0]), handle(&args[1])) else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            Ok(Some(register_event(
+                state,
+                Registration::TimerExpire { trigger, timer },
+            )))
         }
     );
     native!(

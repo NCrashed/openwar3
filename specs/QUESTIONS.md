@@ -298,3 +298,42 @@ anything yet:
   hit points of a living unit or destructable but never kill it, and
   `GetUnitState` reads only `UNIT_STATE_LIFE` and `UNIT_STATE_MAX_LIFE`.
   `IsUnitType` knows only `UNIT_TYPE_DEAD`. These wait for the unit spec.
+
+## Natives that keep state for scripts (`game::players`, `game::widgets`)
+
+The ignored test `maps` counts the stubbed natives that the 191 installed
+maps call in 30 s (after `config` and `main`); the most common ones that
+scripts read back are now implemented. Choices where no spec says
+anything yet:
+
+- **Math natives.** `Sin`, `Cos`, `Atan2`, `SquareRoot` and `Pow` are called
+  by maps and are still stubs. The simulation must be deterministic, so
+  they cannot use the processor's or the platform's functions. We need
+  their exact results, in the way SPEC-0004 describes the arithmetic
+  (bit patterns, test vectors). The same holds for any other native that
+  computes with reals (`GetRectCenterX`, distances, angles).
+- **Tech, player and game states** are kept as scripts set them: nothing
+  changes them on its own (no research, income, upkeep or day and night).
+  A tech without a limit reads -1, everything else 0 until set. What does
+  `GetPlayerTechMaxAllowed` read without a limit, and what are the game's
+  starting values of player states (gold, lumber, food) and of
+  `GAME_STATE_TIME_OF_DAY`?
+- **`TriggerRegisterTimerExpireEvent`** triggers run after the timer's
+  callback, in the order they were registered, with `GetExpiredTimer`.
+- **`GetRectCenterX`** is `mul(add(min, max), 0.5)`.
+- **Camera bounds** are the smallest and largest coordinates of the four
+  points given to `SetCameraBounds` (before that, of the eight values in
+  `war3map.w3i`), and `GetCameraMargin` is 0 for every margin, so the
+  playable area of Blizzard.j is exactly what `main` passes. What are the
+  game's margins and bounds?
+- **Objects not modelled yet** (sounds, dialogs, quests, boards, effects,
+  regions, camera setups and the like) are real handles, so that tests
+  against `null` behave; every other native on them does nothing.
+- **Units.** `SetUnitX` and the like move a unit anywhere, without the
+  limits of the map; `SetUnitOwner` ignores `changeColor`;
+  `GetPlayerUnitCount` counts living units and `GetPlayerStructureCount`
+  living units whose type has `isbldg`.
+- **`VersionGet`** is `VERSION_FROZEN_THRONE`.
+- **Not yet:** events of player and game states, players leaving,
+  dialogs, regions; unit orders and abilities (they wait for the unit
+  spec); leaderboards and multiboards.

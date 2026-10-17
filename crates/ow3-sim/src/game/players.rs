@@ -64,6 +64,16 @@ pub struct Setup {
     pub map_name: String,
     pub map_description: String,
     pub strings: TriggerStrings,
+    /// `(player, tech)`: the most a player may have, and the level
+    /// researched.
+    pub tech_max: BTreeMap<(i32, i32), i32>,
+    pub tech_levels: BTreeMap<(i32, i32), i32>,
+    /// `(player, state)`: values of `SetPlayerState`.
+    pub player_states: BTreeMap<(i32, i32), i32>,
+    /// Values of `SetFloatGameState` (bit patterns) and
+    /// `SetIntegerGameState`.
+    pub float_game_states: BTreeMap<i32, u32>,
+    pub integer_game_states: BTreeMap<i32, i32>,
 }
 
 impl Setup {
@@ -96,6 +106,11 @@ impl Setup {
             map_name: String::new(),
             map_description: String::new(),
             strings: TriggerStrings::default(),
+            tech_max: BTreeMap::new(),
+            tech_levels: BTreeMap::new(),
+            player_states: BTreeMap::new(),
+            float_game_states: BTreeMap::new(),
+            integer_game_states: BTreeMap::new(),
         }
     }
 
@@ -488,6 +503,168 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let id = state.setup.local_player;
             Ok(Some(Value::Handle(Some(state.player_handle(id)))))
         }
+    );
+
+    // Tech limits and research, player states and game states, kept as
+    // scripts set them. PROVISIONAL: nothing changes them on its own (no
+    // research, income or day and night yet); a tech without a limit reads
+    // -1 (no limit) and every other value reads 0 until set.
+    native!(
+        add,
+        state,
+        "constant native SetPlayerTechMaxAllowed takes player whichPlayer, integer techid, integer maximum returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(p) = player(&state, &args[0]) {
+                let key = (p, integer(&args[1]));
+                state.setup.tech_max.insert(key, integer(&args[2]));
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetPlayerTechMaxAllowed takes player whichPlayer, integer techid returns integer",
+        |vm, state, args| {
+            let state = state.borrow();
+            let value = player(&state, &args[0])
+                .and_then(|p| state.setup.tech_max.get(&(p, integer(&args[1]))))
+                .copied()
+                .unwrap_or(-1);
+            Ok(Some(Value::Integer(value)))
+        }
+    );
+    for (declaration, adds) in [
+        (
+            "constant native SetPlayerTechResearched takes player whichPlayer, integer techid, integer setToLevel returns nothing",
+            false,
+        ),
+        (
+            "constant native AddPlayerTechResearched takes player whichPlayer, integer techid, integer levels returns nothing",
+            true,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(p) = player(&state, &args[0]) {
+                let level = state
+                    .setup
+                    .tech_levels
+                    .entry((p, integer(&args[1])))
+                    .or_insert(0);
+                *level = if adds {
+                    level.wrapping_add(integer(&args[2]))
+                } else {
+                    integer(&args[2])
+                };
+            }
+            Ok(None)
+        });
+    }
+    native!(
+        add,
+        state,
+        "constant native GetPlayerTechResearched takes player whichPlayer, integer techid, boolean specificonly returns boolean",
+        |vm, state, args| {
+            let state = state.borrow();
+            let level = player(&state, &args[0])
+                .and_then(|p| state.setup.tech_levels.get(&(p, integer(&args[1]))))
+                .copied()
+                .unwrap_or(0);
+            Ok(Some(Value::Boolean(level > 0)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetPlayerState takes player whichPlayer, playerstate whichPlayerState, integer value returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let (Some(p), Some(s)) = (player(&state, &args[0]), handle(&args[1])) {
+                state
+                    .setup
+                    .player_states
+                    .insert((p, s as i32), integer(&args[2]));
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetPlayerState takes player whichPlayer, playerstate whichPlayerState returns integer",
+        |vm, state, args| {
+            let state = state.borrow();
+            let value = match (player(&state, &args[0]), handle(&args[1])) {
+                (Some(p), Some(s)) => state.setup.player_states.get(&(p, s as i32)).copied(),
+                _ => None,
+            };
+            Ok(Some(Value::Integer(value.unwrap_or(0))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetFloatGameState takes fgamestate whichFloatGameState, real value returns nothing",
+        |vm, state, args| {
+            if let Some(s) = handle(&args[0]) {
+                let value = real(&args[1]);
+                state
+                    .borrow_mut()
+                    .setup
+                    .float_game_states
+                    .insert(s as i32, value);
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetFloatGameState takes fgamestate whichFloatGameState returns real",
+        |vm, state, args| {
+            let state = state.borrow();
+            let value = handle(&args[0])
+                .and_then(|s| state.setup.float_game_states.get(&(s as i32)))
+                .copied();
+            Ok(Some(Value::Real(value.unwrap_or(0))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetIntegerGameState takes igamestate whichIntegerGameState, integer value returns nothing",
+        |vm, state, args| {
+            if let Some(s) = handle(&args[0]) {
+                let value = integer(&args[1]);
+                state
+                    .borrow_mut()
+                    .setup
+                    .integer_game_states
+                    .insert(s as i32, value);
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetIntegerGameState takes igamestate whichIntegerGameState returns integer",
+        |vm, state, args| {
+            let state = state.borrow();
+            let value = handle(&args[0])
+                .and_then(|s| state.setup.integer_game_states.get(&(s as i32)))
+                .copied();
+            Ok(Some(Value::Integer(value.unwrap_or(0))))
+        }
+    );
+    // 1.27b runs The Frozen Throne: VERSION_FROZEN_THRONE.
+    native!(
+        add,
+        state,
+        "native VersionGet takes nothing returns version",
+        |vm, state, args| { Ok(Some(converted(1))) }
     );
 
     // Alliances.

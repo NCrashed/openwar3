@@ -137,12 +137,41 @@ The model is
 variation always 0: `HRAA` -> `CliffTransHLAA0.mdx`, `RABH` ->
 `CliffTransLABH0.mdx`. Neither tile draws its ground.
 
+**Cliff type of a ramp model.** Look at the tile itself and its east,
+west and north neighbours, in this order, keeping only those that have an
+`R` or `S` corner. Among their corners (per tile in the order BL, BR, TL,
+TR) take the first one with the highest level; the ramp uses that point's
+`ctex` (15 counts as 0). If no tile qualifies, type 0 is used.
+
+**What each tile gets.** For every tile:
+
+1. If it has an `R` or `S` corner, it is a ramp tile: it starts a ramp
+   model when its pattern is in the table above; otherwise it gets no
+   model. It gets no cliff model either way.
+2. Otherwise, if its corner levels differ, it gets a cliff model (rules
+   of "Cliff models"), also when some of its corners are ramp points
+   (letters `H` or `L`).
+3. Its ground is drawn unless it got a cliff model, starts a ramp model,
+   or is the second tile of a ramp model (its pattern is the "second"
+   pattern of a table entry: `RLAA`, `LRAA`, `AALR`, `AARL`, `ARLA`,
+   `ALRA`, `RAAL`, `LAAR`). Ramp tiles without a model, such as the middle
+   of a wide ramp (`LRRL`, `RHHR`), are drawn as ordinary ground with the
+   corner heights of "Ground height".
+
 In `(4)LostTemple.w3m` these rules give 58 ramp models with 14 different
 names, all of which exist in the game archives. Replacing
 `CliffTransLABH0.mdx` and `CliffTransALHB0.mdx` in a copy of the map
 changed exactly the two predicted places (tile (33, 30) with second tile
 (33, 31), and tile (24, 32) with (24, 33)); every other ramp looked as
 before.
+
+The same map has 17 tiles with ramp points but no `R` or `S` corner and
+different levels (pond edges in the north-east, for example tiles
+(127, 110) and (127, 111) with models `CliffsBACB` and `CliffsBBAB`). They
+get cliff models by rule 2: replacing `CliffsBACB*` and `CliffsBBAB*` in a
+copy of the map turned exactly those spots into the replacement models.
+An implementation that gives no cliff model to tiles with ramp points
+leaves holes there.
 
 ## Edge cases
 
@@ -153,10 +182,10 @@ before.
 
 ## Open questions
 
-1. Ramps: which cliff type a ramp model uses, whether tiles with an `R`
-   or `S` corner that start no ramp model get cliff models, and what the
-   `CliffTrans` models with `X` or `C` in their names are for (no pattern
-   above produces them).
+1. Ramps: what the `CliffTrans` models with `X` or `C` in their names are
+   for (no pattern above produces them), and an internal per-tile flag
+   that makes the game skip a tile entirely (seen in the code, not
+   observed in maps).
 2. Placement of the cliff model (origin, height) and how its vertices
    follow the ground heights of the corners.
 3. The clamping of small raised areas above.

@@ -9,6 +9,8 @@ type event extends agent
 type player extends agent
 type widget extends agent
 type unit extends widget
+type item extends widget
+type destructable extends widget
 type trigger extends agent
 type triggeraction extends handle
 type eventid extends handle
@@ -27,6 +29,8 @@ native ConvertDamageType takes integer i returns damagetype
 native ConvertWeaponType takes integer i returns weapontype
 native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit
 native GetWidgetLife takes widget whichWidget returns real
+native CreateItem takes integer itemid, real x, real y returns item
+native CreateDestructable takes integer objectid, real x, real y, real face, real scale, integer variation returns destructable
 native CreateTrigger takes nothing returns trigger
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
 native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unitevent whichEvent returns event
@@ -69,6 +73,8 @@ endfunction
 function main takes nothing returns nothing
     local trigger damaged = CreateTrigger()
     local trigger died = CreateTrigger()
+    local item rat
+    local destructable tree
     set source = CreateUnit(Player(0), 'hfoo', 0, 0, 0)
     set target = CreateUnit(Player(1), 'hfoo', 100, 0, 0)
     call TriggerRegisterUnitEvent(damaged, target, ConvertUnitEvent(52))
@@ -81,6 +87,11 @@ function main takes nothing returns nothing
     if not UnitDamageTarget(null, source, 1, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0)) then
         call Print("no source")
     endif
+    set rat = CreateItem('ratc', 0, 0)
+    call UnitDamageTarget(source, rat, 0.25, true, false, ConvertAttackType(5), ConvertDamageType(4), ConvertWeaponType(0))
+    set tree = CreateDestructable('LTlt', 0, 0, 0, 1, 0)
+    call UnitDamageTarget(source, tree, 0.75, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0))
+    call Print("item " + R2S(GetWidgetLife(rat)) + " tree " + R2S(GetWidgetLife(tree)))
 endfunction
 "#;
 
@@ -104,6 +115,7 @@ fn damage_and_events() {
             "done, life 0.000",
             "not done",
             "no source",
+            "item 0.750 tree 0.250",
         ]
     );
 }
@@ -112,7 +124,8 @@ fn damage_and_events() {
 /// (SPEC-0015): 0.70 for melee maps, 0.75 for the others.
 #[test]
 fn melee_and_custom_constants() {
-    let game_data = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    let game_data =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
     if !game_data.join("War3Patch.mpq").exists() {
         return;
     }
@@ -124,7 +137,13 @@ fn melee_and_custom_constants() {
     assert_eq!(melee.bonus[spells][hero], 0x3F33_3334);
     assert_eq!(custom.bonus[spells][hero], 0.75f32.to_bits());
     assert_eq!(melee.defense_armor, 0x3D75_C290);
+    // A tree's armor type, Wood, is outside the lists; the footman's is
+    // one of them.
+    let data = ow3_sim::data::ObjectData::load(&mut archives).unwrap();
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    assert_eq!(data.destructable_armor[&code(b"LTlt")], None);
+    assert!(data.units[&code(b"hfoo")].armor_type.is_some());
     // 100 pierce damage against medium armor 10: 46.88 as R2SW shows it.
-    let d = custom.damage(100f32.to_bits(), 10f32.to_bits(), 1, 2, 4);
+    let d = custom.damage(100f32.to_bits(), 10f32.to_bits(), Some(1), 2, 4);
     assert_eq!(f32::from_bits(d), 46.874_992);
 }

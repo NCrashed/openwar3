@@ -125,6 +125,8 @@ pub struct Item {
     type_id: i32,
     x: u32,
     y: u32,
+    /// Hit points as a bit pattern (SPEC-0015).
+    life: u32,
 }
 
 /// PROVISIONAL: a placeholder unit with what the enumerations need, until

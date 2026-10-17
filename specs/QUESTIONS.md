@@ -281,24 +281,23 @@ where the spec is silent:
 ## Damage and armor (`ow3-sim::combat`, `game::widgets`)
 
 `UnitDamageTarget`, `EVENT_UNIT_DAMAGED`, `GetEventDamage` and
-`GetEventDamageSource` follow SPEC-0015. Choices where the spec is silent:
+`GetEventDamageSource` follow SPEC-0015, including the map's own
+`Units\MiscGame.txt`, armor types outside the lists, and damage to
+destructables and items. Choices where the spec is silent:
 
-- **The worked example** of SPEC-0015 gives 46.875; the formula with
-  `DefenseArmor` = `0x3D75C290` gives 46.874992, which `R2SW` shows as
-  46.88. The implementation keeps the formula.
-- **Constants** are read from the game archives only; a `MiscGame.txt`
-  imported into a map is not used. Without the file every multiplier is
-  1, `DefenseArmor` 0.06 and the agility constants 0.
-- **Targets** other than units take no damage, and `UnitDamageTarget`
-  returns false for them. A unit that dies of the damage has the source
-  as its killing unit.
-- **Life after the damaged triggers.** The damage is taken from the life
-  the target has after its `EVENT_UNIT_DAMAGED` triggers have run.
+- **Without `MiscGame.txt`** every multiplier is 1, `DefenseArmor` 0.06
+  and the agility constants 0.
+- **Destructables and items** (open question 4) have armor 0 and the
+  armor type of the `armor` column of `DestructableData.slk` and
+  `ItemData.slk`. A destructable at 0 life dies as with
+  `SetDestructableLife`; an item stays with 0 life.
+- **Killing unit.** A unit that dies of the damage has the source as its
+  killing unit.
 - **Hero armor** uses the agility of the type (`AGI`), without levels or
   attribute changes, as `add(add(def, AgiDefenseBase),
   mul(AgiDefenseBonus, agility))`.
-- **Unknown armor types** count as `none`. Ethereal units, magic immunity
-  and missed attacks (open question 1) are not handled.
+- Ethereal units, magic immunity and missed attacks (open question 1) are
+  not handled.
 
 ## Natives that keep state for scripts (`game::players`, `game::widgets`)
 

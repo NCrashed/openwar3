@@ -46,17 +46,15 @@ pub struct UnitType {
     /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
     /// SPEC-0015.
     pub armor: u32,
-    pub armor_type: usize,
+    pub armor_type: Option<usize>,
     pub agility: u32,
 }
 
-/// The index of an armor type name; unknown names count as "none".
-fn armor_type(name: &str) -> usize {
+/// The index of an armor type name, or `None` for a name outside the
+/// lists, such as `Wood` (SPEC-0015).
+fn armor_type(name: &str) -> Option<usize> {
     let name = name.trim().to_ascii_lowercase();
-    crate::combat::ARMOR_TYPES
-        .iter()
-        .position(|t| *t == name)
-        .unwrap_or(crate::combat::ARMOR_TYPES.len() - 1)
+    crate::combat::ARMOR_TYPES.iter().position(|t| *t == name)
 }
 
 /// When a type regenerates life (`regenType`).
@@ -99,9 +97,12 @@ struct Balance {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ObjectData {
     pub units: BTreeMap<i32, UnitType>,
-    /// Hit points of destructable and item types, as bit patterns.
+    /// Hit points of destructable and item types, as bit patterns, and
+    /// their armor types (`armor`, see [`UnitType::armor_type`]).
     pub destructables: BTreeMap<i32, u32>,
     pub items: BTreeMap<i32, u32>,
+    pub destructable_armor: BTreeMap<i32, Option<usize>>,
+    pub item_armor: BTreeMap<i32, Option<usize>>,
     unit_names: BTreeMap<String, i32>,
 }
 
@@ -284,12 +285,16 @@ impl ObjectData {
             archives,
             "Units\\DestructableData.slk",
             "DestructableID",
-            &["HP"],
+            &["HP", "armor"],
         )? {
             data.destructables.insert(id, real(values[0].as_ref()));
+            data.destructable_armor
+                .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
         }
-        for (id, values) in rows(archives, "Units\\ItemData.slk", "itemID", &["HP"])? {
+        for (id, values) in rows(archives, "Units\\ItemData.slk", "itemID", &["HP", "armor"])? {
             data.items.insert(id, real(values[0].as_ref()));
+            data.item_armor
+                .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
         }
         // A custom unit has its own string id, "custom_" and its raw code,
         // or none for a hero, and takes its balance numbers from its base
@@ -329,10 +334,14 @@ impl ObjectData {
         for (id, base, values) in custom(archives, ObjectKind::Destructibles, &[b"bhps"])? {
             let base_hp = data.destructables.get(&base).copied().unwrap_or(0);
             data.destructables.insert(id, values[0].unwrap_or(base_hp));
+            let armor = data.destructable_armor.get(&base).copied().flatten();
+            data.destructable_armor.insert(id, armor);
         }
         for (id, base, values) in custom(archives, ObjectKind::Items, &[b"ihtp"])? {
             let base_hp = data.items.get(&base).copied().unwrap_or(0);
             data.items.insert(id, values[0].unwrap_or(base_hp));
+            let armor = data.item_armor.get(&base).copied().flatten();
+            data.item_armor.insert(id, armor);
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {

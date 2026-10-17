@@ -1,16 +1,16 @@
 //! Damage, armor and attack types (SPEC-0015).
 //!
-//! The constants come from `[Misc]` of `Units\MiscGame.txt` for melee maps
-//! and of `Custom_V1\Units\MiscGame.txt` for the others, read from the
-//! game archives with `s2r`. Damage of `UnitDamageTarget` is the amount
-//! times the armor factor (for `DAMAGE_TYPE_NORMAL` only) times the
-//! multiplier of the attack type against the armor type, and at least the
-//! smaller of the amount and 1.
+//! The constants come from `[Misc]` of a `Units\MiscGame.txt` imported
+//! into the map, else of the game's `Units\MiscGame.txt` for melee maps and
+//! `Custom_V1\Units\MiscGame.txt` for the others, read with `s2r`. Damage
+//! of `UnitDamageTarget` is the amount times the armor factor (for
+//! `DAMAGE_TYPE_NORMAL` only) times the multiplier of the attack type
+//! against the armor type (1 for armor types outside the lists), and at
+//! least the smaller of the amount and 1.
 //!
-//! PROVISIONAL: game data sets other than the default, and a
-//! `MiscGame.txt` imported into the map, are not considered. Without the
-//! file every multiplier is 1, `DefenseArmor` 0.06 and the agility
-//! constants 0.
+//! PROVISIONAL: game data sets other than the default are not
+//! considered. Without the file every multiplier is 1, `DefenseArmor`
+//! 0.06 and the agility constants 0.
 
 use ow3_math::{add, div, i2r, mul, r2i, s2r, sub};
 
@@ -87,15 +87,17 @@ impl Combat {
         combat
     }
 
-    /// The constants for a map, melee or not, from the game archives.
+    /// The constants for a map, melee or not: the map's own
+    /// `Units\MiscGame.txt`, else the game's copy. `Custom_V1` is looked up
+    /// in the game archives only.
     pub fn load(archives: &mut crate::map::Archives, melee: bool) -> Combat {
+        let own = archives.read_map_file("Units\\MiscGame.txt");
         let path = if melee {
             "Units\\MiscGame.txt"
         } else {
             "Custom_V1\\Units\\MiscGame.txt"
         };
-        archives
-            .read_game_file(path)
+        own.or_else(|| archives.read_game_file(path))
             .map(|d| Combat::parse(&String::from_utf8_lossy(&d)))
             .unwrap_or_default()
     }
@@ -120,19 +122,21 @@ impl Combat {
     }
 
     /// The damage of `UnitDamageTarget` against armor `armor` of type
-    /// `armor_type` (an index into [`ARMOR_TYPES`]).
+    /// `armor_type` (an index into [`ARMOR_TYPES`], or `None` for a type
+    /// outside the lists, which takes the multiplier 1).
     pub fn damage(
         &self,
         amount: u32,
         armor: u32,
-        armor_type: usize,
+        armor_type: Option<usize>,
         attack_type: i32,
         damage_type: i32,
     ) -> u32 {
         let multiplier = usize::try_from(attack_type)
             .ok()
             .and_then(|a| self.bonus.get(a))
-            .and_then(|list| list.get(armor_type))
+            .zip(armor_type)
+            .and_then(|(list, t)| list.get(t))
             .copied()
             .unwrap_or(ONE);
         let factor = if damage_type == DAMAGE_TYPE_NORMAL {
@@ -223,10 +227,10 @@ mod tests {
             "[Misc]\nDefenseArmor=0.06\nDamageBonusPierce=2.00,0.75,1.00,0.35,1.00,0.50,0.05,1.50\n",
         );
         assert_eq!(combat.defense_armor, 0x3D75_C290);
-        let medium = 1;
+        let medium = Some(1);
         let normal = combat.damage(bits(100.0), bits(10.0), medium, 2, DAMAGE_TYPE_NORMAL);
-        // "46.875" in the spec, printed as 46.88: the 0.06 of s2r is a
-        // little more than 0.06, so the factor is a little less than 0.625.
+        // 0x423B7FFE: the 0.06 of s2r is a little more than 0.06, so the
+        // factor is a little less than 0.625; R2SW prints 46.88.
         assert_eq!(f32::from_bits(normal), 46.874_992);
         let magic = combat.damage(bits(100.0), bits(10.0), medium, 2, 14);
         assert_eq!(f32::from_bits(magic), 75.0);
@@ -236,10 +240,23 @@ mod tests {
     fn least_damage() {
         let combat = Combat::default();
         // 1.5 against armor 10 is 1; 0.7 stays 0.7.
-        let d = combat.damage(bits(1.5), bits(10.0), 1, 1, DAMAGE_TYPE_NORMAL);
+        let d = combat.damage(bits(1.5), bits(10.0), Some(1), 1, DAMAGE_TYPE_NORMAL);
         assert_eq!(d, ONE);
-        let small = combat.damage(bits(0.7), bits(100.0), 1, 1, DAMAGE_TYPE_NORMAL);
+        let small = combat.damage(bits(0.7), bits(100.0), Some(1), 1, DAMAGE_TYPE_NORMAL);
         assert_eq!(small, bits(0.7));
+    }
+
+    /// An armor type outside the lists (a tree's `Wood`) takes 1 from every
+    /// attack type; `none` takes 1.5 from pierce.
+    #[test]
+    fn armor_type_outside_the_lists() {
+        let combat =
+            Combat::parse("[Misc]\nDamageBonusPierce=2.00,0.75,1.00,0.35,1.00,0.50,0.05,1.50\n");
+        let none = Some(7);
+        let pierce = 2;
+        let d = |t| combat.damage(bits(10.0), 0, t, pierce, DAMAGE_TYPE_NORMAL);
+        assert_eq!(d(None), bits(10.0));
+        assert_eq!(d(none), bits(15.0));
     }
 
     #[test]

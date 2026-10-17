@@ -265,13 +265,66 @@ fn set_unit_life(
     }
 }
 
+/// `UnitDamageTarget` (SPEC-0015) of a unit, destructable or item.
+///
+/// PROVISIONAL (SPEC-0015 open question 4): destructables and items have
+/// armor 0 with the armor type of their data; a destructable at 0 life
+/// dies as with `SetDestructableLife`, an item stays with 0 life.
+fn damage_widget(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    source: Option<u32>,
+    target: Option<u32>,
+    amount: u32,
+    attack_type: i32,
+    damage_type: i32,
+) -> bool {
+    // The armor type, life and kind of a target that is not a unit.
+    let other = {
+        let s = state.borrow();
+        if s.unit(source).is_none() {
+            return false;
+        }
+        match target.and_then(|h| s.objects.get(&h)) {
+            Some(Object::Unit(_)) => None,
+            Some(Object::Destructable(d)) if d.alive => {
+                let armor = s.data.destructable_armor.get(&d.type_id).copied().flatten();
+                Some((armor, d.life, true))
+            }
+            Some(Object::Item(i)) => {
+                let armor = s.data.item_armor.get(&i.type_id).copied().flatten();
+                Some((armor, i.life, false))
+            }
+            _ => return false,
+        }
+    };
+    let Some((armor_type, life, destructable)) = other else {
+        return damage_unit(vm, state, source, target, amount, attack_type, damage_type);
+    };
+    let damage = state
+        .borrow()
+        .combat
+        .damage(amount, 0, armor_type, attack_type, damage_type);
+    let left = sub(life, damage);
+    if destructable {
+        set_destructable_life(vm, state, target, left);
+    } else {
+        let mut s = state.borrow_mut();
+        if let Some(Object::Item(item)) = target.and_then(|h| s.objects.get_mut(&h)) {
+            item.life = if f32::from_bits(left) < 0.0 { 0 } else { left };
+        }
+    }
+    true
+}
+
 /// `UnitDamageTarget` of a unit (SPEC-0015): the damage after armor and
 /// the attack type, the `EVENT_UNIT_DAMAGED` triggers of the target while
-/// it still has its old life, then the life lowered, which may kill it
-/// with `source` as the killer. False without a source or a living target.
+/// it still has its old life, then the damage taken from the life it has
+/// after them, which may kill it with `source` as the killer. False
+/// without a source or a living target.
 ///
-/// PROVISIONAL: targets other than units are not damaged; ethereal and
-/// magic immune units are treated like the others.
+/// PROVISIONAL: ethereal and magic immune units are treated like the
+/// others.
 fn damage_unit(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
@@ -604,6 +657,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let life = match handle(&args[0]).and_then(|h| state.objects.get(&h)) {
                 Some(Object::Unit(u)) if u.alive => u.life.value(),
                 Some(Object::Destructable(d)) => d.life,
+                Some(Object::Item(i)) => i.life,
                 _ => 0,
             };
             Ok(Some(Value::Real(life)))
@@ -968,10 +1022,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if !state.data.items.is_empty() && !state.data.items.contains_key(&type_id) {
                 return Ok(Some(Value::Handle(None)));
             }
+            let life = state
+                .data
+                .items
+                .get(&type_id)
+                .copied()
+                .unwrap_or(UNKNOWN_LIFE);
             let h = state.create(Object::Item(Item {
                 type_id,
                 x: real(&args[1]),
                 y: real(&args[2]),
+                life,
             }));
             state.items.push(h);
             Ok(Some(Value::Handle(Some(h))))
@@ -1102,7 +1163,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let attack = handle(&args[5]).map_or(-1, |h| h as i32);
             let damage = handle(&args[6]).map_or(-1, |h| h as i32);
-            let done = damage_unit(
+            let done = damage_widget(
                 vm,
                 state,
                 handle(&args[0]),

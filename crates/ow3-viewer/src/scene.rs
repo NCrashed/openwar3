@@ -50,8 +50,10 @@ impl Scene {
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
         let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
-        let (cliffs, covered) = crate::cliff_mesh::build(&mut chain, &terrain);
-        let layers = terrain_mesh::build(&terrain, &textures, &covered);
+        let cliffs = crate::cliff_mesh::build(&mut chain, &terrain);
+        // The corners of cliff tiles show the cliff type's ground.
+        let painted = crate::cliff_mesh::repaint(&terrain, &cliffs.grounds);
+        let layers = terrain_mesh::build(&painted, &textures, &cliffs.covered);
         let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
             let depths = ow3_render::water::depths(&mut chain);
             let mesh = terrain_mesh::water(&terrain, &kind, depths);
@@ -60,8 +62,8 @@ impl Scene {
         let water = water.filter(|(mesh, _)| !mesh.indices.is_empty());
         let placements = crate::objects::placements(&mut chain);
         let (mut groups, mut model_textures, animation) = models::load(&mut chain, &placements);
-        model_textures.extend(models::textures(&mut chain, &cliffs));
-        groups.extend(cliffs);
+        model_textures.extend(models::textures(&mut chain, &cliffs.groups));
+        groups.extend(cliffs.groups);
         Ok(Scene {
             terrain,
             textures,

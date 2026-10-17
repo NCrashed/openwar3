@@ -34,6 +34,7 @@ native CreateDestructable takes integer objectid, real x, real y, real face, rea
 native CreateTrigger takes nothing returns trigger
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
 native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unitevent whichEvent returns event
+native TriggerRegisterDeathEvent takes trigger whichTrigger, widget whichWidget returns event
 native GetTriggerUnit takes nothing returns unit
 native GetTriggerEventId takes nothing returns eventid
 native GetEventDamage takes nothing returns real
@@ -62,6 +63,11 @@ function Died takes nothing returns nothing
         call Print("killed by the source")
     endif
 endfunction
+function ItemDied takes nothing returns nothing
+    if GetKillingUnit() == null then
+        call Print("item died, no killer")
+    endif
+endfunction
 function Hit takes real amount returns nothing
     local boolean done = UnitDamageTarget(source, target, amount, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0))
     if done then
@@ -75,6 +81,7 @@ function main takes nothing returns nothing
     local trigger died = CreateTrigger()
     local item rat
     local destructable tree
+    local trigger itemdied = CreateTrigger()
     set source = CreateUnit(Player(0), 'hfoo', 0, 0, 0)
     set target = CreateUnit(Player(1), 'hfoo', 100, 0, 0)
     call TriggerRegisterUnitEvent(damaged, target, ConvertUnitEvent(52))
@@ -92,6 +99,10 @@ function main takes nothing returns nothing
     set tree = CreateDestructable('LTlt', 0, 0, 0, 1, 0)
     call UnitDamageTarget(source, tree, 0.75, true, false, ConvertAttackType(2), ConvertDamageType(4), ConvertWeaponType(0))
     call Print("item " + R2S(GetWidgetLife(rat)) + " tree " + R2S(GetWidgetLife(tree)))
+    call TriggerRegisterDeathEvent(itemdied, rat)
+    call TriggerAddAction(itemdied, function ItemDied)
+    call UnitDamageTarget(source, rat, 5, true, false, ConvertAttackType(5), ConvertDamageType(4), ConvertWeaponType(0))
+    call Print("item life " + R2S(GetWidgetLife(rat)))
 endfunction
 "#;
 
@@ -116,6 +127,8 @@ fn damage_and_events() {
             "not done",
             "no source",
             "item 0.750 tree 0.250",
+            "item died, no killer",
+            "item life 0.000",
         ]
     );
 }

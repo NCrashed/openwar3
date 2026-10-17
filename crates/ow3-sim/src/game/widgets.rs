@@ -267,9 +267,10 @@ fn set_unit_life(
 
 /// `UnitDamageTarget` (SPEC-0015) of a unit, destructable or item.
 ///
-/// PROVISIONAL (SPEC-0015 open question 4): destructables and items have
-/// armor 0 with the armor type of their data; a destructable at 0 life
-/// dies as with `SetDestructableLife`, an item stays with 0 life.
+/// Destructables and items take the full amount times the multiplier of
+/// their armor type, without armor value. A destructable at 0 life dies
+/// as with `SetDestructableLife`; an item at 0 life runs its death
+/// triggers, without a killing unit, and stays.
 fn damage_widget(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
@@ -309,9 +310,19 @@ fn damage_widget(
     if destructable {
         set_destructable_life(vm, state, target, left);
     } else {
-        let mut s = state.borrow_mut();
-        if let Some(Object::Item(item)) = target.and_then(|h| s.objects.get_mut(&h)) {
-            item.life = if f32::from_bits(left) < 0.0 { 0 } else { left };
+        // An item at 0 life runs its death triggers and stays (SPEC-0015).
+        let died_now = {
+            let mut s = state.borrow_mut();
+            match target.and_then(|h| s.objects.get_mut(&h)) {
+                Some(Object::Item(item)) => {
+                    item.life = if f32::from_bits(left) < 0.0 { 0 } else { left };
+                    f32::from_bits(life) > 0.0 && f32::from_bits(item.life) <= 0.0
+                }
+                _ => false,
+            }
+        };
+        if let (true, Some(item)) = (died_now, target) {
+            died(vm, state, item, None);
         }
     }
     true

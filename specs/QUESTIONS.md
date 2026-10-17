@@ -287,10 +287,8 @@ destructables and items. Choices where the spec is silent:
 
 - **Without `MiscGame.txt`** every multiplier is 1, `DefenseArmor` 0.06
   and the agility constants 0.
-- **Destructables and items** (open question 4) have armor 0 and the
-  armor type of the `armor` column of `DestructableData.slk` and
-  `ItemData.slk`. A destructable at 0 life dies as with
-  `SetDestructableLife`; an item stays with 0 life.
+- **Items at 0 life** (open question 4) stay where they are and can be
+  enumerated like other items.
 - **Killing unit.** A unit that dies of the damage has the source as its
   killing unit.
 - **Hero armor** uses the agility of the type (`AGI`), without levels or
@@ -357,11 +355,12 @@ cells, opacity of the full tile). Still open:
 Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 `ow3-render::water` and the viewer. Choices where the spec is silent:
 
-- **Cliff tops** (SPEC-0014 open question 5). The texture is
-  `texDir\texFile.blp` as rule 7 says, and the whole model is drawn with
-  it, so the top edge shows the grass of `Cliff1` where the game shows
-  the tileset's ground (snow on Northrend and Icecrown). Tilesets differ
-  in lighting, which the viewer does not model.
+- **Ground next to cliffs** (SPEC-0014 open question 5). Where cliff
+  tiles of different types share a point, the later tile (by rows from
+  the south) gives the ground; a `groundTile` missing from the map's
+  ground list is not added. A lettered cliff texture imported into the
+  map would be read in place of the game's copy. Tilesets differ in
+  lighting, which the viewer does not model.
 - **Cliff placement** (SPEC-0014 open question 2). The shipped models
   span x -128..0, y 0..128 and raise the corner of the name's BL letter
   at (0, 0), BR at (0, 128), TR at (-128, 128), TL at (-128, 0); the
@@ -381,11 +380,13 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
   depth colour and blended with its alpha, drawn after the models without
   writing depth. No animation, no shorelines.
-- **A dark gap beside the ramp** at tile (33, 30) of
-  `(4)LostTemple.w3x` is still visible with the rules of SPEC-0014 for
-  ramps; every tile without ground has model triangles over it. (What
-  looked like two holes in the north-east cliffs are snow ground tiles
-  between cliff models, as the rules give.)
+- **Ground of ramp middles** (open question 2). The `CliffTrans` models
+  are half a level up at the corner of the letter `R` (heights 128, 64, 0
+  from `H` over `R` to the far end). The viewer draws ground points with
+  the letter `R` or `S` 64 higher than "Ground height" says, so that the
+  ground beside a ramp meets its model; with the plain heights a step of
+  64 showed under the model's edge. `GetLocationZ` keeps the plain
+  heights.
 
 ## Math natives (`ow3-math::natives`)
 

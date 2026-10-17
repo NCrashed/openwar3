@@ -55,6 +55,20 @@ indices):
 - `UI\FrameDef\DateStrings.fdf` (`MONTH_01`)
 - `UI\FrameDef\NetworkStrings.fdf` (`ERROR_ID_INVALIDPARAMS`)
 
+These are exactly the string files listed in `UI\FrameDef\FrameDef.toc`
+(the `War3x.mpq` copy; the 69 other files it lists define frames and
+have no string lists). No other files are read for this native.
+
+- The copies under `UI\FrameDef` are used, in custom and in melee maps
+  alike. `Custom_V0\UI\Framedef\InfoPanelStrings.fdf` and
+  `Melee_V0\...` have shorter texts for `ARMORTIP_FORT` and
+  `CASTER_UPGRADE_TIP`; the game returned the `UI\FrameDef` texts
+  (314 and 142 bytes, against 298 and 138) in both kinds of map.
+- A map cannot add keys: a map that imported its own
+  `UI\FrameDef\GlobalStrings.fdf` with an extra key `OW3_MAPKEY` got
+  `"OW3_MAPKEY"` back (not found), and the other keys kept the game's
+  texts.
+
 The result is the text of the entry in the installed language.
 
 - The lookup is case-sensitive and does not trim:
@@ -106,6 +120,11 @@ player. A 2 s timer started just before `DialogDisplay` did not expire
 during 20 s of real time with the dialog open. After the click it
 expired normally, with elapsed time 2.0.
 
+The sleep clock (SPEC-0002) stops as well: a thread that called
+`TriggerSleepAction(2.0)` just before the dialog was shown did not resume
+during 12 s of real time with the dialog open, and resumed about 3 s
+after the click.
+
 ## Edge cases
 
 - `LeaderboardGetPlayerIndex` after `LeaderboardRemovePlayerItem` can
@@ -115,12 +134,10 @@ expired normally, with elapsed time 2.0.
 
 1. Whether the duplicate `HIGH_VOL` result means "last definition wins"
    or "empty entries are ignored".
-2. Which of the copies of `InfoPanelStrings.fdf` (`UI\FrameDef`,
-   `Custom_V0\...`, `Melee_V0\...`) is used.
-3. Whether the leaderboard sort functions reorder rows; the test could
+2. Whether the leaderboard sort functions reorder rows; the test could
    not tell (the indices of the first rows of p0 and p1 are the same in
    both orders).
-4. Pause in multiplayer: whether a dialog stops game time in a game with
+3. Pause in multiplayer: whether a dialog stops game time in a game with
    several players.
 
 ## Sources
@@ -142,4 +159,7 @@ Test maps built from a 12-player melee map without victory conditions.
 4. The same with `DialogDisplay(Player(0), d, true)` in the first action:
    the dialog is visible after the click.
 5. Dialog shown with a 2 s timer running: the timer does not expire until
-   a button is pressed.
+   a button is pressed. The same for a thread sleeping 2 s.
+6. `GetLocalizedString("ARMORTIP_FORT")` has length 314 in a custom and
+   in a melee map; a key added by a map's own `GlobalStrings.fdf` is not
+   found.

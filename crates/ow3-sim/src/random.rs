@@ -44,6 +44,9 @@ pub struct Random {
 pub const GAME_GENERATORS: usize = 45;
 /// The game generator that rolls the damage dice of attacks (SPEC-0016).
 pub const ATTACK_DICE: usize = 2;
+/// The game generator that an attack order draws one output from before
+/// its first hit (SPEC-0016); how it sets the delay is not known.
+pub const ATTACK_START: usize = 9;
 
 impl Random {
     /// The seeding formula, without the step that `seeded` discards.

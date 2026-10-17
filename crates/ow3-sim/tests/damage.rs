@@ -177,19 +177,59 @@ fn knight_hits() {
     let weapon = knight.weapon.as_ref().unwrap();
     assert_eq!((weapon.damage, weapon.dice, weapon.sides), (25, 2, 5));
     assert_eq!(f32::from_bits(weapon.cooldown), 1.5);
-    let mut dice = ow3_sim::random::Random::reseed(777).1[ow3_sim::random::ATTACK_DICE].clone();
-    let hits: Vec<f32> = (0..6)
-        .map(|_| {
-            let amount = ow3_sim::combat::hit_amount(weapon, 0, &mut dice);
-            let d = combat.damage(amount, 10f32.to_bits(), Some(1), weapon.attack_type, 4);
-            f32::from_bits(d)
-        })
-        .collect();
-    // The spec lists these rounded; with the armor factor 0x3F1FFFFF of
-    // SPEC-0015 they are a few units of the last place below.
-    let expected = [29.0625, 30.0, 29.0625, 29.0625, 30.0, 27.1875];
-    for (hit, expected) in hits.iter().zip(expected) {
-        assert!((hit - expected).abs() < 1e-4, "{hits:?}");
+    // The table of SPEC-0016: six hits of each attacker after its own
+    // SetRandomSeed(777).
+    for (code, expected) in [
+        (
+            b"hkni",
+            [
+                0x41E8_7FFE,
+                0x41EF_FFFE,
+                0x41E8_7FFE,
+                0x41E8_7FFE,
+                0x41EF_FFFE,
+                0x41D9_7FFE,
+            ],
+        ),
+        (
+            b"Hpal",
+            [
+                0x418B_FFFF,
+                0x4195_FFFF,
+                0x4195_FFFF,
+                0x4190_FFFF,
+                0x419A_FFFF,
+                0x4181_FFFF,
+            ],
+        ),
+        (
+            b"hrif",
+            [
+                0x411D_7FFE,
+                0x4124_FFFE,
+                0x411D_7FFE,
+                0x411D_7FFE,
+                0x4124_FFFE,
+                0x410E_7FFE,
+            ],
+        ),
+    ] {
+        let id = i32::from_be_bytes(*code);
+        let unit = &data.units[&id];
+        let weapon = unit.weapon.as_ref().unwrap();
+        let primary = if ow3_sim::data::is_hero(id) {
+            unit.primary
+        } else {
+            0
+        };
+        let mut dice = ow3_sim::random::Random::reseed(777).1[ow3_sim::random::ATTACK_DICE].clone();
+        let hits: Vec<u32> = (0..6)
+            .map(|_| {
+                let amount = ow3_sim::combat::hit_amount(weapon, primary, &mut dice);
+                combat.damage(amount, 10f32.to_bits(), Some(1), weapon.attack_type, 4)
+            })
+            .collect();
+        assert_eq!(hits, expected, "{}", String::from_utf8_lossy(code));
     }
     // The melee data set has the knight at 28 and 1.4 s.
     let melee = ow3_sim::data::ObjectData::load(&mut archives, true).unwrap();

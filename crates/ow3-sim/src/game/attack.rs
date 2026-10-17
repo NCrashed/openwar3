@@ -20,7 +20,7 @@ use ow3_jass::vm::{NativeFn, Vm};
 use super::{Object, State, handle, string};
 use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::is_hero;
-use crate::random::ATTACK_DICE;
+use crate::random::{ATTACK_DICE, ATTACK_START};
 
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +86,10 @@ fn order(state: &mut State, h: u32, target: Option<u32>) -> bool {
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.attack = attack;
+    }
+    if attack.is_some() {
+        // PROVISIONAL: the output is drawn at the order and not used.
+        state.game_random[ATTACK_START].step();
     }
     if attack.is_some() && !state.attacking.contains(&h) {
         state.attacking.push(h);

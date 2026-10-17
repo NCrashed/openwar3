@@ -303,19 +303,17 @@ The damage of one hit, the dice from game generator 2, the reseeding of
 the 45 game generators and the `Custom_V1` data set follow SPEC-0016 and
 SPEC-0007. Choices where the specs are silent:
 
-- **The example of SPEC-0016** lists 29.0625, 30.0, ...; with the armor
-  factor `0x3F1FFFFF` of the SPEC-0015 example the values are a few units
-  of the last place below (29.062496, 29.999996, ...). The test compares
-  them with a tolerance.
-- **Numbers of the `Units\` tables** are read as the nearest real.
-  `s2r` would give `1.5000001` for `cool1` "1.5" (its division by 10 is
-  not exact); how the game reads the tables is not specified.
+- **Numbers of the `Units\` tables** (SPEC-0016 open question 4) are
+  read as the nearest real; `s2r` would give `1.5000001` for `cool1`
+  "1.5".
 - **Which copy of a table.** A `Units\*.slk` imported into the map comes
   first, then, for maps without the melee flag, the game's `Custom_V1`
   copy, then the game's `Units\` copy.
 - **Attack orders.** Only `IssueTargetOrder(u, "attack", target)` and
-  `IssueImmediateOrder(u, "stop")` are known. The first hit comes `dmgpt1`
-  after the order (open question 1), later hits `cool1` apart, rounded to
+  `IssueImmediateOrder(u, "stop")` are known. An attack order draws one
+  output of game generator 9 and does not use it; the first hit comes `dmgpt1`
+  after the order (open question 1; the game takes 140 to 191 ticks on the
+  update steps of the unit), later hits `cool1` apart, rounded to
   whole ticks; hits come after the timers of their tick. Units do not
   move, turn, acquire targets or check their range.
 - **Custom unit types** keep the weapon of their base type: the weapon

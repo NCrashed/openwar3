@@ -11,7 +11,6 @@
 //! doodads whose type is in `Units\DestructableData.slk` or is a custom
 //! destructable of the map.
 
-use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
@@ -20,13 +19,13 @@ use std::path::Path;
 use ow3_formats::binary::RawCode;
 use ow3_formats::map::doodads::Doodads;
 use ow3_formats::map::info::MapInfo;
-use ow3_formats::map::objects::{ObjectKind, ObjectModifications};
 use ow3_formats::map::strings::TriggerStrings;
 use ow3_formats::map::terrain::Terrain;
 use ow3_formats::mpq::Archive;
-use ow3_formats::slk::Table;
 use ow3_jass::ast::Script;
 use ow3_jass::check::Program;
+
+use crate::data::ObjectData;
 
 /// Game archives by priority, highest first.
 pub const GAME_ARCHIVES: [&str; 5] = [
@@ -120,6 +119,8 @@ pub struct Map {
     pub scripts: [Script; 3],
     pub destructables: Vec<PlacedDestructable>,
     pub world_bounds: Bounds,
+    /// Unit, destructable and item types.
+    pub data: ObjectData,
 }
 
 fn parse_script(name: &str, data: &[u8]) -> Result<Script, MapError> {
@@ -172,13 +173,15 @@ impl Map {
             max_x: terrain.origin_x + (terrain.width.saturating_sub(1)) as f32 * CELL,
             max_y: terrain.origin_y + (terrain.height.saturating_sub(1)) as f32 * CELL,
         };
-        let destructables = destructables(archives)?;
+        let data = ObjectData::load(archives)?;
+        let destructables = destructables(archives, &data)?;
         Ok(Map {
             info,
             strings,
             scripts: [common, blizzard, script],
             destructables,
             world_bounds,
+            data,
         })
     }
 
@@ -195,39 +198,18 @@ impl Map {
     }
 }
 
-/// Destructable types: the standard ones and the map's custom ones.
-fn destructable_types(archives: &mut Archives) -> Result<BTreeSet<RawCode>, MapError> {
-    let mut types = BTreeSet::new();
-    if let Some(data) = archives.read("Units\\DestructableData.slk") {
-        let table = Table::parse(&data).map_err(|e| error("DestructableData.slk", e))?;
-        if let Some(column) = table.column("DestructableID") {
-            for row in 2..=table.last_row() {
-                if let Some(id) = table.get(row, column)
-                    && let Ok(bytes) = <[u8; 4]>::try_from(id.raw().as_bytes())
-                {
-                    types.insert(RawCode(bytes));
-                }
-            }
-        }
-    }
-    let kind = ObjectKind::Destructibles;
-    if let Some(data) = archives.read_map_file(kind.file_name()) {
-        let mods = ObjectModifications::parse(&data, kind).map_err(|e| error("war3map.w3b", e))?;
-        types.extend(mods.custom.iter().filter_map(|d| d.id));
-    }
-    Ok(types)
-}
-
-fn destructables(archives: &mut Archives) -> Result<Vec<PlacedDestructable>, MapError> {
-    let Some(data) = archives.read_map_file("war3map.doo") else {
+fn destructables(
+    archives: &mut Archives,
+    data: &ObjectData,
+) -> Result<Vec<PlacedDestructable>, MapError> {
+    let Some(file) = archives.read_map_file("war3map.doo") else {
         return Ok(Vec::new());
     };
-    let doodads = Doodads::parse(&data).map_err(|e| error("war3map.doo", e))?;
-    let types = destructable_types(archives)?;
+    let doodads = Doodads::parse(&file).map_err(|e| error("war3map.doo", e))?;
     Ok(doodads
         .doodads
         .iter()
-        .filter(|d| types.contains(&d.kind))
+        .filter(|d| data.destructables.contains_key(&raw_code_value(d.kind)))
         .map(|d| PlacedDestructable {
             type_id: raw_code_value(d.kind),
             variation: d.variation,

@@ -17,9 +17,10 @@ use ow3_jass::ast::Script;
 use ow3_jass::check::{Program, Type};
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{LoadError, NativeFn, Natives, Outcome, RuntimeError, Thread, Vm};
-use ow3_math::{add, i2r, mul, sub};
+use ow3_math::{add, div, i2r, mul, sub};
 
 use crate::clock::{CHUNK_MICROS, FrameClock, Speed, Step};
+use crate::data::ObjectData;
 use crate::map::Map;
 use crate::sleep::SleepQueue;
 use crate::timers::{Fired, LONG_PART, TimerId, TimerQueue, raise_timeout, split_timeout};
@@ -43,6 +44,7 @@ macro_rules! native {
 
 mod enumerate;
 pub mod players;
+mod widgets;
 
 /// The first handle id (SPEC-0006).
 const FIRST_HANDLE: u32 = 0x0010_0000;
@@ -67,6 +69,7 @@ pub enum Object {
     Group(Vec<u32>),
     Unit(Unit),
     Destructable(Destructable),
+    Item(Item),
     Location {
         x: u32,
         y: u32,
@@ -95,6 +98,18 @@ pub struct Destructable {
     type_id: i32,
     x: u32,
     y: u32,
+    /// Hit points as a bit pattern, and the most there can be.
+    life: u32,
+    max_life: u32,
+    alive: bool,
+}
+
+/// PROVISIONAL: a placeholder item lying on the ground.
+#[derive(Clone, Debug)]
+pub struct Item {
+    type_id: i32,
+    x: u32,
+    y: u32,
 }
 
 /// PROVISIONAL: a placeholder unit with what the enumerations need, until
@@ -106,6 +121,9 @@ pub struct Unit {
     x: u32,
     y: u32,
     facing: u32,
+    /// Hit points as a bit pattern, and the most there can be.
+    life: u32,
+    max_life: u32,
     alive: bool,
 }
 
@@ -155,6 +173,13 @@ struct Context {
     filter_unit: Option<u32>,
     enum_destructable: Option<u32>,
     filter_destructable: Option<u32>,
+    enum_item: Option<u32>,
+    filter_item: Option<u32>,
+    /// Responses of the event that started the thread.
+    event_id: Option<i32>,
+    triggering_unit: Option<u32>,
+    triggering_player: Option<u32>,
+    triggering_widget: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -192,6 +217,12 @@ pub struct State {
     units: Vec<u32>,
     /// Destructables in the order they were placed or created.
     destructables: Vec<u32>,
+    /// Items on the ground in the order they were created.
+    items: Vec<u32>,
+    /// Event registrations in the order they were made.
+    events: Vec<widgets::Registration>,
+    /// Unit, destructable and item types of the map.
+    pub data: ObjectData,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
     world_bounds: [u32; 4],
     next_handle: u32,
@@ -218,6 +249,9 @@ impl State {
             random: Random::new(0),
             units: Vec::new(),
             destructables: Vec::new(),
+            items: Vec::new(),
+            events: Vec::new(),
+            data: ObjectData::default(),
             world_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
@@ -411,11 +445,23 @@ impl<'a> Game<'a> {
         state.setup = players::Setup::from_map(map);
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
+        state.data = map.data.clone();
         for d in &map.destructables {
+            // PROVISIONAL: placed with the life percentage of the editor.
+            let max_life = state
+                .data
+                .destructables
+                .get(&d.type_id)
+                .copied()
+                .unwrap_or(0);
+            let life = div(mul(max_life, i2r(i32::from(d.life_percent))), i2r(100));
             let destructable = Destructable {
                 type_id: d.type_id,
                 x: d.x.to_bits(),
                 y: d.y.to_bits(),
+                life,
+                max_life,
+                alive: true,
             };
             let handle = state.create(Object::Destructable(destructable));
             state.destructables.push(handle);
@@ -537,7 +583,7 @@ impl<'a> Game<'a> {
             (timer.callback, timer.fires_trigger)
         };
         if let Some(trigger) = trigger {
-            fire_trigger(&mut self.vm, &self.state, trigger);
+            fire_trigger(&mut self.vm, &self.state, trigger, Context::default());
         } else if let Some(callback) = callback {
             let context = Context {
                 expired_timer: Some(handle),
@@ -668,7 +714,7 @@ fn run_actions(
 /// `TriggerEvaluate`: every condition must hold. A condition that sleeps
 /// counts as false (SPEC-0005). PROVISIONAL: evaluation stops at the first
 /// false condition, and each condition runs in its own thread.
-fn evaluate_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) -> bool {
+fn evaluate_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Context) -> bool {
     let Some(conditions) = state
         .borrow_mut()
         .trigger(Some(trigger))
@@ -678,7 +724,7 @@ fn evaluate_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) -> bo
     };
     let context = Context {
         triggering_trigger: Some(trigger),
-        ..state.borrow().context
+        ..base
     };
     // SPEC-0006: every condition is evaluated, also after a false one.
     let results: Vec<bool> = conditions
@@ -739,7 +785,7 @@ fn test_operand(
 
 /// `TriggerExecute`: runs the actions; the caller continues once they end
 /// or one sleeps (SPEC-0005).
-fn execute_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) {
+fn execute_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Context) {
     let Some(actions) = state
         .borrow_mut()
         .trigger(Some(trigger))
@@ -749,20 +795,20 @@ fn execute_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) {
     };
     let context = Context {
         triggering_trigger: Some(trigger),
-        ..state.borrow().context
+        ..base
     };
     run_actions(vm, state, actions, 0, context);
 }
 
 /// A trigger's event happened: if it is enabled and its conditions hold,
 /// its actions run.
-fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32) {
+fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Context) {
     let enabled = state
         .borrow_mut()
         .trigger(Some(trigger))
         .is_some_and(|t| t.enabled);
-    if enabled && evaluate_trigger(vm, state, trigger) {
-        execute_trigger(vm, state, trigger);
+    if enabled && evaluate_trigger(vm, state, trigger, base) {
+        execute_trigger(vm, state, trigger, base);
     }
 }
 
@@ -1083,7 +1129,8 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         "native TriggerExecute takes trigger whichTrigger returns nothing",
         |vm, state, args| {
             if let Some(trigger) = handle(&args[0]) {
-                execute_trigger(vm, state, trigger);
+                let base = state.borrow().context;
+                execute_trigger(vm, state, trigger, base);
             }
             Ok(None)
         }
@@ -1093,8 +1140,10 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         state,
         "native TriggerEvaluate takes trigger whichTrigger returns boolean",
         |vm, state, args| {
-            let result =
-                handle(&args[0]).is_some_and(|trigger| evaluate_trigger(vm, state, trigger));
+            let result = handle(&args[0]).is_some_and(|trigger| {
+                let base = state.borrow().context;
+                evaluate_trigger(vm, state, trigger, base)
+            });
             Ok(Some(Value::Boolean(result)))
         }
     );
@@ -1378,6 +1427,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
+    widgets::register(&mut add, state);
 }
 
 /// `S2I` (SPEC-0005): leading spaces, an optional sign, decimal digits up to

@@ -114,3 +114,25 @@ fn melee_map_setup() {
     }
     assert!(state.errors.is_empty(), "{:?}", state.errors);
 }
+
+/// Unit, destructable and item types from the game data.
+#[test]
+fn object_data() {
+    let path = game_data().join("Maps/(2)BootyBay.w3m");
+    if !path.exists() {
+        return;
+    }
+    let map = Map::load(&game_data(), &path).unwrap();
+    let data = &map.data;
+    let hfoo = i32::from_be_bytes(*b"hfoo");
+    assert_eq!(data.unit_id("footman"), Some(hfoo));
+    assert_eq!(data.unit_id("Footman"), Some(hfoo));
+    assert_eq!(data.unit_name(hfoo), Some("footman"));
+    assert_eq!(f32::from_bits(data.units[&hfoo].hp), 420.0);
+    assert!(data.units.len() > 500, "{}", data.units.len());
+    assert!(
+        data.destructables
+            .contains_key(&i32::from_be_bytes(*b"LTlt"))
+    );
+    assert!(data.items.contains_key(&i32::from_be_bytes(*b"ratc")));
+}

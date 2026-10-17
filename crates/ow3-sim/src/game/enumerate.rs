@@ -22,7 +22,7 @@ use ow3_math::{add, mul, sub};
 
 use super::{
     BoolExpr, Context, Destructable, Object, State, Unit, code, handle, integer, real,
-    run_new_thread, test_boolexpr,
+    run_new_thread, string, test_boolexpr,
 };
 
 fn f(bits: u32) -> f32 {
@@ -674,94 +674,76 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         });
     }
 
-    // Placeholder units.
+    // Items, as destructables.
     native!(
         add,
         state,
-        "native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit",
+        "native EnumItemsInRect takes rect r, boolexpr filter, code actionFunc returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let Some(owner) = state.player_id(handle(&args[0])) else {
-                return Ok(Some(Value::Handle(None)));
+            let candidates: Vec<u32> = {
+                let state = state.borrow();
+                let Some([min_x, min_y, max_x, max_y]) = rect(&state, handle(&args[0])) else {
+                    return Ok(None);
+                };
+                state
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(|h| match state.objects.get(h) {
+                        Some(Object::Item(i)) => {
+                            (f(min_x)..=f(max_x)).contains(&f(i.x))
+                                && (f(min_y)..=f(max_y)).contains(&f(i.y))
+                        }
+                        _ => false,
+                    })
+                    .collect()
             };
-            let unit = Unit {
-                owner,
-                type_id: integer(&args[1]),
-                x: real(&args[2]),
-                y: real(&args[3]),
-                facing: real(&args[4]),
-                alive: true,
-            };
-            let h = state.create(Object::Unit(unit));
-            state.units.push(h);
-            Ok(Some(Value::Handle(Some(h))))
-        }
-    );
-    native!(
-        add,
-        state,
-        "native KillUnit takes unit whichUnit returns nothing",
-        |vm, state, args| {
-            if let Some(h) = handle(&args[0])
-                && let Some(Object::Unit(unit)) = state.borrow_mut().objects.get_mut(&h)
-            {
-                unit.alive = false;
-            }
+            let chosen = select(vm, state, candidates, handle(&args[1]), None, |c, i| {
+                Context {
+                    filter_item: Some(i),
+                    ..c
+                }
+            });
+            for_each(vm, state, chosen, code(&args[2]), |c, i| Context {
+                enum_item: Some(i),
+                ..c
+            });
             Ok(None)
         }
     );
     native!(
         add,
         state,
-        "native RemoveUnit takes unit whichUnit returns nothing",
-        |vm, state, args| {
-            let unit = handle(&args[0]);
-            destroy(state, unit, |o| matches!(o, Object::Unit(_)));
-            state.borrow_mut().units.retain(|&u| Some(u) != unit);
-            Ok(None)
-        }
+        "constant native GetEnumItem takes nothing returns item",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.enum_item))) }
     );
-    for (declaration, field) in [
+    native!(
+        add,
+        state,
+        "constant native GetFilterItem takes nothing returns item",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.filter_item))) }
+    );
+
+    // Units by the string id of their type, such as "footman".
+    for (declaration, counted) in [
         (
-            "constant native GetUnitX takes unit whichUnit returns real",
-            (|u: &Unit| u.x) as fn(&Unit) -> u32,
+            "native GroupEnumUnitsOfType takes group whichGroup, string unitname, boolexpr filter returns nothing",
+            false,
         ),
         (
-            "constant native GetUnitY takes unit whichUnit returns real",
-            |u: &Unit| u.y,
-        ),
-        (
-            "constant native GetUnitFacing takes unit whichUnit returns real",
-            |u: &Unit| u.facing,
+            "native GroupEnumUnitsOfTypeCounted takes group whichGroup, string unitname, boolexpr filter, integer countLimit returns nothing",
+            true,
         ),
     ] {
         native!(add, state, declaration, |vm, state, args| {
-            let value = state.borrow().unit(handle(&args[0])).map_or(0, field);
-            Ok(Some(Value::Real(value)))
+            let type_id = string(&args[1]).and_then(|n| state.borrow().data.unit_id(n));
+            let limit = counted.then(|| integer(&args[3]));
+            group_enum(vm, state, handle(&args[0]), handle(&args[2]), limit, |u| {
+                Some(u.type_id) == type_id
+            });
+            Ok(None)
         });
     }
-    native!(
-        add,
-        state,
-        "constant native GetUnitTypeId takes unit whichUnit returns integer",
-        |vm, state, args| {
-            let id = state
-                .borrow()
-                .unit(handle(&args[0]))
-                .map_or(0, |u| u.type_id);
-            Ok(Some(Value::Integer(id)))
-        }
-    );
-    native!(
-        add,
-        state,
-        "constant native GetOwningPlayer takes unit whichUnit returns player",
-        |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let owner = state.unit(handle(&args[0])).map(|u| u.owner);
-            Ok(Some(Value::Handle(owner.map(|id| state.player_handle(id)))))
-        }
-    );
 
     // Locations and rects.
     native!(

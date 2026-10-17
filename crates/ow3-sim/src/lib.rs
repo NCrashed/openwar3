@@ -5,6 +5,7 @@
 //! on a separate sleep clock.
 
 pub mod clock;
+pub mod data;
 pub mod game;
 pub mod map;
 pub mod sleep;

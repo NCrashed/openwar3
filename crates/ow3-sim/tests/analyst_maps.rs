@@ -383,7 +383,8 @@ fn survey() {
 /// SPEC-0005: `ForGroup` callbacks and `GroupEnum` filters that sleep end
 /// at the sleep, and the enumeration goes on. The three units are created
 /// by the script. Y3 runs once per destructable of the map, a number the
-/// spec does not give; death events (Y5) are not simulated yet.
+/// spec does not give. A death event action (Y5) sleeps like any action:
+/// the code after `KillUnit` goes on, and the action ends later.
 #[test]
 fn b1_callbacks_sleep() {
     let Some(output) = run("h-B1-callbacks-speed.w3x", 3.0) else {
@@ -401,11 +402,14 @@ fn b1_callbacks_sleep() {
             "Y2 after GroupEnum",
             "Y4 TriggerExecute action before sleep",
             "Y4 after TriggerExecute",
+            "Y5 death event action before sleep",
+            "Y5 after KillUnit",
             "G1 speed 2",
             "G2 after SLOWEST 0",
             "G3 after FASTEST 2",
             "G4 after SLOW 1",
             "Y4 TriggerExecute action after sleep",
+            "Y5 death event action after sleep",
         ],
     );
 }
@@ -530,4 +534,14 @@ fn c_compiler_maps() {
         };
         assert_lines(&output, lines);
     }
+}
+
+/// SPEC-0001 test B: a map may declare and call the `common.ai` native
+/// `UnitAlive`; it is true for a new footman and false after `KillUnit`.
+#[test]
+fn b_unit_alive() {
+    let Some(output) = run("ow3-B-unitalive.w3x", 3.0) else {
+        return;
+    };
+    assert_lines(&output, &["alive before: 1", "alive after: 0"]);
 }

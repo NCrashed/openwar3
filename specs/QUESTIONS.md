@@ -220,9 +220,12 @@ specified. Choices where the specs are silent:
   filter?
 - **`ForceEnumAllies` and `ForceEnumEnemies`** take the same players as
   `ForceEnumPlayers`, split by `IsPlayerAlly`.
-- **Not yet:** `EnumItemsInRect`, `GroupEnumUnitsOfType` (needs unit
-  names), `GroupEnumUnitsSelected`, `IsUnitInRangeXY` (needs collision
-  sizes) and death events.
+- **`EnumItemsInRect`** works like `EnumDestructablesInRect`: filter first,
+  then the action, in the order the items were created.
+- **`GroupEnumUnitsOfType`** takes the units whose type has the given
+  string id (see "Units, destructables, items and death events").
+- **Not yet:** `GroupEnumUnitsSelected` and `IsUnitInRangeXY` (needs
+  collision sizes).
 
 ## Map loading and player slots (`ow3-sim::map`, `game::players`)
 
@@ -260,3 +263,38 @@ anything yet:
 - **Destructables** are the `war3map.doo` entries whose type is in
   `Units\DestructableData.slk` or is a custom destructable of the map.
   Are other placed doodads ever enumerated?
+
+## Units, destructables, items and death events (`ow3-sim::data`, `game::widgets`)
+
+Units, destructables and items are placeholders until they are
+specified: type, owner (units), position, facing (units) and hit points.
+Test B1 now matches SPEC-0005 for death events (Y5), and test B of
+SPEC-0001 (`UnitAlive`) prints 1 then 0. Choices where no spec says
+anything yet:
+
+- **String ids of unit types** (`"footman"` for `'hfoo'`) come from the
+  `name` column of `Units\unitUI.slk`. `UnitId` ignores ASCII case. A
+  custom unit of the map keeps the string id of its base type, and when
+  several types share one, `UnitId` gives the lowest raw code. Is the
+  comparison case-insensitive, and what do custom units report?
+- **Hit points** of a new unit are its type's `HP` in
+  `Units\UnitBalance.slk`, or the value set by the map (`uhpm`).
+  Destructables take `HP` of `Units\DestructableData.slk` (`bhps`) times
+  the life percentage placed in the editor. Is `HP` the right column (not
+  `realHP`), and how are hit points of placed destructables computed?
+- **Unknown types.** With game data loaded, `CreateUnit` and `CreateItem`
+  with a type the data does not know give `null`. Is that what the game
+  does?
+- **Death events** fire in the order the triggers were registered, whatever
+  the kind of registration (unit event, player unit event, widget death).
+  Is there an order by kind, for example unit events before player unit
+  events?
+- **The filter of `TriggerRegisterPlayerUnitEvent`** is tested with the
+  dying unit as `GetFilterUnit`, before the trigger's conditions. Which
+  event responses does the filter see?
+- **`KillUnit`** gives no killing unit (`GetKillingUnit` is `null`). A second
+  `KillUnit` on a dead unit does nothing.
+- **Hit points and death.** `SetWidgetLife` and `SetDestructableLife` set the
+  hit points of a living unit or destructable but never kill it, and
+  `GetUnitState` reads only `UNIT_STATE_LIFE` and `UNIT_STATE_MAX_LIFE`.
+  `IsUnitType` knows only `UNIT_TYPE_DEAD`. These wait for the unit spec.

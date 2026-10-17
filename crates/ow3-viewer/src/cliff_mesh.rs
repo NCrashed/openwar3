@@ -27,7 +27,7 @@ use ow3_formats::slk::Table;
 use ow3_render::cliffs;
 use ow3_render::terrain::ground_height;
 
-use crate::models::{Group, Part, parts};
+use crate::models::{Group, Instance, Part, parts};
 use crate::terrain_mesh::TILE;
 
 /// The replaceable texture id of cliff models.
@@ -257,7 +257,10 @@ pub fn build(chain: &mut ArchiveChain, terrain: &Terrain) -> (Vec<Group>, BTreeS
         .map(|((model, _), parts)| Group {
             model,
             parts,
-            instances: vec![IDENTITY],
+            instances: vec![Instance {
+                matrix: IDENTITY,
+                bone_base: 0,
+            }],
         })
         .collect();
     (groups, covered)
@@ -298,11 +301,7 @@ mod tests {
                 point(2, 8192),
             ],
         };
-        let vertex = |position| ModelVertex {
-            position,
-            normal: [1.0, 0.0, 0.0],
-            uv: [0.0, 0.0],
-        };
+        let vertex = |position| ModelVertex::fixed(position, [1.0, 0.0, 0.0], [0.0, 0.0]);
         let part = Part {
             vertices: vec![
                 vertex([0.0, 0.0, 128.0]),

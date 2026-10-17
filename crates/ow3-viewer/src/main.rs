@@ -1,4 +1,4 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>]`
 //!
 //! Shows a map's ground in a window: arrows or WASD move, the mouse wheel
 //! or +/- zooms, Q/E turn, R/F tilt, Escape quits. With `--screenshot`
@@ -24,6 +24,8 @@ struct Options {
     screenshot: Option<PathBuf>,
     size: (u32, u32),
     camera: Option<Vec<f32>>,
+    /// Seconds into the animations of a screenshot.
+    time: f32,
 }
 
 fn options() -> Result<Options, String> {
@@ -33,6 +35,7 @@ fn options() -> Result<Options, String> {
         screenshot: None,
         size: (1280, 720),
         camera: None,
+        time: 0.0,
     };
     let mut map = None;
     while let Some(arg) = args.next() {
@@ -51,6 +54,9 @@ fn options() -> Result<Options, String> {
                 let v = value("--camera")?;
                 let numbers: Result<Vec<f32>, _> = v.split(',').map(|n| n.trim().parse()).collect();
                 options.camera = Some(numbers.map_err(|_| "bad --camera")?);
+            }
+            "--time" => {
+                options.time = value("--time")?.trim().parse().map_err(|_| "bad --time")?;
             }
             _ if map.is_none() => map = Some(PathBuf::from(arg)),
             _ => return Err(format!("unexpected argument {arg}")),
@@ -79,6 +85,7 @@ fn screenshot(scene: &Scene, options: &Options, out: &PathBuf) -> Result<(), Str
     let renderer = Renderer::new(&device, &queue, format, scene);
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
+    renderer.animate(&queue, (options.time * 1000.0) as i32);
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
     image
@@ -104,6 +111,8 @@ struct App {
     camera: Camera,
     size: (u32, u32),
     gpu: Option<Gpu>,
+    /// When the animations started.
+    started: std::time::Instant,
     error: Option<String>,
 }
 
@@ -235,6 +244,8 @@ impl ApplicationHandler for App {
                                 .texture
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let aspect = gpu.config.width as f32 / gpu.config.height as f32;
+                            let elapsed = self.started.elapsed().as_millis() as i32;
+                            gpu.renderer.animate(&gpu.queue, elapsed);
                             gpu.renderer.draw(
                                 &gpu.device,
                                 &gpu.queue,
@@ -244,6 +255,8 @@ impl ApplicationHandler for App {
                                 aspect,
                             );
                             frame.present();
+                            // Models move: draw the next frame too.
+                            gpu.window.request_redraw();
                         }
                         Err(_) => gpu.surface.configure(&gpu.device, &gpu.config),
                     }
@@ -289,6 +302,7 @@ fn main() -> ExitCode {
         camera,
         size: options.size,
         gpu: None,
+        started: std::time::Instant::now(),
         error: None,
     };
     let event_loop = match EventLoop::new() {

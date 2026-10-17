@@ -8,7 +8,7 @@ use ow3_formats::map::terrain::Terrain;
 use ow3_formats::mpq::ArchiveChain;
 use ow3_render::image::Image;
 
-use crate::models::{self, Group};
+use crate::models::{self, Animation, Group};
 use crate::terrain_mesh::{self, Layer};
 
 pub struct Scene {
@@ -21,6 +21,8 @@ pub struct Scene {
     /// they use by path.
     pub groups: Vec<Group>,
     pub model_textures: BTreeMap<String, Image>,
+    /// How the models move.
+    pub animation: Animation,
 }
 
 /// The first frame of the water texture `path` (without the frame
@@ -57,7 +59,7 @@ impl Scene {
         });
         let water = water.filter(|(mesh, _)| !mesh.indices.is_empty());
         let placements = crate::objects::placements(&mut chain);
-        let (mut groups, mut model_textures) = models::load(&mut chain, &placements);
+        let (mut groups, mut model_textures, animation) = models::load(&mut chain, &placements);
         model_textures.extend(models::textures(&mut chain, &cliffs));
         groups.extend(cliffs);
         Ok(Scene {
@@ -67,6 +69,7 @@ impl Scene {
             water,
             groups,
             model_textures,
+            animation,
         })
     }
 }

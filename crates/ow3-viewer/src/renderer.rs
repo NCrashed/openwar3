@@ -370,6 +370,7 @@ impl Renderer {
             &globals_layout,
             &scene.groups,
             &scene.model_textures,
+            &scene.animation,
         );
         Renderer {
             opaque,
@@ -381,6 +382,11 @@ impl Renderer {
             water_pipeline,
             water,
         }
+    }
+
+    /// Poses the models `elapsed` milliseconds into their animations.
+    pub fn animate(&self, queue: &wgpu::Queue, elapsed: i32) {
+        self.models.update(queue, elapsed);
     }
 
     /// Draws the ground seen by `camera` into `target`.

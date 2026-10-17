@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use ow3_render::image::Image;
 use wgpu::util::DeviceExt;
 
-use crate::models::{Group, ModelVertex};
+use crate::models::{Animation, Group, Instance, ModelVertex};
 use crate::renderer::{DEPTH_FORMAT, upload_texture};
 
 const SHADER: &str = r#"
@@ -18,29 +18,51 @@ struct Globals {
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var skin: texture_2d<f32>;
 @group(1) @binding(1) var skin_sampler: sampler;
+@group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
+@group(2) @binding(1) var<storage, read> alphas: array<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) m0: vec4<f32>,
-    @location(4) m1: vec4<f32>,
-    @location(5) m2: vec4<f32>,
-    @location(6) m3: vec4<f32>,
+    @location(3) bone_ids: vec4<u32>,
+    @location(4) weights: vec4<f32>,
+    @location(5) alpha: u32,
+    @location(6) m0: vec4<f32>,
+    @location(7) m1: vec4<f32>,
+    @location(8) m2: vec4<f32>,
+    @location(9) m3: vec4<f32>,
+    @location(10) bone_base: u32,
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) alpha: f32,
 };
 
 @vertex
 fn vs(v: VertexIn) -> VertexOut {
     let model = mat4x4<f32>(v.m0, v.m1, v.m2, v.m3);
+    // A vertex without bones keeps its rest position.
+    var skinned = mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    );
+    let total = v.weights.x + v.weights.y + v.weights.z + v.weights.w;
+    if total > 0.0 {
+        skinned = bones[v.bone_base + v.bone_ids.x] * v.weights.x
+            + bones[v.bone_base + v.bone_ids.y] * v.weights.y
+            + bones[v.bone_base + v.bone_ids.z] * v.weights.z
+            + bones[v.bone_base + v.bone_ids.w] * v.weights.w;
+    }
     var out: VertexOut;
-    out.clip = globals.view_projection * model * vec4<f32>(v.position, 1.0);
-    out.normal = (model * vec4<f32>(v.normal, 0.0)).xyz;
+    out.clip = globals.view_projection * model * skinned * vec4<f32>(v.position, 1.0);
+    out.normal = (model * skinned * vec4<f32>(v.normal, 0.0)).xyz;
     out.uv = v.uv;
+    out.alpha = alphas[v.alpha];
     return out;
 }
 
@@ -48,11 +70,14 @@ fn lit(v: VertexOut) -> vec4<f32> {
     let texel = textureSample(skin, skin_sampler, v.uv);
     let n = normalize(v.normal);
     let light = 0.5 + 0.5 * max(dot(n, globals.light.xyz), 0.0);
-    return vec4<f32>(texel.rgb * light, texel.a);
+    return vec4<f32>(texel.rgb * light, texel.a * v.alpha);
 }
 
 @fragment
 fn fs_opaque(v: VertexOut) -> @location(0) vec4<f32> {
+    if v.alpha <= 0.0 {
+        discard;
+    }
     return vec4<f32>(lit(v).rgb, 1.0);
 }
 
@@ -72,6 +97,9 @@ fn fs_blended(v: VertexOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_modulated(v: VertexOut) -> @location(0) vec4<f32> {
+    if v.alpha <= 0.0 {
+        discard;
+    }
     return textureSample(skin, skin_sampler, v.uv);
 }
 "#;
@@ -109,6 +137,10 @@ pub struct ModelRenderer {
     pipelines: BTreeMap<Kind, wgpu::RenderPipeline>,
     instance_buffers: Vec<(wgpu::Buffer, u32)>,
     parts: Vec<GpuPart>,
+    animation: Animation,
+    bones: wgpu::Buffer,
+    alphas: wgpu::Buffer,
+    animation_bind_group: wgpu::BindGroup,
 }
 
 impl ModelRenderer {
@@ -119,6 +151,7 @@ impl ModelRenderer {
         globals_layout: &wgpu::BindGroupLayout,
         groups: &[Group],
         textures: &BTreeMap<String, Image>,
+        animation: &Animation,
     ) -> ModelRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("models"),
@@ -145,22 +178,66 @@ impl ModelRenderer {
                 },
             ],
         });
+        let storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let animation_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("animation"),
+            entries: &[storage(0), storage(1)],
+        });
+        let bones = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bones"),
+            size: u64::from(animation.bone_count()) * 64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let alphas = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("alphas"),
+            size: u64::from(animation.alpha_count()) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let animation_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("animation"),
+            layout: &animation_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: bones.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: alphas.as_entire_binding(),
+                },
+            ],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("models"),
-            bind_group_layouts: &[globals_layout, &texture_layout],
+            bind_group_layouts: &[globals_layout, &texture_layout, &animation_layout],
             push_constant_ranges: &[],
         });
         let vertex_layouts = [
             wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<ModelVertex>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3, 1 => Float32x3, 2 => Float32x2,
+                    3 => Uint32x4, 4 => Float32x4, 5 => Uint32
+                ],
             },
             wgpu::VertexBufferLayout {
-                array_stride: 64,
+                array_stride: std::mem::size_of::<Instance>() as u64,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
-                    3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
+                    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4,
+                    10 => Uint32
                 ],
             },
         ];
@@ -291,15 +368,30 @@ impl ModelRenderer {
         }
         // Opaque parts first, then the blended kinds over them.
         parts.sort_by_key(|p| p.kind);
-        ModelRenderer {
+        let renderer = ModelRenderer {
             pipelines,
             instance_buffers,
             parts,
-        }
+            animation: animation.clone(),
+            bones,
+            alphas,
+            animation_bind_group,
+        };
+        renderer.update(queue, 0);
+        renderer
+    }
+
+    /// Poses the models `elapsed` milliseconds into their animations.
+    pub fn update(&self, queue: &wgpu::Queue, elapsed: i32) {
+        let bones = self.animation.bones(elapsed);
+        queue.write_buffer(&self.bones, 0, bytemuck::cast_slice(&bones));
+        let alphas = self.animation.alphas(elapsed);
+        queue.write_buffer(&self.alphas, 0, bytemuck::cast_slice(&alphas));
     }
 
     /// Draws the models into a pass whose group 0 holds the globals.
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
+        pass.set_bind_group(2, &self.animation_bind_group, &[]);
         let mut current = None;
         for part in &self.parts {
             if current != Some(part.kind) {

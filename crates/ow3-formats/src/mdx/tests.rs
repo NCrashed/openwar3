@@ -105,7 +105,7 @@ fn sample() -> Vec<u8> {
     bone.sized(&node).u32(0).u32(u32::MAX);
     file.chunk(b"BONE", &bone);
     file.chunk(b"PIVT", Writer::default().f32(0.5).f32(0.5).f32(0.0));
-    file.chunk(b"LITE", Writer::default().u32(7));
+    file.chunk(b"CAMS", Writer::default().u32(7));
     file.0
 }
 
@@ -141,7 +141,7 @@ fn parses_a_small_model() {
     assert!(translation.keys[0].tangents.is_some());
     assert_eq!(model.pivots, [[0.5, 0.5, 0.0]]);
     assert_eq!(model.other_chunks.len(), 1);
-    assert_eq!(&model.other_chunks[0].0.0, b"LITE");
+    assert_eq!(&model.other_chunks[0].0.0, b"CAMS");
 }
 
 #[test]

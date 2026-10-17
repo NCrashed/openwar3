@@ -311,3 +311,27 @@ specs are silent:
   on. Does a sleeping thread resume while a dialog is open?
 - **Multiboards** have no limit on rows and columns; each
   `MultiboardGetItem` makes a new handle.
+
+## Terrain rendering (`ow3-render::terrain`)
+
+A top-down image of a map's terrain (`render_terrain` example) matches the
+layout of the map's minimap for the maps tried. What it relies on, read
+from the game data itself or chosen:
+
+- **Atlas cells** (from the textures' alpha): in the left 4 x 4 cells of a
+  ground texture, cell `n` covers the corners whose bits are set in `n`:
+  1 bottom right, 2 bottom left, 4 top right, 8 top left. Atlases 512
+  pixels wide have 16 more full cells on the right.
+- **Layering.** The lowest ground texture index among a tile's corners
+  fills the tile; each higher texture present covers its own corners, in
+  increasing order. Is that the game's rule, also for tiles with three or
+  four textures?
+- **Variations.** A full tile uses the low 5 bits of its bottom-left
+  point's texture details: 0..15 the right-hand cells 16..31, 16 cell 0,
+  17 cell 15; narrow atlases use cell 0. In shipped maps, variations 0,
+  4, 8, 12, 16 and 17 are about equally common and the others rare. Which
+  cell does the game draw for each variation, and which corner's value
+  counts?
+- **Not drawn yet:** cliffs (models), water surface and its colour, blight,
+  boundary as the game shows it, doodads and units. Water is a blue tint
+  on points with the water flag (0x4); points with flag 0x8 are darkened.

@@ -104,6 +104,14 @@ name = "ow3-math"
 version = "0.0.0"
 
 [[package]]
+name = "ow3-render"
+version = "0.0.0"
+dependencies = [
+ "ow3-formats",
+ "png",
+]
+
+[[package]]
 name = "ow3-sim"
 version = "0.0.0"
 dependencies = [

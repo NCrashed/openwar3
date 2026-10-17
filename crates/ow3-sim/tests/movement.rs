@@ -43,8 +43,14 @@ fn game_with(
     if !game_data.join("War3Patch.mpq").exists() {
         return None;
     }
-    let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
-    let mut data = ow3_sim::data::ObjectData::load(&mut archives, false).unwrap();
+    // The tables of the game, read once for all the games of the tests.
+    static DATA: std::sync::OnceLock<ow3_sim::data::ObjectData> = std::sync::OnceLock::new();
+    let mut data = DATA
+        .get_or_init(|| {
+            let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
+            ow3_sim::data::ObjectData::load(&mut archives, false).unwrap()
+        })
+        .clone();
     change(data.units.get_mut(&i32::from_be_bytes(*b"hfoo")).unwrap());
     let text = SCRIPT.replace("TARGET", target);
     let script = Box::leak(Box::new(ow3_jass::parse(&text).unwrap()));

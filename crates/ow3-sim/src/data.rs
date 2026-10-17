@@ -61,6 +61,8 @@ pub struct UnitType {
     pub prop_window: u32,
     /// The collision size (`collision`), as a real (SPEC-0019).
     pub collision: u32,
+    /// How far the unit looks for enemies on its own (`acquire`, SPEC-0019).
+    pub acquire: u32,
 }
 
 /// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
@@ -304,12 +306,13 @@ impl ObjectData {
             "Units\\UnitWeapons.slk",
             "unitWeapID",
             &[
-                "dmgplus1", "dice1", "sides1", "cool1", "dmgpt1", "rangeN1", "atkType1",
+                "dmgplus1", "dice1", "sides1", "cool1", "dmgpt1", "rangeN1", "atkType1", "acquire",
             ],
         )? {
             let Some(unit) = data.units.get_mut(&id) else {
                 continue;
             };
+            unit.acquire = real(values[7].as_ref());
             let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
             unit.weapon = values[6]
                 .as_deref()
@@ -434,6 +437,7 @@ impl ObjectData {
             }
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
+            unit.acquire = def.number(b"uacq").unwrap_or(unit.acquire);
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
             if let Some(orient) = def.number(b"uori") {

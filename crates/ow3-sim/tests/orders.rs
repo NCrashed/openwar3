@@ -48,8 +48,14 @@ fn game(
     if !game_data.join("War3Patch.mpq").exists() {
         return None;
     }
-    let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
-    let mut data = ow3_sim::data::ObjectData::load(&mut archives, false).unwrap();
+    // The tables of the game, read once for all the games of the tests.
+    static DATA: std::sync::OnceLock<ow3_sim::data::ObjectData> = std::sync::OnceLock::new();
+    let mut data = DATA
+        .get_or_init(|| {
+            let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
+            ow3_sim::data::ObjectData::load(&mut archives, false).unwrap()
+        })
+        .clone();
     change(&mut data);
     let (orders, extra) = orders.split_once("\n---\n").unwrap_or((orders, ""));
     let text = SCRIPT
@@ -242,4 +248,23 @@ fn same_move_again() {
     let last = |p: &[(u64, Vec<UnitView>)]| p.last().unwrap().1[0].x;
     let lost = (last(&a) - last(&b)) / 1.35;
     assert!((lost - 1.0).abs() < 0.05, "{lost} ticks");
+}
+
+/// Acquisition of SPEC-0019: an idle footman takes an enemy footman at 562
+/// and not at 563 (`acquire` 500 and both collisions 31).
+#[test]
+fn idle_footmen_acquire() {
+    for (gap, takes) in [(562, true), (563, false)] {
+        let units = format!(
+            "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', {}, -2000, 180)",
+            -3000 + gap
+        );
+        let Some(mut game) = game(&units, "", |_| {}) else {
+            return;
+        };
+        let path = run(&mut game, 400);
+        let last = &path.last().unwrap().1;
+        let moved = last[0].x != -3000.0 || last[1].x != (-3000 + gap) as f32;
+        assert_eq!(moved, takes, "{gap}");
+    }
 }

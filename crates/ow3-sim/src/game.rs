@@ -151,6 +151,8 @@ pub struct Unit {
     attack: Option<attack::Attacking>,
     /// The move order it follows (SPEC-0018).
     movement: Option<movement::Moving>,
+    /// The tick the unit was created at.
+    born: u64,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,
@@ -835,6 +837,7 @@ impl<'a> Game<'a> {
         }
         self.state.borrow_mut().timers.end_tick(tick);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        movement::acquisitions(&mut self.state.borrow_mut());
         attack::hits(&mut self.vm, &self.state);
         self.park();
     }

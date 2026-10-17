@@ -26,6 +26,9 @@ pub struct Attacking {
     target: u32,
     /// The tick of the next hit.
     next: u64,
+    /// The order id `GetUnitCurrentOrder` gives: 0 for an attack the unit
+    /// began on its own (SPEC-0019).
+    pub(super) order_id: i32,
 }
 
 impl Attacking {
@@ -65,7 +68,7 @@ pub(super) fn standing(state: &State, target: u32) -> bool {
 
 /// Unit `h` starts hitting `target` at tick `tick`: the first hit comes its
 /// weapon's damage point later (SPEC-0019).
-pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64) {
+pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id: i32) {
     let damage_point = match state.objects.get(&h) {
         Some(Object::Unit(u)) => state
             .data
@@ -79,6 +82,7 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64) {
         u.attack = Some(Attacking {
             target,
             next: tick + damage_point,
+            order_id,
         });
     }
     if !state.attacking.contains(&h) {

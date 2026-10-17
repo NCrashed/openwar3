@@ -14,8 +14,9 @@
 //! remaining angle (SPEC-0018); with less than 0.001 radians left the
 //! facing takes its target.
 //!
-//! PROVISIONAL: `orientInterp` values other than 0, 1, 3 and 4 turn like
-//! 0, 3 has no maximum, and all use the braking table of 0.
+//! PROVISIONAL: `orientInterp` values other than 0, 1, 3 and 4 take the
+//! first and largest steps of 0, and 3 has no maximum; each type brakes
+//! by its own table.
 
 use ow3_math::{add, frac, mul, recip, sub};
 
@@ -97,35 +98,48 @@ impl Turn {
     }
 }
 
-/// The braking table of SPEC-0018 (`orientInterp` 0): the largest step
+/// The braking tables of SPEC-0013, by `orientInterp`: the largest step
 /// with a remaining angle, both in degrees, as reals.
-fn brake_table() -> &'static [(u32, u32)] {
-    static TABLE: std::sync::OnceLock<Vec<(u32, u32)>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| {
-        include_str!("../../../../specs/SPEC-0018-facing-brake.tsv")
+fn brake_table(orient_interp: u8) -> &'static [(u32, u32)] {
+    static TABLES: std::sync::OnceLock<Vec<Vec<(u32, u32)>>> = std::sync::OnceLock::new();
+    let tables = TABLES.get_or_init(|| {
+        let mut tables = vec![Vec::new(); 9];
+        for line in include_str!("../../../../specs/SPEC-0013-facing-brake.tsv")
             .lines()
             .skip(1)
-            .filter_map(|l| {
-                let (r, s) = l.split_once('\t')?;
-                Some((
-                    r.trim().parse::<f32>().ok()?.to_bits(),
-                    s.trim().parse::<f32>().ok()?.to_bits(),
-                ))
-            })
-            .collect()
-    })
+        {
+            let mut fields = line.split('\t').map(str::trim);
+            let (Some(kind), Some(r), Some(s)) = (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            let (Ok(kind), Ok(r), Ok(s)) =
+                (kind.parse::<usize>(), r.parse::<f32>(), s.parse::<f32>())
+            else {
+                continue;
+            };
+            if let Some(table) = tables.get_mut(kind) {
+                table.push((r.to_bits(), s.to_bits()));
+            }
+        }
+        tables
+    });
+    tables
+        .get(usize::from(orient_interp))
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&tables[0])
 }
 
 /// The braking step `B(r)` for `remaining` degrees, interpolated linearly
 /// between the points of the table, in the engine arithmetic. `None`
 /// above the table, where no braking was seen.
 ///
-/// PROVISIONAL: SPEC-0018 interpolates on a log-log scale, which needs
+/// PROVISIONAL: SPEC-0013 interpolates on a log-log scale, which needs
 /// logarithms the simulation does not have; the points are close enough
 /// for the difference to stay small. Below the first point the first
-/// segment goes on; other `orientInterp` values use this table too.
-fn brake(remaining: u32) -> Option<u32> {
-    let table = brake_table();
+/// segment goes on.
+fn brake(remaining: u32, orient_interp: u8) -> Option<u32> {
+    let table = brake_table(orient_interp);
     let r = real(remaining);
     let last = table.last()?;
     if r > real(last.0) {
@@ -165,7 +179,7 @@ pub(super) fn follow(facing: u32, heading: u32, w: u32, orient_interp: u8) -> (u
     if real(step) > real(largest) {
         step = largest;
     }
-    if let Some(b) = brake(mul(r, RADIANS_TO_DEGREES)) {
+    if let Some(b) = brake(mul(r, RADIANS_TO_DEGREES), orient_interp) {
         let b = mul(b, DEGREES_TO_RADIANS);
         if real(b) < real(step) {
             step = b;

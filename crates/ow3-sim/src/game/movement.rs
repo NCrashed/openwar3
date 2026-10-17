@@ -316,7 +316,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let order = match state.unit(handle(&args[0])) {
-                Some(u) if u.attack.is_some() => ORDER_ATTACK,
+                Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
                 None => 0,
             };
@@ -478,7 +478,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
         }
         if let Some(target) = begin_attack {
-            super::attack::begin(state, h, target, tick);
+            super::attack::begin(state, h, target, tick, m.order_id);
         }
     }
     still.extend(std::mem::take(&mut state.moving));
@@ -497,4 +497,99 @@ fn walk(m: &mut Moving, direction: u32, window: u32, turn_rate: u32, speed: u32)
     } else {
         [0, 0]
     };
+}
+
+/// The player that never fights (SPEC-0019: not an enemy of anyone).
+const NEUTRAL_PASSIVE: i32 = 15;
+
+/// Whether units of `a` take units of `b` for enemies.
+fn enemies(state: &State, a: i32, b: i32) -> bool {
+    a != b && a != NEUTRAL_PASSIVE && b != NEUTRAL_PASSIVE && !state.setup.is_ally(a, b)
+}
+
+/// Idle units with a weapon look for enemies at their updates (SPEC-0019,
+/// "Acquisition"): the nearest enemy unit whose centre is within
+/// `acquire` and both collision sizes becomes the target of an attack of
+/// their own, which `GetUnitCurrentOrder` shows as 0.
+///
+/// PROVISIONAL: a unit looks every 6 ticks from its creation on, from the
+/// first update (the game's first look comes at a random update from the
+/// 1st to the 24th, open question 2); the nearest enemy is taken, the
+/// earlier created one on a tie.
+pub(super) fn acquisitions(state: &mut State) {
+    let tick = state.ticks;
+    let idle: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|h| match state.objects.get(h) {
+            Some(Object::Unit(u)) => {
+                u.alive
+                    && u.attack.is_none()
+                    && u.movement.is_none_or(|m| !m.ordered())
+                    && tick > u.born
+                    && (tick - u.born) % UPDATE == 0
+            }
+            _ => false,
+        })
+        .collect();
+    if idle.is_empty() {
+        return;
+    }
+    // The possible targets, by x: (x, y, collision, owner, creation
+    // order, handle).
+    let mut targets: Vec<(f32, f32, u32, i32, usize, u32)> = state
+        .units
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &h)| match state.objects.get(&h) {
+            Some(Object::Unit(o)) if o.alive && !o.hidden => {
+                let collision = state.data.units.get(&o.type_id).map_or(0, |d| d.collision);
+                Some((real_of(o.x), real_of(o.y), collision, o.owner, i, h))
+            }
+            _ => None,
+        })
+        .collect();
+    targets.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.4.cmp(&b.4)));
+    let widest = targets.iter().map(|t| real_of(t.2)).fold(0.0f32, f32::max);
+    for h in idle {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
+        let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
+        let Some(data) = state.data.units.get(&u.type_id) else {
+            continue;
+        };
+        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 {
+            continue;
+        }
+        let reach = add(data.acquire, data.collision);
+        let from = targets.partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
+        let mut best: Option<(f32, usize, u32)> = None;
+        for &(ox, oy, collision, other_owner, i, other) in &targets[from..] {
+            let limit = real_of(add(reach, collision));
+            // Plain reals here: the comparison is the same, and scanning
+            // every pair in the engine arithmetic is slow.
+            let (dx, dy) = (ox - x, oy - y);
+            if dx > real_of(reach) + widest + 1.0 {
+                break;
+            }
+            if dx.abs() > limit || dy.abs() > limit || !enemies(state, owner, other_owner) {
+                continue;
+            }
+            let distance = dx * dx + dy * dy;
+            if distance <= limit * limit
+                && best.is_none_or(|(d, j, _)| distance < d || (distance == d && i < j))
+            {
+                best = Some((distance, i, other));
+            }
+        }
+        if let Some((_, _, target)) = best {
+            let Some(Object::Unit(o)) = state.objects.get(&target) else {
+                continue;
+            };
+            let at = [o.x, o.y];
+            order(state, h, Order::Attack { target }, 0, at);
+        }
+    }
 }

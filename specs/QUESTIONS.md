@@ -267,8 +267,10 @@ where the spec is silent:
   yet, so a strength change does not restart life regeneration.
 - **Turning near the target** (SPEC-0013 open question 1): the unit
   reaches the target once it is no more than a step away, while the game
-  shortens the last steps. `orientInterp` 2 and 5..8 turn like 0, and 3
-  has no maximum step.
+  shortens the last steps. The first and largest steps of
+  `orientInterp` 2 and 5..8 are those of 0 and 3 has no maximum step
+  until SPEC-0013 itself (with those values and the closed forms of 3, 7
+  and 8) is in `specs/`; the braking follows the table of each type.
 - **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
   2) sees regeneration like any other thread.
 - **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the
@@ -431,10 +433,10 @@ the spec is silent:
   stored coordinate, so a heading slightly off the line drops whole
   units of the last place (up to 0.001 an update), more than the 0.0002
   that the spec estimates.
-- **Facing brake.** The table of `SPEC-0018-facing-brake.tsv` is
-  interpolated linearly in the engine arithmetic (log-log in the spec,
-  which needs logarithms the simulation does not have): up to 0.002
-  degrees off; all `orientInterp` values use it, and above its last point
+- **Facing brake.** The tables of `SPEC-0013-facing-brake.tsv`, one per
+  `orientInterp`, are interpolated linearly in the engine arithmetic
+  (log-log in the spec, which needs logarithms the simulation does not
+  have): up to 0.002 degrees off. Above the last point of a table
   nothing brakes.
 - **Arrival** is the plain distance below 15.6 (open question 1).
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
@@ -444,6 +446,13 @@ the spec is silent:
   the order draws the output of game generator 9 it comes from. Attackers
   do not follow targets that move; destructables and items have
   collision 0. No paths, collisions between units or queued orders.
+- **Acquisition** (SPEC-0019): an idle unit with a weapon looks for an
+  enemy at every update from the first one after its creation; the
+  game's first look comes at a random update from the 1st to the 24th
+  (the draw is open). The nearest enemy within `acquire` and both
+  collisions is taken, the earlier created one on a tie (not measured).
+  The distance check uses plain reals, which can differ from the engine
+  arithmetic in the last place.
 - **The first update** comes 6 ticks after the order.
 - **The clock** (SPEC-0017) past midnight starts again from the hour
   less 24 at the game time then, which matches the game to 2e-6 hours

@@ -329,7 +329,7 @@ where the specs are silent:
 Ground textures follow SPEC-0012 (layering, corner bits, variation
 cells, opacity of the full tile). Still open:
 
-- **Not drawn yet:** ramps, blight, the boundary as the game shows it.
+- **Not drawn yet:** blight, the boundary as the game shows it.
   Points with flag 0x8 are darkened. The top-down image of
   `ow3-render::terrain` still tints water and draws cliffs as slopes.
 
@@ -349,8 +349,17 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   corner, at the height of the lowest level, and raises each vertex by
   the corners' ground heights (layers excluded), interpolated
   bilinearly. A tile whose model cannot be read keeps its ground.
-- **Ramps** (open question 1): tiles with a ramp flag get no model and
-  show their ground as a slope.
+- **Ramps** (open question 1): a ramp model uses the cliff type chosen as
+  for a cliff model on its first tile, and its origin is the bottom left
+  corner of the lower left of its two tiles (from the geometry of the
+  `CliffTrans` models). Tiles with a ramp corner that start no ramp
+  model and are not the second tile of one get no model and show their
+  ground; next to ramps this leaves visible gaps at the sides.
+- **`GetLocationZ`** interpolates as
+  `lerp(lerp(bl, br, u), lerp(tl, tr, u), v)` with
+  `lerp(a, b, t) = add(a, mul(sub(b, a), t))`; the order is not
+  specified. Outside the grid it takes the nearest edge. Small raised
+  areas (open question 3) follow the formula.
 - **Water surface** (open question 4): the first frame
   `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
   depth colour and blended with its alpha, drawn after the models without

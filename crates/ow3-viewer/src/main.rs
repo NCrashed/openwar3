@@ -49,7 +49,7 @@ fn options() -> Result<Options, String> {
             }
             "--camera" => {
                 let v = value("--camera")?;
-                let numbers: Result<Vec<f32>, _> = v.split(',').map(str::parse).collect();
+                let numbers: Result<Vec<f32>, _> = v.split(',').map(|n| n.trim().parse()).collect();
                 options.camera = Some(numbers.map_err(|_| "bad --camera")?);
             }
             _ if map.is_none() => map = Some(PathBuf::from(arg)),

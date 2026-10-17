@@ -73,6 +73,8 @@ pub struct Map {
     pub scripts: [Script; 3],
     pub destructables: Vec<PlacedDestructable>,
     pub world_bounds: Bounds,
+    /// Ground heights (SPEC-0014).
+    pub heights: crate::heights::Heights,
     /// Unit, destructable and item types.
     pub data: ObjectData,
     /// The string lists of the interface files, for `GetLocalizedString`.
@@ -130,6 +132,7 @@ impl Map {
             max_x: terrain.origin_x + (terrain.width.saturating_sub(1)) as f32 * CELL,
             max_y: terrain.origin_y + (terrain.height.saturating_sub(1)) as f32 * CELL,
         };
+        let heights = crate::heights::Heights::new(&terrain);
         let data = ObjectData::load(archives)?;
         let localized = localized_strings(archives);
         let destructables = destructables(archives, &data)?;
@@ -139,6 +142,7 @@ impl Map {
             scripts: [common, blizzard, script],
             destructables,
             world_bounds,
+            heights,
             data,
             localized,
         })

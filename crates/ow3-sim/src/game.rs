@@ -336,6 +336,8 @@ pub struct State {
     localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
     world_bounds: [u32; 4],
+    /// Ground heights for `GetLocationZ` (SPEC-0014).
+    heights: crate::heights::Heights,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
     camera_bounds: [u32; 4],
     next_handle: u32,
@@ -374,6 +376,7 @@ impl State {
             turning: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
+            heights: crate::heights::Heights::default(),
             camera_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
@@ -569,6 +572,7 @@ impl<'a> Game<'a> {
         state.setup = players::Setup::from_map(map);
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
+        state.heights = map.heights.clone();
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();
         state.localized = map.localized.clone();

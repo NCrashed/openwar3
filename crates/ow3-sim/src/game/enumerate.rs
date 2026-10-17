@@ -824,6 +824,18 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     native!(
         add,
         state,
+        "native GetLocationZ takes location whichLocation returns real",
+        |vm, state, args| {
+            let state = state.borrow();
+            let point = location(&state, handle(&args[0]));
+            Ok(Some(Value::Real(
+                point.map_or(0, |(x, y)| state.heights.at(x, y)),
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
         "native Rect takes real minx, real miny, real maxx, real maxy returns rect",
         |vm, state, args| {
             let object = Object::Rect {

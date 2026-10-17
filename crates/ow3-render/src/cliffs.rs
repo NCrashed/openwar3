@@ -43,6 +43,23 @@ fn variation(p: &TerrainPoint) -> u8 {
     p.texture_details >> 5
 }
 
+/// The cliff type and variation of tile (`x`, `y`) with `corners` BL, BR,
+/// TL, TR: from the first corner with a cliff texture, else the first
+/// point with one in the 5 x 5 square around (x, y), else type 0.
+fn cliff_source(terrain: &Terrain, x: i64, y: i64, corners: &[&TerrainPoint; 4]) -> (u8, u8) {
+    corners
+        .iter()
+        .copied()
+        .find(|p| p.cliff_texture() != NO_CLIFF)
+        .or_else(|| {
+            (x - 2..=x + 2)
+                .flat_map(|sx| (y - 2..=y + 2).map(move |sy| (sx, sy)))
+                .filter_map(|(sx, sy)| point(terrain, sx, sy))
+                .find(|p| p.cliff_texture() != NO_CLIFF)
+        })
+        .map_or((0, 0), |p| (p.cliff_texture(), variation(p)))
+}
+
 /// The cliff model of tile (`x`, `y`), whose bottom left corner is point
 /// (`x`, `y`), or `None` when it has none.
 pub fn cliff_tile(terrain: &Terrain, x: u32, y: u32) -> Option<CliffTile> {
@@ -62,22 +79,163 @@ pub fn cliff_tile(terrain: &Terrain, x: u32, y: u32) -> Option<CliffTile> {
     let letter = |l: u8| char::from(b'A' + (l - lo).min(2));
     let [bl, br, tl, tr] = levels;
     let letters = [tl, tr, br, bl].into_iter().map(letter).collect();
-    let source = corners
-        .iter()
-        .copied()
-        .find(|p| p.cliff_texture() != NO_CLIFF)
-        .or_else(|| {
-            (x - 2..=x + 2)
-                .flat_map(|sx| (y - 2..=y + 2).map(move |sy| (sx, sy)))
-                .filter_map(|(sx, sy)| point(terrain, sx, sy))
-                .find(|p| p.cliff_texture() != NO_CLIFF)
-        });
-    let (cliff_type, variation) = source.map_or((0, 0), |p| (p.cliff_texture(), variation(p)));
+    let (cliff_type, variation) = cliff_source(terrain, x, y, &corners);
     Some(CliffTile {
         letters,
         base_level: lo,
         cliff_type,
         variation,
+    })
+}
+
+/// A ramp model: it stands on a tile and the second tile next to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RampTile {
+    /// The letters of the model name (TL, TR, BR, BL of the first tile,
+    /// `R` written as `L`).
+    pub letters: String,
+    /// The tile whose bottom left corner is the model's origin: the lower
+    /// left of the two.
+    pub origin: (u32, u32),
+    /// Tiles covered: `(1, 2)` or `(2, 1)` from `origin`.
+    pub size: (u32, u32),
+    /// The lowest level of the points of both tiles.
+    pub base_level: u8,
+    /// See [`CliffTile::cliff_type`]. PROVISIONAL (SPEC-0014 open
+    /// question 1): chosen as for a cliff model on the first tile.
+    pub cliff_type: u8,
+}
+
+fn is_ramp(p: &TerrainPoint) -> bool {
+    p.flags() & RAMP != 0
+}
+
+/// Whether point (`x`, `y`) is "upper": the ramp points among the
+/// corners of the tiles around it are on different levels, and it is on
+/// the highest of them.
+fn upper(terrain: &Terrain, x: i64, y: i64) -> bool {
+    let Some(own) = point(terrain, x, y) else {
+        return false;
+    };
+    let tiles_x = i64::from(terrain.width) - 1;
+    let tiles_y = i64::from(terrain.height) - 1;
+    let mut levels = Vec::new();
+    for ty in [y - 1, y] {
+        for tx in [x - 1, x] {
+            if !(0..tiles_x).contains(&tx) || !(0..tiles_y).contains(&ty) {
+                continue;
+            }
+            for (cx, cy) in [(tx, ty), (tx + 1, ty), (tx, ty + 1), (tx + 1, ty + 1)] {
+                if let Some(p) = point(terrain, cx, cy).filter(|p| is_ramp(p)) {
+                    levels.push(p.layer_height());
+                }
+            }
+        }
+    }
+    let (Some(&lo), Some(&hi)) = (levels.iter().min(), levels.iter().max()) else {
+        return false;
+    };
+    lo != hi && own.layer_height() == hi
+}
+
+/// The ramp letter of point (`x`, `y`), or `None` when it has none.
+fn letter(terrain: &Terrain, x: i64, y: i64) -> Option<char> {
+    let p = point(terrain, x, y)?;
+    let up = upper(terrain, x, y);
+    if !is_ramp(p) {
+        return Some(if up { 'B' } else { 'A' });
+    }
+    if up {
+        return Some('H');
+    }
+    let near: Vec<&TerrainPoint> = (y - 1..=y + 1)
+        .flat_map(|ny| (x - 1..=x + 1).map(move |nx| (nx, ny)))
+        .filter_map(|(nx, ny)| point(terrain, nx, ny))
+        .collect();
+    let all = near.len() == 9 && near.iter().all(|p| is_ramp(p));
+    let ramp_levels: Vec<u8> = near
+        .iter()
+        .filter(|p| is_ramp(p))
+        .map(|p| p.layer_height())
+        .collect();
+    let ramp_spread = ramp_levels.iter().max()? - ramp_levels.iter().min()?;
+    if (all && ramp_spread == 0) || ramp_spread > 1 {
+        return None;
+    }
+    let differ =
+        |a: (i64, i64), b: (i64, i64)| match (point(terrain, a.0, a.1), point(terrain, b.0, b.1)) {
+            (Some(a), Some(b)) => is_ramp(a) && is_ramp(b) && a.layer_height() != b.layer_height(),
+            _ => false,
+        };
+    let vertical = differ((x, y - 1), (x, y + 1));
+    let horizontal = differ((x - 1, y), (x + 1, y));
+    let levels = near.iter().map(|p| p.layer_height());
+    let spread = levels.clone().max()? - levels.min()?;
+    match (vertical, horizontal) {
+        (true, true) => (spread <= 1).then_some('S'),
+        (true, false) | (false, true) => (spread <= 1).then_some('R'),
+        (false, false) => Some(if all { 'S' } else { 'L' }),
+    }
+}
+
+/// The patterns that start a ramp model and the offset of its second
+/// tile.
+const RAMP_PATTERNS: [(&str, (i64, i64)); 16] = [
+    ("HRAA", (1, 0)),
+    ("HRAB", (1, 0)),
+    ("RHAA", (-1, 0)),
+    ("RHBA", (-1, 0)),
+    ("AARH", (1, 0)),
+    ("BARH", (1, 0)),
+    ("AAHR", (-1, 0)),
+    ("ABHR", (-1, 0)),
+    ("AHRA", (0, -1)),
+    ("BHRA", (0, -1)),
+    ("ARHA", (0, 1)),
+    ("ARHB", (0, 1)),
+    ("HAAR", (0, -1)),
+    ("HBAR", (0, -1)),
+    ("RAAH", (0, 1)),
+    ("RABH", (0, 1)),
+];
+
+/// The ramp model that tile (`x`, `y`) starts, or `None` (SPEC-0014).
+pub fn ramp_tile(terrain: &Terrain, x: u32, y: u32) -> Option<RampTile> {
+    let (x, y) = (i64::from(x), i64::from(y));
+    let corners = [
+        point(terrain, x, y)?,
+        point(terrain, x + 1, y)?,
+        point(terrain, x, y + 1)?,
+        point(terrain, x + 1, y + 1)?,
+    ];
+    if !corners.iter().any(|p| is_ramp(p)) {
+        return None;
+    }
+    let pattern: String = [(x, y + 1), (x + 1, y + 1), (x + 1, y), (x, y)]
+        .into_iter()
+        .map(|(px, py)| letter(terrain, px, py))
+        .collect::<Option<_>>()?;
+    let &(_, (dx, dy)) = RAMP_PATTERNS.iter().find(|(p, _)| *p == pattern)?;
+    let (sx, sy) = (x + dx, y + dy);
+    let tiles_x = i64::from(terrain.width) - 1;
+    let tiles_y = i64::from(terrain.height) - 1;
+    if !(0..tiles_x).contains(&sx) || !(0..tiles_y).contains(&sy) {
+        return None;
+    }
+    let (ox, oy) = (x.min(sx), y.min(sy));
+    let size = (1 + dx.unsigned_abs() as u32, 1 + dy.unsigned_abs() as u32);
+    let base_level = (ox..=ox + i64::from(size.0))
+        .flat_map(|px| (oy..=oy + i64::from(size.1)).map(move |py| (px, py)))
+        .filter_map(|(px, py)| point(terrain, px, py))
+        .map(TerrainPoint::layer_height)
+        .min()?;
+    let (cliff_type, _) = cliff_source(terrain, x, y, &corners);
+    Some(RampTile {
+        letters: pattern.replace('R', "L"),
+        origin: (ox as u32, oy as u32),
+        size,
+        base_level,
+        cliff_type,
     })
 }
 

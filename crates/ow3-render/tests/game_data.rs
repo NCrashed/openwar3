@@ -93,3 +93,47 @@ fn animates_a_unit_model() {
     }
     assert_eq!(ow3_render::model::stand_index(&model), 0);
 }
+
+/// The ramps of Lost Temple as SPEC-0014 counts them: 58 ramp models with
+/// 14 names, among them `LABH` on tiles (33, 30) and (33, 31) and `ALHB`
+/// on (24, 32) and (24, 33). Every model exists.
+#[test]
+fn lost_temple_ramps() {
+    let map = game_data().join("Maps/FrozenThrone/(4)LostTemple.w3x");
+    if !map.exists() {
+        return;
+    }
+    let mut chain = ArchiveChain::open(&game_data(), &map).unwrap();
+    let terrain = Terrain::parse(&chain.read_map_file("war3map.w3e").unwrap()).unwrap();
+    let mut ramps = Vec::new();
+    for y in 0..terrain.height - 1 {
+        for x in 0..terrain.width - 1 {
+            if let Some(ramp) = ow3_render::cliffs::ramp_tile(&terrain, x, y) {
+                ramps.push(((x, y), ramp));
+            }
+        }
+    }
+    let names: std::collections::BTreeSet<&str> =
+        ramps.iter().map(|(_, r)| r.letters.as_str()).collect();
+    for name in &names {
+        let path = ow3_render::cliffs::model_path("CliffTrans", name, 0);
+        assert!(chain.read(&path).is_some(), "{path}");
+    }
+    let at = |x, y| {
+        ramps
+            .iter()
+            .find(|(t, _)| *t == (x, y))
+            .map(|(_, r)| r.clone())
+    };
+    let labh = at(33, 30).expect("ramp at (33, 30)");
+    assert_eq!(
+        (labh.letters.as_str(), labh.origin, labh.size),
+        ("LABH", (33, 30), (1, 2))
+    );
+    let alhb = at(24, 32).expect("ramp at (24, 32)");
+    assert_eq!(
+        (alhb.letters.as_str(), alhb.origin, alhb.size),
+        ("ALHB", (24, 32), (1, 2))
+    );
+    assert_eq!((ramps.len(), names.len()), (58, 14), "{names:?}");
+}

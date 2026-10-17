@@ -48,8 +48,7 @@ impl Scene {
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
         let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
-        let cliff_tiles = crate::cliff_mesh::cliff_tiles(&terrain);
-        let (cliffs, covered) = crate::cliff_mesh::build(&mut chain, &terrain, &cliff_tiles);
+        let (cliffs, covered) = crate::cliff_mesh::build(&mut chain, &terrain);
         let layers = terrain_mesh::build(&terrain, &textures, &covered);
         let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
             let depths = ow3_render::water::depths(&mut chain);

@@ -84,6 +84,9 @@ fn camera(scene: &Scene, values: Option<&[f32]>) -> Camera {
         camera.yaw = get(3, camera.yaw);
         camera.pitch = get(4, camera.pitch);
     }
+    // The target stands on the ground.
+    camera.target[2] =
+        ow3_viewer::terrain_mesh::ground_z(&scene.terrain, camera.target[0], camera.target[1]);
     camera
 }
 

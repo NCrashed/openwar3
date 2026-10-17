@@ -91,6 +91,8 @@ struct Animated {
     sequence: usize,
     /// The first sequence named Death, or the Stand sequence.
     death: usize,
+    /// The height of the top of the model in its Stand pose.
+    top: f32,
     /// The first sequence named Attack, if any.
     attack: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
@@ -152,6 +154,7 @@ impl Animation {
                     .sequences
                     .iter()
                     .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
+                let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
                     .keys()
@@ -164,6 +167,7 @@ impl Animation {
                     sequence,
                     death,
                     attack,
+                    top,
                     palette,
                     bone_base,
                 });
@@ -173,9 +177,9 @@ impl Animation {
         index
     }
 
-    /// The height of the top of model `index` (its extent), at least 50.
+    /// The height of the top of model `index` in its Stand pose.
     pub fn model_top(&self, index: usize) -> f32 {
-        self.models[index].model.info.extent.max[2].max(50.0)
+        self.models[index].top
     }
 
     /// The bones of model `index`.
@@ -331,6 +335,33 @@ impl Animation {
         }
         out
     }
+}
+
+/// The height of the top of `model` at the start of `sequence`: the highest
+/// vertex of the geosets visible then, at least 50. (The extent in the
+/// header is often much taller.)
+fn stand_top(model: &Model, sequence: usize) -> f32 {
+    let moment = Moment::start(model, sequence);
+    let pose = Pose::new(model, moment);
+    let mut top = f32::MIN;
+    for (g, geoset) in model.geosets.iter().enumerate() {
+        let alpha = model
+            .geoset_animations
+            .iter()
+            .find(|a| a.geoset_id as usize == g)
+            .map_or(1.0, |a| {
+                track_or(model, &a.tracks, b"KGAO", &[a.alpha], moment)[0]
+            });
+        if alpha <= 0.0 {
+            continue;
+        }
+        let (positions, _) = pose.skin(geoset);
+        top = positions.iter().fold(top, |top, p| top.max(p[2]));
+    }
+    if top == f32::MIN {
+        top = model.info.extent.max[2];
+    }
+    top.max(50.0)
 }
 
 /// `a` and `b` mixed: `t` 0 gives `a`, 1 gives `b`.

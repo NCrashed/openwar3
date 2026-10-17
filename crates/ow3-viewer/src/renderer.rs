@@ -521,7 +521,7 @@ impl Renderer {
             .iter()
             .filter_map(|a| {
                 Some(Bar {
-                    at: [a.head[0], a.head[1], a.head[2] + 24.0],
+                    at: a.head,
                     fill: a.life?,
                     selected: self.selected == Some(a.handle),
                 })

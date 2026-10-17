@@ -41,7 +41,8 @@ struct Vertex {
 /// A health bar over a unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bar {
-    /// The point in the world the bar stands over.
+    /// The top of the unit in the world; the bar stands a few pixels
+    /// above it.
     pub at: [f32; 3],
     /// The share of life, 0 to 1.
     pub fill: f32,
@@ -53,6 +54,8 @@ const BAR_WIDTH: f32 = 36.0;
 const BAR_HEIGHT: f32 = 5.0;
 /// Pixels of the outline around a selected unit's bar.
 const OUTLINE: f32 = 2.0;
+/// Pixels between the top of a unit and its bar.
+const LIFT: f32 = 8.0;
 
 /// `point` on the screen in normalised device coordinates, or `None`
 /// behind the camera.
@@ -84,7 +87,8 @@ fn triangles(bars: &[Bar], view_projection: &Mat4, size: (u32, u32)) -> Vec<Vert
         if cx.abs() > 1.2 || cy.abs() > 1.2 {
             continue;
         }
-        let (px, py) = (cx * w / 2.0, cy * h / 2.0);
+        // A few pixels above the head, whatever the zoom.
+        let (px, py) = (cx * w / 2.0, cy * h / 2.0 + LIFT);
         let (hw, hh) = (BAR_WIDTH / 2.0, BAR_HEIGHT / 2.0);
         if bar.selected {
             let o = OUTLINE;

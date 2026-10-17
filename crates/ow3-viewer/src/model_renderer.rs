@@ -304,33 +304,44 @@ impl ModelRenderer {
             });
             pipelines.insert(kind, pipeline);
         }
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("model texture"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..wgpu::SamplerDescriptor::default()
-        });
+        // Textures repeat, except on parts that ask for their edges to be
+        // kept (cliffs, whose atlas halves must not run into each other).
+        let sampler = |address_mode| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("model texture"),
+                address_mode_u: address_mode,
+                address_mode_v: address_mode,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
+                anisotropy_clamp: 16,
+                ..wgpu::SamplerDescriptor::default()
+            })
+        };
+        let samplers = [
+            sampler(wgpu::AddressMode::Repeat),
+            sampler(wgpu::AddressMode::ClampToEdge),
+        ];
         let mut bind_groups = BTreeMap::new();
         for (path, image) in textures {
             let view = upload_texture(device, queue, image);
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("model texture"),
-                layout: &texture_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
-            bind_groups.insert(path.clone(), bind_group);
+            for (clamp, sampler) in [false, true].into_iter().zip(&samplers) {
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("model texture"),
+                    layout: &texture_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
+                bind_groups.insert((path.clone(), clamp), bind_group);
+            }
         }
         let mut instance_buffers = Vec::with_capacity(groups.len());
         let mut parts = Vec::new();
@@ -345,7 +356,7 @@ impl ModelRenderer {
                 group.instances.len() as u32,
             ));
             for part in &group.parts {
-                let Some(bind_group) = bind_groups.get(&part.texture) else {
+                let Some(bind_group) = bind_groups.get(&(part.texture.clone(), part.clamp)) else {
                     continue;
                 };
                 parts.push(GpuPart {

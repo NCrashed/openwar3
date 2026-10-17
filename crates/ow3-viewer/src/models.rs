@@ -72,6 +72,8 @@ pub struct Part {
     pub indices: Vec<u32>,
     pub texture: String,
     pub filter_mode: u32,
+    /// The texture keeps its edges instead of repeating.
+    pub clamp: bool,
 }
 
 /// One model, and where it stands.
@@ -253,6 +255,7 @@ fn animated_parts(
                 indices: indices.clone(),
                 texture,
                 filter_mode: layer.filter_mode,
+                clamp: false,
             });
         }
     }
@@ -304,6 +307,7 @@ pub fn parts(model: &Model, textures: &[Option<String>]) -> Vec<Part> {
                 indices: indices.clone(),
                 texture,
                 filter_mode: layer.filter_mode,
+                clamp: false,
             });
         }
     }

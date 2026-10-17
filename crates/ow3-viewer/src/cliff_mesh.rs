@@ -302,6 +302,9 @@ pub fn build(chain: &mut ArchiveChain, terrain: &Terrain) -> Cliffs {
                     indices: Vec::new(),
                     texture: p.texture.clone(),
                     filter_mode: p.filter_mode,
+                    // Cliff models cover the whole atlas, rock above and
+                    // ground below: no repeating across its edges.
+                    clamp: true,
                 })
                 .collect()
         });
@@ -380,12 +383,14 @@ mod tests {
             indices: vec![0, 1, 2],
             texture: String::new(),
             filter_mode: 0,
+            clamp: true,
         };
         let mut into = Part {
             vertices: Vec::new(),
             indices: Vec::new(),
             texture: String::new(),
             filter_mode: 0,
+            clamp: true,
         };
         place(&mut into, &part, &terrain, (0, 0), (1, 1), 2);
         let at: Vec<[f32; 3]> = into.vertices.iter().map(|v| v.position).collect();

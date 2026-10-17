@@ -362,6 +362,7 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..wgpu::SamplerDescriptor::default()
         });
         let mut views = Vec::with_capacity(scene.textures.len());
@@ -418,6 +419,7 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..wgpu::SamplerDescriptor::default()
         });
         let water = scene.water.as_ref().map(|(layer, image)| {

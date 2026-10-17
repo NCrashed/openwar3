@@ -1,22 +1,20 @@
 //! A top-down image of a map's terrain, one square per tile.
 //!
-//! Each ground texture of a tileset (`TerrainArt\Terrain.slk`, columns
-//! `dir` and `file`) is an atlas of 64 x 64 cells. Read from the textures
-//! themselves: in the left 4 x 4 cells, cell `n` (row by row) covers the
-//! corners whose bits are set in `n`: 1 bottom right, 2 bottom left,
-//! 4 top right, 8 top left; cells 0 and 15 are fully covered. Atlases 512
-//! pixels wide have 16 more full cells on the right.
+//! The ground follows SPEC-0012. Each ground texture of a tileset
+//! (`TerrainArt\Terrain.slk`, columns `dir` and `file`) is an atlas of
+//! cells `height / 4` pixels square. In the left 4 x 4 cells, cell `n`
+//! (row by row) covers the corners whose bits are set in `n`: 1 bottom
+//! right, 2 bottom left, 4 top right, 8 top left; cells 0 and 15 are full.
+//! Atlases twice as wide as high have 16 more full cells on the right.
 //!
 //! A tile is drawn from its four corner points: the lowest ground texture
-//! index among them fills the tile, then each higher texture present
-//! covers its own corners, in increasing order.
+//! index among them fills the tile with the cell chosen by the variation of
+//! the bottom-left point, then each higher index present covers its own
+//! corners, in increasing order.
 //!
-//! PROVISIONAL, until a spec says how the game draws terrain: a full tile
-//! uses the variation in the low 5 bits of its bottom-left point's texture
-//! details (0..15: the right-hand cells, 16: cell 0, 17: cell 15; atlases
-//! without right-hand cells use cell 0); heights shade the tiles as if lit
-//! from the north-west, water tints towards blue and the map boundary is
-//! darkened, all interpolated between the points of a tile; cliffs show
+//! PROVISIONAL, until a spec covers them: heights shade the tiles as if
+//! lit from the north-west, water tints towards blue and the map boundary
+//! is darkened, all interpolated between the points of a tile; cliffs show
 //! only as steep slopes, without cliff models.
 
 use std::collections::BTreeMap;
@@ -28,7 +26,8 @@ use ow3_formats::slk::Table;
 
 use crate::image::Image;
 
-/// Pixels of a cell in a ground texture atlas.
+/// Pixels of a cell in the shipped ground texture atlases; image tiles
+/// must divide it.
 pub const CELL: u32 = 64;
 const WATER: u8 = 0x4;
 const BOUNDARY: u8 = 0x8;
@@ -75,22 +74,36 @@ fn texture_paths(chain: &mut ArchiveChain) -> BTreeMap<RawCode, String> {
     paths
 }
 
-/// The atlas cell a full tile uses for `variation`.
+/// Pixels of a cell of `atlas`: a quarter of its height (SPEC-0012).
+fn cell_size(atlas: &Image) -> u32 {
+    (atlas.height / 4).max(1)
+}
+
+/// The atlas cell a full tile uses for `variation` (SPEC-0012).
 fn full_cell(atlas: &Image, variation: u8) -> u32 {
-    let extended = atlas.width >= 8 * CELL;
-    match variation {
-        0..=15 if extended => 16 + u32::from(variation),
-        17 => 15,
-        _ => 0,
+    let v = u32::from(variation & 0x1F);
+    let wide = atlas.width >= 2 * atlas.height;
+    match v {
+        _ if !wide => {
+            if v % 2 == 0 {
+                0
+            } else {
+                15
+            }
+        }
+        0..=15 => 16 + v,
+        16 => 15,
+        17 => 0,
+        _ => v - 2,
     }
 }
 
-/// Top-left pixel of `cell` in an atlas: cells 0..15 in the left 4 x 4
-/// block, 16..31 in the right one.
-fn cell_origin(cell: u32) -> (u32, u32) {
+/// Top-left pixel of `cell` in an atlas with cells of `size` pixels:
+/// cells 0..15 in the left 4 x 4 block, 16..31 in the right one.
+fn cell_origin(cell: u32, size: u32) -> (u32, u32) {
     let block = cell / 16;
     let n = cell % 16;
-    ((block * 4 + n % 4) * CELL, (n / 4) * CELL)
+    ((block * 4 + n % 4) * size, (n / 4) * size)
 }
 
 /// Height of a point in world units, layers included.
@@ -135,8 +148,9 @@ pub fn top_down(terrain: &Terrain, textures: &[Option<Image>], tile: u32) -> Ima
                 let pixels = scaled
                     .entry((usize::from(texture), cell))
                     .or_insert_with(|| {
-                        let (x, y) = cell_origin(cell);
-                        atlas.scaled_square(x, y, CELL, tile)
+                        let size = cell_size(atlas);
+                        let (x, y) = cell_origin(cell, size);
+                        atlas.scaled_square(x, y, size, tile)
                     });
                 for (i, &color) in pixels.iter().enumerate() {
                     let (px, py) = (left + i as u32 % tile, top + i as u32 / tile);
@@ -214,19 +228,26 @@ fn shade(image: &mut Image, terrain: &Terrain, tile: u32) {
 mod tests {
     use super::*;
 
+    /// SPEC-0012: cell positions and the variation table.
     #[test]
     fn cells_of_the_atlas() {
-        assert_eq!(cell_origin(0), (0, 0));
-        assert_eq!(cell_origin(5), (64, 64));
-        assert_eq!(cell_origin(15), (192, 192));
-        assert_eq!(cell_origin(16), (256, 0));
-        assert_eq!(cell_origin(31), (448, 192));
+        assert_eq!(cell_origin(0, 64), (0, 0));
+        assert_eq!(cell_origin(5, 64), (64, 64));
+        assert_eq!(cell_origin(15, 64), (192, 192));
+        assert_eq!(cell_origin(16, 64), (256, 0));
+        assert_eq!(cell_origin(31, 32), (224, 96));
         let wide = Image::new(512, 256);
         let narrow = Image::new(256, 256);
-        assert_eq!(full_cell(&wide, 0), 16);
-        assert_eq!(full_cell(&wide, 16), 0);
-        assert_eq!(full_cell(&wide, 17), 15);
-        assert_eq!(full_cell(&narrow, 3), 0);
+        assert_eq!(cell_size(&wide), 64);
+        // The table of SPEC-0012.
+        let cells: Vec<u32> = (0..32).map(|v| full_cell(&wide, v)).collect();
+        let mut expected: Vec<u32> = (16..32).collect();
+        expected.extend([15, 0]);
+        expected.extend(16..30);
+        assert_eq!(cells, expected);
+        for v in 0..32u8 {
+            assert_eq!(full_cell(&narrow, v), if v % 2 == 0 { 0 } else { 15 });
+        }
     }
 }
 
@@ -240,7 +261,7 @@ mod drawing_tests {
     fn atlas(color: [u8; 3]) -> Image {
         let mut image = Image::new(4 * CELL, 4 * CELL);
         for n in 0..16u32 {
-            let (x0, y0) = cell_origin(n);
+            let (x0, y0) = cell_origin(n, CELL);
             for y in 0..CELL {
                 for x in 0..CELL {
                     let right = x >= CELL / 2;

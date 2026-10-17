@@ -5,6 +5,7 @@
 
 pub mod binary;
 pub mod blp;
+pub mod fdf;
 pub mod map;
 pub mod mpq;
 pub mod slk;

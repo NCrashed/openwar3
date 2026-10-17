@@ -7,6 +7,7 @@
 //! whole terrain grid (SPEC-0008), and destructables are the placed
 //! doodads whose type is a destructable type (SPEC-0006).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
@@ -111,6 +112,8 @@ pub struct Map {
     pub world_bounds: Bounds,
     /// Unit, destructable and item types.
     pub data: ObjectData,
+    /// The string lists of the interface files, for `GetLocalizedString`.
+    pub localized: BTreeMap<String, String>,
 }
 
 fn parse_script(name: &str, data: &[u8]) -> Result<Script, MapError> {
@@ -164,6 +167,7 @@ impl Map {
             max_y: terrain.origin_y + (terrain.height.saturating_sub(1)) as f32 * CELL,
         };
         let data = ObjectData::load(archives)?;
+        let localized = localized_strings(archives);
         let destructables = destructables(archives, &data)?;
         Ok(Map {
             info,
@@ -172,6 +176,7 @@ impl Map {
             destructables,
             world_bounds,
             data,
+            localized,
         })
     }
 
@@ -210,4 +215,26 @@ fn destructables(
             life_percent: d.life_percent,
         })
         .collect())
+}
+
+/// Files whose string lists `GetLocalizedString` reads (SPEC-0010).
+pub const STRING_FILES: [&str; 4] = [
+    "UI\\FrameDef\\GlobalStrings.fdf",
+    "UI\\FrameDef\\InfoPanelStrings.fdf",
+    "UI\\FrameDef\\DateStrings.fdf",
+    "UI\\FrameDef\\NetworkStrings.fdf",
+];
+
+/// The entries of the string lists in [`STRING_FILES`]. PROVISIONAL: a
+/// later definition replaces an earlier one, also across files (SPEC-0010
+/// open question 1).
+fn localized_strings(archives: &mut Archives) -> BTreeMap<String, String> {
+    let mut strings = BTreeMap::new();
+    for file in STRING_FILES {
+        if let Some(data) = archives.read(file) {
+            let text = String::from_utf8_lossy(&data);
+            strings.extend(ow3_formats::fdf::string_lists(&text));
+        }
+    }
+    strings
 }

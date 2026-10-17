@@ -296,22 +296,18 @@ anything yet:
 
 ## Leaderboards, multiboards and dialogs (`game::boards`)
 
-Texts are stored with trigger strings resolved, so test W2a reads `text
-910` from `LeaderboardGetLabelText`, `MultiboardGetTitleText` and
-`GetLocalizedString`, as SPEC-0003 says. Dialog buttons are clicked
-through the simulation (`Game::click_button`). Choices where no spec
-says anything yet:
+Texts are stored with trigger strings resolved (SPEC-0003). Leaderboard
+rows, `GetLocalizedString` and dialog clicks follow SPEC-0010, and a
+dialog shown to the local player stops game time. Choices where the
+specs are silent:
 
-- **`LeaderboardAddItem`** always adds a row, also for a player that has
-  one. Sorting keeps the order of equal rows. `LeaderboardGetPlayerIndex`
-  is -1 for a player without a row, and `LeaderboardGetItemCount` counts
-  rows (not the size set by `LeaderboardSetSizeByItemCount`).
+- **Sorting** keeps the order of equal rows (SPEC-0010 open question 3).
+- **String lists.** `GetLocalizedString` reads `GlobalStrings.fdf`,
+  `InfoPanelStrings.fdf`, `DateStrings.fdf` and `NetworkStrings.fdf` of
+  `UI\FrameDef`, through the archive order of SPEC-0008; a later entry
+  replaces an earlier one, also across files (open questions 1 and 2).
+  Are other files of `UI\FrameDef` read too?
+- **The dialog pause** stops ticks like `PauseGame`; the sleep clock goes
+  on. Does a sleeping thread resume while a dialog is open?
 - **Multiboards** have no limit on rows and columns; each
   `MultiboardGetItem` makes a new handle.
-- **`GetLocalizedString`** returns its argument after resolving a trigger
-  string reference. The game looks other keys up in its string tables;
-  which tables, and what does it return for an unknown key?
-- **A click** runs the triggers registered for the button and for its
-  dialog in the order they were registered, with `GetClickedButton`,
-  `GetClickedDialog` and `GetTriggerPlayer`. Does the dialog close first,
-  and in which order do button and dialog triggers run?

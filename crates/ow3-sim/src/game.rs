@@ -249,6 +249,8 @@ pub struct State {
     player_leaderboards: BTreeMap<i32, Option<u32>>,
     /// Unit, destructable and item types of the map.
     pub data: ObjectData,
+    /// Interface strings for `GetLocalizedString` (SPEC-0010).
+    localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
     world_bounds: [u32; 4],
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
@@ -285,6 +287,7 @@ impl State {
             dialog_events: Vec::new(),
             player_leaderboards: BTreeMap::new(),
             data: ObjectData::default(),
+            localized: BTreeMap::new(),
             world_bounds: [0; 4],
             camera_bounds: [0; 4],
             conditions: HashMap::new(),
@@ -483,6 +486,7 @@ impl<'a> Game<'a> {
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();
+        state.localized = map.localized.clone();
         for d in &map.destructables {
             // PROVISIONAL: placed with the life percentage of the editor.
             let max_life = state

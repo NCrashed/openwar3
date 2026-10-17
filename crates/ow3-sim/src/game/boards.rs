@@ -3,18 +3,16 @@
 //! are stored with trigger strings resolved, so `LeaderboardGetLabelText`
 //! and `MultiboardGetTitleText` return the entry text.
 //!
-//! Dialog buttons are clicked through [`super::Game::click_button`], which
-//! runs the triggers registered for the button and its dialog.
+//! Leaderboard rows, `GetLocalizedString` and dialog clicks follow
+//! SPEC-0010. Buttons are clicked through [`super::Game::click_button`];
+//! a dialog shown to the local player stops game time.
 //!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: `LeaderboardAddItem` always
-//! adds a row, also for a player that has one; sorting keeps the order of
-//! equal rows; `LeaderboardGetPlayerIndex` is -1 for a player without a
-//! row; rows and columns of a multiboard are not limited; each
-//! `MultiboardGetItem` makes a new handle; `GetLocalizedString` returns
-//! its argument (after resolving a trigger string reference).
+//! PROVISIONAL, listed in specs/QUESTIONS.md: sorting keeps the order of
+//! equal rows; rows and columns of a multiboard are not limited; each
+//! `MultiboardGetItem` makes a new handle.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use ow3_jass::semantics::Value;
@@ -52,6 +50,8 @@ pub struct Multiboard {
 pub struct Dialog {
     message: String,
     buttons: Vec<u32>,
+    /// Players the dialog is shown to.
+    shown: BTreeSet<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,31 +94,65 @@ fn dialog(state: &mut State, h: Option<u32>) -> Option<&mut Dialog> {
     }
 }
 
-/// Runs the triggers registered for `button` and for its dialog, in the
-/// order they were registered, as player `player` clicked it.
+/// Event ids seen in the triggers of a click (SPEC-0010).
+const EVENT_DIALOG_BUTTON_CLICK: i32 = 90;
+const EVENT_OF_DIALOG_TRIGGERS: i32 = 92;
+
+/// Game time stops while a dialog is shown to the local player
+/// (SPEC-0010).
+fn update_pause(state: &mut State) {
+    let local = state.setup.local_player;
+    state.clock.dialog_open = state
+        .objects
+        .values()
+        .any(|o| matches!(o, Object::Dialog(d) if d.shown.contains(&local)));
+}
+
+/// Player `player` clicks `button` (SPEC-0010): the dialog is hidden for
+/// that player, then the dialog's triggers run, then the button's, each
+/// kind in the order registered.
 pub(super) fn click(vm: &mut Vm, state: &Rc<RefCell<State>>, button: u32, player: i32) {
-    let (dialog, triggers, player) = {
+    let (dialog, dialog_triggers, button_triggers, player_handle) = {
         let mut state = state.borrow_mut();
         let Some(Object::Button(b)) = state.objects.get(&button) else {
             return;
         };
         let dialog = b.dialog;
-        let triggers: Vec<u32> = state
-            .dialog_events
-            .iter()
-            .filter_map(|e| match *e {
-                DialogEvent::Dialog { trigger, dialog: d } if d == dialog => Some(trigger),
-                DialogEvent::Button { trigger, button: b } if b == button => Some(trigger),
-                _ => None,
-            })
-            .collect();
-        (dialog, triggers, state.player_handle(player))
+        if let Some(d) = super::boards::dialog(&mut state, Some(dialog)) {
+            d.shown.remove(&player);
+        }
+        update_pause(&mut state);
+        let mut dialog_triggers = Vec::new();
+        let mut button_triggers = Vec::new();
+        for event in &state.dialog_events {
+            match *event {
+                DialogEvent::Dialog { trigger, dialog: d } if d == dialog => {
+                    dialog_triggers.push(trigger);
+                }
+                DialogEvent::Button { trigger, button: b } if b == button => {
+                    button_triggers.push(trigger);
+                }
+                _ => {}
+            }
+        }
+        let player_handle = state.player_handle(player);
+        (dialog, dialog_triggers, button_triggers, player_handle)
     };
-    for trigger in triggers {
+    for trigger in dialog_triggers {
         let context = Context {
             clicked_button: Some(button),
             clicked_dialog: Some(dialog),
-            triggering_player: Some(player),
+            triggering_player: Some(player_handle),
+            event_id: Some(EVENT_OF_DIALOG_TRIGGERS),
+            ..Context::default()
+        };
+        fire_trigger(vm, state, trigger, context);
+    }
+    // In a button's trigger the clicked button and dialog are null.
+    for trigger in button_triggers {
+        let context = Context {
+            triggering_player: Some(player_handle),
+            event_id: Some(EVENT_DIALOG_BUTTON_CLICK),
             ..Context::default()
         };
         fire_trigger(vm, state, trigger, context);
@@ -189,7 +223,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             "native LeaderboardRemovePlayerItem takes leaderboard lb, player p returns nothing",
             |lb, args, state| {
                 let player = state.player_id(handle(&args[1]));
-                lb.rows.retain(|r| Some(r.player) != player);
+                if let Some(i) = lb.rows.iter().position(|r| Some(r.player) == player) {
+                    lb.rows.remove(i);
+                }
             },
         ),
         (
@@ -524,6 +560,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     state.objects.remove(&button);
                 }
                 state.objects.remove(&handle(&args[0]).expect("found"));
+                update_pause(&mut state);
             }
             Ok(None)
         }
@@ -623,14 +660,41 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "constant native GetClickedDialog takes nothing returns dialog",
         |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.clicked_dialog))) }
     );
-
-    // Localized strings: the argument itself, after a trigger string
-    // reference is resolved (SPEC-0003).
+    // SPEC-0010: the key's text in the interface string lists, the key
+    // itself when it is not there, null for "" and null. A trigger string
+    // reference is resolved first (SPEC-0003).
     native!(
         add,
         state,
         "native GetLocalizedString takes string source returns string",
-        |vm, state, args| { Ok(Some(args[0].clone())) }
+        |vm, state, args| {
+            let key = string(&args[0]).unwrap_or("");
+            if key.is_empty() {
+                return Ok(Some(Value::String(None)));
+            }
+            let state = state.borrow();
+            Ok(Some(Value::string(
+                state.localized.get(key).map_or(key, String::as_str),
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native DialogDisplay takes player whichPlayer, dialog whichDialog, boolean flag returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let player = state.player_id(handle(&args[0]));
+            if let (Some(player), Some(d)) = (player, dialog(&mut state, handle(&args[1]))) {
+                if args[2] == Value::Boolean(true) {
+                    d.shown.insert(player);
+                } else {
+                    d.shown.remove(&player);
+                }
+            }
+            update_pause(&mut state);
+            Ok(None)
+        }
     );
 }
 

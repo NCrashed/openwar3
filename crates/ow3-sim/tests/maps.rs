@@ -163,3 +163,26 @@ fn object_data() {
     );
     assert!(data.items.contains_key(&i32::from_be_bytes(*b"ratc")));
 }
+
+/// SPEC-0010: one key from each interface string file is found.
+#[test]
+fn localized_strings() {
+    let path = game_data().join("Maps/(2)BootyBay.w3m");
+    if !path.exists() {
+        return;
+    }
+    let map = Map::load(&game_data(), &path).unwrap();
+    for key in [
+        "GAMEOVER_DEFEAT_MSG",
+        "AGILITY",
+        "MONTH_01",
+        "ERROR_ID_INVALIDPARAMS",
+    ] {
+        assert!(
+            map.localized.get(key).is_some_and(|t| !t.is_empty()),
+            "{key}"
+        );
+    }
+    assert!(!map.localized.contains_key("gameover_defeat_msg"));
+    assert!(map.localized.get("HIGH_VOL").is_some_and(|t| !t.is_empty()));
+}

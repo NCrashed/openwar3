@@ -67,6 +67,10 @@ pub enum Step {
 pub struct FrameClock {
     pub speed: Speed,
     pub paused: bool,
+    /// A dialog is shown to the local player: game time stops as for a
+    /// pause (SPEC-0010; PROVISIONAL: the sleep clock goes on, as in a
+    /// pause).
+    pub dialog_open: bool,
     backlog_micros: u64,
     /// Sleep clock at the start of the next chunk.
     sleep_time: u64,
@@ -77,6 +81,7 @@ impl Default for FrameClock {
         FrameClock {
             speed: Speed::Normal,
             paused: false,
+            dialog_open: false,
             backlog_micros: 0,
             sleep_time: 0,
         }
@@ -107,7 +112,7 @@ impl FrameClock {
             return None;
         }
         self.backlog_micros -= CHUNK_MICROS;
-        let ticks = if self.paused {
+        let ticks = if self.paused || self.dialog_open {
             0
         } else {
             self.speed.ticks_per_chunk()

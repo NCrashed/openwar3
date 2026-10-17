@@ -18,6 +18,26 @@ larger y (north). Each point carries a ground texture index (an index into
 the ground tile list of `war3map.w3e`, 0..15) and a variation value
 (5 bits, 0..31).
 
+### Ground tile list
+
+The header of `war3map.w3e` has the tileset letter, a "custom tilesets"
+flag (the 32-bit integer after the letter) and the list of ground tile
+ids that the texture indices refer to.
+
+- **Flag 1:** the indices refer to the map's list. Each id is a row of
+  `TerrainArt\Terrain.slk` (`dir` and `file` give the image).
+- **Flag 0:** the map's list is ignored. The list used is the rows of
+  `TerrainArt\Terrain.slk` whose `tileID` starts with the tileset letter,
+  in the order of the rows in that file. For the Ashenvale letter `A`
+  that is `Adrt`, `Adrd`, `Agrs`, `Arck`, ...: index 0 drew `Adrt`,
+  index 1 `Adrd` and index 3 `Arck`, whatever ids the map listed
+  (`Ndrt`, `Ldrg`, `Ldrt`, `Nrck` at index 0 all drew `Adrt`).
+
+The World Editor writes flag 0 together with exactly that list, so on
+unmodified maps both readings agree. They differ for a map whose letter
+was changed without its list, which happens in test maps. The
+`convertTo` column of `Terrain.slk` plays no part in this.
+
 ### Atlas cells
 
 A ground texture image is an atlas of square cells, 4 rows high. Cell
@@ -89,6 +109,9 @@ full tiles.
 ## Open questions
 
 1. Cliffs, ramps, water, blight and the boundary.
+2. Whether flag 0 replaces the cliff type list (`TerrainArt\CliffTypes.slk`)
+   in the same way, and what is drawn for an index beyond the end of the
+   tileset's list.
 
 ## Sources
 
@@ -128,3 +151,7 @@ cliffs), camera straight down (angle of attack 270, rotation 90).
    index 0 and the wide one at index 1: tiles of index 0 drawing cell 0
    show the cell's colour; tiles of index 1 drawing cell 0 (variation 17)
    are black.
+7. Tileset letter `A`, all points with the same index, Ashenvale images
+   replaced by solid colours: flag 0 shows `Adrt` for index 0, `Adrd`
+   for 1 and `Arck` for 3 with several different map lists; flag 1 with
+   the list `Ndrt, ...` shows `Ndrt`.

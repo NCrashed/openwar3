@@ -55,19 +55,55 @@ constants (0.05); the 25 life and 15 mana per point are likewise.
 `e = mul(i2r(n), dt)` (or `dt` added `n` times; both give the same
 values here), `rate = 0.25`, `dt = 0x3BA3D70A`: the value is computed
 from the starting value and the elapsed time, not by adding a portion
-every tick. All 60 measured ticks match. For heroes the first tick after
-the set gives a slightly smaller step (see open questions);
-`SPEC-0013-regen-samples.tsv` lists the measured values.
+All 60 measured ticks match; `SPEC-0013-regen-samples.tsv` lists the
+measured values.
+
+**Heroes: restart after an attribute change.** When a hero is created, and
+whenever its strength changes (`SetHeroStr`), its life regeneration is
+restarted 0.0001 s later (the shortest timer delay of SPEC-0002) at the
+new rate; in between it does not regenerate. At creation the same holds
+for mana. So the first step after creation, or after a strength change,
+covers 0.0049 s instead of 0.005 s: paladin life +867 units of the last
+place instead of 884 or 885, footman-based hero `'Hf00'` 160 instead of
+163 or 164, paladin mana 4367 instead of 4456; after `SetHeroStr(30)` the
+paladin's life step was 1123 instead of 1147, while its mana step was
+normal. Non-heroes (footman, sorceress) and heroes whose state is set
+0.5 s after creation show full first steps. That intelligence changes
+restart mana regeneration in the same way is an inference, not tested.
 
 ### Facing
 
 - `CreateUnit` takes the facing in degrees modulo 360 into 0..360:
   400 -> 40, -90 -> 270, 720.5 -> 0.5.
-- The stored facing goes through a conversion: 33.3 reads back as
-  33.299995.
-- `SetUnitFacing` turns the unit over time at its turn rate; right after
-  the call `GetUnitFacing` still gives the old value, one second later
-  the new one.
+- The facing is stored in radians. Setting a facing `a` (degrees) stores
+  `r = mul(a, 0x3C8EFA35)` (pi/180); if `|r| >= 2 pi` (`0x40C90FDB`),
+  `r = mul(frac(mul(r, recip(2 pi))), 2 pi)` (`frac` keeps the sign,
+  SPEC-0004); then, if `r < 0`, `r = add(r, 2 pi)`. `GetUnitFacing`
+  returns `mul(r, 0x42652EE1)` (180/pi). This reproduces all 30 tested
+  values bit for bit: 33.3 -> 33.299995 (`0x42053332`), 40 -> 39.999996,
+  360 -> 359.99997 (not reduced: `mul(360, pi/180)` is just below 2 pi),
+  400 -> 40.000019, -90 -> 270.0, -0.001 -> 359.99899, -1000.25 ->
+  79.749939, 10000.7 -> 280.70065.
+- `SetUnitFacing` turns the unit over time. `GetUnitFacing` changes only
+  every 6 ticks (0.03 s), the first time 3 ticks after the call. The
+  turn speed is set by the `orientInterp` column of `Units\UnitData.slk`,
+  not by `turnRate` (custom types with `turnRate` 0.1 to 3.0 turned
+  exactly like the footman; `uloc` with `turnRate` 0.2 turns like the
+  footman, which has 0.6, because both have `orientInterp` 0). Measured
+  turn per update, in radians, while far from the target: it starts at
+  `s`, grows by `s` per update and then stays at the maximum `m`:
+
+  | `orientInterp` | Units tested | `s` | `m` |
+  |---|---|---|---|
+  | 0 | `hfoo`, `uloc` | 0.07 | 0.2 |
+  | 1 | `hmtt`, `hgry` | 0.03 | 0.1 |
+  | 3 | `nadk` | 0.005 | not reached in 2 s |
+  | 4 | `hkni`, `Hamg` | 0.04 | 0.15 |
+
+  Near the target the steps shrink and the facing snaps to the target
+  once less than about 0.001 radians remain (footman, 0 -> 180: last
+  values 179.954, then 180.0 after 0.705 s). The exact rule of this final
+  phase is open.
 
 ### Position
 
@@ -93,10 +129,11 @@ the set gives a slightly smaller step (see open questions);
 
 ## Open questions
 
-1. The first regeneration step of heroes after `SetUnitState` is smaller
-   than the following ones (paladin life +867 units of the last place,
-   then 884 or 885 per tick).
-2. Turn rate and the exact facing conversion.
+1. The turning rule near the target, and the parameters of the other
+   `orientInterp` values (2, 5..8).
+2. A thread resumed after `TriggerSleepAction` that sets life and starts
+   a 0.005 s periodic timer reads no regeneration at the first expiry
+   (all unit types), unlike a thread run from a timer trigger.
 3. Placement of new units on blocked ground.
 
 ## Sources

@@ -118,8 +118,19 @@ widget):
   pierce and siege).
 - An item `'ratc'` (75 life) lost 10 to 10 chaos damage.
 
-Armor values of destructables and items, other attack types against
-`Wood`, and what happens at 0 life were not tested (open question 4).
+- A rock `'DTrc'` (armor type `Stone`) also lost exactly 10 to 10 damage
+  with each of the seven attack types.
+- The damage type makes no difference (10 `DAMAGE_TYPE_MAGIC` damage
+  removed 10 from a tree). Destructables and items have no armor value
+  in the data, and none applies: the full amount is taken.
+- The floor of step 4 applies: 0.3 damage removed 0.3 from a tree and
+  from an item.
+- A destructable whose life reaches 0 dies: its
+  `TriggerRegisterDeathEvent` trigger runs inside `UnitDamageTarget`,
+  with `GetKillingUnit()` `null`; it keeps its type and reads life 0.
+- An item whose life reaches 0 runs its death trigger the same way but
+  stays: one second later it still had its type and position, life 0,
+  and `IsItemVisible` true.
 
 ## Edge cases
 
@@ -134,7 +145,7 @@ Armor values of destructables and items, other attack types against
 2. Game data sets other than the default.
 3. Damage from real attacks (as opposed to `UnitDamageTarget`): base
    damage, dice and upgrades.
-4. Damage to destructables and items beyond the cases above.
+4. Whether an item at 0 life can still be picked up or used.
 
 ## Sources
 

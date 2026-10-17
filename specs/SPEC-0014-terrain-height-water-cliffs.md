@@ -81,18 +81,38 @@ flags use other models (open question 1).
    missing one. The model used is `n = cvar mod count`.
 6. The ground of a tile with a cliff model is not drawn (the model
    brings its own ground).
-7. **Texture.** The cliff texture is `<texDir>\<texFile>.blp` of the cliff
-   type in `CliffTypes.slk` (`ReplaceableTextures\Cliff\Cliff0` or
-   `Cliff1`) for every tileset. The files `<letter>_Cliff0.blp` and
-   `<letter>_Cliff1.blp` of `War3.mpq` are not used: a test map with
-   tileset N or I that imported `Cliff0`/`Cliff1` in red and green and
-   `N_`/`I_` versions in other colours showed red and green cliffs in
-   both tilesets, and with only the `N_`/`I_` versions imported the
-   cliffs looked exactly as without any import. Cliffs of different
-   tilesets differ only through the tileset's lighting.
-   The snow along the top edge of `CNsn` cliffs (white) is not part of
-   `Cliff1` (it stayed white when `Cliff1` was replaced by solid green);
-   where it comes from is open question 5.
+7. **Texture.** The models have one texture, the replaceable cliff
+   texture, and their texture coordinates cover the whole atlas (rock in
+   the upper half, ground in the lower half). With the cliff type's
+   `texDir` and `texFile` (`ReplaceableTextures\Cliff`, `Cliff0` or
+   `Cliff1`) and the map's tileset letter `t`, the texture is the first
+   that exists of:
+   1. `<texDir>\<texFile>.blp` in the map;
+   2. `<texDir>\<t>_<texFile>.blp` in the game archives (`War3.mpq` has
+      them for A, B, C, D, F, G, N, Q, V, W, X, Y);
+   3. `<texDir>\<texFile>.blp` in the game archives.
+   A `<t>_<texFile>.blp` imported into the map is not used. So the
+   tilesets I, J, K, O, Z, which have no such files, use the plain
+   `Cliff0` (Lordaeron dirt) and `Cliff1` (Lordaeron grass).
+   Evidence: tileset N and I maps importing plain `Cliff0`/`Cliff1` in
+   red and green showed red and green cliffs on both; importing only
+   `N_`/`I_` versions changed nothing; without imports, `CNdi` cliffs
+   show icy rock (`N_Cliff0`) on N and brown dirt and rock (`Cliff0`) on I.
+   The snow along the edges of `CNsn` cliffs is ground, see rule 8.
+8. **Ground next to cliffs.** Every tile that gets a cliff model gives
+   its four corner points the ground texture `groundTile` of its cliff
+   type (`CliffTypes.slk`: `Ndrt` for `CNdi`, `Nsnw` for `CNsn`, ...),
+   whatever texture `war3map.w3e` stores for them. The ground is then
+   drawn with these textures by the rules of SPEC-0012, so a band one
+   tile wide on both sides of every cliff shows the cliff type's ground.
+   Tested with solid test textures (all `war3map.w3e` points `Ndrt`): a
+   single raised point and a 3 x 3 raised block with cliff type `CNsn`
+   only on the raised points showed snow exactly on the tiles predicted
+   by this rule (144 of 144 tiles; the cliff tiles on the lower left
+   sides take type `CNdi` from their bottom left corner and so give
+   `Ndrt`), and with `CNsn` on all points the band appears on all sides.
+   When a point is a corner of cliff tiles of different types, the
+   tests did not tell which type wins (open question 5).
 
 ### Ramps
 
@@ -190,8 +210,10 @@ leaves holes there.
    follow the ground heights of the corners.
 3. The clamping of small raised areas above.
 4. Water texture animation and shorelines.
-5. How the ground texture of the tileset (for `CNsn` the snow) is applied
-   to the parts of cliff models next to the upper and lower ground.
+5. Ground next to cliffs (rule 8): which cliff type wins at a point shared
+   by cliff tiles of different types, whether a `groundTile` missing from
+   the map's ground list is added, and what `upperTile` (only `COrd` sets
+   one) does.
 
 ## Sources
 

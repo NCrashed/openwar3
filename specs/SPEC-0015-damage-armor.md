@@ -26,6 +26,12 @@ small, medium, large, fort, normal, hero, divine, none), and
   `Custom_V1\Units\MiscGame.txt`. The two differ, for example
   `DamageBonusSpells` against hero armor: 0.70 in the melee map, 0.75 in
   the custom map (both measured). Other data set values were not tested.
+- **Map overrides.** A `Units\MiscGame.txt` imported into the map is read
+  and takes precedence over both game copies, also in a custom map (with
+  `DamageBonusChaos` set to 3.00 there, 100 chaos damage did 300). A
+  `Custom_V1\Units\MiscGame.txt` imported into the map is not used (100
+  stayed 100): the `Custom_V1` folder is looked up in the game archives
+  only.
 - **Numbers** in these files are read with `s2r` of SPEC-0004:
   `"0.06"` is `div(6, 100)` = `0x3D75C290` (not the IEEE nearest
   `0x3D75C28F`), `"0.70"` is `0x3F333334`. `"1.50"`, `"0.75"`, `"1.25"`,
@@ -82,7 +88,9 @@ damageType, weaponType)`:
 5. `GetEventDamage()` in `EVENT_UNIT_DAMAGED` triggers is `d`. These
    triggers run before the life is lowered: inside them the target still
    has its old life.
-6. The target's life is then lowered by `d` (SPEC-0013 for death).
+6. After the triggers, `d` is taken from the life the target has then
+   (a trigger that set the life to 1000 left 900 after 100 damage);
+   SPEC-0013 for death.
 
 - The multiplier `M` applies to every damage type; the `attack` and
   `ranged` flags change nothing.
@@ -90,8 +98,28 @@ damageType, weaponType)`:
   way. With `source = null` no damage is done.
 
 Example (custom map): 100 pierce damage, `DAMAGE_TYPE_NORMAL`, against
-medium armor 10: `x = mul(10, 0x3D75C290)`, `f = 0.625`, result 46.875
-(`R2SW` 46.88); with `DAMAGE_TYPE_MAGIC` 75.0.
+medium armor 10: `x = mul(10, 0x3D75C290)` = `0x3F19999A`,
+`r = div(x, add(1, x))` = `0x3EC00001`, `f = sub(1, r)` = `0x3F1FFFFF`
+(0.62499994, just below 0.625 because `s2r("0.06")` is just above 0.06),
+`d = mul(mul(100, f), 0.75)` = `0x423B7FFE` (46.874992; `R2SW(d, 1, 2)`
+prints 46.88), which is the value measured in the game. With
+`DAMAGE_TYPE_MAGIC` the result is 75.0.
+
+### Destructables and items
+
+`UnitDamageTarget` also damages destructables and items (the target is a
+widget):
+
+- A tree `'LTlt'` (50 life, armor type `Wood` in
+  `Units\DestructableData.slk`) lost exactly 10 to 10 damage of
+  `DAMAGE_TYPE_NORMAL` with each of the seven attack types: an armor type
+  that is not one of the eight of the lists gets the multiplier 1.0 for
+  every attack type (it does not count as `none`, which has 1.5 for
+  pierce and siege).
+- An item `'ratc'` (75 life) lost 10 to 10 chaos damage.
+
+Armor values of destructables and items, other attack types against
+`Wood`, and what happens at 0 life were not tested (open question 4).
 
 ## Edge cases
 
@@ -106,6 +134,7 @@ medium armor 10: `x = mul(10, 0x3D75C290)`, `f = 0.625`, result 46.875
 2. Game data sets other than the default.
 3. Damage from real attacks (as opposed to `UnitDamageTarget`): base
    damage, dice and upgrades.
+4. Damage to destructables and items beyond the cases above.
 
 ## Sources
 

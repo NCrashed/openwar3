@@ -4,6 +4,8 @@
 //! base for a map view.
 
 pub mod animation;
+pub mod cliffs;
 pub mod image;
 pub mod model;
 pub mod terrain;
+pub mod water;

@@ -1,5 +1,5 @@
-//! What is drawn: a map's ground and the models placed on it, loaded from
-//! its archive and the game archives.
+//! What is drawn: a map's ground, cliffs and water and the models placed
+//! on it, loaded from its archive and the game archives.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,9 +15,28 @@ pub struct Scene {
     pub terrain: Terrain,
     pub textures: Vec<Option<Image>>,
     pub layers: Vec<Layer>,
-    /// Models with their placements, and the textures they use by path.
+    /// The water surface and its texture, if the map has water.
+    pub water: Option<(Layer, Image)>,
+    /// Models with their placements (cliffs included), and the textures
+    /// they use by path.
     pub groups: Vec<Group>,
     pub model_textures: BTreeMap<String, Image>,
+}
+
+/// The first frame of the water texture `path` (without the frame
+/// number), or plain white.
+fn water_texture(chain: &mut ArchiveChain, path: &str) -> Image {
+    chain
+        .read(&format!("{path}00.blp"))
+        .and_then(|d| ow3_formats::blp::decode(&d).ok())
+        .map_or_else(
+            || {
+                let mut white = Image::new(1, 1);
+                white.set(0, 0, [255; 4]);
+                white
+            },
+            Image::from,
+        )
 }
 
 impl Scene {
@@ -29,13 +48,24 @@ impl Scene {
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
         let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
-        let layers = terrain_mesh::build(&terrain, &textures);
+        let cliff_tiles = crate::cliff_mesh::cliff_tiles(&terrain);
+        let (cliffs, covered) = crate::cliff_mesh::build(&mut chain, &terrain, &cliff_tiles);
+        let layers = terrain_mesh::build(&terrain, &textures, &covered);
+        let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
+            let depths = ow3_render::water::depths(&mut chain);
+            let mesh = terrain_mesh::water(&terrain, &kind, depths);
+            (mesh, water_texture(&mut chain, &kind.texture))
+        });
+        let water = water.filter(|(mesh, _)| !mesh.indices.is_empty());
         let placements = crate::objects::placements(&mut chain);
-        let (groups, model_textures) = models::load(&mut chain, &placements);
+        let (mut groups, mut model_textures) = models::load(&mut chain, &placements);
+        model_textures.extend(models::textures(&mut chain, &cliffs));
+        groups.extend(cliffs);
         Ok(Scene {
             terrain,
             textures,
             layers,
+            water,
             groups,
             model_textures,
         })

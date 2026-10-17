@@ -2,18 +2,22 @@
 //! layer (SPEC-0012), grouped by texture so that drawing the groups in
 //! increasing texture index draws every tile's layers in order.
 //!
-//! PROVISIONAL, until specs cover them: heights include cliff layers, so
-//! cliffs show as steep slopes without cliff models; water darkens points
-//! with the water flag towards blue and the map boundary is darkened.
+//! Tiles with a cliff model have no ground (SPEC-0014). The water surface
+//! is a separate mesh over every tile with water, coloured per vertex by
+//! the depth (SPEC-0014).
+//!
+//! PROVISIONAL: the map boundary is darkened.
+
+use std::collections::BTreeSet;
 
 use bytemuck::{Pod, Zeroable};
 use ow3_formats::map::terrain::{Terrain, TerrainPoint};
 use ow3_render::image::Image;
 use ow3_render::terrain::{cell_origin, cell_size, corners, height, tile_layers};
+use ow3_render::water::{self, Depths, WaterType};
 
 /// Size of a tile in world units.
 pub const TILE: f32 = 128.0;
-const WATER: u8 = 0x4;
 const BOUNDARY: u8 = 0x8;
 
 #[repr(C)]
@@ -22,8 +26,8 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    /// Brightness in `rgb` (the boundary is darker) and the share of water
-    /// in `a`.
+    /// Brightness of the ground in `rgb` (the boundary is darker); the
+    /// colour of the water.
     pub tint: [f32; 4],
 }
 
@@ -62,13 +66,48 @@ fn normal(terrain: &Terrain, x: u32, y: u32) -> [f32; 3] {
 
 fn tint(p: &TerrainPoint) -> [f32; 4] {
     let bright = if p.flags() & BOUNDARY != 0 { 0.45 } else { 1.0 };
-    let water = if p.flags() & WATER != 0 { 1.0 } else { 0.0 };
-    [bright, bright, bright, water]
+    [bright, bright, bright, 1.0]
+}
+
+/// The water surface over every tile with water, `cells` tiles per repeat
+/// of its texture.
+pub fn water(terrain: &Terrain, kind: &WaterType, depths: Depths) -> Layer {
+    let table = water::colour_table(depths, &kind.colours);
+    let mut layer = Layer::default();
+    let (tiles_x, tiles_y) = (terrain.width - 1, terrain.height - 1);
+    for ty in 0..tiles_y {
+        for tx in 0..tiles_x {
+            if !water::has_water(&corners(terrain, tx, ty)) {
+                continue;
+            }
+            let base = layer.vertices.len() as u32;
+            for (x, y) in [(tx, ty), (tx + 1, ty), (tx + 1, ty + 1), (tx, ty + 1)] {
+                let p = &terrain.points[(y * terrain.width + x) as usize];
+                let [px, py, ground] = position(terrain, x, y);
+                let surface = water::surface_height(p, kind.height);
+                let colour = table[water::colour_index(surface - ground, depths)];
+                layer.vertices.push(Vertex {
+                    position: [px, py, surface],
+                    normal: [0.0, 0.0, 1.0],
+                    uv: [x as f32 / kind.cells, -(y as f32) / kind.cells],
+                    tint: colour.map(|c| f32::from(c) / 255.0),
+                });
+            }
+            layer
+                .indices
+                .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+    layer
 }
 
 /// The ground mesh, one layer per ground texture that is used, in
-/// increasing texture index.
-pub fn build(terrain: &Terrain, textures: &[Option<Image>]) -> Vec<Layer> {
+/// increasing texture index; tiles with a cliff model are left out.
+pub fn build(
+    terrain: &Terrain,
+    textures: &[Option<Image>],
+    cliffs: &BTreeSet<(u32, u32)>,
+) -> Vec<Layer> {
     let mut layers: Vec<Layer> = (0..textures.len())
         .map(|texture| Layer {
             texture,
@@ -78,6 +117,9 @@ pub fn build(terrain: &Terrain, textures: &[Option<Image>]) -> Vec<Layer> {
     let (tiles_x, tiles_y) = (terrain.width - 1, terrain.height - 1);
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
+            if cliffs.contains(&(tx, ty)) {
+                continue;
+            }
             let points = corners(terrain, tx, ty);
             for (texture, cell) in tile_layers(&points, textures) {
                 let Some(atlas) = textures[texture].as_ref() else {
@@ -157,7 +199,7 @@ mod tests {
             points: vec![point(0), point(1), point(0), point(0)],
         };
         let textures = [Some(Image::new(512, 256)), Some(Image::new(256, 256))];
-        let layers = build(&terrain, &textures);
+        let layers = build(&terrain, &textures, &BTreeSet::new());
         assert_eq!(layers.len(), 2);
         assert_eq!((layers[0].texture, layers[1].texture), (0, 1));
         for layer in &layers {

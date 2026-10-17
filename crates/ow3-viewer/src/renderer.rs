@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::camera::{Camera, Mat4};
 use crate::model_renderer::ModelRenderer;
 use crate::scene::Scene;
-use crate::terrain_mesh::Vertex;
+use crate::terrain_mesh::{Layer, Vertex};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Colour of the sky behind the map.
@@ -55,9 +55,12 @@ fn vs(v: VertexIn) -> VertexOut {
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas, atlas_sampler, v.uv);
     let light = 0.55 + 0.45 * max(dot(normalize(v.normal), globals.light.xyz), 0.0) / globals.light.z;
-    let lit = texel.rgb * light * v.tint.rgb;
-    let wet = 0.7 * v.tint.a;
-    return vec4<f32>(mix(lit, globals.water.rgb, wet), texel.a);
+    return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
+}
+
+@fragment
+fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
+    return textureSample(atlas, atlas_sampler, v.uv) * v.tint;
 }
 "#;
 
@@ -86,6 +89,8 @@ pub struct Renderer {
     globals_bind_group: wgpu::BindGroup,
     layers: Vec<GpuLayer>,
     models: ModelRenderer,
+    water_pipeline: wgpu::RenderPipeline,
+    water: Option<GpuLayer>,
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -232,7 +237,7 @@ impl Renderer {
         });
         // The full tiles of texture 0 are drawn opaque, everything else with
         // its alpha (SPEC-0012).
-        let pipeline = |blend: Option<wgpu::BlendState>| {
+        let pipeline = |blend: Option<wgpu::BlendState>, entry: &str, depth_write: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ground"),
                 layout: Some(&pipeline_layout),
@@ -250,7 +255,7 @@ impl Renderer {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs"),
+                    entry_point: Some(entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
@@ -261,7 +266,7 @@ impl Renderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: true,
+                    depth_write_enabled: depth_write,
                     // Later layers lie on the same triangles as earlier ones.
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: wgpu::StencilState::default(),
@@ -272,8 +277,11 @@ impl Renderer {
                 cache: None,
             })
         };
-        let opaque = pipeline(None);
-        let blended = pipeline(Some(wgpu::BlendState::ALPHA_BLENDING));
+        let opaque = pipeline(None, "fs", true);
+        let blended = pipeline(Some(wgpu::BlendState::ALPHA_BLENDING), "fs", true);
+        // Water is see-through and drawn last, without hiding what lies
+        // below it.
+        let water_pipeline = pipeline(Some(wgpu::BlendState::ALPHA_BLENDING), "fs_water", false);
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: std::mem::size_of::<Globals>() as u64,
@@ -303,42 +311,58 @@ impl Renderer {
                     .map(|image| upload_texture(device, queue, image)),
             );
         }
+        let gpu_layer = |layer: &Layer, view: &wgpu::TextureView, sampler: &wgpu::Sampler| {
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("atlas"),
+                layout: &texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+            GpuLayer {
+                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("ground vertices"),
+                    contents: bytemuck::cast_slice(&layer.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("ground indices"),
+                    contents: bytemuck::cast_slice(&layer.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                count: layer.indices.len() as u32,
+                bind_group,
+                opaque: layer.texture == 0,
+            }
+        };
         let layers = scene
             .layers
             .iter()
             .filter_map(|layer| {
                 let view = views.get(layer.texture)?.as_ref()?;
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("atlas"),
-                    layout: &texture_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&sampler),
-                        },
-                    ],
-                });
-                Some(GpuLayer {
-                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("ground vertices"),
-                        contents: bytemuck::cast_slice(&layer.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("ground indices"),
-                        contents: bytemuck::cast_slice(&layer.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
-                    count: layer.indices.len() as u32,
-                    bind_group,
-                    opaque: layer.texture == 0,
-                })
+                Some(gpu_layer(layer, view, &sampler))
             })
             .collect();
+        let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("water"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..wgpu::SamplerDescriptor::default()
+        });
+        let water = scene.water.as_ref().map(|(layer, image)| {
+            let view = upload_texture(device, queue, image);
+            gpu_layer(layer, &view, &repeat)
+        });
         let models = ModelRenderer::new(
             device,
             queue,
@@ -354,6 +378,8 @@ impl Renderer {
             globals_bind_group,
             layers,
             models,
+            water_pipeline,
+            water,
         }
     }
 
@@ -419,6 +445,14 @@ impl Renderer {
             }
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             self.models.draw(&mut pass);
+            if let Some(water) = &self.water {
+                pass.set_pipeline(&self.water_pipeline);
+                pass.set_bind_group(0, &self.globals_bind_group, &[]);
+                pass.set_bind_group(1, &water.bind_group, &[]);
+                pass.set_vertex_buffer(0, water.vertices.slice(..));
+                pass.set_index_buffer(water.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..water.count, 0, 0..1);
+            }
         }
         queue.submit([encoder.finish()]);
     }

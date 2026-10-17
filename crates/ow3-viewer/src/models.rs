@@ -145,6 +145,12 @@ pub fn load(
         .into_values()
         .filter(|g| !g.parts.is_empty())
         .collect();
+    let textures = textures(chain, &groups);
+    (groups, textures)
+}
+
+/// The textures that the parts of `groups` use, by path.
+pub fn textures(chain: &mut ArchiveChain, groups: &[Group]) -> BTreeMap<String, Image> {
     let mut textures = BTreeMap::new();
     for part in groups.iter().flat_map(|g| &g.parts) {
         if !textures.contains_key(&part.texture)
@@ -155,7 +161,7 @@ pub fn load(
             textures.insert(part.texture.clone(), Image::from(image));
         }
     }
-    (groups, textures)
+    textures
 }
 
 #[cfg(test)]

@@ -107,9 +107,15 @@ pub fn cell_origin(cell: u32, size: u32) -> (u32, u32) {
     ((block * 4 + n % 4) * size, (n / 4) * size)
 }
 
-/// Height of a point in world units, layers included.
+/// Height of a point in world units, layers included (SPEC-0014): layer
+/// 15 counts as 14.
 pub fn height(p: &TerrainPoint) -> f32 {
-    (f32::from(p.ground_height) - 8192.0) / 4.0 + (f32::from(p.layer_height()) - 2.0) * 128.0
+    ground_height(p) + (f32::from(p.layer_height().min(14)) - 2.0) * 128.0
+}
+
+/// Height of a point without its cliff layer.
+pub fn ground_height(p: &TerrainPoint) -> f32 {
+    (f32::from(p.ground_height) - 8192.0) / 4.0
 }
 
 /// The four corner points of tile (`x`, `y`), in the order of their bits:

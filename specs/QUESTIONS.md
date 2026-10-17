@@ -320,10 +320,34 @@ where the specs are silent:
 Ground textures follow SPEC-0012 (layering, corner bits, variation
 cells, opacity of the full tile). Still open:
 
-- **Not drawn yet:** cliffs (models), ramps, the water surface and its
-  colour, blight, the boundary as the game shows it, doodads and units.
-  Water is a blue tint on points with the water flag (0x4); points with
-  flag 0x8 are darkened.
+- **Not drawn yet:** ramps, blight, the boundary as the game shows it.
+  Points with flag 0x8 are darkened. The top-down image of
+  `ow3-render::terrain` still tints water and draws cliffs as slopes.
+
+Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
+`ow3-render::water` and the viewer. Choices where the spec is silent:
+
+- **Cliff texture.** The model's replaceable texture 11 is
+  `texDir\texFile.blp` of the cliff type in `CliffTypes.slk`. The game
+  archives also have `ReplaceableTextures\Cliff\<letter>_Cliff0.blp` and
+  `_Cliff1.blp` for some tilesets (A, B, C, D, F, G, N, Q, V, W, X, Y),
+  none for I, J, K, O or Z; when these are used is not known. Cliffs on
+  an Icecrown map show grass this way.
+- **Cliff placement** (SPEC-0014 open question 2). The shipped models
+  span x -128..0, y 0..128 and raise the corner of the name's BL letter
+  at (0, 0), BR at (0, 128), TR at (-128, 128), TL at (-128, 0); the
+  viewer places model point (x, y) at (y, -x) from the tile's bottom left
+  corner, at the height of the lowest level, and raises each vertex by
+  the corners' ground heights (layers excluded), interpolated
+  bilinearly. A tile whose model cannot be read keeps its ground.
+- **Ramps** (open question 1): tiles with a ramp flag get no model and
+  show their ground as a slope.
+- **Water surface** (open question 4): the first frame
+  `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
+  depth colour and blended with its alpha, drawn after the models without
+  writing depth. No animation, no shorelines.
+- **Two holes** in the cliffs of the north-east of `(4)LostTemple.w3x`
+  show through the ground; not explained yet.
 
 ## Math natives (`ow3-math::natives`)
 

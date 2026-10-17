@@ -25,6 +25,36 @@ analysts: ["analyst workspace (test maps)"]
   `UnitId("footman")` is still `'hfoo'` and `UnitId("grunt")` is `'ogru'`.
 - `UnitId2String` of an unknown raw code gives `""`.
 
+### Heroes
+
+A unit type is a hero exactly when the first character of its raw code
+is an uppercase ASCII letter `A`..`Z` (the top byte of the integer is
+0x41..0x5A). The type's data does not matter:
+
+| Type | Based on | `IsHeroUnitId` | `IsUnitType(u, UNIT_TYPE_HERO)` | `GetHeroLevel` | Max life |
+|---|---|---|---|---|---|
+| `'Hpal'` | | true | true | 1 | 650 |
+| `'H000'` | `'Hpal'` | true | true | 1 | 650 |
+| `'O000'` | `'Hpal'` | true | true | 1 | 650 |
+| `'h003'` | `'Hpal'` | false | false | 0 | 100 |
+| `'Hf00'` | `'hfoo'` | true | true | 1 | 420 |
+| `'h004'` | `'hfoo'` | false | false | 0 | 420 |
+
+- `IsHeroUnitId` looks only at the code: `IsHeroUnitId('Zzzz')` is true
+  although no such type exists (and `CreateUnit` of it gives `null`).
+  Codes starting with `@` (0x40), `[` (0x5B), a digit, a lowercase letter,
+  a space, 0x00 or 0xC0 are not heroes.
+- A hero made from a non-hero type (`'Hf00'`) has strength 0, so its life
+  is just the `HP` value; it has 0 skill points and the proper name
+  `"Default string"` (no proper names in its data). Heroes from hero data
+  start with 1 skill point and a proper name from their list.
+- A non-hero code based on a hero type (`'h003'`) gets no strength bonus:
+  its life is the base `HP` (100 for the paladin).
+- A new hero's max life is its `HP` (or the map's `uhpm`) plus 25 per
+  point of starting strength (`STR`, or the map's `ustr`): a paladin with
+  `uhpm` 200 has 750, a paladin with `ustr` 30 has 850, a footman-based
+  hero `'Hf01'` with `ustr` 10 has 420 + 250 = 670.
+
 ### Hit points of new units
 
 `GetUnitState(u, UNIT_STATE_MAX_LIFE)` of a new unit, and its life:
@@ -32,8 +62,8 @@ analysts: ["analyst workspace (test maps)"]
 - Units that are not heroes: the `HP` column of `Units\UnitBalance.slk`
   (footman 420), or the value set by the map with `uhpm` (a custom footman
   with `uhpm` 333 had 333).
-- Heroes: the `realHP` column, which is `HP` plus 25 per point of
-  strength at level 1. The paladin (`HP` 100, strength 22) has 650, the
+- Heroes (see above): `HP` plus 25 per point of strength at level 1, which
+  is the `realHP` column for the shipped heroes. The paladin (`HP` 100, strength 22) has 650, the
   crypt lord (`HP` 25, strength 26) has 675. A custom hero based on the
   paladin without changes also has 650. For all non-hero types of the
   1.27b data the two columns are equal.
@@ -155,3 +185,6 @@ The script runs from a 1 s timer trigger; units are footmen.
    `UnitDamageTarget` from a unit of player 1 -> filter with that unit as
    `GetFilterUnit()`; a combat kill (attack order) -> same, with event id
    and triggering trigger 0 in the filter.
+7. Heroes: `CreateUnit` of the types of the table above, and
+   `IsHeroUnitId` of codes starting with 0x40, 0x41, 0x5A, 0x5B, 0x30,
+   0x61, 0x7A, 0xC0, 0x20, 0x00: true only for 0x41 and 0x5A.

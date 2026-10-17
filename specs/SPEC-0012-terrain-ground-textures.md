@@ -52,6 +52,15 @@ the texture's identity. The rule holds for tiles with two, three and
 four textures; with overlapping alpha masks, a higher index always lies
 on top of a lower one.
 
+### Opacity of the full tile
+
+The full tile of step 2 is drawn **opaque** (its alpha ignored) only when
+the lowest index is 0. When the lowest index of a tile is 1 or more, the
+full tile is drawn with its alpha like the other layers, over nothing
+(transparent parts come out black). With the shipped atlases the full
+cells are opaque, so this is invisible on real maps; it matters only for
+maps that import atlases with transparent full cells.
+
 ### Variation cell of the full tile
 
 The full tile of step 2 uses the variation value of the tile's **bottom
@@ -79,12 +88,7 @@ full tiles.
 
 ## Open questions
 
-1. Whether the full tile of the lowest texture is drawn opaque or with its
-   alpha. With the shipped atlases this makes no difference (the full
-   cells are opaque). With a test atlas whose cell 0 was transparent, a
-   wide texture with index 0 still showed the cell's colour, while a
-   narrow texture with index 1 showed black; not investigated further.
-2. Cliffs, ramps, water, blight and the boundary.
+1. Cliffs, ramps, water, blight and the boundary.
 
 ## Sources
 
@@ -120,3 +124,7 @@ cliffs), camera straight down (angle of attack 270, rotation 90).
    mispredicts 307).
 5. Tiles whose bottom left point has another texture than the lowest
    one, with variation 5 or 6 there: the full tile shows cell 21 or 22.
+6. Test atlases whose cell 0 is fully transparent, the narrow one at
+   index 0 and the wide one at index 1: tiles of index 0 drawing cell 0
+   show the cell's colour; tiles of index 1 drawing cell 0 (variation 17)
+   are black.

@@ -42,6 +42,8 @@ macro_rules! native {
     }};
 }
 
+mod boards;
+pub use boards::Button;
 mod enumerate;
 pub mod players;
 mod widgets;
@@ -70,6 +72,15 @@ pub enum Object {
     Unit(Unit),
     Destructable(Destructable),
     Item(Item),
+    Leaderboard(boards::Leaderboard),
+    Multiboard(boards::Multiboard),
+    MultiboardItem {
+        board: u32,
+        row: i32,
+        column: i32,
+    },
+    Dialog(boards::Dialog),
+    Button(boards::Button),
     /// An object of a kind the simulation does not model yet.
     Opaque,
     Location {
@@ -186,6 +197,8 @@ struct Context {
     triggering_unit: Option<u32>,
     triggering_player: Option<u32>,
     triggering_widget: Option<u32>,
+    clicked_button: Option<u32>,
+    clicked_dialog: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -227,6 +240,10 @@ pub struct State {
     items: Vec<u32>,
     /// Event registrations in the order they were made.
     events: Vec<widgets::Registration>,
+    /// Triggers registered for dialogs and their buttons.
+    dialog_events: Vec<boards::DialogEvent>,
+    /// The leaderboard shown to each player.
+    player_leaderboards: BTreeMap<i32, Option<u32>>,
     /// Unit, destructable and item types of the map.
     pub data: ObjectData,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
@@ -259,6 +276,8 @@ impl State {
             destructables: Vec::new(),
             items: Vec::new(),
             events: Vec::new(),
+            dialog_events: Vec::new(),
+            player_leaderboards: BTreeMap::new(),
             data: ObjectData::default(),
             world_bounds: [0; 4],
             camera_bounds: [0; 4],
@@ -1503,6 +1522,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
+    boards::register(&mut add, state);
 
     // PROVISIONAL: natives that make an object the simulation does not
     // model yet (sounds, dialogs, quests, boards, effects and the like)

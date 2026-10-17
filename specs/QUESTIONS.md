@@ -336,4 +336,26 @@ anything yet:
 - **`VersionGet`** is `VERSION_FROZEN_THRONE`.
 - **Not yet:** events of player and game states, players leaving,
   dialogs, regions; unit orders and abilities (they wait for the unit
-  spec); leaderboards and multiboards.
+  spec).
+
+## Leaderboards, multiboards and dialogs (`game::boards`)
+
+Texts are stored with trigger strings resolved, so test W2a reads `text
+910` from `LeaderboardGetLabelText`, `MultiboardGetTitleText` and
+`GetLocalizedString`, as SPEC-0003 says. Dialog buttons are clicked
+through the simulation (`Game::click_button`). Choices where no spec
+says anything yet:
+
+- **`LeaderboardAddItem`** always adds a row, also for a player that has
+  one. Sorting keeps the order of equal rows. `LeaderboardGetPlayerIndex`
+  is -1 for a player without a row, and `LeaderboardGetItemCount` counts
+  rows (not the size set by `LeaderboardSetSizeByItemCount`).
+- **Multiboards** have no limit on rows and columns; each
+  `MultiboardGetItem` makes a new handle.
+- **`GetLocalizedString`** returns its argument after resolving a trigger
+  string reference. The game looks other keys up in its string tables;
+  which tables, and what does it return for an unknown key?
+- **A click** runs the triggers registered for the button and for its
+  dialog in the order they were registered, with `GetClickedButton`,
+  `GetClickedDialog` and `GetTriggerPlayer`. Does the dialog close first,
+  and in which order do button and dialog triggers run?

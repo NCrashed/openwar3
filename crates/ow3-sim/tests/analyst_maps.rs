@@ -545,3 +545,20 @@ fn b_unit_alive() {
     };
     assert_lines(&output, &["alive before: 1", "alive after: 0"]);
 }
+
+/// SPEC-0003: values stored by resolving natives keep the entry text.
+#[test]
+fn w2a_stored_texts() {
+    let Some(output) = run("h-W2a-wts-forms.w3x", 3.0) else {
+        return;
+    };
+    assert_lines(
+        &output,
+        &[
+            "GET leaderboard label=[text 910]",
+            "GET multiboard title=[text 910]",
+            "GET localized=[text 910]",
+            "GET length=8",
+        ],
+    );
+}

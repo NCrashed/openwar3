@@ -6,12 +6,15 @@
 //! is a separate mesh over every tile with water, coloured per vertex by
 //! the depth (SPEC-0014).
 //!
-//! PROVISIONAL: the map boundary is darkened.
+//! PROVISIONAL: the map boundary is darkened, and ramp points with the
+//! letter R or S are drawn half a level up to meet the ramp models
+//! ([`ramp_lift`]).
 
 use std::collections::BTreeSet;
 
 use bytemuck::{Pod, Zeroable};
 use ow3_formats::map::terrain::{Terrain, TerrainPoint};
+use ow3_render::cliffs::ramp_lift;
 use ow3_render::image::Image;
 use ow3_render::terrain::{cell_origin, cell_size, corners, height, tile_layers};
 use ow3_render::water::{self, Depths, WaterType};
@@ -29,6 +32,32 @@ pub struct Vertex {
     /// Brightness of the ground in `rgb` (the boundary is darker); the
     /// colour of the water.
     pub tint: [f32; 4],
+    /// The atlas cell, a layer of the texture array (0 for water).
+    pub cell: u32,
+}
+
+/// The cells of a ground texture atlas, by number (see
+/// [`ow3_render::terrain::cell_origin`]), as square images.
+pub fn atlas_cells(atlas: &Image) -> Vec<Image> {
+    let size = cell_size(atlas);
+    let count = 16 * (atlas.width / (4 * size)).max(1);
+    (0..count)
+        .map(|cell| {
+            let (cx, cy) = cell_origin(cell, size);
+            let mut image = Image::new(size, size);
+            for y in 0..size {
+                for x in 0..size {
+                    let p = if cx + x < atlas.width && cy + y < atlas.height {
+                        atlas.pixel(cx + x, cy + y)
+                    } else {
+                        [0; 4]
+                    };
+                    image.set(x, y, p);
+                }
+            }
+            image
+        })
+        .collect()
 }
 
 /// Triangles of one ground texture.
@@ -39,29 +68,48 @@ pub struct Layer {
     pub indices: Vec<u32>,
 }
 
-/// World position of point (`x`, `y`).
-fn position(terrain: &Terrain, x: u32, y: u32) -> [f32; 3] {
-    let p = &terrain.points[(y * terrain.width + x) as usize];
-    [
-        terrain.origin_x + x as f32 * TILE,
-        terrain.origin_y + y as f32 * TILE,
-        height(p),
-    ]
+/// The drawn height of every point: its height, plus half a level for the
+/// middle points of ramps ([`ramp_lift`]).
+struct Ground<'a> {
+    terrain: &'a Terrain,
+    heights: Vec<f32>,
 }
 
-/// The normal at a point from the heights of its neighbours.
-fn normal(terrain: &Terrain, x: u32, y: u32) -> [f32; 3] {
-    let at = |x: i64, y: i64| {
-        let x = x.clamp(0, i64::from(terrain.width) - 1) as u32;
-        let y = y.clamp(0, i64::from(terrain.height) - 1) as u32;
-        position(terrain, x, y)[2]
-    };
-    let (x, y) = (i64::from(x), i64::from(y));
-    let dx = (at(x + 1, y) - at(x - 1, y)) / (2.0 * TILE);
-    let dy = (at(x, y + 1) - at(x, y - 1)) / (2.0 * TILE);
-    let n = [-dx, -dy, 1.0];
-    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-    n.map(|c| c / l)
+impl<'a> Ground<'a> {
+    fn new(terrain: &'a Terrain) -> Ground<'a> {
+        let heights = (0..terrain.height)
+            .flat_map(|y| (0..terrain.width).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let p = &terrain.points[(y * terrain.width + x) as usize];
+                height(p) + ramp_lift(terrain, x, y)
+            })
+            .collect();
+        Ground { terrain, heights }
+    }
+
+    /// World position of point (`x`, `y`).
+    fn position(&self, x: u32, y: u32) -> [f32; 3] {
+        [
+            self.terrain.origin_x + x as f32 * TILE,
+            self.terrain.origin_y + y as f32 * TILE,
+            self.heights[(y * self.terrain.width + x) as usize],
+        ]
+    }
+
+    /// The normal at a point from the heights of its neighbours.
+    fn normal(&self, x: u32, y: u32) -> [f32; 3] {
+        let at = |x: i64, y: i64| {
+            let x = x.clamp(0, i64::from(self.terrain.width) - 1) as u32;
+            let y = y.clamp(0, i64::from(self.terrain.height) - 1) as u32;
+            self.position(x, y)[2]
+        };
+        let (x, y) = (i64::from(x), i64::from(y));
+        let dx = (at(x + 1, y) - at(x - 1, y)) / (2.0 * TILE);
+        let dy = (at(x, y + 1) - at(x, y - 1)) / (2.0 * TILE);
+        let n = [-dx, -dy, 1.0];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        n.map(|c| c / l)
+    }
 }
 
 fn tint(p: &TerrainPoint) -> [f32; 4] {
@@ -74,6 +122,7 @@ fn tint(p: &TerrainPoint) -> [f32; 4] {
 pub fn water(terrain: &Terrain, kind: &WaterType, depths: Depths) -> Layer {
     let table = water::colour_table(depths, &kind.colours);
     let mut layer = Layer::default();
+    let ground_points = Ground::new(terrain);
     let (tiles_x, tiles_y) = (terrain.width - 1, terrain.height - 1);
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
@@ -83,7 +132,7 @@ pub fn water(terrain: &Terrain, kind: &WaterType, depths: Depths) -> Layer {
             let base = layer.vertices.len() as u32;
             for (x, y) in [(tx, ty), (tx + 1, ty), (tx + 1, ty + 1), (tx, ty + 1)] {
                 let p = &terrain.points[(y * terrain.width + x) as usize];
-                let [px, py, ground] = position(terrain, x, y);
+                let [px, py, ground] = ground_points.position(x, y);
                 let surface = water::surface_height(p, kind.height);
                 let colour = table[water::colour_index(surface - ground, depths)];
                 layer.vertices.push(Vertex {
@@ -91,6 +140,7 @@ pub fn water(terrain: &Terrain, kind: &WaterType, depths: Depths) -> Layer {
                     normal: [0.0, 0.0, 1.0],
                     uv: [x as f32 / kind.cells, -(y as f32) / kind.cells],
                     tint: colour.map(|c| f32::from(c) / 255.0),
+                    cell: 0,
                 });
             }
             layer
@@ -114,6 +164,7 @@ pub fn build(
             ..Layer::default()
         })
         .collect();
+    let ground_points = Ground::new(terrain);
     let (tiles_x, tiles_y) = (terrain.width - 1, terrain.height - 1);
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
@@ -122,33 +173,28 @@ pub fn build(
             }
             let points = corners(terrain, tx, ty);
             for (texture, cell) in tile_layers(&points, textures) {
-                let Some(atlas) = textures[texture].as_ref() else {
+                if textures[texture].is_none() {
                     continue;
-                };
-                let size = cell_size(atlas);
-                let (cx, cy) = cell_origin(cell, size);
-                // A small inset keeps neighbouring cells from bleeding in.
-                let inset = 0.5;
-                let u0 = (cx as f32 + inset) / atlas.width as f32;
-                let u1 = ((cx + size) as f32 - inset) / atlas.width as f32;
-                let v0 = (cy as f32 + inset) / atlas.height as f32;
-                let v1 = ((cy + size) as f32 - inset) / atlas.height as f32;
+                }
                 let layer = &mut layers[texture];
                 let base = layer.vertices.len() as u32;
                 // Bottom left, bottom right, top right, top left; image row
-                // 0 is the north edge of the tile.
+                // 0 is the north edge of the tile. Each cell of the atlas is
+                // its own texture layer, so that its smaller copies do not
+                // take in the neighbouring cells.
                 let corners = [
-                    (tx, ty, [u0, v1], points[1]),
-                    (tx + 1, ty, [u1, v1], points[0]),
-                    (tx + 1, ty + 1, [u1, v0], points[2]),
-                    (tx, ty + 1, [u0, v0], points[3]),
+                    (tx, ty, [0.0, 1.0], points[1]),
+                    (tx + 1, ty, [1.0, 1.0], points[0]),
+                    (tx + 1, ty + 1, [1.0, 0.0], points[2]),
+                    (tx, ty + 1, [0.0, 0.0], points[3]),
                 ];
                 for (x, y, uv, point) in corners {
                     layer.vertices.push(Vertex {
-                        position: position(terrain, x, y),
-                        normal: normal(terrain, x, y),
+                        position: ground_points.position(x, y),
+                        normal: ground_points.normal(x, y),
                         uv,
                         tint: tint(point),
+                        cell,
                     });
                 }
                 layer
@@ -164,7 +210,7 @@ pub fn build(
 /// The middle of the map, on the ground.
 pub fn centre(terrain: &Terrain) -> [f32; 3] {
     let (x, y) = ((terrain.width - 1) / 2, (terrain.height - 1) / 2);
-    position(terrain, x, y)
+    Ground::new(terrain).position(x, y)
 }
 
 #[cfg(test)]
@@ -217,9 +263,24 @@ mod tests {
         }
         // Texture 0 fills the tile with its variation cell (16, the first
         // right-hand cell), texture 1 uses cell 1 (bottom right corner).
-        assert!(layers[0].vertices[0].uv[0] > 0.5);
-        let uv = layers[1].vertices[3].uv;
-        assert!((0.25..0.5).contains(&uv[0]) && uv[1] < 0.25, "{uv:?}");
+        assert_eq!(layers[0].vertices[0].cell, 16);
+        assert_eq!(layers[1].vertices[0].cell, 1);
+        let uvs: Vec<[f32; 2]> = layers[1].vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(uvs, [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
         assert_eq!(layers[0].vertices[0].normal, [0.0, 0.0, 1.0]);
+    }
+
+    /// Cells are cut from the atlas in the numbering of `cell_origin`.
+    #[test]
+    fn cells_of_an_atlas() {
+        let mut atlas = Image::new(512, 256);
+        // Cell 1 is the second in the top row of the left half; cell 16
+        // the first of the right half.
+        atlas.set(64, 0, [1, 2, 3, 4]);
+        atlas.set(256, 0, [5, 6, 7, 8]);
+        let cells = atlas_cells(&atlas);
+        assert_eq!(cells.len(), 32);
+        assert_eq!(cells[1].pixel(0, 0), [1, 2, 3, 4]);
+        assert_eq!(cells[16].pixel(0, 0), [5, 6, 7, 8]);
     }
 }

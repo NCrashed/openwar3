@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::camera::{Camera, Mat4};
 use crate::model_renderer::ModelRenderer;
 use crate::scene::Scene;
-use crate::terrain_mesh::{Layer, Vertex};
+use crate::terrain_mesh::{Layer, Vertex, atlas_cells};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Colour of the sky behind the map.
@@ -25,7 +25,7 @@ struct Globals {
     water: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
-@group(1) @binding(0) var atlas: texture_2d<f32>;
+@group(1) @binding(0) var atlas: texture_2d_array<f32>;
 @group(1) @binding(1) var atlas_sampler: sampler;
 
 struct VertexIn {
@@ -33,12 +33,14 @@ struct VertexIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tint: vec4<f32>,
+    @location(4) cell: u32,
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
+    @location(3) @interpolate(flat) cell: u32,
 };
 
 @vertex
@@ -48,19 +50,20 @@ fn vs(v: VertexIn) -> VertexOut {
     out.normal = v.normal;
     out.uv = v.uv;
     out.tint = v.tint;
+    out.cell = v.cell;
     return out;
 }
 
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas, atlas_sampler, v.uv);
+    let texel = textureSample(atlas, atlas_sampler, v.uv, v.cell);
     let light = 0.55 + 0.45 * max(dot(normalize(v.normal), globals.light.xyz), 0.0) / globals.light.z;
     return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
 }
 
 @fragment
 fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(atlas, atlas_sampler, v.uv) * v.tint;
+    return textureSample(atlas, atlas_sampler, v.uv, v.cell) * v.tint;
 }
 "#;
 
@@ -166,6 +169,63 @@ pub(crate) fn upload_texture(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// Images of one size as the layers of a texture array, each with its own
+/// smaller copies.
+pub(crate) fn upload_layers(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    images: &[Image],
+) -> wgpu::TextureView {
+    let (width, height) = images.first().map_or((1, 1), |i| (i.width, i.height));
+    let chains: Vec<Vec<Image>> = images.iter().map(mip_chain).collect();
+    let levels = chains.first().map_or(1, Vec::len) as u32;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ground cells"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: images.len().max(1) as u32,
+        },
+        mip_level_count: levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (layer, chain) in chains.iter().enumerate() {
+        for (level, mip) in chain.iter().enumerate() {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &mip.rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * mip.width),
+                    rows_per_image: Some(mip.height),
+                },
+                wgpu::Extent3d {
+                    width: mip.width,
+                    height: mip.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..wgpu::TextureViewDescriptor::default()
+    })
+}
+
 pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -217,7 +277,7 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -249,7 +309,8 @@ impl Renderer {
                         array_stride: std::mem::size_of::<Vertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
+                            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
+                            4 => Uint32
                         ],
                     }],
                 },
@@ -308,7 +369,7 @@ impl Renderer {
             views.push(
                 texture
                     .as_ref()
-                    .map(|image| upload_texture(device, queue, image)),
+                    .map(|image| upload_layers(device, queue, &atlas_cells(image))),
             );
         }
         let gpu_layer = |layer: &Layer, view: &wgpu::TextureView, sampler: &wgpu::Sampler| {
@@ -360,7 +421,7 @@ impl Renderer {
             ..wgpu::SamplerDescriptor::default()
         });
         let water = scene.water.as_ref().map(|(layer, image)| {
-            let view = upload_texture(device, queue, image);
+            let view = upload_layers(device, queue, std::slice::from_ref(image));
             gpu_layer(layer, &view, &repeat)
         });
         let models = ModelRenderer::new(

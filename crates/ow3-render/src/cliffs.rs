@@ -140,6 +140,24 @@ fn upper(terrain: &Terrain, x: i64, y: i64) -> bool {
     lo != hi && own.layer_height() == hi
 }
 
+/// How far above its level the ground at point (`x`, `y`) is drawn: half
+/// a level (64) for a ramp point with the letter `R` or `S`, else 0.
+///
+/// PROVISIONAL (SPEC-0014 open question 2): the `CliffTrans` models are
+/// half a level up at the corner of the letter `R` (heights 128, 64, 0
+/// from `H` over `R` to the far end); drawing the neighbouring ground with
+/// the plain point heights leaves a step of 64 at the sides of ramps.
+pub fn ramp_lift(terrain: &Terrain, x: u32, y: u32) -> f32 {
+    let p = point(terrain, i64::from(x), i64::from(y));
+    if p.is_some_and(is_ramp)
+        && matches!(letter(terrain, i64::from(x), i64::from(y)), Some('R' | 'S'))
+    {
+        64.0
+    } else {
+        0.0
+    }
+}
+
 /// The ramp letter of point (`x`, `y`), or `None` when it has none.
 fn letter(terrain: &Terrain, x: i64, y: i64) -> Option<char> {
     let p = point(terrain, x, y)?;

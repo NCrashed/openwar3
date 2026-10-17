@@ -70,6 +70,23 @@ output `r`.
     above `lo` (`GetRandomReal(7.25, 2.5)` returns values from 7.25 to
     12.0).
 
+### Game generators
+
+Besides the script generator there are 45 game generators, numbered
+0..44, with the same step and table. `SetRandomSeed(s)` also reseeds them:
+
+1. The script generator is seeded with `s` and one step is made (as
+   above); call that step's output `r1`.
+2. A helper generator is seeded with `r1` by the seeding formula above,
+   without the discarded step.
+3. 45 steps of the helper give `v0..v44`; game generator `i` is seeded
+   with `v_i`, again without a discarded step.
+
+The script natives (`GetRandomInt`, `GetRandomReal`) do not use the game
+generators, and the game generators do not advance the script generator.
+Generator 2 rolls the damage dice of unit attacks (SPEC-0016). The other
+uses are not known yet.
+
 ### Table equivalence
 
 The table was recovered from measured outputs. Any table that differs
@@ -91,8 +108,8 @@ member of that class.
    started with `-loadfile` the first `GetRandomInt(0, 2147483647)` was
    57869864 in two runs; how the start state depends on the game (lobby
    seed, replay header) is not known.
-2. Whether other game systems (combat, AI, item drops) draw from the same
-   generator as the script natives.
+2. What the game generators other than number 2 are used for, and their
+   state at game start.
 
 ## Sources
 

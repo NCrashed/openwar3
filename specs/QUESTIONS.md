@@ -309,13 +309,10 @@ SPEC-0007. Choices where the specs are silent:
 - **Which copy of a table.** A `Units\*.slk` imported into the map comes
   first, then, for maps without the melee flag, the game's `Custom_V1`
   copy, then the game's `Units\` copy.
-- **Attack orders.** Only `IssueTargetOrder(u, "attack", target)` and
-  `IssueImmediateOrder(u, "stop")` are known. An attack order draws one
-  output of game generator 9 and does not use it; the first hit comes `dmgpt1`
-  after the order (open question 1; the game takes 140 to 191 ticks on the
-  update steps of the unit), later hits `cool1` apart, rounded to
-  whole ticks; hits come after the timers of their tick. Units do not
-  move, turn, acquire targets or check their range.
+- **Attack timing.** An attack starts as SPEC-0019 says (in range,
+  facing the target); its first hit comes `dmgpt1` after that update and
+  later hits `cool1` apart, rounded to whole ticks; hits come after the
+  timers of their tick. Units do not acquire targets on their own.
 - **Custom unit types** start from their base type as the map has
   changed it (`war3map.w3u` changes to standard types are applied
   first); whether the game starts them from the unchanged base is not
@@ -434,10 +431,13 @@ the spec is silent:
   0.85 degrees behind on a slow turn (verification 3: 10.70, 16.33, ...
   where it gives 11.46, 17.19, ...).
 - **Arrival** is the plain distance below 15.6 (open question 1).
-- **Orders.** Only `IssuePointOrder(u, "move", x, y)`, and
-  `GetUnitCurrentOrder` gives 851986 while it lasts and 0 otherwise. An
-  attack order or `stop` ends it; a unit attacking does not walk to its
-  target. No paths, collisions or other orders (open questions 3 and 4).
+- **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
+  a point, `attack` on a target, `stop` and `holdposition`. An attack on
+  a target in range starts at the first possible update: the random
+  wait of up to 8 updates (SPEC-0019 open question 1) is left out, though
+  the order draws the output of game generator 9 it comes from. Attackers
+  do not follow targets that move; destructables and items have
+  collision 0. No paths, collisions between units or queued orders.
 - **The first update** comes 6 ticks after the order.
 - **The clock** (SPEC-0017) steps 0.01 hours every 0.2 s, which gives
   8.05000 after 1 s and 8.54996 after 11 s as measured, and 9.04992 where

@@ -59,6 +59,8 @@ pub struct UnitType {
     pub speed: u32,
     pub turn_rate: u32,
     pub prop_window: u32,
+    /// The collision size (`collision`), as a real (SPEC-0019).
+    pub collision: u32,
 }
 
 /// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
@@ -344,6 +346,7 @@ impl ObjectData {
                 "AGI",
                 "Primary",
                 "spd",
+                "collision",
             ],
         )? {
             let b = Balance {
@@ -363,6 +366,7 @@ impl ObjectData {
                 unit.armor_type = armor_type(values[10].as_deref().unwrap_or(""));
                 unit.agility = real(values[11].as_ref());
                 unit.speed = real(values[13].as_ref());
+                unit.collision = real(values[14].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -429,6 +433,7 @@ impl ObjectData {
                 unit.armor_type = armor_type(name);
             }
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
+            unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
             if let Some(orient) = def.number(b"uori") {

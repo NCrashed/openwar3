@@ -1,19 +1,31 @@
-//! The `move` order of a unit on open ground (SPEC-0018, part 1).
+//! Orders of units and their movement on open ground (SPEC-0018, part 1,
+//! and SPEC-0019).
 //!
-//! The unit is updated every 6 ticks from the order on. At an update it
-//! stops when it is within 15.6 of the target; otherwise its heading turns
-//! towards the target by at most `turnRate`, and once the heading of the
-//! update before was within `propWin` of the target's direction it moves
-//! along the new heading at `spd` until the next update. Its position
-//! advances every tick from the position at the update by the time
-//! passed, relative to the world's lower left corner, in the arithmetic of
-//! SPEC-0004. Its facing follows the heading at the pace of its
-//! `orientInterp` (SPEC-0013), also after it has stopped.
+//! An ordered unit is updated every 6 ticks from the order on. At an
+//! update it stops when it is within 15.6 of the target point; otherwise
+//! its heading turns towards the target by at most `turnRate`, and once
+//! the heading of the update before was within `propWin` of the target's
+//! direction it moves along the new heading at `spd` until the next
+//! update. Its position advances every tick from the position at the
+//! update by the time passed, relative to the world's lower left corner,
+//! in the arithmetic of SPEC-0004. Its facing follows the heading at the
+//! pace of its `orientInterp` (SPEC-0013), also after it has stopped.
+//!
+//! Orders (SPEC-0019): `move`, `patrol` (between the target and where the
+//! order was given), `attack` and `smart` to a point (like `move`), `attack`
+//! on a target (walk until the centres are within `rangeN1` and both
+//! collision sizes, then turn until the heading is within 0.2 radians of
+//! the target and attack), `stop` and `holdposition` (end the motion at
+//! once). A new order given to a unit that is moving takes effect at its
+//! next update, and its first motion comes a tick late.
 //!
 //! PROVISIONAL: units go straight at their target (no path finding, no
-//! collisions, no small heading wobble, open question 2); the arrival
-//! test is the plain distance below 15.6 (open question 1); the first
-//! update comes 6 ticks after the order.
+//! collisions, no small heading wobble, SPEC-0018 open question 2); the
+//! arrival test is the plain distance below 15.6 (open question 1); the
+//! first update comes 6 ticks after the order; an attack on a target in
+//! range starts without the random wait of SPEC-0019 (open question 1),
+//! though the order draws the generator output it comes from; attackers do
+//! not chase targets that move.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,13 +36,19 @@ use ow3_math::natives::{atan2, cos, sin};
 use ow3_math::{add, i2r, mul, sub};
 
 use super::{Object, State, handle, real, string};
+use crate::random::ATTACK_START;
 
-/// The order id of `move` that `GetUnitCurrentOrder` gives.
+/// Order ids that `GetUnitCurrentOrder` gives (SPEC-0019).
+pub const ORDER_SMART: i32 = 851_971;
+pub const ORDER_ATTACK: i32 = 851_983;
 pub const ORDER_MOVE: i32 = 851_986;
+pub const ORDER_PATROL: i32 = 851_991;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
-/// 15.6 squared: a unit closer than 15.6 to its target has arrived.
+/// 15.6 squared: a unit closer than 15.6 to its target point has arrived.
 const ARRIVED: f32 = 15.6 * 15.6;
+/// A unit attacks once its heading is this close to its target (radians).
+const ATTACK_ANGLE: f32 = 0.2;
 const PI: u32 = 0x4049_0FDB;
 const TWO_PI: u32 = 0x40C9_0FDB;
 /// pi / 180.
@@ -78,9 +96,25 @@ fn turn_towards(from: u32, to: u32, step: u32) -> u32 {
     }
 }
 
-/// A unit going somewhere.
+/// What a unit was told to do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Order {
+    /// `move`, `smart` and `attack` to a point.
+    Point,
+    /// Between the target point and `home`, where the order was given.
+    Patrol { home: [u32; 2] },
+    /// `attack` on a unit, destructable or item.
+    Attack { target: u32 },
+}
+
+/// A unit following an order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moving {
+    order: Order,
+    /// The id `GetUnitCurrentOrder` gives.
+    order_id: i32,
+    /// The point walked to (for an attack, where the target stood at the
+    /// last update).
     target: [u32; 2],
     /// The direction of motion, in radians.
     heading: u32,
@@ -95,12 +129,17 @@ pub struct Moving {
     ticks: u32,
     /// The step of the facing (SPEC-0013), which grows to its maximum.
     facing_step: u32,
-    /// Stopped: only the facing still turns towards the heading.
+    /// Done: only the facing still turns towards the heading.
     arrived: bool,
+    /// A new order came while the unit was moving: it starts again from
+    /// standing at the next update.
+    restart: bool,
+    /// The first tick of motion after a restart is lost.
+    skip: bool,
 }
 
 impl Moving {
-    /// Whether the move order is still on.
+    /// Whether the order is still on.
     pub fn ordered(&self) -> bool {
         !self.arrived
     }
@@ -108,6 +147,11 @@ impl Moving {
     /// Whether the unit moves now, for its animation.
     pub fn walking(&self) -> bool {
         !self.arrived && self.walking
+    }
+
+    /// The id of the order while it is on.
+    pub fn order_id(&self) -> i32 {
+        if self.arrived { 0 } else { self.order_id }
     }
 }
 
@@ -120,28 +164,54 @@ fn absolute(r: [u32; 2], min: [u32; 2]) -> [u32; 2] {
     [sub(r[0], min[0] ^ SIGN), sub(r[1], min[1] ^ SIGN)]
 }
 
-/// Gives unit `h` a move order to `target`; false for a unit that cannot
-/// move.
-fn order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
+/// Where a widget stands.
+fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
+    match state.objects.get(&widget)? {
+        Object::Unit(u) => Some([u.x, u.y]),
+        Object::Destructable(d) => Some([d.x, d.y]),
+        Object::Item(i) => Some([i.x, i.y]),
+        _ => None,
+    }
+}
+
+/// Gives unit `h` an order towards `target`; false for a unit that cannot
+/// follow it. A unit that is moving takes the order at its next update.
+fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2]) -> bool {
     let tick = state.ticks;
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let Some(Object::Unit(u)) = state.objects.get(&h) else {
         return false;
     };
     let speed = state.data.units.get(&u.type_id).map_or(0, |t| t.speed);
-    if !u.alive || real_of(speed) <= 0.0 && !state.data.units.is_empty() {
+    let attack = matches!(order, Order::Attack { .. });
+    if !u.alive || (real_of(speed) <= 0.0 && !attack && !state.data.units.is_empty()) {
         return false;
     }
-    let moving = Moving {
-        target,
-        heading: u.facing,
-        next_update: tick + UPDATE,
-        walking: false,
-        origin: relative([u.x, u.y], min),
-        velocity: [0, 0],
-        ticks: 0,
-        facing_step: 0,
-        arrived: false,
+    let busy = u.movement.filter(|m| m.ordered());
+    let moving = match busy {
+        // Taken at the next update, which the unit keeps.
+        Some(m) => Moving {
+            order,
+            order_id,
+            target,
+            restart: m.walking || m.restart,
+            ..m
+        },
+        None => Moving {
+            order,
+            order_id,
+            target,
+            heading: u.facing,
+            next_update: tick + UPDATE,
+            walking: false,
+            origin: relative([u.x, u.y], min),
+            velocity: [0, 0],
+            ticks: 0,
+            facing_step: 0,
+            arrived: false,
+            restart: false,
+            skip: false,
+        },
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = Some(moving);
@@ -154,17 +224,88 @@ fn order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
     true
 }
 
+/// `stop` and `holdposition`: the unit stands where it is now.
+fn halt(state: &mut State, h: u32) -> bool {
+    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        return false;
+    };
+    if !u.alive {
+        return false;
+    }
+    u.attack = None;
+    if let Some(m) = u.movement.as_mut() {
+        m.arrived = true;
+        m.walking = false;
+        m.velocity = [0, 0];
+    }
+    true
+}
+
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
     native!(
         add,
         state,
         "native IssuePointOrder takes unit whichUnit, string order, real x, real y returns boolean",
         |vm, state, args| {
-            let (Some(h), Some("move")) = (handle(&args[0]), string(&args[1])) else {
+            let (Some(h), Some(name)) = (handle(&args[0]), string(&args[1])) else {
                 return Ok(Some(Value::Boolean(false)));
             };
             let target = [real(&args[2]), real(&args[3])];
-            let done = order(&mut state.borrow_mut(), h, target);
+            let mut state = state.borrow_mut();
+            let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
+            let done = match (name, here) {
+                ("move", _) => order(&mut state, h, Order::Point, ORDER_MOVE, target),
+                ("attack", _) => order(&mut state, h, Order::Point, ORDER_ATTACK, target),
+                ("patrol", Some(home)) => {
+                    order(&mut state, h, Order::Patrol { home }, ORDER_PATROL, target)
+                }
+                // The unit obeys, but the native gives false (SPEC-0019).
+                ("smart", _) => {
+                    order(&mut state, h, Order::Point, ORDER_SMART, target);
+                    false
+                }
+                _ => false,
+            };
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IssueTargetOrder takes unit whichUnit, string order, widget targetWidget returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some("attack"), Some(target)) =
+                (handle(&args[0]), string(&args[1]), handle(&args[2]))
+            else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let mut state = state.borrow_mut();
+            let armed = state
+                .unit(Some(h))
+                .and_then(|u| state.data.units.get(&u.type_id))
+                .is_some_and(|t| t.weapon.is_some());
+            let at = position_of(&state, target);
+            let done = match at {
+                Some(at) if armed && target != h && super::attack::standing(&state, target) => {
+                    // PROVISIONAL: one output is drawn and not used (SPEC-0019,
+                    // the random wait).
+                    state.game_random[ATTACK_START].step();
+                    order(&mut state, h, Order::Attack { target }, ORDER_ATTACK, at)
+                }
+                _ => false,
+            };
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IssueImmediateOrder takes unit whichUnit, string order returns boolean",
+        |vm, state, args| {
+            let done = match (handle(&args[0]), string(&args[1])) {
+                (Some(h), Some("stop" | "holdposition")) => halt(&mut state.borrow_mut(), h),
+                _ => false,
+            };
             Ok(Some(Value::Boolean(done)))
         }
     );
@@ -175,8 +316,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let order = match state.unit(handle(&args[0])) {
-                Some(u) if u.movement.is_some_and(|m| m.ordered()) => ORDER_MOVE,
-                _ => 0,
+                Some(u) if u.attack.is_some() => ORDER_ATTACK,
+                Some(u) => u.movement.map_or(0, |m| m.order_id()),
+                None => 0,
             };
             Ok(Some(Value::Integer(order)))
         }
@@ -196,6 +338,9 @@ pub(super) fn step(state: &mut State) {
         if m.arrived || !m.walking {
             continue;
         }
+        if std::mem::take(&mut m.skip) {
+            continue;
+        }
         m.ticks += 1;
         let elapsed = mul(i2r(m.ticks as i32), crate::timers::TICK);
         let r = [
@@ -209,7 +354,7 @@ pub(super) fn step(state: &mut State) {
 }
 
 /// The updates due at this tick, after the timers.
-pub(super) fn updates(state: &mut State) {
+pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let tick = state.ticks;
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let moving = std::mem::take(&mut state.moving);
@@ -224,14 +369,20 @@ pub(super) fn updates(state: &mut State) {
         let turn_rate = data.map_or(PI, |t| t.turn_rate);
         let window = mul(data.map_or(0, |t| t.prop_window), DEGREES);
         let orient = data.map_or(0, |t| t.orient_interp);
-        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        let reach = data.map_or(0, |t| {
+            let range = t.weapon.as_ref().map_or(0, |w| w.range);
+            add(range, t.collision)
+        });
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
         let Some(mut m) = u.movement else {
             continue;
         };
         if !alive {
-            u.movement = None;
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.movement = None;
+            }
             continue;
         }
         if m.next_update != tick {
@@ -239,29 +390,77 @@ pub(super) fn updates(state: &mut State) {
             continue;
         }
         m.next_update = tick + UPDATE;
+        let mut begin_attack = None;
         if !m.arrived {
-            // Where the unit is now.
-            let here = relative([u.x, u.y], min);
-            let goal = relative(m.target, min);
-            let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
-            let distance = real_of(add(mul(dx, dx), mul(dy, dy)));
-            if distance < ARRIVED {
-                m.arrived = true;
-                m.velocity = [0, 0];
-            } else {
+            if std::mem::take(&mut m.restart) {
+                m.walking = false;
+                m.skip = true;
+            }
+            // An attacker walks to where its target stands now.
+            let mut in_reach = false;
+            if let Order::Attack { target } = m.order {
+                match position_of(state, target) {
+                    Some(at) if super::attack::standing(state, target) => {
+                        m.target = at;
+                        let other = match state.objects.get(&target) {
+                            Some(Object::Unit(t)) => {
+                                state.data.units.get(&t.type_id).map_or(0, |d| d.collision)
+                            }
+                            _ => 0,
+                        };
+                        let limit = add(reach, other);
+                        let here = relative([u.x, u.y], min);
+                        let goal = relative(at, min);
+                        let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
+                        let distance = real_of(add(mul(dx, dx), mul(dy, dy)));
+                        in_reach = distance <= real_of(limit) * real_of(limit);
+                    }
+                    _ => {
+                        m.arrived = true;
+                        m.velocity = [0, 0];
+                    }
+                }
+            }
+            if !m.arrived {
+                let here = relative([u.x, u.y], min);
+                let goal = relative(m.target, min);
+                let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
+                let distance = real_of(add(mul(dx, dx), mul(dy, dy)));
                 let direction = atan2(dy, dx);
-                // The heading of the update before decides whether the
-                // unit moves from this update on.
-                let within = real_of(difference(direction, m.heading)).abs() < real_of(window);
-                m.heading = turn_towards(m.heading, direction, turn_rate);
-                m.walking |= within;
                 m.origin = here;
                 m.ticks = 0;
-                m.velocity = if m.walking {
-                    [mul(speed, cos(m.heading)), mul(speed, sin(m.heading))]
+                if let Order::Attack { target } = m.order {
+                    if in_reach {
+                        // In range: stand, turn to the target and strike.
+                        m.walking = false;
+                        m.velocity = [0, 0];
+                        if real_of(difference(direction, m.heading)).abs() < ATTACK_ANGLE {
+                            m.arrived = true;
+                            begin_attack = Some(target);
+                        } else {
+                            m.heading = turn_towards(m.heading, direction, turn_rate);
+                        }
+                    } else {
+                        walk(&mut m, direction, window, turn_rate, speed);
+                    }
+                } else if distance < ARRIVED {
+                    if let Order::Patrol { home } = m.order {
+                        // Back the other way, turning on the spot.
+                        m.order = Order::Patrol { home: m.target };
+                        m.target = home;
+                        m.walking = false;
+                        m.velocity = [0, 0];
+                        let goal = relative(home, min);
+                        let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
+                        walk(&mut m, atan2(dy, dx), window, turn_rate, speed);
+                    } else {
+                        m.arrived = true;
+                        m.walking = false;
+                        m.velocity = [0, 0];
+                    }
                 } else {
-                    [0, 0]
-                };
+                    walk(&mut m, direction, window, turn_rate, speed);
+                }
             }
         }
         // The facing follows the heading.
@@ -270,15 +469,35 @@ pub(super) fn updates(state: &mut State) {
         if real_of(m.facing_step) > real_of(largest) {
             m.facing_step = largest;
         }
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
         u.facing = turn_towards(u.facing, m.heading, m.facing_step);
         let facing_done = u.facing == m.heading;
-        if m.arrived && facing_done {
+        if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;
         } else {
             u.movement = Some(m);
             still.push(h);
         }
+        if let Some(target) = begin_attack {
+            super::attack::begin(state, h, target, tick);
+        }
     }
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+}
+
+/// The start rule of SPEC-0018 at an update: the heading turns towards
+/// `direction`, and the unit walks along the new heading once the heading
+/// before was within the propulsion window.
+fn walk(m: &mut Moving, direction: u32, window: u32, turn_rate: u32, speed: u32) {
+    let within = real_of(difference(direction, m.heading)).abs() < real_of(window);
+    m.heading = turn_towards(m.heading, direction, turn_rate);
+    m.walking |= within;
+    m.velocity = if m.walking {
+        [mul(speed, cos(m.heading)), mul(speed, sin(m.heading))]
+    } else {
+        [0, 0]
+    };
 }

@@ -1,26 +1,24 @@
-//! Attacks of units (SPEC-0016).
+//! Hits of attacking units (SPEC-0016).
 //!
-//! `IssueTargetOrder(u, "attack", target)` makes a unit with a weapon hit
-//! the target until one of them dies or the unit gets another order. Each
-//! hit does the damage of SPEC-0015 for the amount of
-//! [`crate::combat::hit_amount`], with the dice from game generator 2, and
-//! hits follow `cool1` apart.
+//! An attack begins when the unit stands in range of its target and faces
+//! it (SPEC-0019, `game::movement`); then each hit does the damage of
+//! SPEC-0015 for the amount of [`crate::combat::hit_amount`], with the dice
+//! from game generator 2, the first one `dmgpt1` after the start and the
+//! next ones `cool1` apart, until the target dies or the unit gets another
+//! order.
 //!
-//! PROVISIONAL (SPEC-0016 open question 1): the first hit comes `dmgpt1`
-//! after the order; units do not move, turn or check their range, so any
-//! target is hit where it is; hits come after the timers of their tick.
-//! Only the string orders "attack" and "stop" are known.
+//! PROVISIONAL: hits come after the timers of their tick, and the attacker
+//! does not follow a target that moves away.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ow3_jass::semantics::Value;
-use ow3_jass::vm::{NativeFn, Vm};
+use ow3_jass::vm::Vm;
 
-use super::{Object, State, handle, string};
+use super::{Object, State};
 use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::is_hero;
-use crate::random::{ATTACK_DICE, ATTACK_START};
+use crate::random::ATTACK_DICE;
 
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +54,7 @@ fn ticks(seconds: u32) -> u64 {
 }
 
 /// Whether `target` can still be hit.
-fn standing(state: &State, target: u32) -> bool {
+pub(super) fn standing(state: &State, target: u32) -> bool {
     match state.objects.get(&target) {
         Some(Object::Unit(u)) => u.alive,
         Some(Object::Destructable(d)) => d.alive,
@@ -65,65 +63,27 @@ fn standing(state: &State, target: u32) -> bool {
     }
 }
 
-/// Starts or stops the attack of unit `h`.
-fn order(state: &mut State, h: u32, target: Option<u32>) -> bool {
-    let tick = state.ticks;
-    let weapon = match state.objects.get(&h) {
-        Some(Object::Unit(u)) if u.alive => state
+/// Unit `h` starts hitting `target` at tick `tick`: the first hit comes its
+/// weapon's damage point later (SPEC-0019).
+pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64) {
+    let damage_point = match state.objects.get(&h) {
+        Some(Object::Unit(u)) => state
             .data
             .units
             .get(&u.type_id)
-            .and_then(|t| t.weapon.clone()),
-        _ => return false,
-    };
-    let attack = match (target, weapon) {
-        (Some(target), Some(weapon)) if target != h && standing(state, target) => Some(Attacking {
-            target,
-            next: tick + ticks(weapon.damage_point),
-        }),
-        (Some(_), _) => return false,
-        (None, _) => None,
+            .and_then(|t| t.weapon.as_ref())
+            .map_or(1, |w| ticks(w.damage_point)),
+        _ => return,
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-        u.attack = attack;
-        // A new order, attack or stop, ends a move order.
-        u.movement = None;
+        u.attack = Some(Attacking {
+            target,
+            next: tick + damage_point,
+        });
     }
-    if attack.is_some() {
-        // PROVISIONAL: the output is drawn at the order and not used.
-        state.game_random[ATTACK_START].step();
-    }
-    if attack.is_some() && !state.attacking.contains(&h) {
+    if !state.attacking.contains(&h) {
         state.attacking.push(h);
     }
-    true
-}
-
-pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
-    native!(
-        add,
-        state,
-        "native IssueTargetOrder takes unit whichUnit, string order, widget targetWidget returns boolean",
-        |vm, state, args| {
-            let (Some(h), Some("attack")) = (handle(&args[0]), string(&args[1])) else {
-                return Ok(Some(Value::Boolean(false)));
-            };
-            let done = order(&mut state.borrow_mut(), h, handle(&args[2]));
-            Ok(Some(Value::Boolean(done)))
-        }
-    );
-    native!(
-        add,
-        state,
-        "native IssueImmediateOrder takes unit whichUnit, string order returns boolean",
-        |vm, state, args| {
-            let (Some(h), Some("stop")) = (handle(&args[0]), string(&args[1])) else {
-                return Ok(Some(Value::Boolean(false)));
-            };
-            let done = order(&mut state.borrow_mut(), h, None);
-            Ok(Some(Value::Boolean(done)))
-        }
-    );
 }
 
 /// The hits due at this tick, in the order the attacks began.

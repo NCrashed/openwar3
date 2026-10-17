@@ -832,7 +832,7 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
-        movement::updates(&mut self.state.borrow_mut());
+        movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         attack::hits(&mut self.vm, &self.state);
         self.park();
     }
@@ -1927,7 +1927,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
-    attack::register(&mut add, state);
+
     movement::register(&mut add, state);
     boards::register(&mut add, state);
 

@@ -36,9 +36,8 @@ const BOUNDARY: u8 = 0x8;
 /// The ground texture atlas of every ground tileset of `terrain`, in the
 /// order of `terrain.ground_tilesets`; `None` where it cannot be found.
 pub fn ground_textures(chain: &mut ArchiveChain, terrain: &Terrain) -> Vec<Option<Image>> {
-    let paths = texture_paths(chain);
-    terrain
-        .ground_tilesets
+    let paths: BTreeMap<RawCode, String> = texture_paths(chain).into_iter().collect();
+    ground_tiles(chain, terrain)
         .iter()
         .map(|id| {
             let path = paths.get(id)?;
@@ -48,9 +47,26 @@ pub fn ground_textures(chain: &mut ArchiveChain, terrain: &Terrain) -> Vec<Optio
         .collect()
 }
 
+/// The ground tiles that the texture indices of `terrain` refer to
+/// (SPEC-0012, "Ground tile list"): the map's list when its custom
+/// tilesets flag is set, otherwise the rows of `TerrainArt\Terrain.slk`
+/// whose id starts with the tileset letter, in the order of the file.
+pub fn ground_tiles(chain: &mut ArchiveChain, terrain: &Terrain) -> Vec<RawCode> {
+    if terrain.custom_tilesets {
+        return terrain.ground_tilesets.clone();
+    }
+    texture_paths(chain)
+        .into_iter()
+        .map(|(id, _)| id)
+        .filter(|id| id.0[0] == terrain.tileset)
+        .collect()
+}
+
 /// `dir\file.blp` of each ground tile type in `TerrainArt\Terrain.slk`.
-fn texture_paths(chain: &mut ArchiveChain) -> BTreeMap<RawCode, String> {
-    let mut paths = BTreeMap::new();
+/// The image of every ground tile of `TerrainArt\Terrain.slk`, in the order
+/// of the file.
+fn texture_paths(chain: &mut ArchiveChain) -> Vec<(RawCode, String)> {
+    let mut paths = Vec::new();
     let Some(table) = chain
         .read("TerrainArt\\Terrain.slk")
         .and_then(|data| Table::parse(&data).ok())
@@ -69,7 +85,7 @@ fn texture_paths(chain: &mut ArchiveChain) -> BTreeMap<RawCode, String> {
         if let (Some(tile), Some(dir), Some(file)) = (cell(id), cell(dir), cell(file))
             && let Ok(bytes) = <[u8; 4]>::try_from(tile.as_bytes())
         {
-            paths.insert(RawCode(bytes), format!("{dir}\\{file}.blp"));
+            paths.push((RawCode(bytes), format!("{dir}\\{file}.blp")));
         }
     }
     paths

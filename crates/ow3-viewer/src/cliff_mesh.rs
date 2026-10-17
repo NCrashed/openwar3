@@ -251,15 +251,15 @@ pub struct Cliffs {
 }
 
 /// `terrain` with the corners of cliff tiles given the ground of their
-/// cliff type (SPEC-0014 rule 8).
+/// cliff type (SPEC-0014 rule 8), with the ground indices of `tiles`.
 ///
 /// PROVISIONAL (SPEC-0014 open question 5): where cliff tiles of
 /// different types share a point, the later tile (by rows from the
 /// south) wins; a ground missing from the map's list is not added.
-pub fn repaint(terrain: &Terrain, grounds: &[((u32, u32), RawCode)]) -> Terrain {
+pub fn repaint(terrain: &Terrain, tiles: &[RawCode], grounds: &[((u32, u32), RawCode)]) -> Terrain {
     let mut painted = terrain.clone();
     for &((x, y), code) in grounds {
-        let Some(index) = terrain.ground_tilesets.iter().position(|c| *c == code) else {
+        let Some(index) = tiles.iter().position(|c| *c == code) else {
             continue;
         };
         for (px, py) in [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)] {
@@ -428,12 +428,20 @@ mod tests {
             origin_y: 0.0,
             points: vec![point; 6],
         };
-        let painted = repaint(&terrain, &[((1, 0), RawCode(*b"Nsnw"))]);
+        let painted = repaint(
+            &terrain,
+            &terrain.ground_tilesets,
+            &[((1, 0), RawCode(*b"Nsnw"))],
+        );
         let textures: Vec<u8> = painted.points.iter().map(|p| p.ground_texture()).collect();
         assert_eq!(textures, [0, 1, 1, 0, 1, 1]);
         // The flags stay.
         assert_eq!(painted.points[1].flags(), 4);
-        let unchanged = repaint(&terrain, &[((0, 0), RawCode(*b"Xxxx"))]);
+        let unchanged = repaint(
+            &terrain,
+            &terrain.ground_tilesets,
+            &[((0, 0), RawCode(*b"Xxxx"))],
+        );
         assert_eq!(unchanged.points, terrain.points);
     }
 }

@@ -54,7 +54,8 @@ impl Scene {
         let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
         let cliffs = crate::cliff_mesh::build(&mut chain, &terrain);
         // The corners of cliff tiles show the cliff type's ground.
-        let painted = crate::cliff_mesh::repaint(&terrain, &cliffs.grounds);
+        let tiles = ow3_render::terrain::ground_tiles(&mut chain, &terrain);
+        let painted = crate::cliff_mesh::repaint(&terrain, &tiles, &cliffs.grounds);
         let layers = terrain_mesh::build(&painted, &textures, &cliffs.covered);
         let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
             let depths = ow3_render::water::depths(&mut chain);

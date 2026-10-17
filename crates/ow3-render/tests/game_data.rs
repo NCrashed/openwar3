@@ -153,3 +153,39 @@ fn lost_temple_ramps() {
         }
     }
 }
+
+/// Without the custom tilesets flag the map's ground list is ignored: the
+/// indices name the tiles of the tileset letter in `Terrain.slk`
+/// (SPEC-0012, "Ground tile list").
+#[test]
+fn ground_tiles_of_the_tileset() {
+    let Ok(mut chain) = ArchiveChain::game(&game_data()) else {
+        return;
+    };
+    if chain.read("TerrainArt\\Terrain.slk").is_none() {
+        return;
+    }
+    let code = |c: &[u8; 4]| ow3_formats::binary::RawCode(*c);
+    let mut terrain = Terrain {
+        format_version: 11,
+        tileset: b'A',
+        custom_tilesets: false,
+        ground_tilesets: vec![code(b"Ndrt"), code(b"Ldrg"), code(b"Ldrt"), code(b"Nrck")],
+        cliff_tilesets: Vec::new(),
+        width: 0,
+        height: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        points: Vec::new(),
+    };
+    let tiles = ow3_render::terrain::ground_tiles(&mut chain, &terrain);
+    assert_eq!(tiles[0], code(b"Adrt"));
+    assert_eq!(tiles[1], code(b"Adrd"));
+    assert_eq!(tiles[3], code(b"Arck"));
+    // With the flag the map's list counts.
+    terrain.custom_tilesets = true;
+    assert_eq!(
+        ow3_render::terrain::ground_tiles(&mut chain, &terrain)[0],
+        code(b"Ndrt")
+    );
+}

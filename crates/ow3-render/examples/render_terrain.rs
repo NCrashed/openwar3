@@ -40,7 +40,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
-    for (id, texture) in terrain.ground_tilesets.iter().zip(&textures) {
+    let tiles = ow3_render::terrain::ground_tiles(&mut chain, &terrain);
+    for (id, texture) in tiles.iter().zip(&textures) {
         if texture.is_none() {
             eprintln!("no texture for {id}");
         }

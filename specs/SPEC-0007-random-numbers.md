@@ -84,8 +84,9 @@ Besides the script generator there are 45 game generators, numbered
 
 The script natives (`GetRandomInt`, `GetRandomReal`) do not use the game
 generators, and the game generators do not advance the script generator.
-Generator 2 rolls the damage dice of unit attacks (SPEC-0016). The other
-uses are not known yet.
+Generator 2 rolls the damage dice of unit attacks (SPEC-0016); generator
+9 draws the reaction delay of attack orders (SPEC-0019). The other uses
+are not known yet.
 
 ### Table equivalence
 

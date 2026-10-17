@@ -6,7 +6,8 @@ use ow3_sim::data::UnitType;
 use ow3_sim::game::{Game, UnitView};
 
 /// The script: `UNITS` creates the units (the first one is `a`, the second
-/// `t`), and `ORDERS` runs from a timer 0.5 s later.
+/// `t`), and `ORDERS` runs from a timer 0.5 s later, after
+/// `SetRandomSeed(7)` (a reaction delay of 0.0015 s, SPEC-0019).
 const SCRIPT: &str = r#"
 type agent extends handle
 type player extends agent
@@ -21,12 +22,14 @@ native IssuePointOrder takes unit whichUnit, string order, real x, real y return
 native IssueTargetOrder takes unit whichUnit, string order, widget targetWidget returns boolean
 native IssueImmediateOrder takes unit whichUnit, string order returns boolean
 native GetUnitCurrentOrder takes unit whichUnit returns integer
+native SetRandomSeed takes integer seed returns nothing
 globals
     unit a = null
     unit t = null
 endglobals
 EXTRA
 function Orders takes nothing returns nothing
+    call SetRandomSeed(7)
     ORDERS
 endfunction
 function main takes nothing returns nothing
@@ -267,4 +270,26 @@ fn idle_footmen_acquire() {
         let moved = last[0].x != -3000.0 || last[1].x != (-3000 + gap) as f32;
         assert_eq!(moved, takes, "{gap}");
     }
+}
+
+/// The reaction delay of SPEC-0019: with seed 777 (0.0329 s, past the
+/// first update) a knight next to its target hits one update later than
+/// with seed 7.
+#[test]
+fn reaction_delay_waits_an_update() {
+    let units = "set a = CreateUnit(Player(0), 'hkni', 0, 0, 0)\n    set t = CreateUnit(Player(15), 'hpea', 100, 0, 0)";
+    let Some(mut game) = game(
+        units,
+        "call SetRandomSeed(777)\n    call IssueTargetOrder(a, \"attack\", t)",
+        |d| target_type(d, 32.0),
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 400);
+    let hit = path
+        .iter()
+        .find(|(_, u)| u[1].life < u[1].max_life)
+        .unwrap()
+        .0;
+    assert_eq!(hit - ORDER_TICK, 138 + 6);
 }

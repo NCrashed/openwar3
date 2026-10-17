@@ -114,19 +114,76 @@ Footman (`turnRate` 0.6, 34.38 degrees per update) with `a` = 34.38 +
 `d`: `d` from 9 to 11 gave 112 ticks (attack at update 2), `d` 11.5 to 16
 gave 118 (update 3).
 
-### Random wait before the first attack
+### Reaction delay
 
-A unit ordered to attack a target that is already in range does not
-always attack at the first possible update: the first damage of a
-knight next to its target came 138 + 6 `j` ticks after the order, with
-`j` from 0 to 8 (40 seeds: `j` = 0 four times, 1 four, 2 seven, 3 six,
-4 eight, 5 five, 6 once, 7 four, 8 once). `j` depends only on the state
-of the game's random generators at the order: the same seed before
-every order gave the same `j`, whatever the time and place. With seed 7
-`j` was 0, which the turning tests above used. How `j` is drawn is open
-(it uses one output of game generator 9 of SPEC-0007, not in a simple
-way). A unit that first walks to its target for longer than this wait
-showed no extra delay in 15 of 15 cases.
+When a unit takes an attack order it first waits a random **reaction
+delay** before it acts on it (walks towards the target or starts the
+swing):
+
+- `ReactionDelay` from `Units\MiscData.txt`, section `[Misc]` (0.25 s
+  in 1.27b; the file describes it as the largest random reaction delay
+  in seconds).
+- One output `r` of game generator 9 (SPEC-0007) gives
+  `x = add((r AND 0x7FFFFF) OR 0x3F800000, -1.0)`, a value in [0, 1),
+  as for `GetRandomReal`, and the delay is `mul(x, ReactionDelay)`.
+- The unit acts at its first update at or after the end of the delay:
+  a knight next to its target hit at `138 + 6 j` ticks after the order
+  (6 ticks to its first update, 132 for `dmgpt1`), where `j` is the
+  number of whole updates (0.03 s) the delay spans: delays below 6
+  ticks gave `j` = 0, 6.8 to 9.2 ticks `j` = 1, 12.4 to 16.1 ticks
+  `j` = 2, ... 43.2 to 46.3 ticks `j` = 7.
+
+Verified on 40 seeds (`SetRandomSeed(s)` right before the order, one
+knight per order): the delay computed from the first output of
+generator 9 after the seed predicts `j` in all 40 cases (two samples
+were one tick off because of the test's own counting timer). With seed
+7 the delay is 0.0015 s, so `j` = 0; the turning tests above used that
+seed. A unit that walks to its target for longer than its delay shows no
+extra wait at the swing.
+
+### Chasing a moving target (observations)
+
+Footman attacking a footman copy that walks (without attacking) at a set
+speed, started 300 away; the target's heading pointed along its walk
+from the start. The rule behind these numbers is open; what holds in
+every test:
+
+- **The attacker starts walking after its reaction delay** (previous
+  section): its first motion came 4 to 46 ticks after the order, in
+  steps of 6.
+- **The attacker does not head for the target's current position at
+  first.** In the first part of the approach its steps aim at the
+  target's position at the time of the order. Later (once it is within
+  about 170 of that point in the tests) it aims at the target's current
+  position, updated at every update (seen in the one crossing case
+  analysed this way). After a pause between swings it
+  aims again at a point the target had passed some time before.
+- **A swing starts farther away than the static limit** when the
+  target moves. Distance between the centres at the update the
+  attacker stopped to swing (the static limit is 152):
+
+  | Target speed | Walking away | Walking across |
+  |---|---|---|
+  | 150 | 199.5, 209.9 | 158.9, 195.1 |
+  | 180 | 214.2 | 165.8, 209.6 |
+  | 210 | 238.7 | 177.1 |
+  | 240 | 251.4 | 176.6 |
+  | 270 | never caught | 213.9 |
+  | 300 | never caught | 234.2 |
+
+  At other updates the attacker stopped for one update without
+  swinging and walked on (for example at 255.7 behind a target at 240,
+  at 267 to 284 behind a target at 270), which looks like a new path
+  being made.
+- **A started swing always hits:** the damage was done `dmgpt1` after
+  the swing started, however far the target had walked meanwhile (up to
+  374 between the centres at the damage).
+- After the backswing the attacker walks again; it does not wait for the
+  cooldown to end before walking.
+- A target that is moved by `SetUnitPosition` 20 farther while the
+  attacker walks was hit from 166.6 (the attacker stopped near the old
+  point and swung); moved 40 or more, the attacker went on to the new
+  position without stopping and swung from within the static limit.
 
 ### Acquisition by idle units (first results)
 
@@ -154,12 +211,14 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 ## Open questions
 
-1. How `j` (the random wait) is derived from the random generator, and
-   whether it also applies when the unit walks first but arrives early.
-2. Targets that move (chasing), attack-move with enemies, the timing
-   of acquisition scans after the first one, retaliation, `minRange`.
-3. Queued orders, group orders, formation movement.
-4. Orders on units of other players, `hold position` with enemies in
+1. Whether other orders and the acquisition of targets use the reaction
+   delay as well.
+2. The chase rule: when the attacker takes a new aim point, when it
+   swings at a moving target, and the stop-and-go at about 250 to 280.
+3. Attack-move with enemies, the timing of acquisition scans after the
+   first one, retaliation, `minRange`.
+4. Queued orders, group orders, formation movement.
+5. Orders on units of other players, `hold position` with enemies in
    range.
 
 ## Sources

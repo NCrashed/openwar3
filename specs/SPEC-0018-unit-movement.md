@@ -103,8 +103,13 @@ motion.
 
 ### Arrival
 
-The unit stops at the first update at which its distance to the target
-is below a threshold of about 15.6. The order then ends at once:
+The movement system works in cells of 32 world units (positions,
+distances and radii are divided by 32 before use). A point move has an
+arrival radius of 0.49 cells, that is 15.68 world units (the game's
+minimum radius; a radius given by the order, such as an attack range,
+replaces it when larger). The unit stops at the first update at which
+its distance to the target is within that radius. The order then ends
+at once:
 `GetUnitCurrentOrder` returns 0 from that update on (851986, the `move`
 order id, before). The unit stays where it is, so it comes to rest 8 to
 16 short of the target point, depending on how the steps fall:
@@ -144,8 +149,11 @@ amounts.
 
 ## Open questions
 
-1. The exact arrival test (around 15.6, not monotonic in the remaining
-   distance).
+1. The exact arithmetic of the arrival test: with the radius 15.68 a
+   footman stopped at 15.65 and walked on at 15.7 as expected, but a
+   peasant walked on at 15.6 and stopped at 15.65 and 15.85, so the
+   distance is not the plain Euclidean one in world units (it is taken
+   in cells, from positions that change continuously between updates).
 2. The rule of the small heading changes on straight walks.
 3. Path finding: detours around units, buildings, doodads and cliffs;
    the long-distance case where a unit walking 5000 first headed 1.7

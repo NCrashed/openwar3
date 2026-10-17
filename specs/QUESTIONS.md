@@ -438,12 +438,16 @@ the spec is silent:
   (log-log in the spec, which needs logarithms the simulation does not
   have): up to 0.002 degrees off. Above the last point of a table
   nothing brakes.
-- **Arrival** is the plain distance below 15.6 (open question 1).
+- **Arrival** compares the squared distance in cells of 32 with 0.49
+  squared, in the engine arithmetic (open question 1: the peasant's
+  stops are not explained by any form of the test).
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
-  a point, `attack` on a target, `stop` and `holdposition`. An attack on
-  a target in range starts at the first possible update: the random
-  wait of up to 8 updates (SPEC-0019 open question 1) is left out, though
-  the order draws the output of game generator 9 it comes from. Attackers
+  a point, `attack` on a target, `stop` and `holdposition`. The reaction
+  delay applies to `attack` on a target only (open question 1); a unit
+  that is walking when it gets such an order goes on along its old
+  heading until the delay ends, which the spec does not cover.
+  `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
+  `Custom_V1` for maps that are not melee, then the game's. Attackers
   do not follow targets that move; destructables and items have
   collision 0. No paths, collisions between units or queued orders.
 - **Acquisition** (SPEC-0019): an idle unit with a weapon looks for an

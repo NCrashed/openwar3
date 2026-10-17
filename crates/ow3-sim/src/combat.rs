@@ -8,6 +8,8 @@
 //! against the armor type (1 for armor types outside the lists), and at
 //! least the smaller of the amount and 1.
 //!
+//! `ReactionDelay` of SPEC-0019 comes from `[Misc]` of `Units\MiscData.txt`.
+//!
 //! PROVISIONAL: game data sets other than the default are not
 //! considered. Without the file every multiplier is 1, `DefenseArmor`
 //! 0.06 and the agility constants 0.
@@ -42,6 +44,9 @@ pub struct Combat {
     pub bonus: [[u32; 8]; 7],
     pub agi_defense_base: u32,
     pub agi_defense_bonus: u32,
+    /// The longest reaction delay of attack orders in seconds
+    /// (`ReactionDelay` of `[Misc]` in `Units\MiscData.txt`, SPEC-0019).
+    pub reaction_delay: u32,
 }
 
 impl Default for Combat {
@@ -51,6 +56,7 @@ impl Default for Combat {
             bonus: [[ONE; 8]; 7],
             agi_defense_base: 0,
             agi_defense_bonus: 0,
+            reaction_delay: s2r("0.25"),
         }
     }
 }
@@ -75,6 +81,7 @@ impl Combat {
                 "DefenseArmor" => combat.defense_armor = s2r(value),
                 "AgiDefenseBase" => combat.agi_defense_base = s2r(value),
                 "AgiDefenseBonus" => combat.agi_defense_bonus = s2r(value),
+                "ReactionDelay" => combat.reaction_delay = s2r(value),
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {
                         for (slot, v) in combat.bonus[attack].iter_mut().zip(value.split(',')) {
@@ -97,9 +104,24 @@ impl Combat {
         } else {
             "Custom_V1\\Units\\MiscGame.txt"
         };
-        own.or_else(|| archives.read_game_file(path))
+        let mut combat = own
+            .or_else(|| archives.read_game_file(path))
             .map(|d| Combat::parse(&String::from_utf8_lossy(&d)))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // PROVISIONAL: `MiscData.txt` is looked up like `MiscGame.txt`,
+        // with the game's plain copy last.
+        let data = archives
+            .read_map_file("Units\\MiscData.txt")
+            .or_else(|| {
+                (!melee)
+                    .then(|| archives.read_game_file("Custom_V1\\Units\\MiscData.txt"))
+                    .flatten()
+            })
+            .or_else(|| archives.read_game_file("Units\\MiscData.txt"));
+        if let Some(d) = data {
+            combat.reaction_delay = Combat::parse(&String::from_utf8_lossy(&d)).reaction_delay;
+        }
+        combat
     }
 
     /// The armor of a hero with `armor` (`def`) and `agility`.

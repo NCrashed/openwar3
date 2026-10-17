@@ -99,6 +99,12 @@ flags use other models (open question 1).
    `N_`/`I_` versions changed nothing; without imports, `CNdi` cliffs
    show icy rock (`N_Cliff0`) on N and brown dirt and rock (`Cliff0`) on I.
    The snow along the edges of `CNsn` cliffs is ground, see rule 8.
+   On tileset I with cliff type `CIsn` (`texFile` `Cliff1`), replacing
+   `Cliff1` by an image whose upper half is blue and lower half red made
+   the visible faces of the cliff models almost entirely red: the models
+   show mostly the lower (ground, for `Cliff1` grass) half of the atlas.
+   Without the replacement the same faces look white and blue under the
+   Icecrown lighting; no other texture source was found (open question 6).
 8. **Ground next to cliffs.** Every tile that gets a cliff model gives
    its four corner points the ground texture `groundTile` of its cliff
    type (`CliffTypes.slk`: `Ndrt` for `CNdi`, `Nsnw` for `CNsn`, ...),
@@ -214,6 +220,9 @@ leaves holes there.
    by cliff tiles of different types, whether a `groundTile` missing from
    the map's ground list is added, and what `upperTile` (only `COrd` sets
    one) does.
+6. Whether the white look of `CIsn` cliff faces on tileset I comes only
+   from lighting applied to the grass of `Cliff1`, or from another
+   mechanism.
 
 ## Sources
 

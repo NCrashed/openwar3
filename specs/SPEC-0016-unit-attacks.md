@@ -52,13 +52,13 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
 - Consecutive hits on a target that does not move are exactly `cool1`
   apart (1.5 s for the custom knight, measured from game time at each
   damage event).
-- When the first hit comes is SPEC-0019: the attack begins at an update
-  once the attacker is in range and turned towards the target, the
-  damage follows `dmgpt1` later, and a unit that is already in range at
-  the order may wait a random 0 to 8 extra updates first. Between the
-  seed and the first hit exactly one output of game generator 9 and two
-  of generator 2 (the dice) were drawn, and nothing else (generator
-  states read from process memory for 7 seeds).
+- When the first hit comes is SPEC-0019: after the random reaction
+  delay (one output of game generator 9) the attack begins at an update
+  once the attacker is in range and turned towards the target, and the
+  damage follows `dmgpt1` later. Between the seed and the first hit
+  exactly one output of game generator 9 (the delay) and two of
+  generator 2 (the dice) were drawn, and nothing else (generator states
+  read from process memory for 7 seeds).
 
 ## Edge cases
 
@@ -68,8 +68,7 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
 
 ## Open questions
 
-1. The random wait before the first hit (SPEC-0019) and the role of
-   `backSw1` and acquisition.
+1. The role of `backSw1` and acquisition.
 2. Weapon 2, splash, upgrades (`dmgUp1`, `DmgUpg`), projectiles and
    missing (`MissDamageReduction`).
 3. Which systems other than attacks draw from generators 0..44.

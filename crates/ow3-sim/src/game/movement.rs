@@ -2,30 +2,31 @@
 //! and SPEC-0019).
 //!
 //! An ordered unit is updated every 6 ticks from the order on. At an
-//! update it stops when it is within 15.6 of the target point; otherwise
-//! its heading turns towards the target by at most `turnRate`, and once
-//! the heading of the update before was within `propWin` of the target's
-//! direction it moves along the new heading at `spd` until the next
-//! update. Its position advances every tick from the position at the
-//! update by the time passed, relative to the world's lower left corner,
-//! in the arithmetic of SPEC-0004. Its facing follows the heading at the
-//! pace of its `orientInterp` (SPEC-0013), also after it has stopped.
+//! update it stops when it is within 0.49 cells of 32 (15.68) of the
+//! target point; otherwise its heading turns towards the target by at most
+//! `turnRate`, and once the heading of the update before was within
+//! `propWin` of the target's direction it moves along the new heading at
+//! `spd` until the next update. Its position advances every tick from the
+//! position at the update by the time passed, relative to the world's
+//! lower left corner, in the arithmetic of SPEC-0004. Its facing follows
+//! the heading at the pace of its `orientInterp` (SPEC-0013), also after
+//! it has stopped.
 //!
 //! Orders (SPEC-0019): `move`, `patrol` (between the target and where the
 //! order was given), `attack` and `smart` to a point (like `move`), `attack`
-//! on a target (walk until the centres are within `rangeN1` and both
-//! collision sizes, then turn until the heading is within 0.2 radians of
-//! the target and attack), `stop` and `holdposition` (end the motion at
-//! once). A new order given to a unit that is moving takes effect at its
-//! next update, and its first motion comes a tick late.
+//! on a target (after the reaction delay, walk until the centres are
+//! within `rangeN1` and both collision sizes, then turn until the heading
+//! is within 0.2 radians of the target and attack), `stop` and
+//! `holdposition` (end the motion at once). A new order given to a unit
+//! that is moving takes effect at its next update, and its first motion
+//! comes a tick late.
 //!
 //! PROVISIONAL: units go straight at their target (no path finding, no
 //! collisions, no small heading wobble, SPEC-0018 open question 2); the
-//! arrival test is the plain distance below 15.6 (open question 1); the
-//! first update comes 6 ticks after the order; an attack on a target in
-//! range starts without the random wait of SPEC-0019 (open question 1),
-//! though the order draws the generator output it comes from; attackers do
-//! not chase targets that move.
+//! arrival test compares squared distances in cells (open question 1);
+//! the first update comes 6 ticks after the order; a moving unit that gets
+//! an attack order goes on as before during the delay; attackers do not
+//! chase targets that move.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,7 +37,7 @@ use ow3_math::natives::{atan2, cos, sin};
 use ow3_math::{add, i2r, mul, sub};
 
 use super::{Object, State, handle, real, string};
-use crate::random::ATTACK_START;
+use crate::random::REACTION;
 
 /// Order ids that `GetUnitCurrentOrder` gives (SPEC-0019).
 pub const ORDER_SMART: i32 = 851_971;
@@ -45,8 +46,10 @@ pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
-/// 15.6 squared: a unit closer than 15.6 to its target point has arrived.
-const ARRIVED: f32 = 15.6 * 15.6;
+/// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).
+const CELL: u32 = 0x3D00_0000;
+/// The arrival radius of a point move in cells (0.49, 15.68 world units).
+const ARRIVAL: u32 = 0x3EFA_E148;
 /// A unit attacks once its heading is this close to its target (radians).
 const ATTACK_ANGLE: f32 = 0.2;
 const PI: u32 = 0x4049_0FDB;
@@ -136,6 +139,9 @@ pub struct Moving {
     restart: bool,
     /// The first tick of motion after a restart is lost.
     skip: bool,
+    /// The tick of an attack order and its reaction delay in seconds: the
+    /// unit acts on the order from its first update after the delay.
+    reaction: Option<(u64, u32)>,
 }
 
 impl Moving {
@@ -195,6 +201,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order_id,
             target,
             restart: m.walking || m.restart,
+            reaction: None,
             ..m
         },
         None => Moving {
@@ -211,6 +218,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             arrived: false,
             restart: false,
             skip: false,
+            reaction: None,
         },
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -287,10 +295,19 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let at = position_of(&state, target);
             let done = match at {
                 Some(at) if armed && target != h && super::attack::standing(&state, target) => {
-                    // PROVISIONAL: one output is drawn and not used (SPEC-0019,
-                    // the random wait).
-                    state.game_random[ATTACK_START].step();
-                    order(&mut state, h, Order::Attack { target }, ORDER_ATTACK, at)
+                    // The reaction delay (SPEC-0019).
+                    let delay = mul(
+                        state.game_random[REACTION].fraction(),
+                        state.combat.reaction_delay,
+                    );
+                    let tick = state.ticks;
+                    let done = order(&mut state, h, Order::Attack { target }, ORDER_ATTACK, at);
+                    if let (true, Some(Object::Unit(u))) = (done, state.objects.get_mut(&h)) {
+                        if let Some(m) = u.movement.as_mut() {
+                            m.reaction = Some((tick, delay));
+                        }
+                    }
+                    done
                 }
                 _ => false,
             };
@@ -391,7 +408,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         }
         m.next_update = tick + UPDATE;
         let mut begin_attack = None;
-        if !m.arrived {
+        // Still in the reaction delay: the unit goes on as before.
+        let waiting = m.reaction.is_some_and(|(from, delay)| {
+            let waited = mul(i2r((tick - from) as i32), crate::timers::TICK);
+            real_of(waited) < real_of(delay)
+        });
+        if !waiting {
+            m.reaction = None;
+        }
+        if !m.arrived && !waiting {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
                 m.skip = true;
@@ -425,7 +450,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 let here = relative([u.x, u.y], min);
                 let goal = relative(m.target, min);
                 let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
-                let distance = real_of(add(mul(dx, dx), mul(dy, dy)));
+                // The squared distance in cells.
+                let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
+                let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
                 let direction = atan2(dy, dx);
                 m.origin = here;
                 m.ticks = 0;
@@ -443,7 +470,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     } else {
                         walk(&mut m, direction, window, turn_rate, speed);
                     }
-                } else if distance < ARRIVED {
+                } else if distance <= real_of(mul(ARRIVAL, ARRIVAL)) {
                     if let Order::Patrol { home } = m.order {
                         // Back the other way, turning on the spot.
                         m.order = Order::Patrol { home: m.target };

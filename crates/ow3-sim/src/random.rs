@@ -44,9 +44,9 @@ pub struct Random {
 pub const GAME_GENERATORS: usize = 45;
 /// The game generator that rolls the damage dice of attacks (SPEC-0016).
 pub const ATTACK_DICE: usize = 2;
-/// The game generator that an attack order draws one output from before
-/// its first hit (SPEC-0016); how it sets the delay is not known.
-pub const ATTACK_START: usize = 9;
+/// The game generator that draws the reaction delay of attack orders
+/// (SPEC-0019).
+pub const REACTION: usize = 9;
 
 impl Random {
     /// The seeding formula, without the step that `seeded` discards.
@@ -113,15 +113,31 @@ impl Random {
         if f32::from_bits(d) < f32::from_bits(MIN_REAL_RANGE) {
             return lo;
         }
+        add(mul(self.fraction(), d), lo)
+    }
+
+    /// A real in `0..1` from the low 23 bits of one output, as
+    /// `GetRandomReal` takes it.
+    pub fn fraction(&mut self) -> u32 {
         let r = self.step();
-        let x = add((r & 0x007F_FFFF) | ONE, MINUS_ONE);
-        add(mul(x, d), lo)
+        add((r & 0x007F_FFFF) | ONE, MINUS_ONE)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SPEC-0019: with seed 7 the reaction delay of the first attack order
+    /// is 0.0015 s.
+    #[test]
+    fn reaction_delay() {
+        let delay = |seed| {
+            let (_, mut game) = Random::reseed(seed);
+            f32::from_bits(mul(game[REACTION].fraction(), 0.25f32.to_bits()))
+        };
+        assert!((delay(7) - 0.0015).abs() < 0.00005, "{}", delay(7));
+    }
 
     /// Every line of `SPEC-0007-vectors.tsv`: the outputs that follow
     /// `SetRandomSeed(seed)`.

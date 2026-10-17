@@ -1,17 +1,18 @@
 //! Player slots, start locations, alliances and the map's names: what the
-//! lobby and the map's `config` function set up.
+//! lobby and the map's `config` function set up (SPEC-0008).
 //!
-//! The neutral slots 12..15 are always playing (SPEC-0006).
+//! Before `config` every slot has the game's defaults; `config` changes
+//! them with its `SetPlayer...` calls; then the game fills the slots
+//! ([`Setup::fill`]) and `main` runs. The neutral slots 12..15 always
+//! play (SPEC-0006). `IsPlayerAlly(a, b)` is exactly the passive alliance
+//! flag from `a` to `b`.
 //!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: without a lobby, the game is
-//! single player. The local player is the first user slot of
-//! `war3map.w3i` (player 0 without a map); the other slots playing are
-//! the computer slots, of the map or set by `config`. Slots start from
-//! `war3map.w3i`: controller from the slot type, race (human for a
-//! selectable race), name with trigger strings resolved, start location by
-//! player number, team by force. Slots the map does not list are users for
-//! 0..11 and neutral for 12..15, named "Player <n>". A player is an ally of
-//! itself and of the players it gives `ALLIANCE_PASSIVE`.
+//! PROVISIONAL, listed in specs/QUESTIONS.md: the local player's name is
+//! "Player"; a race preference other than one of the four races (random,
+//! for example) gives human; in a map without fixed player settings the
+//! computer in slot 1 keeps the start location and race preference from
+//! `config` and is human, and plays only when the map has two or more
+//! players.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,27 +28,43 @@ use crate::map::Map;
 pub const SLOTS: i32 = 16;
 /// Players 0..11; 12..15 are the neutral players.
 pub const PLAYABLE: i32 = 12;
+/// Player 15, `PLAYER_NEUTRAL_PASSIVE`.
+const NEUTRAL_PASSIVE: i32 = 15;
 
 const CONTROL_USER: i32 = 0;
 const CONTROL_COMPUTER: i32 = 1;
-const CONTROL_RESCUABLE: i32 = 2;
-const CONTROL_NEUTRAL: i32 = 3;
+const CONTROL_CREEP: i32 = 4;
+const CONTROL_NONE: i32 = 5;
 const RACE_HUMAN: i32 = 1;
+const RACE_PREF_RANDOM: i32 = 32;
 const SLOT_EMPTY: i32 = 0;
 const SLOT_PLAYING: i32 = 1;
 const ALLIANCE_PASSIVE: i32 = 0;
+const ALLIANCE_HELP_REQUEST: i32 = 1;
+const ALLIANCE_SHARED_VISION: i32 = 5;
+const PLAYER_STATE_GIVES_BOUNTY: i32 = 7;
+const MAP_LOCK_ALLIANCE_CHANGES: i32 = 1024;
+const MAP_LOCK_RANDOM_SEED: i32 = 32768;
+/// `war3map.w3i` flag: fixed player settings.
+const FIXED_PLAYER_SETTINGS: u32 = 0x20;
+/// The name of the local player's profile.
+const PROFILE_NAME: &str = "Player";
+const COMPUTER_NAME: &str = "Computer (Normal)";
 
 #[derive(Clone, Debug)]
 pub struct Slot {
     /// In the game: `PLAYER_SLOT_STATE_PLAYING`, otherwise empty.
     pub present: bool,
     pub controller: i32,
+    /// The race played, 0 before the slots are filled.
     pub race: i32,
     pub race_preference: i32,
     pub selectable: bool,
     pub team: i32,
     pub start_location: i32,
     pub color: i32,
+    /// Bit pattern of a real.
+    pub handicap: u32,
     pub name: String,
 }
 
@@ -64,6 +81,12 @@ pub struct Setup {
     pub map_name: String,
     pub map_description: String,
     pub strings: TriggerStrings,
+    /// Map flags that are set, as the bit masks of `ConvertMapFlag`.
+    pub map_flags: i32,
+    /// The map has fixed player settings (`war3map.w3i` flag 0x20).
+    pub fixed_players: bool,
+    /// Slot names of `war3map.w3i` with trigger strings resolved.
+    map_names: BTreeMap<i32, String>,
     /// `(player, tech)`: the most a player may have, and the level
     /// researched.
     pub tech_max: BTreeMap<(i32, i32), i32>,
@@ -76,93 +99,162 @@ pub struct Setup {
     pub integer_game_states: BTreeMap<i32, i32>,
 }
 
+fn default_name(id: i32) -> String {
+    format!("Player {}", id + 1)
+}
+
+/// The race a preference gives: one of the four races, or human.
+fn race_of(preference: i32) -> i32 {
+    match preference {
+        1 => 1,
+        2 => 2,
+        8 => 3,
+        4 => 4,
+        _ => RACE_HUMAN,
+    }
+}
+
 impl Setup {
-    /// Single player without a map: player 0 is the only player.
-    pub fn single_player() -> Setup {
+    /// The slots before `config` runs (SPEC-0008).
+    pub fn before_config() -> Setup {
         let slots = (0..SLOTS)
-            .map(|id| Slot {
-                present: id == 0 || id >= PLAYABLE,
-                controller: if id < 12 {
-                    CONTROL_USER
-                } else {
-                    CONTROL_NEUTRAL
-                },
-                race: RACE_HUMAN,
-                race_preference: 0,
-                selectable: false,
-                team: id,
-                start_location: id,
-                color: id,
-                name: format!("Player {}", id + 1),
+            .map(|id| {
+                let neutral = id >= PLAYABLE;
+                Slot {
+                    present: neutral,
+                    controller: if neutral { CONTROL_CREEP } else { CONTROL_NONE },
+                    race: 0,
+                    race_preference: RACE_PREF_RANDOM,
+                    selectable: true,
+                    team: if neutral { -1 } else { 0 },
+                    start_location: -1,
+                    color: id,
+                    handicap: 1.0f32.to_bits(),
+                    name: default_name(id),
+                }
             })
+            .collect();
+        let mut alliances = BTreeSet::new();
+        for p in 0..SLOTS {
+            for kind in [
+                ALLIANCE_PASSIVE,
+                ALLIANCE_HELP_REQUEST,
+                ALLIANCE_SHARED_VISION,
+            ] {
+                alliances.insert((p, p, kind));
+            }
+            alliances.insert((p, NEUTRAL_PASSIVE, ALLIANCE_PASSIVE));
+            alliances.insert((NEUTRAL_PASSIVE, p, ALLIANCE_PASSIVE));
+        }
+        let player_states = (PLAYABLE..SLOTS)
+            .map(|p| ((p, PLAYER_STATE_GIVES_BOUNTY), 1))
             .collect();
         Setup {
             local_player: 0,
             slots,
             start_locations: BTreeMap::new(),
-            alliances: BTreeSet::new(),
+            alliances,
             player_count: 0,
             team_count: 0,
             map_name: String::new(),
             map_description: String::new(),
             strings: TriggerStrings::default(),
+            map_flags: 0,
+            fixed_players: false,
+            map_names: BTreeMap::new(),
             tech_max: BTreeMap::new(),
             tech_levels: BTreeMap::new(),
-            player_states: BTreeMap::new(),
+            player_states,
             float_game_states: BTreeMap::new(),
             integer_game_states: BTreeMap::new(),
         }
     }
 
-    /// Single player on `map`, before its `config` runs.
+    /// Single player without a map, with the slots filled: player 0 plays
+    /// as a user, for scripts tested without a map.
+    pub fn single_player() -> Setup {
+        let mut setup = Setup::before_config();
+        setup.slots[0].controller = CONTROL_USER;
+        setup.player_count = 1;
+        setup.fixed_players = true;
+        setup.fill();
+        setup
+    }
+
+    /// `map` before its `config` runs.
     pub fn from_map(map: &Map) -> Setup {
-        let mut setup = Setup::single_player();
+        let mut setup = Setup::before_config();
         setup.strings = map.strings.clone();
-        setup.slots[0].present = false;
-        let info = &map.info;
-        setup.local_player = info
+        setup.fixed_players = map.info.flags & FIXED_PLAYER_SETTINGS != 0;
+        setup.map_names = map
+            .info
             .players
             .iter()
-            .find(|p| p.kind == 1)
-            .map_or(0, |p| p.number);
-        for player in &info.players {
-            let Some(slot) = usize::try_from(player.number)
-                .ok()
-                .and_then(|n| setup.slots.get_mut(n))
-            else {
-                continue;
-            };
-            slot.controller = match player.kind {
-                2 => CONTROL_COMPUTER,
-                3 => CONTROL_NEUTRAL,
-                4 => CONTROL_RESCUABLE,
-                _ => CONTROL_USER,
-            };
-            slot.race = if (1..=4).contains(&player.race) {
-                player.race
-            } else {
-                RACE_HUMAN
-            };
-            slot.present = player.number == setup.local_player || player.kind == 2;
-            slot.name = map.strings.display(&player.name).to_owned();
-            setup.start_locations.insert(
-                player.number,
-                (player.start_x.to_bits(), player.start_y.to_bits()),
-            );
-        }
-        for (team, force) in info.forces.iter().enumerate() {
-            for slot in 0..SLOTS {
-                if force.players & (1 << slot) != 0 {
-                    setup.slots[slot as usize].team = team as i32;
+            .map(|p| (p.number, map.strings.display(&p.name).to_owned()))
+            .collect();
+        setup
+    }
+
+    /// The game fills the slots after `config` and before `main`, as
+    /// single player (SPEC-0008).
+    pub fn fill(&mut self) {
+        if self.fixed_players {
+            // The first user slot is the local player; computer slots
+            // play; other user slots stay empty.
+            self.local_player = (0..PLAYABLE)
+                .find(|&id| self.slots[id as usize].controller == CONTROL_USER)
+                .unwrap_or(0);
+            for id in 0..PLAYABLE {
+                let local = id == self.local_player;
+                let slot = &mut self.slots[id as usize];
+                slot.present = local || slot.controller == CONTROL_COMPUTER;
+                slot.race = race_of(slot.race_preference);
+                slot.name = if local {
+                    PROFILE_NAME.to_owned()
+                } else if slot.present {
+                    self.map_names
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| default_name(id))
+                } else {
+                    default_name(id)
+                };
+            }
+        } else {
+            // Melee: the local player in slot 0 and one computer in slot 1,
+            // both with a random race.
+            self.local_player = 0;
+            let computer = self.player_count >= 2;
+            for id in 0..PLAYABLE {
+                let slot = &mut self.slots[id as usize];
+                slot.present = id == 0 || (id == 1 && computer);
+                slot.race_preference = RACE_PREF_RANDOM;
+                slot.race = race_of(RACE_PREF_RANDOM);
+                slot.name = default_name(id);
+                if slot.present {
+                    slot.controller = if id == 0 {
+                        CONTROL_USER
+                    } else {
+                        CONTROL_COMPUTER
+                    };
+                    slot.team = id;
                 }
             }
+            self.slots[0].name = PROFILE_NAME.to_owned();
+            if computer {
+                self.slots[1].name = COMPUTER_NAME.to_owned();
+            }
         }
-        setup.player_count = info.players.len() as i32;
-        setup.team_count = info.forces.len() as i32;
-        if let Some(slot) = setup.slots.get_mut(setup.local_player as usize) {
-            slot.present = true;
+        for id in 0..PLAYABLE {
+            let slot = &mut self.slots[id as usize];
+            if !slot.present {
+                slot.team = -1;
+            }
         }
-        setup
+        self.map_flags |= MAP_LOCK_RANDOM_SEED;
+        if self.fixed_players {
+            self.map_flags |= MAP_LOCK_ALLIANCE_CHANGES;
+        }
     }
 
     /// Players whose slot is playing.
@@ -185,8 +277,9 @@ impl Setup {
         self.slots.get_mut(usize::try_from(id?).ok()?)
     }
 
+    /// `IsPlayerAlly(a, b)`: the passive alliance flag from `a` to `b`.
     pub fn is_ally(&self, a: i32, b: i32) -> bool {
-        a == b || self.alliances.contains(&(a, b, ALLIANCE_PASSIVE))
+        self.alliances.contains(&(a, b, ALLIANCE_PASSIVE))
     }
 }
 
@@ -381,14 +474,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let mut state = state.borrow_mut();
             let id = player(&state, &args[0]);
-            let local = state.setup.local_player;
             if let (Some(slot), Some(value)) = (state.setup.slot(id), value) {
                 *field(slot) = value;
-                // PROVISIONAL: in single player a slot that `config` gives
-                // to a computer plays, and another user slot stays empty.
-                if setter.contains("SetPlayerController") && id < Some(PLAYABLE) {
-                    slot.present = id == Some(local) || value == CONTROL_COMPUTER;
-                }
             }
             Ok(None)
         });
@@ -667,6 +754,57 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| { Ok(Some(converted(1))) }
     );
 
+    // Map flags (bit masks) and handicaps.
+    native!(
+        add,
+        state,
+        "native SetMapFlag takes mapflag whichMapFlag, boolean value returns nothing",
+        |vm, state, args| {
+            let flag = handle(&args[0]).map_or(0, |h| h as i32);
+            let mut state = state.borrow_mut();
+            if args[1] == Value::Boolean(true) {
+                state.setup.map_flags |= flag;
+            } else {
+                state.setup.map_flags &= !flag;
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IsMapFlagSet takes mapflag whichMapFlag returns boolean",
+        |vm, state, args| {
+            let flag = handle(&args[0]).map_or(0, |h| h as i32);
+            let set = flag != 0 && state.borrow().setup.map_flags & flag == flag;
+            Ok(Some(Value::Boolean(set)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native SetPlayerHandicap takes player whichPlayer, real handicap returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let id = player(&state, &args[0]);
+            if let Some(slot) = state.setup.slot(id) {
+                slot.handicap = real(&args[1]);
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetPlayerHandicap takes player whichPlayer returns real",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let id = player(&state, &args[0]);
+            let handicap = state.setup.slot(id).map_or(0, |s| s.handicap);
+            Ok(Some(Value::Real(handicap)))
+        }
+    );
+
     // Alliances.
     native!(
         add,
@@ -728,4 +866,18 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Boolean(result)))
         });
     }
+}
+
+/// Wraps a native that returns a string so that calling it in `config`
+/// is noted (SPEC-0008).
+pub(super) fn noting_config(f: NativeFn, state: Rc<RefCell<State>>) -> NativeFn {
+    Rc::new(move |vm: &mut Vm, args: &[Value]| {
+        {
+            let mut state = state.borrow_mut();
+            if state.in_config {
+                state.config_called_string_native = true;
+            }
+        }
+        f(vm, args)
+    })
 }

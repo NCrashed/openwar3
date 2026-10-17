@@ -1,15 +1,11 @@
 //! Loading a map: its scripts and the map files the game is set up from.
 //!
 //! Files are looked up in the map archive first, then in the game archives
-//! from the newest to the oldest: `War3Patch.mpq`, `War3xlocal.mpq`,
-//! `War3x.mpq`, `War3local.mpq`, `War3.mpq`. Archives that are missing are
-//! skipped.
-//!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: a map may replace
-//! `Scripts\common.j` and `Scripts\Blizzard.j` by its own copies; the world
-//! bounds span the whole terrain grid; destructables are the placed
-//! doodads whose type is in `Units\DestructableData.slk` or is a custom
-//! destructable of the map.
+//! by priority (SPEC-0008): `War3Patch.mpq`, `War3xLocal.mpq`, `War3x.mpq`,
+//! `War3.mpq`. Archives that are missing are skipped. A map may replace
+//! `Scripts\common.j` and `Scripts\Blizzard.j`. The world bounds span the
+//! whole terrain grid (SPEC-0008), and destructables are the placed
+//! doodads whose type is a destructable type (SPEC-0006).
 
 use std::fmt;
 use std::fs::File;
@@ -28,13 +24,7 @@ use ow3_jass::check::Program;
 use crate::data::ObjectData;
 
 /// Game archives by priority, highest first.
-pub const GAME_ARCHIVES: [&str; 5] = [
-    "War3Patch.mpq",
-    "War3xlocal.mpq",
-    "War3x.mpq",
-    "War3local.mpq",
-    "War3.mpq",
-];
+pub const GAME_ARCHIVES: [&str; 4] = ["War3Patch.mpq", "War3xlocal.mpq", "War3x.mpq", "War3.mpq"];
 
 /// Size of a terrain cell in world units.
 const CELL: f32 = 128.0;

@@ -117,14 +117,16 @@ fn death_events_and_items() {
     assert_eq!(
         game.output(),
         [
-            // Unit a: its unit event; the player event filter wants type 2;
-            // the death event's trigger is disabled.
+            // Unit a (SPEC-0009): KillUnit has no killer, so the player
+            // event's filter is not called and the trigger fires; then the
+            // unit event. The death event's trigger is disabled.
+            "player event 20 player 1 type 1",
             "unit event 53 type 1",
             "-",
-            // Unit b: player event, then death event, in the order they
-            // were registered; a second KillUnit does nothing.
-            "player event 20 player 1 type 2",
+            // Unit b: widget death first, then the player event; a second
+            // KillUnit does nothing.
             "widget event 89 life 0.000",
+            "player event 20 player 1 type 2",
             "-",
             // Items in the rect that pass the filter, in creation order.
             "item 5",

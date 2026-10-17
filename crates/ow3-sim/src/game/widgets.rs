@@ -1,17 +1,16 @@
 //! Units, destructables and items as placeholders until they are
-//! specified, and their death events.
+//! specified, and their death events (SPEC-0009).
 //!
 //! A death runs the triggers registered for it as an event: each enabled
 //! trigger whose conditions hold runs its actions, and an action that
-//! sleeps lets the code that caused the death go on (SPEC-0005).
+//! sleeps lets the code that caused the death go on (SPEC-0005). A unit
+//! starts with the hit points of its type, and a type the game data does
+//! not know gives `null` (without game data every type is accepted, with 1
+//! hit point). `SetDestructableLife(d, 0)` kills.
 //!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: registrations fire in the
-//! order they were made, whatever their kind; the filter of a player unit
-//! event sees the dying unit as `GetFilterUnit`; `KillUnit` has no killing
-//! unit; a unit starts with the hit points of its type (`UnitBalance.slk`
-//! `HP`) and `CreateUnit` with a type the game data does not know gives
-//! `null` (without game data every type is accepted, with 1 hit point);
-//! `UnitId` ignores ASCII case. Changing hit points never kills.
+//! PROVISIONAL, listed in specs/QUESTIONS.md: `KillUnit` has no killing
+//! unit; changing the hit points of a unit never kills it, and setting
+//! those of a destructable to less than 0 kills like 0.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -98,66 +97,114 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
     Some(h)
 }
 
-/// Runs the triggers registered for the death of `widget`.
-fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32) {
-    let (registrations, owner) = {
+/// Runs the triggers registered for the death of `widget` (SPEC-0009):
+/// first the widget death registrations, then the player unit events of
+/// its owner, then its unit events, each kind in the order registered.
+///
+/// The filter of a player unit event sees the killing unit as
+/// `GetFilterUnit`, the owner as `GetTriggerPlayer` and the event and
+/// trigger of the thread in which the unit died; without a killing unit
+/// the filter is not called and the trigger fires.
+fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32>) {
+    let (registrations, owner, dying_thread) = {
         let mut state = state.borrow_mut();
         let owner = state.unit(Some(widget)).map(|u| u.owner);
         let owner_handle = owner.map(|id| state.player_handle(id));
-        (state.events.clone(), owner.zip(owner_handle))
+        let dying_thread = state.context;
+        (state.events.clone(), owner.zip(owner_handle), dying_thread)
     };
+    let unit = owner.is_some().then_some(widget);
     let base = Context {
         triggering_widget: Some(widget),
+        triggering_unit: unit,
+        killing_unit: killer,
         ..Context::default()
     };
-    for registration in registrations {
-        match registration {
-            Registration::Unit {
-                trigger,
-                unit,
-                event: EVENT_UNIT_DEATH,
-            } if unit == widget => {
-                let context = Context {
-                    event_id: Some(EVENT_UNIT_DEATH),
-                    triggering_unit: Some(widget),
-                    ..base
-                };
-                fire_trigger(vm, state, trigger, context);
-            }
-            Registration::PlayerUnit {
-                trigger,
-                player,
-                event: EVENT_PLAYER_UNIT_DEATH,
-                filter,
-            } if owner.is_some_and(|(id, _)| id == player) => {
-                let filter_context = Context {
-                    filter_unit: Some(widget),
-                    ..Context::default()
-                };
-                if test_boolexpr(vm, state, filter, filter_context) {
-                    let context = Context {
-                        event_id: Some(EVENT_PLAYER_UNIT_DEATH),
-                        triggering_unit: Some(widget),
-                        triggering_player: owner.map(|(_, h)| h),
-                        ..base
+    for registration in &registrations {
+        if let Registration::Death { trigger, widget: w } = *registration
+            && w == widget
+        {
+            let context = Context {
+                event_id: Some(EVENT_WIDGET_DEATH),
+                ..base
+            };
+            fire_trigger(vm, state, trigger, context);
+        }
+    }
+    for registration in &registrations {
+        if let Registration::PlayerUnit {
+            trigger,
+            player,
+            event: EVENT_PLAYER_UNIT_DEATH,
+            filter,
+        } = *registration
+            && let Some((id, player_handle)) = owner
+            && id == player
+        {
+            let passes = match killer {
+                None => true,
+                Some(killer) => {
+                    let filter_context = Context {
+                        filter_unit: Some(killer),
+                        triggering_player: Some(player_handle),
+                        event_id: dying_thread.event_id,
+                        triggering_trigger: dying_thread.triggering_trigger,
+                        ..Context::default()
                     };
-                    fire_trigger(vm, state, trigger, context);
+                    test_boolexpr(vm, state, filter, filter_context)
                 }
-            }
-            Registration::Death { trigger, widget: w } if w == widget => {
-                let unit = owner.is_some().then_some(widget);
+            };
+            if passes {
                 let context = Context {
-                    event_id: Some(EVENT_WIDGET_DEATH),
-                    triggering_unit: unit,
+                    event_id: Some(EVENT_PLAYER_UNIT_DEATH),
+                    triggering_player: Some(player_handle),
                     ..base
                 };
                 fire_trigger(vm, state, trigger, context);
             }
-            _ => {}
+        }
+    }
+    for registration in &registrations {
+        if let Registration::Unit {
+            trigger,
+            unit: u,
+            event: EVENT_UNIT_DEATH,
+        } = *registration
+            && u == widget
+        {
+            let context = Context {
+                event_id: Some(EVENT_UNIT_DEATH),
+                ..base
+            };
+            fire_trigger(vm, state, trigger, context);
         }
     }
 }
 
+/// Sets the hit points of a living destructable; 0 or less kills it and
+/// runs its death events (SPEC-0009). PROVISIONAL: also for values below 0
+/// and for `SetWidgetLife`.
+fn set_destructable_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
+    let killed = {
+        let mut state = state.borrow_mut();
+        match destructable_mut(&mut state, h) {
+            Some(d) if d.alive => {
+                if f32::from_bits(life) <= 0.0 {
+                    d.alive = false;
+                    d.life = 0;
+                    true
+                } else {
+                    d.life = life;
+                    false
+                }
+            }
+            _ => false,
+        }
+    };
+    if let (true, Some(h)) = (killed, h) {
+        died(vm, state, h, None);
+    }
+}
 fn register_event(state: &Rc<RefCell<State>>, registration: Registration) -> Value {
     let mut state = state.borrow_mut();
     state.events.push(registration);
@@ -213,10 +260,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "constant native UnitId2String takes integer unitId returns string",
         |vm, state, args| {
             let state = state.borrow();
-            Ok(Some(match state.data.unit_name(integer(&args[0])) {
-                Some(name) => Value::string(name),
-                None => Value::String(None),
-            }))
+            // SPEC-0009: "" for an unknown type and for a custom hero.
+            let name = state.data.unit_name(integer(&args[0])).unwrap_or("");
+            Ok(Some(Value::string(name)))
         }
     );
     native!(
@@ -237,7 +283,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 }
             };
             if let (true, Some(h)) = (killed, h) {
-                died(vm, state, h);
+                died(vm, state, h, None);
             }
             Ok(None)
         }
@@ -376,12 +422,21 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native SetWidgetLife takes widget whichWidget, real newLife returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
+            let h = handle(&args[0]);
             let life = real(&args[1]);
-            match handle(&args[0]).and_then(|h| state.objects.get_mut(&h)) {
-                Some(Object::Unit(u)) if u.alive => u.life = life,
-                Some(Object::Destructable(d)) if d.alive => d.life = life,
-                _ => {}
+            let is_unit = {
+                let mut state = state.borrow_mut();
+                match unit_mut(&mut state, h) {
+                    Some(u) if u.alive => {
+                        u.life = life;
+                        true
+                    }
+                    Some(_) => true,
+                    None => false,
+                }
+            };
+            if !is_unit {
+                set_destructable_life(vm, state, h, life);
             }
             Ok(None)
         }
@@ -411,12 +466,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native SetDestructableLife takes destructable d, real life returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            if let Some(d) = destructable_mut(&mut state, handle(&args[0]))
-                && d.alive
-            {
-                d.life = real(&args[1]);
-            }
+            set_destructable_life(vm, state, handle(&args[0]), real(&args[1]));
             Ok(None)
         }
     );
@@ -438,7 +488,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 }
             };
             if let (true, Some(h)) = (killed, h) {
-                died(vm, state, h);
+                died(vm, state, h, None);
             }
             Ok(None)
         }
@@ -839,7 +889,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         add,
         state,
         "constant native GetKillingUnit takes nothing returns unit",
-        |vm, state, args| { Ok(Some(Value::Handle(None))) }
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.killing_unit))) }
     );
     native!(
         add,

@@ -28,7 +28,7 @@ fn run(name: &str, seconds: f64) -> Option<Vec<String>> {
     let map = load(name)?;
     let program = map.check().unwrap();
     let mut game = Game::load_map(&program, &map).unwrap();
-    game.start();
+    game.start().unwrap();
     game.advance_seconds(seconds);
     let output = game.output();
     for line in &output {
@@ -368,7 +368,10 @@ fn survey() {
                 continue;
             }
         };
-        game.start();
+        if let Err(e) = game.start() {
+            println!("== {name}: does not start ({e})");
+            continue;
+        }
         game.advance_seconds(25.0);
         println!("== {name}");
         for line in game.output().iter().take(60) {

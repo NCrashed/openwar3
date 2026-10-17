@@ -8,5 +8,6 @@ pub mod clock;
 pub mod data;
 pub mod game;
 pub mod map;
+pub mod random;
 pub mod sleep;
 pub mod timers;

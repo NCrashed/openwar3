@@ -67,7 +67,10 @@ fn every_map_loads_and_runs() {
             }
         };
         let mut game = Game::load_map(&program, &map).unwrap();
-        game.start();
+        if let Err(e) = game.start() {
+            failures.push(format!("{name}: {e}"));
+            continue;
+        }
         game.advance_seconds(30.0);
         for (native, calls) in game.vm.stub_calls() {
             let entry = stubs.entry(native.to_owned()).or_insert((0, 0));
@@ -98,9 +101,9 @@ fn every_map_loads_and_runs() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// A two-player melee map: the local player is the first user slot, the
-/// other user slot stays empty, `config` defines the start locations, and
-/// the trees are destructables.
+/// A two-player melee map (SPEC-0008): the local player in slot 0 and a
+/// computer in slot 1 play, the other slots are empty with team -1,
+/// `config` defines the start locations, and the trees are destructables.
 #[test]
 fn melee_map_setup() {
     let path = game_data().join("Maps/(2)BootyBay.w3m");
@@ -112,19 +115,23 @@ fn melee_map_setup() {
     assert!(map.destructables.len() > 100, "{}", map.destructables.len());
     let program = map.check().unwrap();
     let mut game = Game::load_map(&program, &map).unwrap();
-    game.start();
+    game.start().unwrap();
     let state = game.state.borrow();
     let setup = &state.setup;
     assert_eq!(setup.local_player, 0);
-    assert_eq!(setup.present(), [0, 12, 13, 14, 15]);
-    assert_eq!(setup.enumerable(), [0]);
+    assert_eq!(setup.present(), [0, 1, 12, 13, 14, 15]);
+    assert_eq!(setup.enumerable(), [0, 1]);
+    assert_eq!(setup.slots[1].name, "Computer (Normal)");
+    assert_eq!(setup.slots[2].team, -1);
+    assert_eq!(setup.map_flags & 32768, 32768);
     assert_eq!(setup.player_count, 2);
     for player in &map.info.players {
+        // `config` passes them as literals (SPEC-0005), exact here.
         let (x, y) = setup.start_locations[&player.number];
-        // `config` passes them as literals, which read like `S2R` and can
-        // land a unit in the last place away: "1792.0" gives 1792.0001.
-        assert!((f32::from_bits(x) - player.start_x).abs() <= 1e-3);
-        assert!((f32::from_bits(y) - player.start_y).abs() <= 1e-3);
+        assert_eq!(
+            (f32::from_bits(x), f32::from_bits(y)),
+            (player.start_x, player.start_y)
+        );
     }
     assert!(state.errors.is_empty(), "{:?}", state.errors);
 }
@@ -143,6 +150,12 @@ fn object_data() {
     assert_eq!(data.unit_id("Footman"), Some(hfoo));
     assert_eq!(data.unit_name(hfoo), Some("footman"));
     assert_eq!(f32::from_bits(data.units[&hfoo].hp), 420.0);
+    // Heroes start with realHP (SPEC-0009).
+    let hp = |code: &[u8; 4]| f32::from_bits(data.units[&i32::from_be_bytes(*code)].hp);
+    assert_eq!(hp(b"Hpal"), 650.0);
+    assert_eq!(hp(b"Ucrl"), 675.0);
+    assert_eq!(data.unit_id("FOOTMAN"), Some(hfoo));
+    assert_eq!(data.unit_name(i32::from_be_bytes(*b"zzzz")), None);
     assert!(data.units.len() > 500, "{}", data.units.len());
     assert!(
         data.destructables

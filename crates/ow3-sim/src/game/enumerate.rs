@@ -5,12 +5,16 @@
 //! own. A callback that sleeps ends at the sleep and the enumeration goes on
 //! with the next element; a filter that sleeps counts as false (SPEC-0005).
 //!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: each callback and filter gets
-//! its own operation budget; forces enumerate players by increasing id and
-//! groups in the order units were added; `GroupEnum*` and
-//! `ForceEnumPlayers*` clear the group or force first; the enumerations
-//! include dead units; a unit is in range when the squared distance is at
-//! most the squared radius, and in a rect when it lies within its bounds.
+//! Each callback and filter has its own operation budget, forces go by
+//! increasing player number, `GroupEnum*` and `ForceEnumPlayers*` clear the
+//! group or force first, a unit is in range by the distance of its centre,
+//! and `EnumDestructablesInRect` runs the action right after its filter
+//! (SPEC-0006).
+//!
+//! PROVISIONAL, listed in specs/QUESTIONS.md: groups go in the order units
+//! were added; the enumerations include dead units; the range test uses
+//! the squared distance in engine arithmetic, and a rect contains what lies
+//! within its bounds.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -68,6 +72,27 @@ fn select(
         }
     }
     chosen
+}
+
+/// For each candidate in turn: the filter, then, if it passed, the action
+/// (SPEC-0006 for destructables).
+fn filter_then_act(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    candidates: Vec<u32>,
+    filter: Option<u32>,
+    action: Option<usize>,
+    filtering: impl Fn(Context, u32) -> Context,
+    acting: impl Fn(Context, u32) -> Context,
+) {
+    let context = state.borrow().context;
+    for candidate in candidates {
+        if test_boolexpr(vm, state, filter, filtering(context, candidate))
+            && let Some(action) = action
+        {
+            run_new_thread(vm, state, action, acting(context, candidate), false);
+        }
+    }
 }
 
 /// `GroupEnum*`: clears the group, then adds the units that `include`
@@ -614,16 +639,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     })
                     .collect()
             };
-            let chosen = select(vm, state, candidates, handle(&args[1]), None, |c, d| {
-                Context {
+            // SPEC-0006: the action runs right after its filter passed.
+            filter_then_act(
+                vm,
+                state,
+                candidates,
+                handle(&args[1]),
+                code(&args[2]),
+                |c, d| Context {
                     filter_destructable: Some(d),
                     ..c
-                }
-            });
-            for_each(vm, state, chosen, code(&args[2]), |c, d| Context {
-                enum_destructable: Some(d),
-                ..c
-            });
+                },
+                |c, d| Context {
+                    enum_destructable: Some(d),
+                    ..c
+                },
+            );
             Ok(None)
         }
     );
@@ -698,16 +729,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     })
                     .collect()
             };
-            let chosen = select(vm, state, candidates, handle(&args[1]), None, |c, i| {
-                Context {
+            // PROVISIONAL: as for destructables.
+            filter_then_act(
+                vm,
+                state,
+                candidates,
+                handle(&args[1]),
+                code(&args[2]),
+                |c, i| Context {
                     filter_item: Some(i),
                     ..c
-                }
-            });
-            for_each(vm, state, chosen, code(&args[2]), |c, i| Context {
-                enum_item: Some(i),
-                ..c
-            });
+                },
+                |c, i| Context {
+                    enum_item: Some(i),
+                    ..c
+                },
+            );
             Ok(None)
         }
     );

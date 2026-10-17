@@ -49,7 +49,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    game.start();
+    if let Err(e) = game.start() {
+        eprintln!("{e}");
+        return ExitCode::FAILURE;
+    }
     game.advance_seconds(seconds);
     for line in game.output() {
         println!("{line}");

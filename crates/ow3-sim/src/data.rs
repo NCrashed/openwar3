@@ -1,15 +1,17 @@
 //! Object types the simulation needs from the game data: units,
-//! destructables and items, with the map's custom types.
+//! destructables and items, with the map's custom types (SPEC-0009).
 //!
 //! Standard types come from `Units\unitUI.slk` (the unit's string id such
-//! as `footman`, column `name`), `Units\UnitBalance.slk` (`HP`),
-//! `Units\DestructableData.slk` (`HP`) and `Units\ItemData.slk` (`HP`).
-//! A custom type of the map (`war3map.w3u`, `w3b`, `w3t`) copies its base
-//! type and takes the hit points it sets (`uhpm`, `bhps`, `ihtp`).
+//! as `footman`, column `name`), `Units\UnitBalance.slk` (`HP`, or
+//! `realHP` for heroes), `Units\DestructableData.slk` (`HP`) and
+//! `Units\ItemData.slk` (`HP`). A custom type of the map (`war3map.w3u`,
+//! `w3b`, `w3t`) copies its base type and takes the hit points it sets
+//! (`uhpm`, `bhps`, `ihtp`); a custom unit has the string id
+//! `custom_<raw code>`, a custom hero none.
 //!
-//! PROVISIONAL, listed in specs/QUESTIONS.md: a custom unit keeps the
-//! string id of its base type, and when several types share a string id,
-//! the lowest raw code is the one `UnitId` finds.
+//! PROVISIONAL, listed in specs/QUESTIONS.md: a type is a hero when its
+//! raw code starts with an upper-case letter; when several types share a
+//! string id, the lowest raw code is the one `UnitId` finds.
 
 use std::collections::BTreeMap;
 
@@ -129,15 +131,21 @@ impl ObjectData {
                 },
             );
         }
+        // Heroes start with `realHP` (`HP` plus the hit points of their
+        // strength), other units with `HP` (SPEC-0009). The `HP` column of
+        // every type is kept for custom heroes.
+        let mut hp_column = BTreeMap::new();
         for (id, values) in rows(
             archives,
             "Units\\UnitBalance.slk",
             "unitBalanceID",
-            &["HP", "isbldg"],
+            &["HP", "realHP", "isbldg"],
         )? {
+            hp_column.insert(id, real(values[0].as_ref()));
             if let Some(unit) = data.units.get_mut(&id) {
-                unit.hp = real(values[0].as_ref());
-                unit.building = values[1].as_deref() == Some("1");
+                let column = if is_hero(id) { 1 } else { 0 };
+                unit.hp = real(values[column].as_ref());
+                unit.building = values[2].as_deref() == Some("1");
             }
         }
         for (id, values) in rows(
@@ -151,13 +159,25 @@ impl ObjectData {
         for (id, values) in rows(archives, "Units\\ItemData.slk", "itemID", &["HP"])? {
             data.items.insert(id, real(values[0].as_ref()));
         }
+        // A custom unit has its own string id, "custom_" and its raw code,
+        // or none for a hero (SPEC-0009). PROVISIONAL: a custom hero with
+        // `uhpm` gets that value plus what strength adds to its base.
         for (id, base, hp) in custom(archives, ObjectKind::Units, b"uhpm")? {
             let mut unit = data.units.get(&base).cloned().unwrap_or(UnitType {
                 name: None,
                 hp: 0,
                 building: false,
             });
-            unit.hp = hp.unwrap_or(unit.hp);
+            unit.name = (!is_hero(id))
+                .then(|| format!("custom_{}", String::from_utf8_lossy(&id.to_be_bytes())));
+            if let Some(hp) = hp {
+                unit.hp = if is_hero(id) {
+                    let base_column = hp_column.get(&base).copied().unwrap_or(0);
+                    ow3_math::add(hp, ow3_math::sub(unit.hp, base_column))
+                } else {
+                    hp
+                };
+            }
             data.units.insert(id, unit);
         }
         for (id, base, hp) in custom(archives, ObjectKind::Destructibles, b"bhps")? {
@@ -170,14 +190,16 @@ impl ObjectData {
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {
-                data.unit_names.entry(name.clone()).or_insert(id);
+                data.unit_names
+                    .entry(name.to_ascii_lowercase())
+                    .or_insert(id);
             }
         }
         Ok(data)
     }
 
     /// The unit type with string id `name`, as `UnitId` finds it.
-    /// PROVISIONAL: the comparison ignores ASCII case.
+    /// The comparison ignores ASCII case (SPEC-0009).
     pub fn unit_id(&self, name: &str) -> Option<i32> {
         self.unit_names.get(&name.to_ascii_lowercase()).copied()
     }
@@ -186,4 +208,10 @@ impl ObjectData {
     pub fn unit_name(&self, id: i32) -> Option<&str> {
         self.units.get(&id)?.name.as_deref()
     }
+}
+
+/// PROVISIONAL: hero types have raw codes that start with an upper-case
+/// letter (`Hpal`, `H000`).
+pub fn is_hero(id: i32) -> bool {
+    id.to_be_bytes()[0].is_ascii_uppercase()
 }

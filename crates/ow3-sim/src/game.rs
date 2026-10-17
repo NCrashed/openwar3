@@ -22,6 +22,7 @@ use ow3_math::{add, div, i2r, mul, sub};
 use crate::clock::{CHUNK_MICROS, FrameClock, Speed, Step};
 use crate::data::ObjectData;
 use crate::map::Map;
+use crate::random::Random;
 use crate::sleep::SleepQueue;
 use crate::timers::{Fired, LONG_PART, TimerId, TimerQueue, raise_timeout, split_timeout};
 
@@ -195,6 +196,7 @@ struct Context {
     /// Responses of the event that started the thread.
     event_id: Option<i32>,
     triggering_unit: Option<u32>,
+    killing_unit: Option<u32>,
     triggering_player: Option<u32>,
     triggering_widget: Option<u32>,
     clicked_button: Option<u32>,
@@ -227,7 +229,8 @@ pub struct State {
     players: BTreeMap<i32, u32>,
     /// Player slots and the rest of the lobby and `config` setup.
     pub setup: players::Setup,
-    /// PROVISIONAL: random numbers, until the game's generator is specified.
+    /// Script random numbers (SPEC-0007). PROVISIONAL: the state at the
+    /// start is that of `SetRandomSeed(0)`.
     pub random: Random,
     /// The boolexpr made by `Condition` or `Filter` for each function: the
     /// same function gives the same handle (SPEC-0006).
@@ -259,6 +262,9 @@ pub struct State {
     pub errors: Vec<RuntimeError>,
     context: Context,
     sleep_time: u64,
+    /// `config` is running, and it called a native that returns a string.
+    in_config: bool,
+    config_called_string_native: bool,
     /// Tasks that went to sleep inside natives, with their durations.
     parked: Vec<(Task, u32)>,
 }
@@ -271,7 +277,7 @@ impl State {
             objects: HashMap::new(),
             players: BTreeMap::new(),
             setup: players::Setup::single_player(),
-            random: Random::new(0),
+            random: Random::seeded(0),
             units: Vec::new(),
             destructables: Vec::new(),
             items: Vec::new(),
@@ -288,6 +294,8 @@ impl State {
             errors: Vec::new(),
             context: Context::default(),
             sleep_time: 0,
+            in_config: false,
+            config_called_string_native: false,
             parked: Vec::new(),
         };
         for id in 0..players::SLOTS {
@@ -498,10 +506,25 @@ impl<'a> Game<'a> {
         Game::with_state(program, &map.script_refs(), state)
     }
 
-    /// Runs `config`, then `main`, as the game does when a map starts.
-    pub fn start(&mut self) {
+    /// Starts the map as the game does (SPEC-0008): `config`, then the
+    /// slots are filled, then `main`. A map whose `config` calls a native
+    /// that returns a string does not start.
+    pub fn start(&mut self) -> Result<(), StartError> {
+        self.state.borrow_mut().in_config = true;
         self.run("config");
+        let failed = {
+            let mut state = self.state.borrow_mut();
+            state.in_config = false;
+            state.config_called_string_native
+        };
+        if failed {
+            return Err(StartError(
+                "config called a native that returns a string".to_owned(),
+            ));
+        }
+        self.state.borrow_mut().setup.fill();
         self.run("main");
+        Ok(())
     }
 
     fn with_state(
@@ -910,6 +933,13 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     let mut add = |declaration: &str, f: NativeFn| {
         let f = if RESOLVING_NATIVES.contains(&players::native_name(declaration)) {
             players::resolving(f, shared.clone())
+        } else {
+            f
+        };
+        // SPEC-0008: a native returning a string, called in `config`, keeps
+        // the map from starting.
+        let f = if declaration.trim_end().ends_with("returns string") {
+            players::noting_config(f, shared.clone())
         } else {
             f
         };
@@ -1452,23 +1482,34 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             )))
         }
     );
-    // PROVISIONAL: byte positions, clamped to the string; an end before the
-    // start gives an empty string.
+    // SPEC-0005: byte positions; an end before the start or past the end
+    // reads to the end, and a start at or past the end gives "". A
+    // negative start reads memory before the string in the game; it is
+    // taken as 0. A cut inside a multi-byte character gives half of it in
+    // the game; here such bytes become U+FFFD, since strings are UTF-8.
     native!(
         add,
         state,
         "native SubString takes string source, integer start, integer end returns string",
         |vm, state, args| {
-            let Some(source) = string(&args[0]) else {
-                return Ok(Some(Value::String(None)));
+            let bytes = string(&args[0]).unwrap_or("").as_bytes();
+            let n = bytes.len();
+            let start = integer(&args[1]).max(0) as usize;
+            if start >= n {
+                return Ok(Some(Value::string("")));
+            }
+            let end = integer(&args[2]);
+            let end = if end < start as i32 {
+                n
+            } else {
+                (end as usize).min(n)
             };
-            let clamp = |i: i32| (i.max(0) as usize).min(source.len());
-            let (start, end) = (clamp(integer(&args[1])), clamp(integer(&args[2])));
-            let bytes = source.as_bytes().get(start..end.max(start)).unwrap_or(&[]);
-            Ok(Some(Value::string(&String::from_utf8_lossy(bytes))))
+            Ok(Some(Value::string(&String::from_utf8_lossy(
+                &bytes[start..end],
+            ))))
         }
     );
-    // PROVISIONAL: ASCII letters only.
+    // SPEC-0005: only ASCII letters change.
     native!(
         add,
         state,
@@ -1514,7 +1555,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         state,
         "native SetRandomSeed takes integer seed returns nothing",
         |vm, state, args| {
-            state.borrow_mut().random = Random::new(integer(&args[0]) as u32 as u64);
+            state.borrow_mut().random = Random::seeded(integer(&args[0]) as u32);
             Ok(None)
         }
     );
@@ -1587,42 +1628,6 @@ pub fn s2i(text: &str) -> i32 {
     value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
-/// PROVISIONAL: a deterministic stand-in for the game's random numbers
-/// (SplitMix64), so that scripts see varied values. The game's generator,
-/// its seeding and how bounds are handled are not specified yet.
-#[derive(Clone, Debug)]
-pub struct Random {
-    state: u64,
-}
-
-impl Random {
-    pub fn new(seed: u64) -> Random {
-        Random { state: seed }
-    }
-
-    fn next(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// An integer from `low` to `high`, both included, in either order.
-    pub fn integer(&mut self, low: i32, high: i32) -> i32 {
-        let (low, high) = (low.min(high), low.max(high));
-        let span = (i64::from(high) - i64::from(low) + 1) as u64;
-        (i64::from(low) + (self.next() % span) as i64) as i32
-    }
-
-    /// A real from `low` to `high` with engine arithmetic: `low` plus the
-    /// span times a multiple of 2^-24 below 1.
-    pub fn real(&mut self, low: u32, high: u32) -> u32 {
-        let fraction = mul(i2r((self.next() >> 40) as i32), 0x3380_0000);
-        add(low, mul(sub(high, low), fraction))
-    }
-}
-
 /// Smallest and largest x and y of points given as `x1, y1, x2, y2, ...`
 /// (bit patterns of reals): min x, min y, max x, max y.
 fn bounds_of(values: &[u32]) -> [u32; 4] {
@@ -1644,3 +1649,15 @@ fn bounds_of(values: &[u32]) -> [u32; 4] {
     };
     [pick(0, true), pick(1, true), pick(0, false), pick(1, false)]
 }
+
+/// Why a map did not start.
+#[derive(Debug)]
+pub struct StartError(pub String);
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StartError {}

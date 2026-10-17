@@ -131,11 +131,9 @@ the costs it adds for conversions, `if` with an empty branch and a bare
 `return`. Choices where the spec is silent:
 
 - **Global initialisers** run before any thread and are not counted.
-- **Nested threads.** Threads started by natives inside other threads
-  (`ExecuteFunc`, `TriggerExecute`, `TriggerEvaluate`, `ForGroup`, ...)
-  may nest 100 deep; one more fails in the caller. What does the game do
-  with deep nesting, for example a trigger that runs itself with
-  `TriggerExecute` without sleeping?
+- **Nested threads** may nest 100 deep; one more fails in the caller. The
+  game has no limit before its stack overflows (about 1200, SPEC-0005),
+  and SPEC-0005 asks to stop earlier.
 
 ## Game time (`ow3-sim`)
 
@@ -183,17 +181,12 @@ silent:
   one.
 - **`ExecuteFunc` of a function with parameters** ends the calling thread
   (SPEC-0006 open question 2).
-- **`SubString`** uses byte positions clamped to the string, and an end
-  before the start gives "". **`StringCase`** changes ASCII letters only.
-  What does the game do with positions out of range and with non-ASCII
-  text?
-- **Random numbers.** `GetRandomInt` and `GetRandomReal` use a stand-in
-  generator so that scripts see varied values: maps that wait
-  `PolledWait(GetRandomReal(20, 45))` and then run their own trigger again
-  recursed without end while the stub returned 0. We need the game's
-  generator: algorithm, seed at game start, `SetRandomSeed`, and how
-  bounds (inclusive, swapped) are handled. This matters for replays and
-  multiplayer.
+- **Strings are UTF-8 here**, byte strings in the game (SPEC-0005). A
+  `SubString` that cuts a multi-byte character gives U+FFFD instead of half
+  of it, and a negative `start` is taken as 0, as SPEC-0005 allows.
+- **Random numbers** follow SPEC-0007. The state at the start, before any
+  `SetRandomSeed`, is that of `SetRandomSeed(0)` (SPEC-0007 open
+  question 1).
 
 ## Forces, groups and enumerations (`ow3-sim::game::enumerate`)
 
@@ -214,14 +207,13 @@ specified. Choices where the specs are silent:
 - **Dead units** are enumerated by `GroupEnum*` until they are removed.
 - **Counted variants** stop after `countLimit` units or players have been
   added; a limit of 0 or less adds none.
-- **`EnumDestructablesInRect`** first tests every destructable in the rect
-  with the filter, then runs the action for those that passed, in the
-  order of `war3map.doo`. Or does it run the action right after each
-  filter?
+- **`EnumDestructablesInRect`** goes in the order of `war3map.doo` and then
+  the order destructables were created; SPEC-0009 says this is not the
+  game's order (open question 4).
 - **`ForceEnumAllies` and `ForceEnumEnemies`** take the same players as
   `ForceEnumPlayers`, split by `IsPlayerAlly`.
-- **`EnumItemsInRect`** works like `EnumDestructablesInRect`: filter first,
-  then the action, in the order the items were created.
+- **`EnumItemsInRect`** works like `EnumDestructablesInRect`: each filter,
+  then its action, in the order the items were created.
 - **`GroupEnumUnitsOfType`** takes the units whose type has the given
   string id (see "Units, destructables, items and death events").
 - **Not yet:** `GroupEnumUnitsSelected` and `IsUnitInRangeXY` (needs
@@ -229,75 +221,40 @@ specified. Choices where the specs are silent:
 
 ## Map loading and player slots (`ow3-sim::map`, `game::players`)
 
-`Map::load` reads a map with the game archives, and `Game::load_map`
-starts it as single player. All 191 maps of the installation (outside the
-test folders) load, run `config` and `main` and 30 s of game time without
-a thread error. Test W1 matches SPEC-0003. Choices where no spec says
-anything yet:
+`Map::load` and `Game::start` follow SPEC-0008: archive priorities, slots
+before `config`, filling the slots before `main`, alliances and map flags.
+All 191 maps of the installation (outside the test folders) start and run
+30 s without a thread error. Choices where the spec is silent:
 
-- **Archive order.** Files come from the map, then `War3Patch.mpq`,
-  `War3xlocal.mpq`, `War3x.mpq`, `War3local.mpq`, `War3.mpq`. A map may
-  replace `Scripts\common.j` and `Scripts\Blizzard.j` with its own copies.
-  Is that the game's order, and does the game accept such copies?
-- **Who plays in single player.** The local player is the first user slot
-  of `war3map.w3i`. Computer slots of the map play, and so does a slot
-  that `config` gives to a computer with `SetPlayerController`; other user
-  slots are empty. The neutral slots 12..15 always play (SPEC-0006). Is
-  that what the game does for melee maps and for maps with fixed player
-  settings?
-- **Slots before `config`.** Controller from the `war3map.w3i` slot type
-  (user, computer, neutral, rescuable), race from the slot (human when the
-  race is selectable), name from the slot with trigger strings resolved,
-  start location `n` for player `n`, team by force. Slots the map does not
-  list are users (0..11) or neutral (12..15), named "Player <n+1>". Which
-  of these does the game set, and to what?
-- **`GetPlayerRace` with a selectable race** gives human. What does the
-  game pick in single player?
-- **Alliances.** A player is an ally of itself and of every player it
-  gives `ALLIANCE_PASSIVE`; `IsPlayerEnemy` is the opposite. Is that the
-  rule for `IsPlayerAlly` and `IsPlayerEnemy`, and which alliances does
-  the game set before `config` and `main`?
-- **World bounds** span the whole terrain grid: from the `war3map.w3e`
-  origin to `origin + (size - 1) * 128`. Each `GetWorldBounds` call makes a
-  new rect. What are the game's bounds, and does it return a new rect?
-- **Destructables** are the `war3map.doo` entries whose type is in
-  `Units\DestructableData.slk` or is a custom destructable of the map.
-  Are other placed doodads ever enumerated?
+- **The local player's name** is "Player" (the game uses the profile name).
+- **Melee races and the computer.** A race preference that is not one of
+  the four races (random, for example) gives human, so in a melee map
+  both the local player and the computer play human. The computer stays
+  in slot 1 with the start location and team that `config` gave it, and
+  plays only when the map has two or more players. SPEC-0008 open
+  questions 1 and 2.
+- **A map without the fixed-settings flag** is set up as melee (flag 0x20
+  of `war3map.w3i` decides).
 
 ## Units, destructables, items and death events (`ow3-sim::data`, `game::widgets`)
 
 Units, destructables and items are placeholders until they are
 specified: type, owner (units), position, facing (units) and hit points.
-Test B1 now matches SPEC-0005 for death events (Y5), and test B of
-SPEC-0001 (`UnitAlive`) prints 1 then 0. Choices where no spec says
-anything yet:
+String ids, hit points of new units and placed destructables, unknown
+types and the order and filters of death events follow SPEC-0009. Choices
+where the spec is silent:
 
-- **String ids of unit types** (`"footman"` for `'hfoo'`) come from the
-  `name` column of `Units\unitUI.slk`. `UnitId` ignores ASCII case. A
-  custom unit of the map keeps the string id of its base type, and when
-  several types share one, `UnitId` gives the lowest raw code. Is the
-  comparison case-insensitive, and what do custom units report?
-- **Hit points** of a new unit are its type's `HP` in
-  `Units\UnitBalance.slk`, or the value set by the map (`uhpm`).
-  Destructables take `HP` of `Units\DestructableData.slk` (`bhps`) times
-  the life percentage placed in the editor. Is `HP` the right column (not
-  `realHP`), and how are hit points of placed destructables computed?
-- **Unknown types.** With game data loaded, `CreateUnit` and `CreateItem`
-  with a type the data does not know give `null`. Is that what the game
-  does?
-- **Death events** fire in the order the triggers were registered, whatever
-  the kind of registration (unit event, player unit event, widget death).
-  Is there an order by kind, for example unit events before player unit
-  events?
-- **The filter of `TriggerRegisterPlayerUnitEvent`** is tested with the
-  dying unit as `GetFilterUnit`, before the trigger's conditions. Which
-  event responses does the filter see?
-- **`KillUnit`** gives no killing unit (`GetKillingUnit` is `null`). A second
-  `KillUnit` on a dead unit does nothing.
-- **Hit points and death.** `SetWidgetLife` and `SetDestructableLife` set the
-  hit points of a living unit or destructable but never kill it, and
-  `GetUnitState` reads only `UNIT_STATE_LIFE` and `UNIT_STATE_MAX_LIFE`.
-  `IsUnitType` knows only `UNIT_TYPE_DEAD`. These wait for the unit spec.
+- **Heroes** are the types whose raw code starts with an upper-case
+  letter; they start with `realHP`, and have no string id when custom. A
+  custom hero with `uhpm` gets that value plus what strength adds to its
+  base.
+- **`KillUnit`** has no killing unit, so the filter of a player unit death
+  event is never called yet; deaths by damage wait for the unit spec.
+- **Hit points and death.** Setting the hit points of a unit never kills
+  it; setting those of a destructable to 0 or less kills it (SPEC-0009 for
+  0). `IsUnitType` knows only `UNIT_TYPE_DEAD`.
+- **A destructable placed with 0 percent life** is alive and enumerated
+  (SPEC-0009 open question 2).
 
 ## Natives that keep state for scripts (`game::players`, `game::widgets`)
 

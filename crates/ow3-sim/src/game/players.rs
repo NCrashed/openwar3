@@ -165,7 +165,8 @@ impl Setup {
             tech_max: BTreeMap::new(),
             tech_levels: BTreeMap::new(),
             player_states,
-            float_game_states: BTreeMap::new(),
+            // A game starts at 8:00 (SPEC-0017).
+            float_game_states: BTreeMap::from([(2, 8.0f32.to_bits())]),
             integer_game_states: BTreeMap::new(),
         }
     }

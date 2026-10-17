@@ -136,3 +136,23 @@ endfunction
     assert!(!a.alive && a.died_at.is_some());
     assert!(b.alive && b.died_at.is_none() && b.owner == 1);
 }
+
+/// The clock starts at 8:00 and runs one hour per 20 s (SPEC-0017).
+#[test]
+fn clock_runs() {
+    let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
+    let script =
+        ow3_jass::parse("function main takes nothing returns nothing\nendfunction\n").unwrap();
+    let refs = [&declarations, &script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    assert_eq!(game.time_of_day(), 8.0);
+    while game.ticks() < 200 {
+        game.advance(25_000);
+    }
+    assert_eq!(format!("{:.5}", game.time_of_day()), "8.05000");
+    while game.ticks() < 2200 {
+        game.advance(25_000);
+    }
+    assert_eq!(format!("{:.5}", game.time_of_day()), "8.54996");
+}

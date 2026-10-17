@@ -58,6 +58,9 @@ const FIRST_HANDLE: u32 = 0x0010_0000;
 const RESERVED_HANDLES: u32 = 8;
 /// `GAME_STATE_TIME_OF_DAY`, a float game state.
 const GAME_STATE_TIME_OF_DAY: i32 = 2;
+/// Ticks between steps of the clock, and the hours of a step (0.01).
+const TICKS_PER_CLOCK_STEP: u64 = 40;
+const CLOCK_STEP: u32 = 0x3C23_D70A;
 
 /// What a handle refers to.
 #[derive(Clone, Debug)]
@@ -765,6 +768,21 @@ impl<'a> Game<'a> {
             let state = &mut *state;
             state.ticks += 1;
             let tick = state.ticks;
+            // The clock runs one hour per 20 s (SPEC-0017). PROVISIONAL: in
+            // steps of 0.01 hours every 0.2 s, which reproduces two of the
+            // three measured times exactly and the third within 5e-5.
+            if tick % TICKS_PER_CLOCK_STEP == 0 {
+                let hours = state
+                    .setup
+                    .float_game_states
+                    .entry(GAME_STATE_TIME_OF_DAY)
+                    .or_insert(0);
+                let mut next = ow3_math::add(*hours, CLOCK_STEP);
+                if f32::from_bits(next) >= 24.0 {
+                    next = sub(next, 24f32.to_bits());
+                }
+                *hours = next;
+            }
             // Life and mana regenerate every tick (SPEC-0013).
             for h in &state.units {
                 if let Some(Object::Unit(unit)) = state.objects.get_mut(h)
@@ -904,8 +922,8 @@ impl<'a> Game<'a> {
 
     /// The time of day in hours (`GAME_STATE_TIME_OF_DAY`).
     ///
-    /// PROVISIONAL: the day does not run yet; without a value from the
-    /// script it is noon.
+    /// A game starts at 8:00 and the clock runs one hour per 20 s; without
+    /// game state it is noon.
     pub fn time_of_day(&self) -> f32 {
         let state = self.state.borrow();
         state

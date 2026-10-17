@@ -117,7 +117,11 @@ fn mip_chain(image: &Image) -> Vec<Image> {
     levels
 }
 
-pub(crate) fn upload_texture(device: &wgpu::Device, queue: &wgpu::Queue, image: &Image) -> wgpu::TextureView {
+pub(crate) fn upload_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    image: &Image,
+) -> wgpu::TextureView {
     let levels = mip_chain(image);
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ground atlas"),

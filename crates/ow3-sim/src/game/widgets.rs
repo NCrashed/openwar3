@@ -8,9 +8,14 @@
 //! not know gives `null` (without game data every type is accepted, with 1
 //! hit point). `SetDestructableLife(d, 0)` kills.
 //!
+//! Life and mana of units, their regeneration, facing and position follow
+//! SPEC-0013: life set to 0.405 or less kills, and the maxima cannot be
+//! set.
+//!
 //! PROVISIONAL, listed in specs/QUESTIONS.md: `KillUnit` has no killing
-//! unit; changing the hit points of a unit never kills it, and setting
-//! those of a destructable to less than 0 kills like 0.
+//! unit; setting the hit points of a destructable to less than 0 kills
+//! like 0; `SetUnitFacing` takes effect on the next tick; life
+//! regeneration limited to night, day or blight never runs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,11 +23,13 @@ use std::rc::Rc;
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{NativeFn, Vm};
 
-use crate::data::is_hero;
+use ow3_math::{add, floor, mul, sub};
+
+use crate::data::{RegenType, UnitType, is_hero};
 
 use super::{
-    Context, Destructable, Item, Object, State, Unit, converted, fire_trigger, handle, integer,
-    real, string, test_boolexpr,
+    Context, Destructable, Item, Object, Regenerating, State, Unit, converted, fire_trigger,
+    handle, integer, real, string, test_boolexpr,
 };
 
 const EVENT_PLAYER_UNIT_DEATH: i32 = 20;
@@ -30,10 +37,20 @@ const EVENT_UNIT_DEATH: i32 = 53;
 const EVENT_WIDGET_DEATH: i32 = 89;
 const UNIT_STATE_LIFE: i32 = 0;
 const UNIT_STATE_MAX_LIFE: i32 = 1;
+const UNIT_STATE_MANA: i32 = 2;
+const UNIT_STATE_MAX_MANA: i32 = 3;
 const UNIT_TYPE_HERO: i32 = 0;
 const UNIT_TYPE_DEAD: i32 = 1;
 /// Hit points of a unit when there is no game data: 1.0.
 const UNKNOWN_LIFE: u32 = 0x3F80_0000;
+/// Life at or below which a unit dies: 0.405 (SPEC-0013).
+const DEATH_LIFE: f32 = 0.405;
+const FOUR: u32 = 0x4080_0000;
+const QUARTER: u32 = 0x3E80_0000;
+/// Sign bit of a real.
+const SIGN: u32 = 0x8000_0000;
+/// How far `SetUnitPosition` keeps a unit from the world's edges: 32.0.
+const EDGE: u32 = 0x4200_0000;
 
 /// A trigger registered for an event, kept in [`State`].
 #[derive(Clone, Debug)]
@@ -77,19 +94,38 @@ fn item(state: &State, h: Option<u32>) -> Option<&Item> {
 /// Creates a unit of `type_id` for `owner`, or `None` for a type the game
 /// data does not know.
 fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Option<u32> {
-    let max_life = if state.data.units.is_empty() {
-        UNKNOWN_LIFE
+    let data = if state.data.units.is_empty() {
+        UnitType {
+            hp: UNKNOWN_LIFE,
+            ..UnitType::default()
+        }
     } else {
-        state.data.units.get(&type_id)?.hp
+        state.data.units.get(&type_id)?.clone()
     };
+    // Life regenerates at `regenHP` when the type's condition holds, plus
+    // a hero's strength part (SPEC-0013). PROVISIONAL: there is no day,
+    // night or blight yet, so a condition other than "always" never holds.
+    let life_rate = if data.regen_type == RegenType::Always {
+        add(data.life_regen, data.hero_life_regen)
+    } else {
+        data.hero_life_regen
+    };
+    let tick = state.ticks;
+    let mut mana = Regenerating::full(data.max_mana, data.mana_regen, tick);
+    mana.set(data.start_mana, tick);
+    // Positions snap to a quarter, facings are degrees in 0..360
+    // (SPEC-0013).
+    let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
+    let facing = f32::from_bits(at[2]).rem_euclid(360.0).to_bits();
     let unit = Unit {
         owner,
         type_id,
-        x: at[0],
-        y: at[1],
-        facing: at[2],
-        life: max_life,
-        max_life,
+        x: snap(at[0]),
+        y: snap(at[1]),
+        facing,
+        turning_to: None,
+        life: Regenerating::full(data.hp, life_rate, tick),
+        mana,
         alive: true,
         hidden: false,
         user_data: 0,
@@ -187,6 +223,63 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
 /// Sets the hit points of a living destructable; 0 or less kills it and
 /// runs its death events (SPEC-0009). PROVISIONAL: also for values below 0
 /// and for `SetWidgetLife`.
+/// Kills a living unit: it reads life 0 and stops regenerating, and the
+/// triggers of its death run before this returns.
+fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>) {
+    let killed = {
+        let mut state = state.borrow_mut();
+        match unit_mut(&mut state, h) {
+            Some(unit) if unit.alive => {
+                unit.alive = false;
+                unit.life.base = 0;
+                unit.life.rate = 0;
+                unit.mana.rate = 0;
+                true
+            }
+            _ => false,
+        }
+    };
+    if let (true, Some(h)) = (killed, h) {
+        died(vm, state, h, None);
+    }
+}
+
+/// `SetUnitState(u, UNIT_STATE_LIFE, life)` and `SetWidgetLife` of a unit
+/// (SPEC-0013): limited to the maximum, and 0.405 or less kills.
+fn set_unit_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
+    if f32::from_bits(life) <= DEATH_LIFE {
+        kill_unit(vm, state, h);
+        return;
+    }
+    let mut state = state.borrow_mut();
+    let tick = state.ticks;
+    if let Some(u) = unit_mut(&mut state, h)
+        && u.alive
+    {
+        u.life.set(life, tick);
+    }
+}
+
+/// A coordinate as the engine stores it, relative to the world's lower
+/// left corner `min` (SPEC-0013).
+fn world_relative(v: u32, min: u32) -> u32 {
+    sub(add(v, min ^ SIGN), min ^ SIGN)
+}
+
+/// `v` kept inside `min + 32 ..= max - 32`, as `SetUnitPosition` does.
+fn inside(v: u32, min: u32, max: u32) -> u32 {
+    let (low, high) = (add(min, EDGE), sub(max, EDGE));
+    if f32::from_bits(low) > f32::from_bits(high) {
+        v
+    } else if f32::from_bits(v) < f32::from_bits(low) {
+        low
+    } else if f32::from_bits(v) > f32::from_bits(high) {
+        high
+    } else {
+        v
+    }
+}
+
 fn set_destructable_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
     let killed = {
         let mut state = state.borrow_mut();
@@ -273,21 +366,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native KillUnit takes unit whichUnit returns nothing",
         |vm, state, args| {
-            let h = handle(&args[0]);
-            let killed = {
-                let mut state = state.borrow_mut();
-                match unit_mut(&mut state, h) {
-                    Some(unit) if unit.alive => {
-                        unit.alive = false;
-                        unit.life = 0;
-                        true
-                    }
-                    _ => false,
-                }
-            };
-            if let (true, Some(h)) = (killed, h) {
-                died(vm, state, h, None);
-            }
+            kill_unit(vm, state, handle(&args[0]));
             Ok(None)
         }
     );
@@ -355,8 +434,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let value = match (state.unit(handle(&args[0])), handle(&args[1])) {
-                (Some(u), Some(s)) if s as i32 == UNIT_STATE_LIFE => u.life,
-                (Some(u), Some(s)) if s as i32 == UNIT_STATE_MAX_LIFE => u.max_life,
+                (Some(u), Some(s)) => match s as i32 {
+                    UNIT_STATE_LIFE if u.alive => u.life.at(state.ticks),
+                    UNIT_STATE_MAX_LIFE => u.life.max,
+                    UNIT_STATE_MANA => u.mana.at(state.ticks),
+                    UNIT_STATE_MAX_MANA => u.mana.max,
+                    _ => 0,
+                },
                 _ => 0,
             };
             Ok(Some(Value::Real(value)))
@@ -437,7 +521,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let life = match handle(&args[0]).and_then(|h| state.objects.get(&h)) {
-                Some(Object::Unit(u)) => u.life,
+                Some(Object::Unit(u)) if u.alive => u.life.at(state.ticks),
                 Some(Object::Destructable(d)) => d.life,
                 _ => 0,
             };
@@ -451,18 +535,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let h = handle(&args[0]);
             let life = real(&args[1]);
-            let is_unit = {
-                let mut state = state.borrow_mut();
-                match unit_mut(&mut state, h) {
-                    Some(u) if u.alive => {
-                        u.life = life;
-                        true
-                    }
-                    Some(_) => true,
-                    None => false,
-                }
-            };
-            if !is_unit {
+            let is_unit = state.borrow().unit(h).is_some();
+            if is_unit {
+                set_unit_life(vm, state, h, life);
+            } else {
                 set_destructable_life(vm, state, h, life);
             }
             Ok(None)
@@ -553,25 +629,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         }
     );
     type Move = fn(&mut Unit, &[Value], &State);
-    let moves: [(&str, Move); 6] = [
+    let moves: [(&str, Move); 5] = [
         (
             "native SetUnitX takes unit whichUnit, real newX returns nothing",
-            |u, args, _| u.x = real(&args[1]),
+            |u, args, state| u.x = world_relative(real(&args[1]), state.world_bounds[0]),
         ),
         (
             "native SetUnitY takes unit whichUnit, real newY returns nothing",
-            |u, args, _| u.y = real(&args[1]),
+            |u, args, state| u.y = world_relative(real(&args[1]), state.world_bounds[1]),
         ),
         (
             "native SetUnitPosition takes unit whichUnit, real newX, real newY returns nothing",
-            |u, args, _| {
-                u.x = real(&args[1]);
-                u.y = real(&args[2]);
+            |u, args, state| {
+                let [min_x, min_y, max_x, max_y] = state.world_bounds;
+                u.x = world_relative(inside(real(&args[1]), min_x, max_x), min_x);
+                u.y = world_relative(inside(real(&args[2]), min_y, max_y), min_y);
             },
-        ),
-        (
-            "native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing",
-            |u, args, _| u.facing = real(&args[1]),
         ),
         (
             "native SetUnitUserData takes unit whichUnit, integer data returns nothing",
@@ -596,6 +669,24 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(None)
         });
     }
+    native!(
+        add,
+        state,
+        "native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing",
+        |vm, state, args| {
+            // PROVISIONAL (SPEC-0013 open question 2): the unit turns at an
+            // unknown rate; the new facing is reached on the next tick.
+            let mut state = state.borrow_mut();
+            let Some(h) = handle(&args[0]) else {
+                return Ok(None);
+            };
+            if let Some(u) = unit_mut(&mut state, Some(h)) {
+                u.turning_to = Some(real(&args[1]));
+                state.turning.push(h);
+            }
+            Ok(None)
+        }
+    );
     native!(
         add,
         state,
@@ -652,17 +743,21 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native SetUnitState takes unit whichUnit, unitstate whichUnitState, real newVal returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let which = handle(&args[1]).map(|s| s as i32);
+            let h = handle(&args[0]);
             let value = real(&args[2]);
-            if let Some(u) = unit_mut(&mut state, handle(&args[0]))
-                && u.alive
-            {
-                match which {
-                    Some(UNIT_STATE_LIFE) => u.life = value,
-                    Some(UNIT_STATE_MAX_LIFE) => u.max_life = value,
-                    _ => {}
+            match handle(&args[1]).map(|s| s as i32) {
+                Some(UNIT_STATE_LIFE) => set_unit_life(vm, state, h, value),
+                Some(UNIT_STATE_MANA) => {
+                    let mut state = state.borrow_mut();
+                    let tick = state.ticks;
+                    if let Some(u) = unit_mut(&mut state, h)
+                        && u.alive
+                    {
+                        u.mana.set(value, tick);
+                    }
                 }
+                // SPEC-0013: the maxima cannot be set.
+                _ => {}
             }
             Ok(None)
         }
@@ -965,4 +1060,25 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             ))
         }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_relative_coordinates() {
+        let min = (-12288.0f32).to_bits();
+        let max = 12288.0f32.to_bits();
+        let read = |v: f32| f32::from_bits(world_relative(v.to_bits(), min));
+        assert_eq!(read(-1000.3).to_bits(), 0xC47A_1340);
+        assert_eq!(read(-1200.7).to_bits(), 0xC496_1668);
+        assert_eq!(read(100.0), 100.0);
+        let clamped = world_relative(inside(50000.0f32.to_bits(), min, max), min);
+        assert_eq!(f32::from_bits(clamped), 12256.0);
+        assert_eq!(
+            f32::from_bits(inside((-50000.0f32).to_bits(), min, max)),
+            -12256.0
+        );
+    }
 }

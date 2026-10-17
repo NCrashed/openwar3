@@ -135,14 +135,66 @@ pub struct Unit {
     x: u32,
     y: u32,
     facing: u32,
-    /// Hit points as a bit pattern, and the most there can be.
-    life: u32,
-    max_life: u32,
+    /// A facing given to `SetUnitFacing`, reached on the next tick.
+    turning_to: Option<u32>,
+    life: Regenerating,
+    mana: Regenerating,
     alive: bool,
     hidden: bool,
     user_data: i32,
     /// Gold of a mine.
     resources: i32,
+}
+
+/// A regenerating value (life or mana) as SPEC-0013 computes it: the
+/// value set last, the tick it was set at and the rate per second; the
+/// current value is `add(base, mul(rate, mul(i2r(n), dt)))` after `n`
+/// ticks, at most `max`. All bit patterns of reals.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Regenerating {
+    base: u32,
+    since: u64,
+    rate: u32,
+    max: u32,
+}
+
+impl Regenerating {
+    fn full(max: u32, rate: u32, tick: u64) -> Regenerating {
+        Regenerating {
+            base: max,
+            since: tick,
+            rate,
+            max,
+        }
+    }
+
+    /// The value at `tick`.
+    pub fn at(&self, tick: u64) -> u32 {
+        let n = i32::try_from(tick.saturating_sub(self.since)).unwrap_or(i32::MAX);
+        let value = if self.rate == 0 || n == 0 {
+            self.base
+        } else {
+            add(self.base, mul(self.rate, mul(i2r(n), crate::timers::TICK)))
+        };
+        if f32::from_bits(value) > f32::from_bits(self.max) {
+            self.max
+        } else {
+            value
+        }
+    }
+
+    /// Sets the value at `tick`, limited to `0..=max`.
+    fn set(&mut self, value: u32, tick: u64) {
+        let v = f32::from_bits(value);
+        self.base = if v > f32::from_bits(self.max) {
+            self.max
+        } else if v < 0.0 {
+            0
+        } else {
+            value
+        };
+        self.since = tick;
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,6 +301,10 @@ pub struct State {
     player_leaderboards: BTreeMap<i32, Option<u32>>,
     /// Unit, destructable and item types of the map.
     pub data: ObjectData,
+    /// Simulation ticks so far.
+    pub ticks: u64,
+    /// Units given a new facing, in the order of the calls.
+    turning: Vec<u32>,
     /// Interface strings for `GetLocalizedString` (SPEC-0010).
     localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
@@ -287,6 +343,8 @@ impl State {
             dialog_events: Vec::new(),
             player_leaderboards: BTreeMap::new(),
             data: ObjectData::default(),
+            ticks: 0,
+            turning: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             camera_bounds: [0; 4],
@@ -611,6 +669,19 @@ impl<'a> Game<'a> {
     }
 
     fn tick(&mut self) {
+        {
+            let mut state = self.state.borrow_mut();
+            state.ticks += 1;
+            // A unit told to face somewhere faces there from the next tick.
+            // PROVISIONAL: the turn rate is not specified (SPEC-0013).
+            for h in std::mem::take(&mut state.turning) {
+                if let Some(Object::Unit(unit)) = state.objects.get_mut(&h)
+                    && let Some(facing) = unit.turning_to.take()
+                {
+                    unit.facing = facing;
+                }
+            }
+        }
         let mut tick = self.state.borrow_mut().timers.begin_tick();
         loop {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
@@ -1733,3 +1804,47 @@ impl std::fmt::Display for StartError {
 }
 
 impl std::error::Error for StartError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The measured regeneration of SPEC-0013: `(tick, footman life,
+    /// paladin life, paladin mana)`.
+    fn samples() -> Vec<[u32; 4]> {
+        include_str!("../../../specs/SPEC-0013-regen-samples.tsv")
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .map(|l| {
+                let mut f = l.split('\t');
+                let tick = f.next().unwrap().parse().unwrap();
+                let mut hex = || u32::from_str_radix(f.next().unwrap().trim(), 16).unwrap();
+                [tick, hex(), hex(), hex()]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn footman_regeneration_matches_samples() {
+        // SetUnitState(u, UNIT_STATE_LIFE, 100) at tick 7, 0.25 per second.
+        let mut life = Regenerating::full(0x43D2_0000, 0x3E80_0000, 0);
+        life.set(0x42C8_0000, 7);
+        let samples = samples();
+        assert_eq!(samples.len(), 60);
+        for [n, footman, _, _] in samples {
+            assert_eq!(life.at(7 + u64::from(n)), footman, "tick {n}");
+        }
+        assert_eq!(life.at(7), 0x42C8_0000);
+    }
+
+    #[test]
+    fn regenerating_limits() {
+        let mut mana = Regenerating::full(0x4320_0000, 0x3F80_0000, 0);
+        mana.set(0xC2C8_0000, 0);
+        assert_eq!(mana.at(0), 0);
+        mana.set(0x4400_0000, 0);
+        assert_eq!(mana.at(0), 0x4320_0000);
+        mana.set(0x431F_0000, 0);
+        assert_eq!(mana.at(1_000), 0x4320_0000);
+    }
+}

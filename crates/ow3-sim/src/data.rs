@@ -21,7 +21,7 @@ use ow3_formats::slk::Table;
 
 use crate::map::{Archives, MapError, raw_code_value};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitType {
     /// String id such as `footman`, used by `UnitId` and
     /// `GroupEnumUnitsOfType`.
@@ -30,6 +30,53 @@ pub struct UnitType {
     pub hp: u32,
     /// A building (`isbldg` in `UnitBalance.slk`).
     pub building: bool,
+    /// Max mana and the mana a new unit has.
+    pub max_mana: u32,
+    pub start_mana: u32,
+    /// Life regeneration per second under `regen_type`, and for heroes the
+    /// part from strength, which always applies (SPEC-0013).
+    pub life_regen: u32,
+    pub regen_type: RegenType,
+    pub hero_life_regen: u32,
+    /// Mana regeneration per second.
+    pub mana_regen: u32,
+}
+
+/// When a type regenerates life (`regenType`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RegenType {
+    #[default]
+    Always,
+    Night,
+    Day,
+    Blight,
+    Never,
+}
+
+impl RegenType {
+    fn parse(text: &str) -> RegenType {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "night" => RegenType::Night,
+            "day" => RegenType::Day,
+            "blight" => RegenType::Blight,
+            "none" => RegenType::Never,
+            _ => RegenType::Always,
+        }
+    }
+}
+
+/// The balance numbers of a unit type that its starting state comes
+/// from, as bit patterns of reals.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Balance {
+    hp: u32,
+    strength: u32,
+    intelligence: u32,
+    mana: u32,
+    start_mana: u32,
+    life_regen: u32,
+    mana_regen: u32,
+    regen_type: RegenType,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -135,26 +182,43 @@ impl ObjectData {
                 id,
                 UnitType {
                     name: values[0].clone().filter(|n| !n.is_empty()),
-                    hp: 0,
-                    building: false,
+                    ..UnitType::default()
                 },
             );
         }
-        // `HP` and starting strength of every type; a hero starts with
-        // `HP` plus 25 per point of strength (SPEC-0009).
+        // The balance numbers of every type (SPEC-0009, SPEC-0013).
         let mut balance = BTreeMap::new();
         for (id, values) in rows(
             archives,
             "Units\\UnitBalance.slk",
             "unitBalanceID",
-            &["HP", "STR", "isbldg"],
+            &[
+                "HP",
+                "STR",
+                "INT",
+                "manaN",
+                "mana0",
+                "regenHP",
+                "regenMana",
+                "regenType",
+                "isbldg",
+            ],
         )? {
-            let (hp, strength) = (real(values[0].as_ref()), real(values[1].as_ref()));
-            balance.insert(id, (hp, strength));
+            let b = Balance {
+                hp: real(values[0].as_ref()),
+                strength: real(values[1].as_ref()),
+                intelligence: real(values[2].as_ref()),
+                mana: real(values[3].as_ref()),
+                start_mana: real(values[4].as_ref()),
+                life_regen: real(values[5].as_ref()),
+                mana_regen: real(values[6].as_ref()),
+                regen_type: RegenType::parse(values[7].as_deref().unwrap_or("")),
+            };
             if let Some(unit) = data.units.get_mut(&id) {
-                unit.hp = life(id, hp, strength);
-                unit.building = values[2].as_deref() == Some("1");
+                apply(unit, id, &b);
+                unit.building = values[8].as_deref() == Some("1");
             }
+            balance.insert(id, b);
         }
         for (id, values) in rows(
             archives,
@@ -168,20 +232,32 @@ impl ObjectData {
             data.items.insert(id, real(values[0].as_ref()));
         }
         // A custom unit has its own string id, "custom_" and its raw code,
-        // or none for a hero, and takes `HP` and strength from its base
-        // unless it sets `uhpm` or `ustr` (SPEC-0009).
-        for (id, base, values) in custom(archives, ObjectKind::Units, &[b"uhpm", b"ustr"])? {
-            let mut unit = data.units.get(&base).cloned().unwrap_or(UnitType {
-                name: None,
-                hp: 0,
-                building: false,
-            });
+        // or none for a hero, and takes its balance numbers from its base
+        // unless it sets them (SPEC-0009, SPEC-0013). PROVISIONAL: a
+        // custom regeneration type (`uhrt`) is not read.
+        let fields: [&[u8; 4]; 7] = [
+            b"uhpm", b"ustr", b"uint", b"umpm", b"umpi", b"uhpr", b"umpr",
+        ];
+        for (id, base, values) in custom(archives, ObjectKind::Units, &fields)? {
+            let mut unit = data.units.get(&base).cloned().unwrap_or_default();
             unit.name = (!is_hero(id))
                 .then(|| format!("custom_{}", String::from_utf8_lossy(&id.to_be_bytes())));
-            let (base_hp, base_strength) = balance.get(&base).copied().unwrap_or((0, 0));
-            let hp = values[0].unwrap_or(base_hp);
-            let strength = values[1].unwrap_or(base_strength);
-            unit.hp = life(id, hp, strength);
+            let mut b = balance.get(&base).cloned().unwrap_or_default();
+            let slots = [
+                &mut b.hp,
+                &mut b.strength,
+                &mut b.intelligence,
+                &mut b.mana,
+                &mut b.start_mana,
+                &mut b.life_regen,
+                &mut b.mana_regen,
+            ];
+            for (slot, value) in slots.into_iter().zip(&values) {
+                if let Some(v) = value {
+                    *slot = *v;
+                }
+            }
+            apply(&mut unit, id, &b);
             data.units.insert(id, unit);
         }
         for (id, base, values) in custom(archives, ObjectKind::Destructibles, &[b"bhps"])? {
@@ -229,6 +305,38 @@ fn life(id: i32, hp: u32, strength: u32) -> u32 {
         (f32::from_bits(hp) + bonus).to_bits()
     } else {
         hp
+    }
+}
+
+/// 0.05: life per second per point of strength, and mana per second per
+/// point of intelligence, of a hero.
+const PER_POINT_REGEN: u32 = 0x3D4C_CCCD;
+
+/// The starting state of a unit of type `id` from its balance numbers
+/// (SPEC-0009, SPEC-0013). A hero has 25 life and 15 mana per point of
+/// strength and intelligence, starts with full mana, regenerates 0.05 life
+/// per second per point of strength on top of `regenHP`, and 0.05 mana
+/// per point of intelligence instead of `regenMana`.
+fn apply(unit: &mut UnitType, id: i32, b: &Balance) {
+    let hero = is_hero(id);
+    unit.hp = life(id, b.hp, b.strength);
+    unit.life_regen = b.life_regen;
+    unit.regen_type = b.regen_type;
+    if hero {
+        let points = |bits: u32| f32::from_bits(bits) as i32;
+        unit.max_mana = (f32::from_bits(b.mana) + 15.0 * f32::from_bits(b.intelligence)).to_bits();
+        unit.start_mana = unit.max_mana;
+        unit.hero_life_regen = ow3_math::mul(ow3_math::i2r(points(b.strength)), PER_POINT_REGEN);
+        unit.mana_regen = ow3_math::mul(ow3_math::i2r(points(b.intelligence)), PER_POINT_REGEN);
+    } else {
+        unit.max_mana = b.mana;
+        unit.start_mana = if f32::from_bits(b.start_mana) < f32::from_bits(b.mana) {
+            b.start_mana
+        } else {
+            b.mana
+        };
+        unit.hero_life_regen = 0;
+        unit.mana_regen = b.mana_regen;
     }
 }
 

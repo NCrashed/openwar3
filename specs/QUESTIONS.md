@@ -248,9 +248,24 @@ where the spec is silent:
   yet.
 - **`KillUnit`** has no killing unit, so the filter of a player unit death
   event is never called yet; deaths by damage wait for the unit spec.
-- **Hit points and death.** Setting the hit points of a unit never kills
-  it; setting those of a destructable to 0 or less kills it (SPEC-0009 for
-  0). `IsUnitType` knows only `UNIT_TYPE_DEAD`.
+- **Hit points and death.** Setting those of a destructable to 0 or less
+  kills it (SPEC-0009 for 0; units follow SPEC-0013). `IsUnitType` knows
+  only `UNIT_TYPE_HERO` and `UNIT_TYPE_DEAD`.
+- **Conditional life regeneration.** There is no time of day or blight
+  yet, so `regenHP` of a type whose `regenType` is `night`, `day` or
+  `blight` never applies; only a hero's strength part does. The map's
+  `uhrt` field is not read.
+- **The first regeneration step of a hero** (SPEC-0013 open question 1)
+  is the same as the following ones: heroes regenerate like the footman
+  samples, by `add(v0, mul(rate, mul(i2r(n), dt)))`, and do not match the
+  paladin columns of `SPEC-0013-regen-samples.tsv` bit for bit.
+- **`SetUnitFacing`** (SPEC-0013 open question 2) sets the new facing at
+  the next tick; the turn rate and the conversion that makes 33.3 read as
+  33.299995 are not known, and `CreateUnit` stores the facing exactly.
+- **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the
+  unit at the snapped point whatever is there. `SetUnitY` below
+  `minY - 32` and `CreateUnit` far outside the world, which hang the
+  game, are accepted.
 - **A destructable placed with 0 percent life** is alive and enumerated
   (SPEC-0009 open question 2).
 

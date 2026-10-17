@@ -244,10 +244,8 @@ String ids, hit points of new units and placed destructables, unknown
 types and the order and filters of death events follow SPEC-0009. Choices
 where the spec is silent:
 
-- **Heroes** are the types whose raw code starts with an upper-case
-  letter; they start with `realHP`, and have no string id when custom. A
-  custom hero with `uhpm` gets that value plus what strength adds to its
-  base.
+- **`GetHeroLevel`** is 1 for every hero: heroes do not gain experience
+  yet.
 - **`KillUnit`** has no killing unit, so the filter of a player unit death
   event is never called yet; deaths by damage wait for the unit spec.
 - **Hit points and death.** Setting the hit points of a unit never kills
@@ -305,10 +303,8 @@ where the specs are silent:
 ## Terrain rendering (`ow3-render::terrain`)
 
 Ground textures follow SPEC-0012 (layering, corner bits, variation
-cells). Still open:
+cells, opacity of the full tile). Still open:
 
-- **The full tile of the lowest texture** is blended with its alpha; with
-  the shipped atlases it makes no difference (SPEC-0012 open question 1).
 - **Not drawn yet:** cliffs (models), ramps, the water surface and its
   colour, blight, the boundary as the game shows it, doodads and units.
   Water is a blue tint on points with the water flag (0x4); points with

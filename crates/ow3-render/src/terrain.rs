@@ -9,8 +9,9 @@
 //!
 //! A tile is drawn from its four corner points: the lowest ground texture
 //! index among them fills the tile with the cell chosen by the variation of
-//! the bottom-left point, then each higher index present covers its own
-//! corners, in increasing order.
+//! the bottom-left point (opaque for index 0, with its alpha otherwise),
+//! then each higher index present covers its own corners, in increasing
+//! order.
 //!
 //! PROVISIONAL, until a spec covers them: heights shade the tiles as if
 //! lit from the north-west, water tints towards blue and the map boundary
@@ -160,7 +161,8 @@ pub fn top_down(terrain: &Terrain, textures: &[Option<Image>], tile: u32) -> Ima
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
             let (left, top) = (tx * tile, (tiles_y - 1 - ty) * tile);
-            for (texture, cell) in tile_layers(&corners(terrain, tx, ty), textures) {
+            let layers = tile_layers(&corners(terrain, tx, ty), textures);
+            for (layer, &(texture, cell)) in layers.iter().enumerate() {
                 let Some(atlas) = textures[texture].as_ref() else {
                     continue;
                 };
@@ -171,7 +173,13 @@ pub fn top_down(terrain: &Terrain, textures: &[Option<Image>], tile: u32) -> Ima
                 });
                 for (i, &color) in pixels.iter().enumerate() {
                     let (px, py) = (left + i as u32 % tile, top + i as u32 / tile);
-                    image.blend(px, py, color);
+                    // The full tile of texture 0 is opaque; other layers,
+                    // and the full tile of a higher index, blend (SPEC-0012).
+                    if layer == 0 && texture == 0 {
+                        image.set(px, py, [color[0], color[1], color[2], 255]);
+                    } else {
+                        image.blend(px, py, color);
+                    }
                 }
             }
         }

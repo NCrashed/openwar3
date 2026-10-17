@@ -18,6 +18,8 @@ use std::rc::Rc;
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{NativeFn, Vm};
 
+use crate::data::is_hero;
+
 use super::{
     Context, Destructable, Item, Object, State, Unit, converted, fire_trigger, handle, integer,
     real, string, test_boolexpr,
@@ -28,6 +30,7 @@ const EVENT_UNIT_DEATH: i32 = 53;
 const EVENT_WIDGET_DEATH: i32 = 89;
 const UNIT_STATE_LIFE: i32 = 0;
 const UNIT_STATE_MAX_LIFE: i32 = 1;
+const UNIT_TYPE_HERO: i32 = 0;
 const UNIT_TYPE_DEAD: i32 = 1;
 /// Hit points of a unit when there is no game data: 1.0.
 const UNKNOWN_LIFE: u32 = 0x3F80_0000;
@@ -359,15 +362,39 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Real(value)))
         }
     );
+    // Heroes (SPEC-0009): by the first character of the type's code.
+    native!(
+        add,
+        state,
+        "constant native IsHeroUnitId takes integer unitId returns boolean",
+        |vm, state, args| { Ok(Some(Value::Boolean(is_hero(integer(&args[0]))))) }
+    );
+    // PROVISIONAL: heroes do not gain experience yet, so a hero is level 1.
+    native!(
+        add,
+        state,
+        "constant native GetHeroLevel takes unit whichHero returns integer",
+        |vm, state, args| {
+            let level = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .map_or(0, |u| i32::from(is_hero(u.type_id)));
+            Ok(Some(Value::Integer(level)))
+        }
+    );
     native!(
         add,
         state,
         "constant native IsUnitType takes unit whichUnit, unittype whichUnitType returns boolean",
         |vm, state, args| {
             let state = state.borrow();
-            let dead = handle(&args[1]) == Some(UNIT_TYPE_DEAD as u32)
-                && state.unit(handle(&args[0])).is_some_and(|u| !u.alive);
-            Ok(Some(Value::Boolean(dead)))
+            let unit = state.unit(handle(&args[0]));
+            let answer = match handle(&args[1]).map(|t| t as i32) {
+                Some(UNIT_TYPE_HERO) => unit.is_some_and(|u| is_hero(u.type_id)),
+                Some(UNIT_TYPE_DEAD) => unit.is_some_and(|u| !u.alive),
+                _ => false,
+            };
+            Ok(Some(Value::Boolean(answer)))
         }
     );
     native!(

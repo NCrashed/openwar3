@@ -72,11 +72,14 @@ struct GpuLayer {
     indices: wgpu::Buffer,
     count: u32,
     bind_group: wgpu::BindGroup,
+    /// Texture 0: only full tiles, drawn opaque.
+    opaque: bool,
 }
 
 /// The ground on the GPU, ready to draw.
 pub struct Renderer {
-    pipeline: wgpu::RenderPipeline,
+    opaque: wgpu::RenderPipeline,
+    blended: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     layers: Vec<GpuLayer>,
@@ -221,44 +224,50 @@ impl Renderer {
             bind_group_layouts: &[&globals_layout, &texture_layout],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ground"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                // Later layers lie on the same triangles as earlier ones.
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        // The full tiles of texture 0 are drawn opaque, everything else with
+        // its alpha (SPEC-0012).
+        let pipeline = |blend: Option<wgpu::BlendState>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ground"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
+                        ],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    // Later layers lie on the same triangles as earlier ones.
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let opaque = pipeline(None);
+        let blended = pipeline(Some(wgpu::BlendState::ALPHA_BLENDING));
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: std::mem::size_of::<Globals>() as u64,
@@ -319,11 +328,13 @@ impl Renderer {
                     }),
                     count: layer.indices.len() as u32,
                     bind_group,
+                    opaque: layer.texture == 0,
                 })
             })
             .collect();
         Renderer {
-            pipeline,
+            opaque,
+            blended,
             globals,
             globals_bind_group,
             layers,
@@ -377,9 +388,14 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
+
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             for layer in &self.layers {
+                pass.set_pipeline(if layer.opaque {
+                    &self.opaque
+                } else {
+                    &self.blended
+                });
                 pass.set_bind_group(1, &layer.bind_group, &[]);
                 pass.set_vertex_buffer(0, layer.vertices.slice(..));
                 pass.set_index_buffer(layer.indices.slice(..), wgpu::IndexFormat::Uint32);

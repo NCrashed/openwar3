@@ -31,9 +31,18 @@ fn renders_a_map_offscreen() {
     // The ground fills the lower half of the view with colour; the middle
     // of the map is water and grass, so blue and green both show.
     let lower = &image.rgba[image.rgba.len() / 2..];
-    let lit = lower.chunks(4).filter(|p| p[0].max(p[1]).max(p[2]) > 40).count();
+    let lit = lower
+        .chunks(4)
+        .filter(|p| p[0].max(p[1]).max(p[2]) > 40)
+        .count();
     assert!(lit > lower.len() / 4 * 9 / 10, "{lit} lit pixels");
-    let green = lower.chunks(4).filter(|p| p[1] > p[2] && p[1] > p[0]).count();
-    let blue = lower.chunks(4).filter(|p| p[2] > p[0] && p[2] >= p[1]).count();
+    let green = lower
+        .chunks(4)
+        .filter(|p| p[1] > p[2] && p[1] > p[0])
+        .count();
+    let blue = lower
+        .chunks(4)
+        .filter(|p| p[2] > p[0] && p[2] >= p[1])
+        .count();
     assert!(green > 100 && blue > 100, "green {green}, blue {blue}");
 }

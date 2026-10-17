@@ -10,10 +10,12 @@
 //! by `s` per change and stays at `m`, both set by the type's
 //! `orientInterp`.
 //!
-//! PROVISIONAL (SPEC-0013 open question 1): the unit turns the shorter
-//! way and reaches the target once it is no more than a step away; the
-//! game shortens the last steps by a rule not yet known. `orientInterp`
-//! values other than 0, 1, 3 and 4 turn like 0, and 3 has no maximum.
+//! Each step is `min(w + s, m, B(r))` with the braking `B` of the
+//! remaining angle (SPEC-0018); with less than 0.001 radians left the
+//! facing takes its target.
+//!
+//! PROVISIONAL: `orientInterp` values other than 0, 1, 3 and 4 turn like
+//! 0, 3 has no maximum, and all use the braking table of 0.
 
 use ow3_math::{add, frac, mul, recip, sub};
 
@@ -89,34 +91,97 @@ impl Turn {
         if since < FIRST_CHANGE || (since - FIRST_CHANGE) % CHANGE_EVERY != 0 {
             return (facing, true);
         }
-        let (first, largest) = steps(self.orient_interp);
-        self.step = add(self.step, first);
-        if real(self.step) > real(largest) {
-            self.step = largest;
-        }
-        // The difference, moved into -pi..pi.
-        let mut diff = sub(self.target, facing);
-        if real(diff) > real(PI) {
-            diff = sub(diff, TWO_PI);
-        } else if real(diff) < -real(PI) {
-            diff = add(diff, TWO_PI);
-        }
-        if real(diff).abs() <= real(self.step) {
-            return (self.target, false);
-        }
-        let step = if real(diff) < 0.0 {
-            self.step ^ SIGN
-        } else {
-            self.step
-        };
-        let mut next = add(facing, step);
-        if real(next) >= real(TWO_PI) {
-            next = sub(next, TWO_PI);
-        } else if real(next) < 0.0 {
-            next = add(next, TWO_PI);
-        }
-        (next, true)
+        let (next, step) = follow(facing, self.target, self.step, self.orient_interp);
+        self.step = step;
+        (next, next != self.target)
     }
+}
+
+/// The braking table of SPEC-0018 (`orientInterp` 0): the largest step
+/// with a remaining angle, both in degrees, as reals.
+fn brake_table() -> &'static [(u32, u32)] {
+    static TABLE: std::sync::OnceLock<Vec<(u32, u32)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        include_str!("../../../../specs/SPEC-0018-facing-brake.tsv")
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                let (r, s) = l.split_once('\t')?;
+                Some((
+                    r.trim().parse::<f32>().ok()?.to_bits(),
+                    s.trim().parse::<f32>().ok()?.to_bits(),
+                ))
+            })
+            .collect()
+    })
+}
+
+/// The braking step `B(r)` for `remaining` degrees, interpolated linearly
+/// between the points of the table, in the engine arithmetic. `None`
+/// above the table, where no braking was seen.
+///
+/// PROVISIONAL: SPEC-0018 interpolates on a log-log scale, which needs
+/// logarithms the simulation does not have; the points are close enough
+/// for the difference to stay small. Below the first point the first
+/// segment goes on; other `orientInterp` values use this table too.
+fn brake(remaining: u32) -> Option<u32> {
+    let table = brake_table();
+    let r = real(remaining);
+    let last = table.last()?;
+    if r > real(last.0) {
+        return None;
+    }
+    let i = table
+        .iter()
+        .position(|&(x, _)| real(x) >= r)
+        .unwrap_or(table.len() - 1)
+        .max(1);
+    let ((x0, y0), (x1, y1)) = (table[i - 1], table[i]);
+    let t = ow3_math::div(sub(remaining, x0), sub(x1, x0));
+    Some(add(y0, mul(sub(y1, y0), t)))
+}
+
+/// Below this many radians left the facing takes the heading (0.001).
+const SNAP: u32 = 0x3A83_126F;
+
+/// One step of a facing towards `heading` (SPEC-0018): with `w` the step of
+/// the change before (0 at rest) and `r` the angle left, the step is
+/// `min(w + s, m, B(r))`; with less than 0.001 radians left the facing
+/// takes the heading and the step becomes 0. The new facing and step.
+pub(super) fn follow(facing: u32, heading: u32, w: u32, orient_interp: u8) -> (u32, u32) {
+    // The difference, moved into -pi..pi.
+    let mut diff = sub(heading, facing);
+    if real(diff) > real(PI) {
+        diff = sub(diff, TWO_PI);
+    } else if real(diff) < -real(PI) {
+        diff = add(diff, TWO_PI);
+    }
+    let r = diff & !SIGN;
+    if real(r) < real(SNAP) {
+        return (heading, 0);
+    }
+    let (first, largest) = steps(orient_interp);
+    let mut step = add(w, first);
+    if real(step) > real(largest) {
+        step = largest;
+    }
+    if let Some(b) = brake(mul(r, RADIANS_TO_DEGREES)) {
+        let b = mul(b, DEGREES_TO_RADIANS);
+        if real(b) < real(step) {
+            step = b;
+        }
+    }
+    if real(step) >= real(r) {
+        return (heading, 0);
+    }
+    let signed = if real(diff) < 0.0 { step ^ SIGN } else { step };
+    let mut next = add(facing, signed);
+    if real(next) >= real(TWO_PI) {
+        next = sub(next, TWO_PI);
+    } else if real(next) < 0.0 {
+        next = add(next, TWO_PI);
+    }
+    (next, step)
 }
 
 #[cfg(test)]

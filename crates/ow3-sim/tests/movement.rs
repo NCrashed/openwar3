@@ -134,9 +134,9 @@ fn when_the_footman_starts() {
 
 /// Verification 3 of SPEC-0018: with turnRate 0.1 the facing of a footman
 /// turning round goes 4.0107, 10.6987, 16.3289, 22.0670, 27.7958, 33.5255
-/// degrees at updates 1 to 6. Here the facing reaches the heading (11.46,
-/// 17.19, ...) where the game keeps about 0.85 degrees behind it; the
-/// rule of that lag is not known.
+/// degrees at updates 1 to 6: two growing steps, then the brake keeps it
+/// 0.85 degrees behind the heading. The brake table is interpolated
+/// linearly here (log-log in the spec), which costs up to 0.002 degrees.
 #[test]
 fn facing_follows_a_slow_heading() {
     let Some(mut game) = game_with("-4000, -2000", |t| t.turn_rate = 0.1f32.to_bits()) else {
@@ -154,6 +154,6 @@ fn facing_follows_a_slow_heading() {
         .collect();
     let expected = [4.0107, 10.6987, 16.3289, 22.0670, 27.7958, 33.5255];
     for (got, want) in facings.iter().zip(expected) {
-        assert!((got - want).abs() < 1.0, "{facings:?}");
+        assert!((got - want).abs() < 0.002, "{facings:?}");
     }
 }

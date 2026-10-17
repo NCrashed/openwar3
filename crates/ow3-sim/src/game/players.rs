@@ -97,6 +97,11 @@ pub struct Setup {
     /// `SetIntegerGameState`.
     pub float_game_states: BTreeMap<i32, u32>,
     pub integer_game_states: BTreeMap<i32, i32>,
+    /// The clock (SPEC-0017): the hours set last, the game time since the
+    /// start (0.005 added each tick) and the game time they were set at.
+    pub clock_base: u32,
+    pub clock_time: u32,
+    pub clock_start: u32,
 }
 
 fn default_name(id: i32) -> String {
@@ -168,6 +173,9 @@ impl Setup {
             // A game starts at 8:00 (SPEC-0017).
             float_game_states: BTreeMap::from([(2, 8.0f32.to_bits())]),
             integer_game_states: BTreeMap::new(),
+            clock_base: 8.0f32.to_bits(),
+            clock_time: 0,
+            clock_start: 0,
         }
     }
 
@@ -698,11 +706,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             if let Some(s) = handle(&args[0]) {
                 let value = real(&args[1]);
-                state
-                    .borrow_mut()
-                    .setup
-                    .float_game_states
-                    .insert(s as i32, value);
+                let mut state = state.borrow_mut();
+                let setup = &mut state.setup;
+                setup.float_game_states.insert(s as i32, value);
+                // The clock goes on from the time set (SPEC-0017).
+                if s == 2 {
+                    setup.clock_base = value;
+                    setup.clock_start = setup.clock_time;
+                }
             }
             Ok(None)
         }

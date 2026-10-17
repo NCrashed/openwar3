@@ -463,16 +463,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 }
             }
         }
-        // The facing follows the heading.
-        let (first, largest) = super::facing::steps(orient);
-        m.facing_step = add(m.facing_step, first);
-        if real_of(m.facing_step) > real_of(largest) {
-            m.facing_step = largest;
-        }
+        // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
-        u.facing = turn_towards(u.facing, m.heading, m.facing_step);
+        let (facing, step) = super::facing::follow(u.facing, m.heading, m.facing_step, orient);
+        u.facing = facing;
+        m.facing_step = step;
         let facing_done = u.facing == m.heading;
         if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;

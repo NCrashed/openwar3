@@ -59,9 +59,8 @@ const FIRST_HANDLE: u32 = 0x0010_0000;
 const RESERVED_HANDLES: u32 = 8;
 /// `GAME_STATE_TIME_OF_DAY`, a float game state.
 const GAME_STATE_TIME_OF_DAY: i32 = 2;
-/// Ticks between steps of the clock, and the hours of a step (0.01).
-const TICKS_PER_CLOCK_STEP: u64 = 40;
-const CLOCK_STEP: u32 = 0x3C23_D70A;
+/// Hours of the clock per second of game time (0.05).
+const HOURS_PER_SECOND: u32 = 0x3D4C_CCCD;
 
 /// What a handle refers to.
 #[derive(Clone, Debug)]
@@ -782,21 +781,24 @@ impl<'a> Game<'a> {
             let state = &mut *state;
             state.ticks += 1;
             let tick = state.ticks;
-            // The clock runs one hour per 20 s (SPEC-0017). PROVISIONAL: in
-            // steps of 0.01 hours every 0.2 s, which reproduces two of the
-            // three measured times exactly and the third within 5e-5.
-            if tick % TICKS_PER_CLOCK_STEP == 0 {
-                let hours = state
-                    .setup
-                    .float_game_states
-                    .entry(GAME_STATE_TIME_OF_DAY)
-                    .or_insert(0);
-                let mut next = ow3_math::add(*hours, CLOCK_STEP);
-                if f32::from_bits(next) >= 24.0 {
-                    next = sub(next, 24f32.to_bits());
-                }
-                *hours = next;
+            // The clock (SPEC-0017): the hours set last plus 0.05 per second
+            // of game time since, with the game time summed tick by tick.
+            // PROVISIONAL: past midnight it starts again from the hour less
+            // 24, which matches the game to 2e-6 hours but not bit for bit.
+            let setup = &mut state.setup;
+            setup.clock_time = ow3_math::add(setup.clock_time, crate::timers::TICK);
+            let mut hours = ow3_math::add(
+                setup.clock_base,
+                mul(sub(setup.clock_time, setup.clock_start), HOURS_PER_SECOND),
+            );
+            if f32::from_bits(hours) >= 24.0 {
+                hours = sub(hours, 24f32.to_bits());
+                setup.clock_base = hours;
+                setup.clock_start = setup.clock_time;
             }
+            setup
+                .float_game_states
+                .insert(GAME_STATE_TIME_OF_DAY, hours);
             // Life and mana regenerate every tick (SPEC-0013).
             for h in &state.units {
                 if let Some(Object::Unit(unit)) = state.objects.get_mut(h)

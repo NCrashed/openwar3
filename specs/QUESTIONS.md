@@ -426,10 +426,16 @@ the spec is silent:
 - **Straight at the target.** The heading points exactly at the target;
   the game's small wobble (open question 2) makes some steps a unit of
   the last place shorter, so a footman walking 1000 east rests at
-  -2011.848 here and at -2011.933 in the game.
-- **Facing.** It reaches the heading, while the game keeps it about
-  0.85 degrees behind on a slow turn (verification 3: 10.70, 16.33, ...
-  where it gives 11.46, 17.19, ...).
+  -2011.848 here and at -2011.933 in the game: 0.085 apart, beyond the
+  0.02 of verification 1. Each step is truncated to 1/1024 of the
+  stored coordinate, so a heading slightly off the line drops whole
+  units of the last place (up to 0.001 an update), more than the 0.0002
+  that the spec estimates.
+- **Facing brake.** The table of `SPEC-0018-facing-brake.tsv` is
+  interpolated linearly in the engine arithmetic (log-log in the spec,
+  which needs logarithms the simulation does not have): up to 0.002
+  degrees off; all `orientInterp` values use it, and above its last point
+  nothing brakes.
 - **Arrival** is the plain distance below 15.6 (open question 1).
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
   a point, `attack` on a target, `stop` and `holdposition`. An attack on
@@ -439,9 +445,9 @@ the spec is silent:
   do not follow targets that move; destructables and items have
   collision 0. No paths, collisions between units or queued orders.
 - **The first update** comes 6 ticks after the order.
-- **The clock** (SPEC-0017) steps 0.01 hours every 0.2 s, which gives
-  8.05000 after 1 s and 8.54996 after 11 s as measured, and 9.04992 where
-  the game showed 9.04987 after 21 s.
+- **The clock** (SPEC-0017) past midnight starts again from the hour
+  less 24 at the game time then, which matches the game to 2e-6 hours
+  but not bit for bit.
 
 ## Day/night lighting (`ow3-render::daylight`, the viewer)
 

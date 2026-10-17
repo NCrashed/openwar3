@@ -148,11 +148,15 @@ fn clock_runs() {
     let mut game = Game::load(&program, &refs).unwrap();
     assert_eq!(game.time_of_day(), 8.0);
     while game.ticks() < 200 {
-        game.advance(25_000);
+        game.step();
     }
     assert_eq!(format!("{:.5}", game.time_of_day()), "8.05000");
     while game.ticks() < 2200 {
-        game.advance(25_000);
+        game.step();
     }
     assert_eq!(format!("{:.5}", game.time_of_day()), "8.54996");
+    while game.ticks() < 4200 {
+        game.step();
+    }
+    assert_eq!(format!("{:.5}", game.time_of_day()), "9.04987");
 }

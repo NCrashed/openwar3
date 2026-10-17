@@ -35,35 +35,16 @@ drawn with.
   by at most `turnRate` radians (footman 0.6 rad = 34.38 degrees per
   update). If the remaining difference is smaller, it becomes equal to
   the target direction. It turns the shorter way.
-- The facing follows the heading. At each update, with `r` the angle
-  from the facing to the heading after that update's turn, and `w` the
-  facing step of the previous update (0 when it was at rest), the
-  facing turns towards the heading by
-
-      step = min(w + s, m, B(r))
-
-  with `s` and `m` the `orientInterp` values of SPEC-0013 (for
-  `orientInterp` 0: `s` = 0.07 rad, `m` = 0.2 rad) and `B` a braking
-  function of the remaining angle alone. If `r` is below about 0.001 rad
-  (between 0.0527 and 0.0612 degrees measured) the facing is set to the
-  heading instead and `w` becomes 0.
-- `B` was measured for `orientInterp` 0 only, as a table
-  (`SPEC-0018-facing-brake.tsv`, degrees, 90 points from 0.06 to 9.2
-  degrees remaining; interpolate between points, log-log interpolation
-  reproduces all points within 0.0001 degrees). Some values: `B(0.1)` =
-  0.031, `B(0.5)` = 0.2285, `B(1)` = 0.5435, `B(2)` = 1.2927, `B(3)` =
-  2.146, `B(6.51)` = 5.650, `B(9.21)` = 8.724. With more than about 9
-  degrees left, the step was limited by `w + s` or `m` in all tests, so
-  `B` is not known there. The closed form of `B` is open.
-- The same rule covers `SetUnitFacing` (SPEC-0013: the heading is set
-  at once, the facing then turns) and a facing that chases a turning
-  heading. With a slow `turnRate` (0.1 rad, 5.73 degrees per update) the
+- The facing follows the heading by the facing turn rule of SPEC-0013
+  (`step = min(w + s, m, B(r))` per update, with the `orientInterp`
+  values and the braking table there). It is the same rule as for
+  `SetUnitFacing`, applied to a heading that may itself be turning.
+- Example: with a slow `turnRate` (0.1 rad, 5.73 degrees per update) the
   footman's facing went 4.0107, 10.6987, 16.3289, 22.0670, 27.7958,
   33.5255 degrees: two acceleration steps, then the brake holds it at a
   constant 0.85 degrees behind the heading, where `B(0.85 + 5.73)`
-  equals the heading's 5.73 degrees per update. The model gives these six
-  values to 0.0001 degrees, and the 14 `SetUnitFacing` turns from 0.5 to
-  180 degrees of SPEC-0013 to 0.002 degrees at every update.
+  equals the heading's 5.73 degrees per update. The rule gives these six
+  values to 0.0001 degrees.
 
 So `turnRate` sets how fast a unit can change its direction of motion,
 and `orientInterp` only how fast its model turns. (This fits the
@@ -194,9 +175,12 @@ amounts.
    x = -2011.9326 reached at tick 738 after the order (update 123),
    `GetUnitCurrentOrder` 0 from tick 739. Until the heading changes on
    straight walks are specified, compare with tolerances: the update
-   count and the tick of arrival exactly, x within 0.02 (the heading
-   changes shorten each update by at most 0.0002 along the line), y
-   within 0.05.
+   count and the tick of arrival exactly, x within 0.15 and y within
+   0.05. (The truncation to 1/1024 of the stored coordinate makes a step
+   whose heading is slightly off the line lose up to one unit of the
+   last place, about 0.001 per update, so over 123 updates x can differ
+   by about 0.1; an implementation aiming straight at the target got
+   -2011.848.)
 2. The start table above for `propWin` 10, 30, 60, 90 and the `turnRate`
    values listed: first motion at the predicted update in all 40 cases.
 3. Facing of a footman with `turnRate` 0.1 turning to 180 degrees:

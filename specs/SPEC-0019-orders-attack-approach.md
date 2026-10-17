@@ -128,6 +128,24 @@ every order gave the same `j`, whatever the time and place. With seed 7
 way). A unit that first walks to its target for longer than this wait
 showed no extra delay in 15 of 15 cases.
 
+### Acquisition by idle units (first results)
+
+An idle unit with a weapon attacks an enemy unit on its own:
+
+- **Range.** It acquires an enemy whose centre is at most
+  `acquire + c_a + c_t` away (`acquire` from `Units\UnitWeapons.slk`,
+  collisions as above): a footman (`acquire` 500, collision 31) took an
+  enemy footman copy (collision 31, `Player(1)`) at 562 and not at 563.
+  `Player(15)` (neutral passive) is not an enemy of `Player(0)`
+  (`IsUnitEnemy` false); its units were not tested for acquisition.
+- **Then** it walks to the target and attacks it by the approach rule
+  above. `GetUnitCurrentOrder` stays 0 during such an attack.
+- **When.** The first acquisition of a newly created unit came at a
+  random update: the first motion was `6 k + 5` ticks after creation,
+  with `k` from 1 to 24 (30 footmen each with seeds 7 and 8). The values depend only on the
+  random seed set before the units were created (the same seed gave the
+  same 30 values in the same order); the draw is not yet identified.
+
 ## Edge cases
 
 - The target of these tests could not move (move speed 0) and belonged
@@ -138,8 +156,8 @@ showed no extra delay in 15 of 15 cases.
 
 1. How `j` (the random wait) is derived from the random generator, and
    whether it also applies when the unit walks first but arrives early.
-2. Targets that move (chasing), attack-move with enemies, acquisition
-   (`acquire` range) and retaliation, `minRange`.
+2. Targets that move (chasing), attack-move with enemies, the timing
+   of acquisition scans after the first one, retaliation, `minRange`.
 3. Queued orders, group orders, formation movement.
 4. Orders on units of other players, `hold position` with enemies in
    range.

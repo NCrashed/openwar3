@@ -173,6 +173,11 @@ impl Animation {
         index
     }
 
+    /// The height of the top of model `index` (its extent), at least 50.
+    pub fn model_top(&self, index: usize) -> f32 {
+        self.models[index].model.info.extent.max[2].max(50.0)
+    }
+
     /// The bones of model `index`.
     pub fn palette_len(&self, index: usize) -> u32 {
         self.models[index].palette.len() as u32

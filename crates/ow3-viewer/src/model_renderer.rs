@@ -440,7 +440,7 @@ impl ModelRenderer {
         chain: &mut ArchiveChain,
         units: &[UnitDraw],
         elapsed: i32,
-    ) {
+    ) -> Vec<UnitAnchor> {
         // Models and groups first: they may add bone matrices.
         let mut drawn = Vec::with_capacity(units.len());
         for unit in units {
@@ -482,6 +482,7 @@ impl ModelRenderer {
             .values()
             .map(|&(buffer, _)| (buffer, Vec::new()))
             .collect();
+        let mut anchors = Vec::with_capacity(drawn.len());
         for (unit, buffer, model) in drawn {
             let bone_base = match self
                 .animation
@@ -498,10 +499,23 @@ impl ModelRenderer {
                 matrix: unit.matrix,
                 bone_base,
             });
+            let m = unit.matrix;
+            let top = self.animation.model_top(model);
+            anchors.push(UnitAnchor {
+                handle: unit.handle,
+                foot: [m[3][0], m[3][1], m[3][2]],
+                head: [
+                    m[3][0] + m[2][0] * top,
+                    m[3][1] + m[2][1] * top,
+                    m[3][2] + m[2][2] * top,
+                ],
+                life: unit.life,
+            });
         }
         for (buffer, instances) in lists {
             self.instance_buffers[buffer].write(device, queue, &instances);
         }
+        anchors
     }
 
     /// Poses the models `elapsed` milliseconds into their animations.
@@ -601,4 +615,14 @@ impl Instances {
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(instances));
         self.count = instances.len() as u32;
     }
+}
+
+/// Where a unit stands and how tall it is, for its health bar and for
+/// picking it with the mouse.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnitAnchor {
+    pub handle: u32,
+    pub foot: [f32; 3],
+    pub head: [f32; 3],
+    pub life: Option<f32>,
 }

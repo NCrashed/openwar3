@@ -32,6 +32,8 @@ pub struct UnitDraw {
     pub matrix: Mat4,
     /// What it is doing.
     pub pose: UnitPose,
+    /// Its share of its maximum life, for a living unit that has any.
+    pub life: Option<f32>,
     /// The unit's handle, which picks its phase.
     pub handle: u32,
 }
@@ -64,6 +66,25 @@ impl Sim {
         })
     }
 
+    /// A line about unit `handle`: type, owner, life, mana and attack.
+    pub fn describe(&self, handle: u32) -> Option<String> {
+        let u = self.game.units().into_iter().find(|u| u.handle == handle)?;
+        let code = String::from_utf8_lossy(&u.type_id.to_be_bytes()).into_owned();
+        let mut line = format!(
+            "{code} #{handle} of player {}: life {:.1}/{:.0}",
+            u.owner, u.life, u.max_life
+        );
+        if u.max_mana > 0.0 {
+            line += &format!(", mana {:.1}/{:.0}", u.mana, u.max_mana);
+        }
+        if !u.alive {
+            line += ", dead";
+        } else if let Some(attack) = u.attack {
+            line += &format!(", attacking #{}", attack.target);
+        }
+        Some(line)
+    }
+
     /// Lets `micros` of real time pass.
     pub fn advance(&mut self, micros: u64) {
         self.game.advance(micros);
@@ -91,6 +112,8 @@ impl Sim {
                     model: placement.model,
                     team: placement.team,
                     handle: u.handle,
+                    life: (u.alive && u.max_life > 0.0)
+                        .then(|| (u.life / u.max_life).clamp(0.0, 1.0)),
                     pose: pose(&u, now),
                 })
             })
@@ -147,6 +170,10 @@ mod tests {
             hidden: false,
             died_at,
             attack,
+            life: 1.0,
+            max_life: 1.0,
+            mana: 0.0,
+            max_mana: 0.0,
         }
     }
 

@@ -3,9 +3,11 @@
 
 pub mod camera;
 pub mod cliff_mesh;
+pub mod controls;
 pub mod model_renderer;
 pub mod models;
 pub mod objects;
+pub mod overlay;
 pub mod renderer;
 pub mod scene;
 pub mod sim_units;

@@ -207,6 +207,25 @@ pub fn build(
     layers
 }
 
+/// The height of the ground at (`x`, `y`), interpolated between the
+/// corners of its tile; the nearest edge outside the map.
+pub fn ground_z(terrain: &Terrain, x: f32, y: f32) -> f32 {
+    if terrain.width < 2 || terrain.height < 2 {
+        return 0.0;
+    }
+    let fx = ((x - terrain.origin_x) / TILE).clamp(0.0, (terrain.width - 1) as f32);
+    let fy = ((y - terrain.origin_y) / TILE).clamp(0.0, (terrain.height - 1) as f32);
+    let (tx, ty) = (
+        (fx as u32).min(terrain.width - 2),
+        (fy as u32).min(terrain.height - 2),
+    );
+    let (u, v) = (fx - tx as f32, fy - ty as f32);
+    let h = |x: u32, y: u32| height(&terrain.points[(y * terrain.width + x) as usize]);
+    let bottom = h(tx, ty) + (h(tx + 1, ty) - h(tx, ty)) * u;
+    let top = h(tx, ty + 1) + (h(tx + 1, ty + 1) - h(tx, ty + 1)) * u;
+    bottom + (top - bottom) * v
+}
+
 /// The middle of the map, on the ground.
 pub fn centre(terrain: &Terrain) -> [f32; 3] {
     let (x, y) = ((terrain.width - 1) / 2, (terrain.height - 1) / 2);

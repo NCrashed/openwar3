@@ -13,11 +13,12 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use ow3_viewer::camera::Camera;
+use ow3_viewer::controls::{Action, Controls};
 use ow3_viewer::renderer::{self, Renderer};
 use ow3_viewer::scene::Scene;
 use ow3_viewer::sim_units::Sim;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -115,6 +116,7 @@ fn screenshot(
         );
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
+    renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
     image
@@ -145,6 +147,13 @@ struct App {
     /// The running map, if its script runs.
     sim: Option<Sim>,
     last_frame: std::time::Instant,
+    controls: Controls,
+    /// The mouse cursor in pixels.
+    cursor: (f32, f32),
+    /// Frames since `counted`, for the frame rate in the title.
+    frames: u32,
+    counted: std::time::Instant,
+    fps: f32,
     error: Option<String>,
 }
 
@@ -192,31 +201,6 @@ impl App {
             renderer,
         })
     }
-
-    fn key(&mut self, key: &Key) -> bool {
-        let step = self.camera.distance * 0.08;
-        match key {
-            Key::Named(NamedKey::ArrowUp) => self.camera.pan(0.0, step),
-            Key::Named(NamedKey::ArrowDown) => self.camera.pan(0.0, -step),
-            Key::Named(NamedKey::ArrowLeft) => self.camera.pan(-step, 0.0),
-            Key::Named(NamedKey::ArrowRight) => self.camera.pan(step, 0.0),
-            Key::Character(c) => match c.as_str() {
-                "w" | "W" => self.camera.pan(0.0, step),
-                "s" | "S" => self.camera.pan(0.0, -step),
-                "a" | "A" => self.camera.pan(-step, 0.0),
-                "d" | "D" => self.camera.pan(step, 0.0),
-                "q" | "Q" => self.camera.turn(5.0, 0.0),
-                "e" | "E" => self.camera.turn(-5.0, 0.0),
-                "r" | "R" => self.camera.turn(0.0, 3.0),
-                "f" | "F" => self.camera.turn(0.0, -3.0),
-                "+" | "=" => self.camera.zoom(0.9),
-                "-" => self.camera.zoom(1.1),
-                _ => return false,
-            },
-            _ => return false,
-        }
-        true
-    }
 }
 
 impl ApplicationHandler for App {
@@ -233,7 +217,6 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let mut redraw = false;
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -243,76 +226,122 @@ impl ApplicationHandler for App {
                     gpu.surface.configure(&gpu.device, &gpu.config);
                     gpu.depth =
                         renderer::depth_view(&gpu.device, gpu.config.width, gpu.config.height);
-                    redraw = true;
                 }
             }
             WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key,
-                        state: ElementState::Pressed,
-                        ..
-                    },
+                event: KeyEvent {
+                    logical_key, state, ..
+                },
                 ..
             } => {
                 if logical_key == Key::Named(NamedKey::Escape) {
                     event_loop.exit();
                 }
-                redraw = self.key(&logical_key);
+                let name = match &logical_key {
+                    Key::Named(named) => format!("{named:?}"),
+                    Key::Character(c) => c.to_string(),
+                    _ => String::new(),
+                };
+                if let Some(action) = Action::of_key(&name) {
+                    self.controls.key(action, state == ElementState::Pressed);
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                self.camera.zoom(0.9f32.powf(lines));
-                redraw = true;
+                self.controls.wheel(lines);
             }
-            WindowEvent::RedrawRequested => {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
                 if let Some(gpu) = &mut self.gpu {
-                    match gpu.surface.get_current_texture() {
-                        Ok(frame) => {
-                            let view = frame
-                                .texture
-                                .create_view(&wgpu::TextureViewDescriptor::default());
-                            let aspect = gpu.config.width as f32 / gpu.config.height as f32;
-                            let now = std::time::Instant::now();
-                            let elapsed = self.started.elapsed().as_millis() as i32;
-                            if let Some(sim) = &mut self.sim {
-                                let micros = now.duration_since(self.last_frame).as_micros();
-                                sim.advance(micros as u64);
-                                let units = sim.draws();
-                                gpu.renderer.set_units(
-                                    &gpu.device,
-                                    &gpu.queue,
-                                    &mut sim.chain,
-                                    &units,
-                                    elapsed,
-                                );
-                            }
-                            self.last_frame = now;
-                            gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
-                            gpu.renderer.draw(
-                                &gpu.device,
-                                &gpu.queue,
-                                &view,
-                                &gpu.depth,
-                                &self.camera,
-                                aspect,
-                            );
-                            frame.present();
-                            // Models move: draw the next frame too.
-                            gpu.window.request_redraw();
-                        }
-                        Err(_) => gpu.surface.configure(&gpu.device, &gpu.config),
+                    let size = (gpu.config.width, gpu.config.height);
+                    let picked =
+                        gpu.renderer
+                            .pick(self.cursor.0, self.cursor.1, &self.camera, size);
+                    gpu.renderer.selected = picked;
+                    if let (Some(handle), Some(sim)) = (picked, &self.sim)
+                        && let Some(line) = sim.describe(handle)
+                    {
+                        println!("{line}");
                     }
                 }
             }
+            WindowEvent::RedrawRequested => self.frame(),
             _ => {}
         }
-        if redraw && let Some(gpu) = &self.gpu {
-            gpu.window.request_redraw();
+    }
+}
+
+impl App {
+    /// Moves the camera and the simulation on and draws the next frame.
+    fn frame(&mut self) {
+        let Some(gpu) = &mut self.gpu else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last_frame);
+        self.last_frame = now;
+        let terrain = &self.scene.terrain;
+        self.controls
+            .update(&mut self.camera, dt.as_secs_f32(), |x, y| {
+                ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
+            });
+        let elapsed = self.started.elapsed().as_millis() as i32;
+        if let Some(sim) = &mut self.sim {
+            sim.advance(dt.as_micros() as u64);
+            let units = sim.draws();
+            gpu.renderer
+                .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);
         }
+        gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
+        let size = (gpu.config.width, gpu.config.height);
+        gpu.renderer
+            .prepare_overlay(&gpu.device, &gpu.queue, &self.camera, size);
+        match gpu.surface.get_current_texture() {
+            Ok(frame) => {
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let aspect = size.0 as f32 / size.1 as f32;
+                gpu.renderer.draw(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    &gpu.depth,
+                    &self.camera,
+                    aspect,
+                );
+                frame.present();
+            }
+            Err(_) => gpu.surface.configure(&gpu.device, &gpu.config),
+        }
+        // The frame rate and the selected unit in the title, twice a second.
+        self.frames += 1;
+        let counted = now.duration_since(self.counted).as_secs_f32();
+        if counted >= 0.5 {
+            self.fps = self.frames as f32 / counted;
+            self.frames = 0;
+            self.counted = now;
+            let selected = gpu
+                .renderer
+                .selected
+                .and_then(|h| self.sim.as_ref()?.describe(h));
+            let title = match selected {
+                Some(line) => format!("openwar3 - {:.0} fps - {line}", self.fps),
+                None => format!("openwar3 - {:.0} fps", self.fps),
+            };
+            gpu.window.set_title(&title);
+        }
+        // Models move: draw the next frame too.
+        gpu.window.request_redraw();
     }
 }
 
@@ -363,6 +392,11 @@ fn main() -> ExitCode {
         started: std::time::Instant::now(),
         sim,
         last_frame: std::time::Instant::now(),
+        controls: Controls::new(camera),
+        cursor: (0.0, 0.0),
+        frames: 0,
+        counted: std::time::Instant::now(),
+        fps: 0.0,
         error: None,
     };
     let event_loop = match EventLoop::new() {

@@ -173,6 +173,11 @@ pub struct UnitView {
     pub died_at: Option<u64>,
     /// The attack it is making.
     pub attack: Option<AttackView>,
+    /// Life and mana now, and their maxima.
+    pub life: f32,
+    pub max_life: f32,
+    pub mana: f32,
+    pub max_mana: f32,
 }
 
 /// An attack in progress, in ticks.
@@ -872,6 +877,14 @@ impl<'a> Game<'a> {
                     hidden: u.hidden,
                     died_at: u.died_at,
                     attack: u.attack.map(|a| a.view(&state, u.type_id)),
+                    life: if u.alive {
+                        f32::from_bits(u.life.value())
+                    } else {
+                        0.0
+                    },
+                    max_life: f32::from_bits(u.life.max),
+                    mana: f32::from_bits(u.mana.value()),
+                    max_mana: f32::from_bits(u.mana.max),
                 }),
                 _ => None,
             })

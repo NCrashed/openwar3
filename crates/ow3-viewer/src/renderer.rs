@@ -5,7 +5,8 @@ use ow3_render::image::Image;
 use wgpu::util::DeviceExt;
 
 use crate::camera::{Camera, Mat4};
-use crate::model_renderer::ModelRenderer;
+use crate::model_renderer::{ModelRenderer, UnitAnchor};
+use crate::overlay::{Bar, Overlay};
 use crate::scene::Scene;
 use crate::terrain_mesh::{Layer, Vertex, atlas_cells};
 
@@ -94,6 +95,11 @@ pub struct Renderer {
     models: ModelRenderer,
     water_pipeline: wgpu::RenderPipeline,
     water: Option<GpuLayer>,
+    overlay: Overlay,
+    /// The units placed last, for health bars and picking.
+    anchors: Vec<UnitAnchor>,
+    /// The unit picked with the mouse.
+    pub selected: Option<u32>,
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -444,6 +450,9 @@ impl Renderer {
             models,
             water_pipeline,
             water,
+            overlay: Overlay::new(device, format),
+            anchors: Vec::new(),
+            selected: None,
         }
     }
 
@@ -463,7 +472,62 @@ impl Renderer {
         units: &[crate::sim_units::UnitDraw],
         elapsed: i32,
     ) {
-        self.models.set_units(device, queue, chain, units, elapsed);
+        self.anchors = self.models.set_units(device, queue, chain, units, elapsed);
+    }
+
+    /// Lays out the health bars of the units for a view of `size` pixels.
+    pub fn prepare_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        size: (u32, u32),
+    ) {
+        let bars: Vec<Bar> = self
+            .anchors
+            .iter()
+            .filter_map(|a| {
+                Some(Bar {
+                    at: [a.head[0], a.head[1], a.head[2] + 24.0],
+                    fill: a.life?,
+                    selected: self.selected == Some(a.handle),
+                })
+            })
+            .collect();
+        let aspect = size.0 as f32 / size.1.max(1) as f32;
+        self.overlay
+            .set(device, queue, &bars, &camera.view_projection(aspect), size);
+    }
+
+    /// The unit under pixel (`x`, `y`) of a view of `size` pixels: the one
+    /// whose upright line from foot to head passes closest, within 24
+    /// pixels.
+    pub fn pick(&self, x: f32, y: f32, camera: &Camera, size: (u32, u32)) -> Option<u32> {
+        let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+        let m = camera.view_projection(w / h);
+        let screen = |p| {
+            crate::overlay::project(&m, p).map(|[x, y]| [(x + 1.0) * w / 2.0, (1.0 - y) * h / 2.0])
+        };
+        let mut best: Option<(f32, u32)> = None;
+        for a in &self.anchors {
+            let (Some(foot), Some(head)) = (screen(a.foot), screen(a.head)) else {
+                continue;
+            };
+            // The distance from the cursor to the segment foot-head.
+            let (dx, dy) = (head[0] - foot[0], head[1] - foot[1]);
+            let length = dx * dx + dy * dy;
+            let t = if length > 0.0 {
+                (((x - foot[0]) * dx + (y - foot[1]) * dy) / length).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let (px, py) = (foot[0] + dx * t, foot[1] + dy * t);
+            let distance = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
+            if distance < 24.0 && best.is_none_or(|(d, _)| distance < d) {
+                best = Some((distance, a.handle));
+            }
+        }
+        best.map(|(_, handle)| handle)
     }
 
     /// Draws the ground seen by `camera` into `target`.
@@ -536,6 +600,7 @@ impl Renderer {
                 pass.set_index_buffer(water.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..water.count, 0, 0..1);
             }
+            self.overlay.draw(&mut pass);
         }
         queue.submit([encoder.finish()]);
     }

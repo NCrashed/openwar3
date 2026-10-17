@@ -48,6 +48,41 @@ pub struct UnitType {
     pub armor: u32,
     pub armor_type: Option<usize>,
     pub agility: u32,
+    /// A hero's primary attribute (`Primary`: STR, AGI or INT), as a
+    /// real; 0 for others.
+    pub primary: u32,
+    /// Weapon 1 (SPEC-0016), if the type has one.
+    pub weapon: Option<Weapon>,
+}
+
+/// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Weapon {
+    /// `dmgplus1`, `dice1`, `sides1`.
+    pub damage: i32,
+    pub dice: i32,
+    pub sides: i32,
+    /// `cool1` and `dmgpt1` in seconds, `rangeN1`, as reals.
+    pub cooldown: u32,
+    pub damage_point: u32,
+    pub range: u32,
+    /// The JASS attack type of `atkType1` (1 for `normal`, 2 `pierce`,
+    /// ..., 0 `spells`).
+    pub attack_type: i32,
+}
+
+/// The JASS attack type of an `atkType1` name, or `None` for no weapon.
+fn attack_type(name: &str) -> Option<i32> {
+    Some(match name.trim().to_ascii_lowercase().as_str() {
+        "spells" => 0,
+        "normal" => 1,
+        "pierce" => 2,
+        "siege" => 3,
+        "magic" => 4,
+        "chaos" => 5,
+        "hero" => 6,
+        _ => return None,
+    })
 }
 
 /// The index of an armor type name, or `None` for a name outside the
@@ -114,11 +149,22 @@ type Row = (i32, Vec<Option<String>>);
 /// `columns` (`None` where a cell is missing).
 fn rows(
     archives: &mut Archives,
+    melee: bool,
     path: &str,
     key: &str,
     columns: &[&str],
 ) -> Result<Vec<Row>, MapError> {
-    let Some(data) = archives.read(path) else {
+    // PROVISIONAL: the map's own copy comes first, as for MiscGame.txt
+    // (SPEC-0015); SPEC-0016 does not say.
+    let data = archives
+        .read_map_file(path)
+        .or_else(|| {
+            (!melee)
+                .then(|| archives.read_game_file(&format!("Custom_V1\\{path}")))
+                .flatten()
+        })
+        .or_else(|| archives.read_game_file(path));
+    let Some(data) = data else {
         return Ok(Vec::new());
     };
     let table = Table::parse(&data).map_err(|e| MapError(format!("{path}: {e}")))?;
@@ -222,9 +268,12 @@ fn custom(
 }
 
 impl ObjectData {
-    pub fn load(archives: &mut Archives) -> Result<ObjectData, MapError> {
+    /// The types of a map from `archives`; `melee` maps read the `Units\`
+    /// tables of the game, others their `Custom_V1` copies where they
+    /// exist (SPEC-0016). A table imported into the map comes first.
+    pub fn load(archives: &mut Archives, melee: bool) -> Result<ObjectData, MapError> {
         let mut data = ObjectData::default();
-        for (id, values) in rows(archives, "Units\\unitUI.slk", "unitUIID", &["name"])? {
+        for (id, values) in rows(archives, melee, "Units\\unitUI.slk", "unitUIID", &["name"])? {
             data.units.insert(
                 id,
                 UnitType {
@@ -233,7 +282,13 @@ impl ObjectData {
                 },
             );
         }
-        for (id, values) in rows(archives, "Units\\UnitData.slk", "unitID", &["orientInterp"])? {
+        for (id, values) in rows(
+            archives,
+            melee,
+            "Units\\UnitData.slk",
+            "unitID",
+            &["orientInterp"],
+        )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.orient_interp = values[0]
                     .as_deref()
@@ -241,10 +296,39 @@ impl ObjectData {
                     .unwrap_or(0);
             }
         }
+        // Weapon 1 (SPEC-0016). PROVISIONAL: reals are read like the other
+        // numbers of the tables; how the game reads them is not specified.
+        for (id, values) in rows(
+            archives,
+            melee,
+            "Units\\UnitWeapons.slk",
+            "unitWeapID",
+            &[
+                "dmgplus1", "dice1", "sides1", "cool1", "dmgpt1", "rangeN1", "atkType1",
+            ],
+        )? {
+            let Some(unit) = data.units.get_mut(&id) else {
+                continue;
+            };
+            let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
+            unit.weapon = values[6]
+                .as_deref()
+                .and_then(attack_type)
+                .map(|attack_type| Weapon {
+                    damage: int(&values[0]).unwrap_or(0),
+                    dice: int(&values[1]).unwrap_or(0),
+                    sides: int(&values[2]).unwrap_or(0),
+                    cooldown: real(values[3].as_ref()),
+                    damage_point: real(values[4].as_ref()),
+                    range: real(values[5].as_ref()),
+                    attack_type,
+                });
+        }
         // The balance numbers of every type (SPEC-0009, SPEC-0013).
         let mut balance = BTreeMap::new();
         for (id, values) in rows(
             archives,
+            melee,
             "Units\\UnitBalance.slk",
             "unitBalanceID",
             &[
@@ -260,6 +344,7 @@ impl ObjectData {
                 "def",
                 "defType",
                 "AGI",
+                "Primary",
             ],
         )? {
             let b = Balance {
@@ -278,11 +363,18 @@ impl ObjectData {
                 unit.armor = real(values[9].as_ref());
                 unit.armor_type = armor_type(values[10].as_deref().unwrap_or(""));
                 unit.agility = real(values[11].as_ref());
+                unit.primary = match values[12].as_deref() {
+                    Some("STR") => b.strength,
+                    Some("AGI") => unit.agility,
+                    Some("INT") => b.intelligence,
+                    _ => 0,
+                };
             }
             balance.insert(id, b);
         }
         for (id, values) in rows(
             archives,
+            melee,
             "Units\\DestructableData.slk",
             "DestructableID",
             &["HP", "armor"],
@@ -291,7 +383,13 @@ impl ObjectData {
             data.destructable_armor
                 .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
         }
-        for (id, values) in rows(archives, "Units\\ItemData.slk", "itemID", &["HP", "armor"])? {
+        for (id, values) in rows(
+            archives,
+            melee,
+            "Units\\ItemData.slk",
+            "itemID",
+            &["HP", "armor"],
+        )? {
             data.items.insert(id, real(values[0].as_ref()));
             data.item_armor
                 .insert(id, armor_type(values[1].as_deref().unwrap_or("")));

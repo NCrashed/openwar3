@@ -40,17 +40,39 @@ pub struct Random {
     b: u32,
 }
 
+/// Game generators that `SetRandomSeed` reseeds besides the script's.
+pub const GAME_GENERATORS: usize = 45;
+/// The game generator that rolls the damage dice of attacks (SPEC-0016).
+pub const ATTACK_DICE: usize = 2;
+
 impl Random {
-    /// The state after `SetRandomSeed(seed)`.
-    pub fn seeded(seed: u32) -> Random {
+    /// The seeding formula, without the step that `seeded` discards.
+    fn unstepped(seed: u32) -> Random {
         let s = seed;
         let b = ((s % 59) << 10)
             | ((s % 61) << 2)
             | ((s % 53) << 18)
             | ((s / 47).wrapping_mul(17).wrapping_add(s) << 26);
-        let mut random = Random { a: s, b };
-        random.step();
-        random
+        Random { a: s, b }
+    }
+
+    /// The state after `SetRandomSeed(seed)`.
+    pub fn seeded(seed: u32) -> Random {
+        Random::reseed(seed).0
+    }
+
+    /// The script generator and the game generators after
+    /// `SetRandomSeed(seed)` (SPEC-0007, "Game generators"): the output of
+    /// the script generator's first step seeds a helper whose next 45
+    /// outputs seed the game generators.
+    pub fn reseed(seed: u32) -> (Random, Vec<Random>) {
+        let mut script = Random::unstepped(seed);
+        let r1 = script.step();
+        let mut helper = Random::unstepped(r1);
+        let game = (0..GAME_GENERATORS)
+            .map(|_| Random::unstepped(helper.step()))
+            .collect();
+        (script, game)
     }
 
     /// One step of the generator; returns its output.

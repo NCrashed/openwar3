@@ -152,11 +152,50 @@ fn melee_and_custom_constants() {
     assert_eq!(melee.defense_armor, 0x3D75_C290);
     // A tree's armor type, Wood, is outside the lists; the footman's is
     // one of them.
-    let data = ow3_sim::data::ObjectData::load(&mut archives).unwrap();
+    let data = ow3_sim::data::ObjectData::load(&mut archives, true).unwrap();
     let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
     assert_eq!(data.destructable_armor[&code(b"LTlt")], None);
     assert!(data.units[&code(b"hfoo")].armor_type.is_some());
     // 100 pierce damage against medium armor 10: 46.88 as R2SW shows it.
     let d = custom.damage(100f32.to_bits(), 10f32.to_bits(), Some(1), 2, 4);
     assert_eq!(f32::from_bits(d), 46.874_992);
+}
+
+/// The example of SPEC-0016: a knight of the custom data set, after
+/// `SetRandomSeed(777)`, against medium armor 10.
+#[test]
+fn knight_hits() {
+    let game_data =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    if !game_data.join("War3Patch.mpq").exists() {
+        return;
+    }
+    let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
+    let data = ow3_sim::data::ObjectData::load(&mut archives, false).unwrap();
+    let combat = ow3_sim::combat::Combat::load(&mut archives, false);
+    let knight = &data.units[&i32::from_be_bytes(*b"hkni")];
+    let weapon = knight.weapon.as_ref().unwrap();
+    assert_eq!((weapon.damage, weapon.dice, weapon.sides), (25, 2, 5));
+    assert_eq!(f32::from_bits(weapon.cooldown), 1.5);
+    let mut dice = ow3_sim::random::Random::reseed(777).1[ow3_sim::random::ATTACK_DICE].clone();
+    let hits: Vec<f32> = (0..6)
+        .map(|_| {
+            let amount = ow3_sim::combat::hit_amount(weapon, 0, &mut dice);
+            let d = combat.damage(amount, 10f32.to_bits(), Some(1), weapon.attack_type, 4);
+            f32::from_bits(d)
+        })
+        .collect();
+    // The spec lists these rounded; with the armor factor 0x3F1FFFFF of
+    // SPEC-0015 they are a few units of the last place below.
+    let expected = [29.0625, 30.0, 29.0625, 29.0625, 30.0, 27.1875];
+    for (hit, expected) in hits.iter().zip(expected) {
+        assert!((hit - expected).abs() < 1e-4, "{hits:?}");
+    }
+    // The melee data set has the knight at 28 and 1.4 s.
+    let melee = ow3_sim::data::ObjectData::load(&mut archives, true).unwrap();
+    let weapon = melee.units[&i32::from_be_bytes(*b"hkni")]
+        .weapon
+        .clone()
+        .unwrap();
+    assert_eq!((weapon.damage, f32::from_bits(weapon.cooldown)), (28, 1.4));
 }

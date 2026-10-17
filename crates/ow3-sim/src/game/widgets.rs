@@ -125,6 +125,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         y: snap(at[1]),
         facing: facing::from_degrees(at[2]),
         turn: None,
+        attack: None,
         orient_interp: data.orient_interp,
         life,
         mana,
@@ -274,7 +275,7 @@ fn set_unit_life(
 /// their armor type, without armor value. A destructable at 0 life dies
 /// as with `SetDestructableLife`; an item at 0 life runs its death
 /// triggers, without a killing unit, and stays.
-fn damage_widget(
+pub(super) fn damage_widget(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
     source: Option<u32>,

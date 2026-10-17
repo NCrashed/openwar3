@@ -297,6 +297,32 @@ destructables and items. Choices where the spec is silent:
 - Ethereal units, magic immunity and missed attacks (open question 1) are
   not handled.
 
+## Attacks of units (`ow3-sim::combat`, `game::attack`, `ow3-sim::random`)
+
+The damage of one hit, the dice from game generator 2, the reseeding of
+the 45 game generators and the `Custom_V1` data set follow SPEC-0016 and
+SPEC-0007. Choices where the specs are silent:
+
+- **The example of SPEC-0016** lists 29.0625, 30.0, ...; with the armor
+  factor `0x3F1FFFFF` of the SPEC-0015 example the values are a few units
+  of the last place below (29.062496, 29.999996, ...). The test compares
+  them with a tolerance.
+- **Numbers of the `Units\` tables** are read as the nearest real.
+  `s2r` would give `1.5000001` for `cool1` "1.5" (its division by 10 is
+  not exact); how the game reads the tables is not specified.
+- **Which copy of a table.** A `Units\*.slk` imported into the map comes
+  first, then, for maps without the melee flag, the game's `Custom_V1`
+  copy, then the game's `Units\` copy.
+- **Attack orders.** Only `IssueTargetOrder(u, "attack", target)` and
+  `IssueImmediateOrder(u, "stop")` are known. The first hit comes `dmgpt1`
+  after the order (open question 1), later hits `cool1` apart, rounded to
+  whole ticks; hits come after the timers of their tick. Units do not
+  move, turn, acquire targets or check their range.
+- **Custom unit types** keep the weapon of their base type: the weapon
+  fields of `war3map.w3u` are not read.
+- **State at game start.** The game generators start as after
+  `SetRandomSeed(0)`, like the script generator.
+
 ## Natives that keep state for scripts (`game::players`, `game::widgets`)
 
 The ignored test `maps` counts the stubbed natives that the 191 installed

@@ -137,7 +137,7 @@ impl Map {
         let heights = crate::heights::Heights::new(&terrain);
         // The melee flag of war3map.w3i chooses the constants (SPEC-0015).
         let combat = crate::combat::Combat::load(archives, info.flags & 0x04 != 0);
-        let data = ObjectData::load(archives)?;
+        let data = ObjectData::load(archives, info.flags & 0x04 != 0)?;
         let localized = localized_strings(archives);
         let destructables = destructables(archives, &data)?;
         Ok(Map {

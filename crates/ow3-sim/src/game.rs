@@ -45,6 +45,7 @@ macro_rules! native {
 
 mod boards;
 pub use boards::Button;
+mod attack;
 mod enumerate;
 mod facing;
 pub mod players;
@@ -141,6 +142,8 @@ pub struct Unit {
     facing: u32,
     /// A turn started by `SetUnitFacing`.
     turn: Option<facing::Turn>,
+    /// The attack the unit is making (SPEC-0016).
+    attack: Option<attack::Attacking>,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,
@@ -334,6 +337,8 @@ pub struct State {
     /// Script random numbers (SPEC-0007). PROVISIONAL: the state at the
     /// start is that of `SetRandomSeed(0)`.
     pub random: Random,
+    /// The game generators of SPEC-0007, reseeded with the script's.
+    pub game_random: Vec<Random>,
     /// The boolexpr made by `Condition` or `Filter` for each function: the
     /// same function gives the same handle (SPEC-0006).
     conditions: HashMap<usize, u32>,
@@ -355,6 +360,8 @@ pub struct State {
     pub ticks: u64,
     /// Units turning, in the order of the calls.
     turning: Vec<u32>,
+    /// Units attacking, in the order their attacks began.
+    attacking: Vec<u32>,
     /// Interface strings for `GetLocalizedString` (SPEC-0010).
     localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
@@ -362,7 +369,7 @@ pub struct State {
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// Damage constants (SPEC-0015).
-    combat: crate::combat::Combat,
+    pub combat: crate::combat::Combat,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
     camera_bounds: [u32; 4],
     next_handle: u32,
@@ -390,6 +397,7 @@ impl State {
             players: BTreeMap::new(),
             setup: players::Setup::single_player(),
             random: Random::seeded(0),
+            game_random: Random::reseed(0).1,
             units: Vec::new(),
             destructables: Vec::new(),
             items: Vec::new(),
@@ -399,6 +407,7 @@ impl State {
             data: ObjectData::default(),
             ticks: 0,
             turning: Vec::new(),
+            attacking: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             heights: crate::heights::Heights::default(),
@@ -765,6 +774,8 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
+        attack::hits(&mut self.vm, &self.state);
+        self.park();
     }
 
     fn fire(&mut self, fired: Fired<u32>) {
@@ -1738,7 +1749,10 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         state,
         "native SetRandomSeed takes integer seed returns nothing",
         |vm, state, args| {
-            state.borrow_mut().random = Random::seeded(integer(&args[0]) as u32);
+            let (script, game) = Random::reseed(integer(&args[0]) as u32);
+            let mut state = state.borrow_mut();
+            state.random = script;
+            state.game_random = game;
             Ok(None)
         }
     );
@@ -1814,6 +1828,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
+    attack::register(&mut add, state);
     boards::register(&mut add, state);
 
     // PROVISIONAL: natives that make an object the simulation does not

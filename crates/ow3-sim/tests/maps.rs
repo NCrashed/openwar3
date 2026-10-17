@@ -52,6 +52,7 @@ fn every_map_loads_and_runs() {
             .unwrap()
             .display()
             .to_string();
+        let started = std::time::Instant::now();
         let map = match Map::load(&game_data(), path) {
             Ok(map) => map,
             Err(e) => {
@@ -79,7 +80,8 @@ fn every_map_loads_and_runs() {
         }
         let state = game.state.borrow();
         eprintln!(
-            "{name}: {} destructables, {} lines, {} thread errors{}",
+            "{name}: {:.2} s, {} destructables, {} lines, {} thread errors{}",
+            started.elapsed().as_secs_f64(),
             map.destructables.len(),
             state.output.len(),
             state.errors.len(),

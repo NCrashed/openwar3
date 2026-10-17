@@ -158,6 +158,21 @@ impl Combat {
     }
 }
 
+/// The amount of one hit of `weapon` (SPEC-0016): its base damage, plus
+/// `primary` (a hero's primary attribute, a whole number as a real), plus
+/// its dice rolled from `dice` (game generator 2).
+pub fn hit_amount(
+    weapon: &crate::data::Weapon,
+    primary: u32,
+    dice: &mut crate::random::Random,
+) -> u32 {
+    let mut total = weapon.damage.wrapping_add(f32::from_bits(primary) as i32);
+    for _ in 0..weapon.dice.max(0) {
+        total = total.wrapping_add(dice.integer(1, weapon.sides));
+    }
+    i2r(total)
+}
+
 /// `floor(100000 * (1 - 0.94^n))`, computed exactly: 0.94^n is
 /// 94^n / 10^(2n), kept as decimal digits.
 fn negative_step(n: u32) -> i32 {

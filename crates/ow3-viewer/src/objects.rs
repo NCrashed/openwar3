@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 
 use ow3_formats::binary::RawCode;
 use ow3_formats::map::doodads::Doodads;
+use ow3_formats::map::objects::{ObjectKind, ObjectModifications, Value as ObjectValue};
 use ow3_formats::map::units::PlacedUnits;
 use ow3_formats::mpq::ArchiveChain;
 use ow3_formats::slk::Table;
@@ -138,23 +139,7 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
             },
         );
     }
-    let mut unit_looks: BTreeMap<RawCode, Look> = BTreeMap::new();
-    for (id, v) in table(
-        chain,
-        "Units\\unitUI.slk",
-        "unitUIID",
-        &["file", "modelScale"],
-    ) {
-        unit_looks.insert(
-            id,
-            Look {
-                file: v[0].clone(),
-                variations: 1,
-                replaceable: None,
-                scale: number(&v[1], 1.0),
-            },
-        );
-    }
+    let mut unit_looks = unit_looks(chain);
     let unit_ids: std::collections::BTreeSet<RawCode> = unit_looks.keys().copied().collect();
     for (id, v) in table(chain, "Units\\ItemData.slk", "itemID", &["file"]) {
         unit_looks.insert(
@@ -215,7 +200,18 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
 /// The model and scale of every unit type of `Units\unitUI.slk`, by raw
 /// code value.
 pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, (String, f32)> {
-    table(
+    unit_looks(chain)
+        .into_iter()
+        .map(|(id, look)| (i32::from_be_bytes(id.0), (model_path(&look, 0), look.scale)))
+        .collect()
+}
+
+/// The look of every unit type: `Units\unitUI.slk`, then the map's
+/// changes to standard types and its own types (`war3map.w3u`), which
+/// start from their base and may set the model (`umdl`) and its scale
+/// (`usca`).
+fn unit_looks(chain: &mut ArchiveChain) -> BTreeMap<RawCode, Look> {
+    let mut looks: BTreeMap<RawCode, Look> = table(
         chain,
         "Units\\unitUI.slk",
         "unitUIID",
@@ -229,9 +225,35 @@ pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, (String, f32)> {
             replaceable: None,
             scale: number(&v[1], 1.0),
         };
-        (i32::from_be_bytes(id.0), (model_path(&look, 0), look.scale))
+        (id, look)
     })
-    .collect()
+    .collect();
+    let Some(mods) = chain
+        .read_map_file(ObjectKind::Units.file_name())
+        .and_then(|d| ObjectModifications::parse(&d, ObjectKind::Units).ok())
+    else {
+        return looks;
+    };
+    let types = mods
+        .original
+        .iter()
+        .map(|d| (d.base, d))
+        .chain(mods.custom.iter().filter_map(|d| Some((d.id?, d))));
+    for (id, d) in types {
+        let Some(mut look) = looks.get(&d.base).cloned() else {
+            continue;
+        };
+        // The last value of a field counts.
+        for m in &d.modifications {
+            match (&m.field.0, &m.value) {
+                (b"umdl", ObjectValue::String(file)) => look.file = file.clone(),
+                (b"usca", ObjectValue::Real(s) | ObjectValue::Unreal(s)) => look.scale = *s,
+                _ => {}
+            }
+        }
+        looks.insert(id, look);
+    }
+    looks
 }
 
 #[cfg(test)]

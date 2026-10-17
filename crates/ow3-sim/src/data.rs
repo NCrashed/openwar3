@@ -198,72 +198,62 @@ fn real(text: Option<&String>) -> u32 {
         .to_bits()
 }
 
-/// A custom type: its id, its base type's id and the values of the fields
-/// asked for that it sets.
-type Custom = (i32, i32, Vec<Option<u32>>);
-
-/// The text that the map's custom types of `kind` set for `field`, by id.
-fn custom_text(
-    archives: &mut Archives,
-    kind: ObjectKind,
-    field: &[u8; 4],
-) -> Result<BTreeMap<i32, String>, MapError> {
-    let Some(data) = archives.read_map_file(kind.file_name()) else {
-        return Ok(BTreeMap::new());
-    };
-    let mods = ObjectModifications::parse(&data, kind)
-        .map_err(|e| MapError(format!("{}: {e}", kind.file_name())))?;
-    Ok(mods
-        .custom
-        .iter()
-        .filter_map(|d| {
-            let text = d
-                .modifications
-                .iter()
-                .rev()
-                .find(|m| m.field.0 == *field)
-                .and_then(|m| match &m.value {
-                    Value::String(s) => Some(s.clone()),
-                    _ => None,
-                })?;
-            Some((raw_code_value(d.id?), text))
-        })
-        .collect())
+/// A type the map changes or adds, with the values it sets (the last one
+/// for a field set twice).
+struct Definition {
+    id: i32,
+    base: i32,
+    /// A new type of the map, rather than a change to a standard one.
+    custom: bool,
+    values: BTreeMap<[u8; 4], Value>,
 }
 
-/// The map's custom types of `kind`: new id, base id and the values of
-/// `fields` it sets.
-fn custom(
-    archives: &mut Archives,
-    kind: ObjectKind,
-    fields: &[&[u8; 4]],
-) -> Result<Vec<Custom>, MapError> {
+impl Definition {
+    /// A number field as a real.
+    fn number(&self, field: &[u8; 4]) -> Option<u32> {
+        match self.values.get(field)? {
+            Value::Integer(i) => Some((*i as f32).to_bits()),
+            Value::Real(r) | Value::Unreal(r) => Some(r.to_bits()),
+            Value::String(_) => None,
+        }
+    }
+
+    fn text(&self, field: &[u8; 4]) -> Option<&str> {
+        match self.values.get(field)? {
+            Value::String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// The map's changes to standard types of `kind`, then its own types, in
+/// the order of the file.
+fn definitions(archives: &mut Archives, kind: ObjectKind) -> Result<Vec<Definition>, MapError> {
     let Some(data) = archives.read_map_file(kind.file_name()) else {
         return Ok(Vec::new());
     };
     let mods = ObjectModifications::parse(&data, kind)
         .map_err(|e| MapError(format!("{}: {e}", kind.file_name())))?;
-    Ok(mods
-        .custom
-        .iter()
-        .filter_map(|d| {
-            let id = d.id?;
-            let values = fields
-                .iter()
-                .map(|field| {
-                    d.modifications
-                        .iter()
-                        .rev()
-                        .find(|m| m.field.0 == **field)
-                        .and_then(|m| match m.value {
-                            Value::Integer(i) => Some((i as f32).to_bits()),
-                            Value::Real(r) | Value::Unreal(r) => Some(r.to_bits()),
-                            Value::String(_) => None,
-                        })
-                })
-                .collect();
-            Some((raw_code_value(id), raw_code_value(d.base), values))
+    let definition = |d: &ow3_formats::map::objects::ObjectDefinition, custom: bool| {
+        let base = raw_code_value(d.base);
+        let id = if custom { raw_code_value(d.id?) } else { base };
+        let values = d
+            .modifications
+            .iter()
+            .map(|m| (m.field.0, m.value.clone()))
+            .collect();
+        Some(Definition {
+            id,
+            base,
+            custom,
+            values,
         })
+    };
+    Ok(mods
+        .original
+        .iter()
+        .filter_map(|d| definition(d, false))
+        .chain(mods.custom.iter().filter_map(|d| definition(d, true)))
         .collect())
 }
 
@@ -398,48 +388,80 @@ impl ObjectData {
         // or none for a hero, and takes its balance numbers from its base
         // unless it sets them (SPEC-0009, SPEC-0013). PROVISIONAL: a
         // custom regeneration type (`uhrt`) is not read.
-        let fields: [&[u8; 4]; 9] = [
-            b"uhpm", b"ustr", b"uint", b"umpm", b"umpi", b"uhpr", b"umpr", b"udef", b"uagi",
-        ];
-        let armor_types = custom_text(archives, ObjectKind::Units, b"udty")?;
-        for (id, base, values) in custom(archives, ObjectKind::Units, &fields)? {
-            let mut unit = data.units.get(&base).cloned().unwrap_or_default();
-            unit.name = (!is_hero(id))
-                .then(|| format!("custom_{}", String::from_utf8_lossy(&id.to_be_bytes())));
-            let mut b = balance.get(&base).cloned().unwrap_or_default();
-            let slots = [
-                &mut b.hp,
-                &mut b.strength,
-                &mut b.intelligence,
-                &mut b.mana,
-                &mut b.start_mana,
-                &mut b.life_regen,
-                &mut b.mana_regen,
+        // Changes to standard types come first, then the map's own types.
+        // PROVISIONAL: a custom type starts from its base as the map has
+        // changed it.
+        for def in definitions(archives, ObjectKind::Units)? {
+            let mut unit = data.units.get(&def.base).cloned().unwrap_or_default();
+            if def.custom {
+                unit.name = (!is_hero(def.id))
+                    .then(|| format!("custom_{}", String::from_utf8_lossy(&def.id.to_be_bytes())));
+            }
+            let mut b = balance.get(&def.base).cloned().unwrap_or_default();
+            let slots: [(&[u8; 4], &mut u32); 7] = [
+                (b"uhpm", &mut b.hp),
+                (b"ustr", &mut b.strength),
+                (b"uint", &mut b.intelligence),
+                (b"umpm", &mut b.mana),
+                (b"umpi", &mut b.start_mana),
+                (b"uhpr", &mut b.life_regen),
+                (b"umpr", &mut b.mana_regen),
             ];
-            for (slot, value) in slots.into_iter().zip(&values) {
-                if let Some(v) = value {
-                    *slot = *v;
+            for (field, slot) in slots {
+                if let Some(v) = def.number(field) {
+                    *slot = v;
                 }
             }
-            apply(&mut unit, id, &b);
-            unit.armor = values[7].unwrap_or(unit.armor);
-            unit.agility = values[8].unwrap_or(unit.agility);
-            if let Some(name) = armor_types.get(&id) {
+            apply(&mut unit, def.id, &b);
+            unit.armor = def.number(b"udef").unwrap_or(unit.armor);
+            unit.agility = def.number(b"uagi").unwrap_or(unit.agility);
+            if let Some(name) = def.text(b"udty") {
                 unit.armor_type = armor_type(name);
             }
-            data.units.insert(id, unit);
+            if let Some(orient) = def.number(b"uori") {
+                unit.orient_interp = f32::from_bits(orient) as u8;
+            }
+            unit.primary = match def.text(b"upra") {
+                Some(p) if p.eq_ignore_ascii_case("STR") => b.strength,
+                Some(p) if p.eq_ignore_ascii_case("AGI") => unit.agility,
+                Some(p) if p.eq_ignore_ascii_case("INT") => b.intelligence,
+                Some(_) => 0,
+                None => unit.primary,
+            };
+            // The weapon: a map can give one, change it or take it away.
+            let attack = match def.text(b"ua1t") {
+                Some(name) => attack_type(name),
+                None => unit.weapon.as_ref().map(|w| w.attack_type),
+            };
+            unit.weapon = attack.map(|attack_type| {
+                let mut weapon = unit.weapon.clone().unwrap_or_default();
+                weapon.attack_type = attack_type;
+                let int =
+                    |field, old: i32| def.number(field).map_or(old, |v| f32::from_bits(v) as i32);
+                weapon.damage = int(b"ua1b", weapon.damage);
+                weapon.dice = int(b"ua1d", weapon.dice);
+                weapon.sides = int(b"ua1s", weapon.sides);
+                weapon.cooldown = def.number(b"ua1c").unwrap_or(weapon.cooldown);
+                weapon.damage_point = def.number(b"udp1").unwrap_or(weapon.damage_point);
+                weapon.range = def.number(b"ua1r").unwrap_or(weapon.range);
+                weapon
+            });
+            balance.insert(def.id, b);
+            data.units.insert(def.id, unit);
         }
-        for (id, base, values) in custom(archives, ObjectKind::Destructibles, &[b"bhps"])? {
-            let base_hp = data.destructables.get(&base).copied().unwrap_or(0);
-            data.destructables.insert(id, values[0].unwrap_or(base_hp));
-            let armor = data.destructable_armor.get(&base).copied().flatten();
-            data.destructable_armor.insert(id, armor);
+        for def in definitions(archives, ObjectKind::Destructibles)? {
+            let base_hp = data.destructables.get(&def.base).copied().unwrap_or(0);
+            data.destructables
+                .insert(def.id, def.number(b"bhps").unwrap_or(base_hp));
+            let armor = data.destructable_armor.get(&def.base).copied().flatten();
+            data.destructable_armor.insert(def.id, armor);
         }
-        for (id, base, values) in custom(archives, ObjectKind::Items, &[b"ihtp"])? {
-            let base_hp = data.items.get(&base).copied().unwrap_or(0);
-            data.items.insert(id, values[0].unwrap_or(base_hp));
-            let armor = data.item_armor.get(&base).copied().flatten();
-            data.item_armor.insert(id, armor);
+        for def in definitions(archives, ObjectKind::Items)? {
+            let base_hp = data.items.get(&def.base).copied().unwrap_or(0);
+            data.items
+                .insert(def.id, def.number(b"ihtp").unwrap_or(base_hp));
+            let armor = data.item_armor.get(&def.base).copied().flatten();
+            data.item_armor.insert(def.id, armor);
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {

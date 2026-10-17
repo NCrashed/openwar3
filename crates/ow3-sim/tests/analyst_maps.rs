@@ -565,3 +565,20 @@ fn w2a_stored_texts() {
         ],
     );
 }
+
+/// A custom type of the map (`war3map.w3u`): the target of the SPEC-0016
+/// attack tests, a footman with 10000 life and armor type `normal`, keeps
+/// the footman's weapon.
+#[test]
+fn custom_unit_type() {
+    let Some(map) = load("c-AT10.w3x") else {
+        return;
+    };
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    let target = &map.data.units[&code(b"hv03")];
+    let footman = &map.data.units[&code(b"hfoo")];
+    assert_eq!(f32::from_bits(target.hp), 10_000.0);
+    assert_eq!(target.armor_type, Some(4));
+    assert_eq!(target.weapon, footman.weapon);
+    assert_eq!(target.name.as_deref(), Some("custom_hv03"));
+}

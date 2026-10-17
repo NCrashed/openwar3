@@ -91,6 +91,26 @@ impl Sim {
         Some(line)
     }
 
+    /// A right click with `unit` selected, on unit `on` or else on the
+    /// ground at `at`: an enemy is attacked, otherwise the unit moves to
+    /// the point (`smart`). A line about the order given, if any.
+    pub fn command(&mut self, unit: u32, on: Option<u32>, at: Option<[f32; 3]>) -> Option<String> {
+        if let Some(target) = on.filter(|&t| t != unit && self.game.hostile(unit, t)) {
+            return self
+                .game
+                .issue_target_order(unit, "attack", target)
+                .then(|| format!("#{unit}: attack #{target}"));
+        }
+        let [x, y, _] = at?;
+        self.game.issue_point_order(unit, "smart", x, y);
+        Some(format!("#{unit}: move to ({x:.0}, {y:.0})"))
+    }
+
+    /// `stop` for `unit`.
+    pub fn stop(&mut self, unit: u32) {
+        self.game.issue_immediate_order(unit, "stop");
+    }
+
     /// The light models the script chose (SPEC-0017).
     pub fn day_night_models(&self) -> Option<(String, String)> {
         self.game.day_night_models()

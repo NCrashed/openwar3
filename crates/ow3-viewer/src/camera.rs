@@ -122,6 +122,60 @@ impl Camera {
         self.yaw = (self.yaw + yaw).rem_euclid(360.0);
         self.pitch = (self.pitch + pitch).clamp(10.0, 89.0);
     }
+
+    /// The eye and the direction of the ray through pixel (`x`, `y`) of a
+    /// view `size` pixels large.
+    pub fn ray(&self, x: f32, y: f32, size: (u32, u32)) -> ([f32; 3], [f32; 3]) {
+        let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+        let eye = self.eye();
+        let f = normalize(sub(self.target, eye));
+        let s = normalize(cross(f, [0.0, 0.0, 1.0]));
+        let u = cross(s, f);
+        let tan = (self.fov.to_radians() / 2.0).tan();
+        let (nx, ny) = ((2.0 * x / w - 1.0) * tan * w / h, (1.0 - 2.0 * y / h) * tan);
+        let direction = normalize([
+            f[0] + s[0] * nx + u[0] * ny,
+            f[1] + s[1] * nx + u[1] * ny,
+            f[2] + s[2] * nx + u[2] * ny,
+        ]);
+        (eye, direction)
+    }
+
+    /// Where the ray through pixel (`x`, `y`) first meets the ground of
+    /// height `ground(x, y)`: marched in steps of 16, then halved down.
+    pub fn ground_point(
+        &self,
+        x: f32,
+        y: f32,
+        size: (u32, u32),
+        ground: impl Fn(f32, f32) -> f32,
+    ) -> Option<[f32; 3]> {
+        let (eye, d) = self.ray(x, y, size);
+        let at = |t: f32| [eye[0] + d[0] * t, eye[1] + d[1] * t, eye[2] + d[2] * t];
+        let below = |t: f32| {
+            let p = at(t);
+            p[2] <= ground(p[0], p[1])
+        };
+        let far = self.distance * 4.0 + 20_000.0;
+        let mut t = 0.0;
+        while t < far {
+            let next = t + 16.0;
+            if below(next) {
+                let (mut lo, mut hi) = (t, next);
+                for _ in 0..16 {
+                    let mid = (lo + hi) / 2.0;
+                    if below(mid) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                return Some(at(hi));
+            }
+            t = next;
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +207,26 @@ mod tests {
         assert!(north[1] > 0.1, "{north:?}");
         let east = project(&m, [1500.0, 2000.0, 0.0]);
         assert!(east[0] > 0.1, "{east:?}");
+    }
+
+    /// The ray through a pixel meets flat ground where that ground point
+    /// is drawn.
+    #[test]
+    fn rays_meet_the_ground_where_it_is_drawn() {
+        let mut camera = Camera::new([1000.0, 2000.0, 50.0]);
+        camera.yaw = 70.0;
+        let size = (1600, 900);
+        let m = camera.view_projection(1600.0 / 900.0);
+        for (x, y) in [(800.0, 450.0), (100.0, 800.0), (1500.0, 100.0)] {
+            let p = camera.ground_point(x, y, size, |_, _| 50.0).unwrap();
+            assert!((p[2] - 50.0).abs() < 0.5, "{p:?}");
+            let s = project(&m, p);
+            let pixel = [(s[0] + 1.0) * 800.0, (1.0 - s[1]) * 450.0];
+            assert!(
+                (pixel[0] - x).abs() < 0.5 && (pixel[1] - y).abs() < 0.5,
+                "{pixel:?} for {x} {y}"
+            );
+        }
     }
 
     #[test]

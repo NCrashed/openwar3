@@ -1,7 +1,9 @@
 //! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim]`
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
-//! zooms, Q/E turn, R/F tilt, Escape quits. The map's script runs in the
+//! zooms, Q/E turn, R/F tilt, Escape quits. A left click selects a unit;
+//! a right click then sends it to the ground point or attacks the enemy
+//! clicked, and H stops it. The map's script runs in the
 //! simulation, which places the units (`--no-sim`: the units placed in the
 //! editor instead). With `--screenshot` the view `--time` seconds in is
 //! drawn into a PNG file without a window, on a GPU or the software Vulkan
@@ -248,6 +250,14 @@ impl ApplicationHandler for App {
                     Key::Character(c) => c.to_string(),
                     _ => String::new(),
                 };
+                // H: the selected unit stops.
+                if matches!(name.as_str(), "h" | "H")
+                    && state == ElementState::Pressed
+                    && let (Some(gpu), Some(sim)) = (&self.gpu, &mut self.sim)
+                    && let Some(unit) = gpu.renderer.selected
+                {
+                    sim.stop(unit);
+                }
                 if let Some(action) = Action::of_key(&name) {
                     self.controls.key(action, state == ElementState::Pressed);
                 }
@@ -276,6 +286,26 @@ impl ApplicationHandler for App {
                     if let (Some(handle), Some(sim)) = (picked, &self.sim)
                         && let Some(line) = sim.describe(handle)
                     {
+                        println!("{line}");
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                if let (Some(gpu), Some(sim)) = (&mut self.gpu, &mut self.sim)
+                    && let Some(unit) = gpu.renderer.selected
+                {
+                    let size = (gpu.config.width, gpu.config.height);
+                    let (x, y) = self.cursor;
+                    let on = gpu.renderer.pick(x, y, &self.camera, size);
+                    let terrain = &self.scene.terrain;
+                    let at = self.camera.ground_point(x, y, size, |x, y| {
+                        ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
+                    });
+                    if let Some(line) = sim.command(unit, on, at) {
                         println!("{line}");
                     }
                 }

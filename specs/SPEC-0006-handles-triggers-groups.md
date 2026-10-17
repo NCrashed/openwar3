@@ -83,6 +83,20 @@ similar natives.
   short time: right after `RemoveUnit` the group still counts it and
   `FirstOfGroup` still returns it; 0.5 s later it is gone.
 
+### Destructables
+
+- `EnumDestructablesInRect(r, filter, action)` runs the action for a
+  destructable right after its filter returned true, before the filter of
+  the next one: with a filter that always returns true, the calls came as
+  filter 1, action 1, filter 2, action 2, and so on.
+- The destructables are the `war3map.doo` entries whose type is a
+  destructable type of the game data. In `(12)IceCrown`,
+  `EnumDestructablesInRect(GetWorldBounds(), ...)` called the filter
+  4471 times: exactly the number of `war3map.doo` entries with a type
+  listed in `Units\DestructableData.slk`. The other 1486 entries
+  (doodads) were not enumerated. Custom destructable types of a map were
+  not tested.
+
 ### Forces
 
 - `ForForce` visits players in ascending player number, whatever the order

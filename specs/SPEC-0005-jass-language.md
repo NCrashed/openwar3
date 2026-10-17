@@ -136,6 +136,32 @@ Escapes: `\"` (quote), `\\` (backslash), `\t` (tab, 9), `\n` (line feed,
   true, `null == null` is true.
 - `null` behaves as empty text in concatenation and length:
   `null + "x"` is `"x"`, `StringLength(null)` is 0.
+- Strings are byte strings (the game uses UTF-8). `StringLength` counts
+  bytes: six Cyrillic letters give 12.
+- `StringCase(s, upper)` changes only the ASCII letters `a`-`z` and
+  `A`-`Z`. Digits, `_` and all non-ASCII bytes stay as they are
+  (`StringCase("aBc1_x", true)` is `"ABC1_X"`; Cyrillic text and `é` are
+  unchanged).
+- `SubString(s, start, end)` works on byte positions and gives the bytes
+  from `start` up to, but not including, `end`. With `n = StringLength(s)`
+  and `0 <= start`:
+
+  | Case | Result | Examples with `s = "abcdef"` |
+  |---|---|---|
+  | `start <= end <= n` | bytes `start .. end-1` | `(3, 3)` -> `""`; `SubString("TRIGSTR_910", 0, 4)` -> `"TRIG"` (SPEC-0003) |
+  | `start <= n < end` | bytes `start .. n-1` | `(2, 100)` -> `"cdef"`, `(5, 100)` -> `"f"` |
+  | `end < start <= n` | bytes `start .. n-1` | `(4, 2)` -> `"ef"`, `(1, 0)` -> `"bcdef"`, `(0, -1)` -> `"abcdef"`, `(2, -1)` -> `"cdef"` |
+  | `start >= n` | `""` | `(6, 6)`, `(6, 7)`, `(7, 2)`, `(10, 12)` -> `""` |
+
+  `SubString(null, ...)` and `SubString("", ...)` give `""`. A position
+  inside a multi-byte character cuts it: the result can hold half a
+  character.
+- `SubString` with a negative `start` reads memory before the string: in
+  the game `(-1, 3)` gave four bytes, an unrelated byte followed by
+  `"abc"`, and `(-2, 2)` gave two unrelated bytes and `"ab"`; `(-1, -1)`
+  gave `""`. A `start` of 2147483647 gave the same as `(-1, 3)`. These
+  results are not reproducible; an implementation may treat a negative
+  `start` as 0.
 
 ### S2I and S2R
 
@@ -180,6 +206,16 @@ What survives the end of a thread:
   caller too.
 - When a trigger action thread ends with an error (division by zero or
   the operation limit), the trigger's next action still runs.
+
+**Deep nesting of threads.** Each nested thread (a trigger run with
+`TriggerExecute` from a trigger action, `ExecuteFunc`, and so on) uses
+space on the game's native stack (1 MiB for the main thread of
+`war3.exe`). A trigger action that runs its own trigger with
+`TriggerExecute` and nothing else completed at a depth of 1200 and
+crashed the game process (stack overflow) at 1300. There is no script
+error or limit before that. An implementation should stop such a thread
+with an error well before it runs out of its own stack; the depth of the
+crash itself does not need to be reproduced.
 
 `-2147483648 / -1` terminates the game process (a crash, observed under
 Wine). An implementation should not reproduce the crash. Treating it as a

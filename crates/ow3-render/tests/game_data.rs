@@ -49,3 +49,47 @@ fn renders_a_unit_model() {
     // The footman fills a good part of the square, not all of it.
     assert!((1500..12000).contains(&covered), "{covered}");
 }
+
+/// The footman's walk moves its bones, and the rest of the frame stays
+/// the same: frames of a loop come back to where they started.
+#[test]
+fn animates_a_unit_model() {
+    use ow3_render::animation::{Moment, Pose};
+    let Ok(mut chain) = ArchiveChain::game(&game_data()) else {
+        return;
+    };
+    let Some(data) = chain.read("Units\\Human\\Footman\\Footman.mdx") else {
+        return;
+    };
+    let model = ow3_formats::mdx::Model::parse(&data).unwrap();
+    let walk = model
+        .sequences
+        .iter()
+        .position(|s| s.name == "Walk")
+        .unwrap();
+    let length = model.sequences[walk].interval[1] - model.sequences[walk].interval[0];
+    let geoset = &model.geosets[0];
+    let skin = |elapsed: i32| {
+        Pose::new(&model, Moment::at(&model, walk, elapsed))
+            .skin(geoset)
+            .0
+    };
+    let (start, middle) = (skin(0), skin(length as i32 / 2));
+    let moved = start
+        .iter()
+        .zip(&middle)
+        .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| (x - y).abs() > 1.0))
+        .count();
+    assert!(
+        moved > start.len() / 10,
+        "{moved} of {} vertices moved",
+        start.len()
+    );
+    let end = skin(length as i32);
+    for (a, b) in start.iter().zip(&end) {
+        for (x, y) in a.iter().zip(b) {
+            assert!((x - y).abs() < 0.5, "the loop does not close: {a:?} {b:?}");
+        }
+    }
+    assert_eq!(ow3_render::model::stand_index(&model), 0);
+}

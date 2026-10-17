@@ -3,6 +3,7 @@
 //! images of models in their rest pose, for checking the data and as a
 //! base for a map view.
 
+pub mod animation;
 pub mod image;
 pub mod model;
 pub mod terrain;

@@ -75,12 +75,12 @@ fn texture_paths(chain: &mut ArchiveChain) -> BTreeMap<RawCode, String> {
 }
 
 /// Pixels of a cell of `atlas`: a quarter of its height (SPEC-0012).
-fn cell_size(atlas: &Image) -> u32 {
+pub fn cell_size(atlas: &Image) -> u32 {
     (atlas.height / 4).max(1)
 }
 
 /// The atlas cell a full tile uses for `variation` (SPEC-0012).
-fn full_cell(atlas: &Image, variation: u8) -> u32 {
+pub fn full_cell(atlas: &Image, variation: u8) -> u32 {
     let v = u32::from(variation & 0x1F);
     let wide = atlas.width >= 2 * atlas.height;
     match v {
@@ -100,15 +100,54 @@ fn full_cell(atlas: &Image, variation: u8) -> u32 {
 
 /// Top-left pixel of `cell` in an atlas with cells of `size` pixels:
 /// cells 0..15 in the left 4 x 4 block, 16..31 in the right one.
-fn cell_origin(cell: u32, size: u32) -> (u32, u32) {
+pub fn cell_origin(cell: u32, size: u32) -> (u32, u32) {
     let block = cell / 16;
     let n = cell % 16;
     ((block * 4 + n % 4) * size, (n / 4) * size)
 }
 
 /// Height of a point in world units, layers included.
-fn height(p: &TerrainPoint) -> f32 {
+pub fn height(p: &TerrainPoint) -> f32 {
     (f32::from(p.ground_height) - 8192.0) / 4.0 + (f32::from(p.layer_height()) - 2.0) * 128.0
+}
+
+/// The four corner points of tile (`x`, `y`), in the order of their bits:
+/// bottom right (1), bottom left (2), top right (4), top left (8).
+pub fn corners(terrain: &Terrain, x: u32, y: u32) -> [&TerrainPoint; 4] {
+    let point = |x: u32, y: u32| &terrain.points[(y * terrain.width + x) as usize];
+    [
+        point(x + 1, y),
+        point(x, y),
+        point(x + 1, y + 1),
+        point(x, y + 1),
+    ]
+}
+
+/// The layers of a tile in drawing order (SPEC-0012): the ground texture
+/// index and the atlas cell of each. Textures without an atlas are left
+/// out.
+pub fn tile_layers(corners: &[&TerrainPoint; 4], textures: &[Option<Image>]) -> Vec<(usize, u32)> {
+    let mut present: Vec<u8> = corners.iter().map(|p| p.ground_texture()).collect();
+    present.sort_unstable();
+    present.dedup();
+    let mut layers = Vec::with_capacity(present.len());
+    for (layer, &texture) in present.iter().enumerate() {
+        let Some(Some(atlas)) = textures.get(usize::from(texture)) else {
+            continue;
+        };
+        let cell = if layer == 0 {
+            full_cell(atlas, corners[1].texture_details & 0x1F)
+        } else {
+            corners
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.ground_texture() == texture)
+                .map(|(bit, _)| 1 << bit)
+                .sum()
+        };
+        layers.push((usize::from(texture), cell));
+    }
+    layers
 }
 
 /// The image, `tile` pixels per tile (a divisor of 64), north up.
@@ -116,42 +155,20 @@ pub fn top_down(terrain: &Terrain, textures: &[Option<Image>], tile: u32) -> Ima
     assert!(tile > 0 && CELL % tile == 0, "tile size must divide {CELL}");
     let (tiles_x, tiles_y) = (terrain.width - 1, terrain.height - 1);
     let mut image = Image::new(tiles_x * tile, tiles_y * tile);
-    let point = |x: u32, y: u32| &terrain.points[(y * terrain.width + x) as usize];
     // Cells scaled to the tile size, made on first use.
     let mut scaled: BTreeMap<(usize, u32), Vec<[u8; 4]>> = BTreeMap::new();
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
-            let corners = [
-                point(tx + 1, ty),     // bit 1: bottom right
-                point(tx, ty),         // bit 2: bottom left
-                point(tx + 1, ty + 1), // bit 4: top right
-                point(tx, ty + 1),     // bit 8: top left
-            ];
             let (left, top) = (tx * tile, (tiles_y - 1 - ty) * tile);
-            let mut present: Vec<u8> = corners.iter().map(|p| p.ground_texture()).collect();
-            present.sort_unstable();
-            present.dedup();
-            for (layer, &texture) in present.iter().enumerate() {
-                let Some(Some(atlas)) = textures.get(usize::from(texture)) else {
+            for (texture, cell) in tile_layers(&corners(terrain, tx, ty), textures) {
+                let Some(atlas) = textures[texture].as_ref() else {
                     continue;
                 };
-                let cell = if layer == 0 {
-                    full_cell(atlas, corners[1].texture_details & 0x1F)
-                } else {
-                    corners
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, p)| p.ground_texture() == texture)
-                        .map(|(bit, _)| 1 << bit)
-                        .sum()
-                };
-                let pixels = scaled
-                    .entry((usize::from(texture), cell))
-                    .or_insert_with(|| {
-                        let size = cell_size(atlas);
-                        let (x, y) = cell_origin(cell, size);
-                        atlas.scaled_square(x, y, size, tile)
-                    });
+                let pixels = scaled.entry((texture, cell)).or_insert_with(|| {
+                    let size = cell_size(atlas);
+                    let (x, y) = cell_origin(cell, size);
+                    atlas.scaled_square(x, y, size, tile)
+                });
                 for (i, &color) in pixels.iter().enumerate() {
                     let (px, py) = (left + i as u32 % tile, top + i as u32 / tile);
                     image.blend(px, py, color);

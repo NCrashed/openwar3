@@ -12,6 +12,18 @@
         default = pkgs.mkShell {
           packages = with pkgs; [ cargo rustc clippy rustfmt rust-analyzer ];
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          # The viewer loads Vulkan and the window system libraries at run
+          # time.
+          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux
+            (pkgs.lib.makeLibraryPath (with pkgs; [
+              vulkan-loader
+              wayland
+              libxkbcommon
+              libx11
+              libxcursor
+              libxi
+              libxrandr
+            ]));
         };
       });
     };

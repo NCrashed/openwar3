@@ -5,6 +5,7 @@
 //! offsets of version 1. Maps that prepend their own header are handled by
 //! scanning for the MPQ signature on 512-byte boundaries.
 
+mod chain;
 mod compression;
 mod crypto;
 mod explode;
@@ -15,6 +16,8 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crypto::{HashType, decrypt, file_key, hash_string};
+
+pub use chain::{ArchiveChain, GAME_ARCHIVES};
 
 const ARCHIVE_SIGNATURE: u32 = 0x1A51_504D; // "MPQ\x1A"
 const USER_DATA_SIGNATURE: u32 = 0x1B51_504D; // "MPQ\x1B"

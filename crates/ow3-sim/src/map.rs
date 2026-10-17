@@ -9,8 +9,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 
 use ow3_formats::binary::RawCode;
@@ -18,14 +16,10 @@ use ow3_formats::map::doodads::Doodads;
 use ow3_formats::map::info::MapInfo;
 use ow3_formats::map::strings::TriggerStrings;
 use ow3_formats::map::terrain::Terrain;
-use ow3_formats::mpq::Archive;
 use ow3_jass::ast::Script;
 use ow3_jass::check::Program;
 
 use crate::data::ObjectData;
-
-/// Game archives by priority, highest first.
-pub const GAME_ARCHIVES: [&str; 4] = ["War3Patch.mpq", "War3xlocal.mpq", "War3x.mpq", "War3.mpq"];
 
 /// Size of a terrain cell in world units.
 const CELL: f32 = 128.0;
@@ -45,39 +39,8 @@ fn error(context: &str, e: impl fmt::Display) -> MapError {
     MapError(format!("{context}: {e}"))
 }
 
-/// The map archive and the game archives, searched in order.
-pub struct Archives {
-    archives: Vec<Archive<BufReader<File>>>,
-}
-
-impl Archives {
-    /// Opens `map` and the game archives found in `game_data`.
-    pub fn open(game_data: &Path, map: &Path) -> Result<Archives, MapError> {
-        let mut archives =
-            vec![Archive::open_path(map).map_err(|e| error(&map.display().to_string(), e))?];
-        for name in GAME_ARCHIVES {
-            let path = game_data.join(name);
-            if path.exists() {
-                archives.push(Archive::open_path(&path).map_err(|e| error(name, e))?);
-            }
-        }
-        Ok(Archives { archives })
-    }
-
-    /// The first copy of `name`, or `None` if no archive has it.
-    pub fn read(&mut self, name: &str) -> Option<Vec<u8>> {
-        self.archives
-            .iter_mut()
-            .find(|a| a.contains(name))
-            .and_then(|a| a.read(name).ok())
-    }
-
-    /// `name` from the map archive only.
-    pub fn read_map_file(&mut self, name: &str) -> Option<Vec<u8>> {
-        let map = &mut self.archives[0];
-        map.contains(name).then(|| map.read(name).ok()).flatten()
-    }
-}
+/// The map archive and the game archives, searched by priority.
+pub use ow3_formats::mpq::ArchiveChain as Archives;
 
 /// A destructable placed in `war3map.doo`.
 #[derive(Clone, Debug, PartialEq)]
@@ -129,7 +92,8 @@ pub fn raw_code_value(code: RawCode) -> i32 {
 impl Map {
     /// Loads the map at `map` with the game archives in `game_data`.
     pub fn load(game_data: &Path, map: &Path) -> Result<Map, MapError> {
-        let mut archives = Archives::open(game_data, map)?;
+        let mut archives =
+            Archives::open(game_data, map).map_err(|e| error(&map.display().to_string(), e))?;
         Map::from_archives(&mut archives)
     }
 

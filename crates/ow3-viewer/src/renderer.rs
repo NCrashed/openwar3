@@ -9,6 +9,7 @@ use crate::model_renderer::{ModelRenderer, UnitAnchor};
 use crate::overlay::{Bar, Overlay};
 use crate::scene::Scene;
 use crate::terrain_mesh::{Layer, Vertex, atlas_cells};
+use ow3_render::daylight::Lighting;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Colour of the sky behind the map.
@@ -22,8 +23,15 @@ const CLEAR: wgpu::Color = wgpu::Color {
 const SHADER: &str = r#"
 struct Globals {
     view_projection: mat4x4<f32>,
-    light: vec4<f32>,
-    water: vec4<f32>,
+    // Ground light: towards the sun and its intensity, its colour and the
+    // ambient intensity, the ambient colour (SPEC-0017).
+    terrain_sun: vec4<f32>,
+    terrain_color: vec4<f32>,
+    terrain_ambient: vec4<f32>,
+    // The same for models.
+    unit_sun: vec4<f32>,
+    unit_color: vec4<f32>,
+    unit_ambient: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var atlas: texture_2d_array<f32>;
@@ -58,7 +66,13 @@ fn vs(v: VertexIn) -> VertexOut {
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas, atlas_sampler, v.uv, v.cell);
-    let light = 0.55 + 0.45 * max(dot(normalize(v.normal), globals.light.xyz), 0.0) / globals.light.z;
+    let n = normalize(v.normal);
+    let facing = max(dot(n, globals.terrain_sun.xyz), 0.0);
+    let light = min(
+        globals.terrain_sun.w * globals.terrain_color.rgb * facing
+            + globals.terrain_color.w * globals.terrain_ambient.rgb,
+        vec3<f32>(1.0),
+    );
     return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
 }
 
@@ -72,9 +86,23 @@ fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct Globals {
     view_projection: Mat4,
-    light: [f32; 4],
-    water: [f32; 4],
+    terrain_sun: [f32; 4],
+    terrain_color: [f32; 4],
+    terrain_ambient: [f32; 4],
+    unit_sun: [f32; 4],
+    unit_color: [f32; 4],
+    unit_ambient: [f32; 4],
 }
+
+/// The light when no day/night model can be read: a white sun from the
+/// south west at 55 degrees, half of it ambient.
+pub const PLAIN_LIGHT: Lighting = Lighting {
+    direction: [-0.4, -0.4, 0.82],
+    color: [1.0, 1.0, 1.0],
+    intensity: 0.5,
+    ambient: [1.0, 1.0, 1.0],
+    ambient_intensity: 0.55,
+};
 
 struct GpuLayer {
     vertices: wgpu::Buffer,
@@ -100,6 +128,9 @@ pub struct Renderer {
     anchors: Vec<UnitAnchor>,
     /// The unit picked with the mouse.
     pub selected: Option<u32>,
+    /// The light of the ground and of models (SPEC-0017).
+    pub terrain_light: Lighting,
+    pub unit_light: Lighting,
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -453,6 +484,8 @@ impl Renderer {
             overlay: Overlay::new(device, format),
             anchors: Vec::new(),
             selected: None,
+            terrain_light: PLAIN_LIGHT,
+            unit_light: PLAIN_LIGHT,
         }
     }
 
@@ -540,15 +573,23 @@ impl Renderer {
         camera: &Camera,
         aspect: f32,
     ) {
-        let light = {
-            let l = [-0.4f32, 0.4, 0.82];
-            let n = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt();
-            [l[0] / n, l[1] / n, l[2] / n, 0.0]
+        let parts = |l: &Lighting| {
+            [
+                [l.direction[0], l.direction[1], l.direction[2], l.intensity],
+                [l.color[0], l.color[1], l.color[2], l.ambient_intensity],
+                [l.ambient[0], l.ambient[1], l.ambient[2], 0.0],
+            ]
         };
+        let [terrain_sun, terrain_color, terrain_ambient] = parts(&self.terrain_light);
+        let [unit_sun, unit_color, unit_ambient] = parts(&self.unit_light);
         let globals = Globals {
             view_projection: camera.view_projection(aspect),
-            light,
-            water: [0.02, 0.09, 0.2, 1.0],
+            terrain_sun,
+            terrain_color,
+            terrain_ambient,
+            unit_sun,
+            unit_color,
+            unit_ambient,
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -15,8 +15,15 @@ use crate::sim_units::UnitDraw;
 const SHADER: &str = r#"
 struct Globals {
     view_projection: mat4x4<f32>,
-    light: vec4<f32>,
-    water: vec4<f32>,
+    // Ground light: towards the sun and its intensity, its colour and the
+    // ambient intensity, the ambient colour (SPEC-0017).
+    terrain_sun: vec4<f32>,
+    terrain_color: vec4<f32>,
+    terrain_ambient: vec4<f32>,
+    // The same for models.
+    unit_sun: vec4<f32>,
+    unit_color: vec4<f32>,
+    unit_ambient: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var skin: texture_2d<f32>;
@@ -72,7 +79,12 @@ fn vs(v: VertexIn) -> VertexOut {
 fn lit(v: VertexOut) -> vec4<f32> {
     let texel = textureSample(skin, skin_sampler, v.uv);
     let n = normalize(v.normal);
-    let light = 0.5 + 0.5 * max(dot(n, globals.light.xyz), 0.0);
+    let facing = max(dot(n, globals.unit_sun.xyz), 0.0);
+    let light = min(
+        globals.unit_sun.w * globals.unit_color.rgb * facing
+            + globals.unit_color.w * globals.unit_ambient.rgb,
+        vec3<f32>(1.0),
+    );
     return vec4<f32>(texel.rgb * light, texel.a * v.alpha);
 }
 

@@ -98,6 +98,7 @@ fn screenshot(
     let mut renderer = Renderer::new(&device, &queue, format, scene);
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
+    let mut sim_hour = 12.0;
     if let Some(sim) = sim {
         // The simulation takes at most a few seconds of real time at once.
         let mut left = (f64::from(options.time) * 1e6) as u64;
@@ -106,6 +107,7 @@ fn screenshot(
             sim.advance(step);
             left -= step;
         }
+        sim_hour = sim.time_of_day();
         let units = sim.draws();
         renderer.set_units(
             &device,
@@ -116,6 +118,7 @@ fn screenshot(
         );
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
+    light(&mut renderer, scene, sim_hour);
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -302,6 +305,8 @@ impl App {
                 .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);
         }
         gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
+        let hour = self.sim.as_ref().map_or(12.0, Sim::time_of_day);
+        light(&mut gpu.renderer, &self.scene, hour);
         let size = (gpu.config.width, gpu.config.height);
         gpu.renderer
             .prepare_overlay(&gpu.device, &gpu.queue, &self.camera, size);
@@ -367,7 +372,8 @@ fn main() -> ExitCode {
             }
         }
     };
-    let scene = match Scene::load(&game_data, &options.map, sim.is_some()) {
+    let day_night = sim.as_ref().and_then(Sim::day_night_models);
+    let scene = match Scene::load(&game_data, &options.map, sim.is_some(), day_night) {
         Ok(scene) => scene,
         Err(e) => {
             eprintln!("{e}");
@@ -417,4 +423,13 @@ fn main() -> ExitCode {
         }
         None => ExitCode::SUCCESS,
     }
+}
+
+/// The light of `hour` o'clock from the scene's day/night models.
+fn light(renderer: &mut Renderer, scene: &Scene, hour: f32) {
+    let at = |model: &Option<ow3_render::daylight::DayLight>| {
+        model.as_ref().map_or(renderer::PLAIN_LIGHT, |m| m.at(hour))
+    };
+    renderer.terrain_light = at(&scene.terrain_light);
+    renderer.unit_light = at(&scene.unit_light);
 }

@@ -8,7 +8,13 @@ use ow3_formats::map::terrain::Terrain;
 use ow3_formats::mpq::ArchiveChain;
 use ow3_render::image::Image;
 
+use ow3_render::daylight::DayLight;
+
 use crate::models::{self, Animation, Group};
+
+/// The unit light when the script names none.
+const DEFAULT_UNIT_LIGHT: &str =
+    "Environment\\DNC\\DNCLordaeron\\DNCLordaeronUnit\\DNCLordaeronUnit.mdx";
 use crate::terrain_mesh::{self, Layer};
 
 pub struct Scene {
@@ -23,6 +29,9 @@ pub struct Scene {
     pub model_textures: BTreeMap<String, Image>,
     /// How the models move.
     pub animation: Animation,
+    /// The day/night models of the ground and of units (SPEC-0017).
+    pub terrain_light: Option<DayLight>,
+    pub unit_light: Option<DayLight>,
 }
 
 /// The first frame of the water texture `path` (without the frame
@@ -44,13 +53,28 @@ fn water_texture(chain: &mut ArchiveChain, path: &str) -> Image {
 impl Scene {
     /// With `without_units`, the units placed in the editor are left out
     /// for the simulation to place.
-    pub fn load(game_data: &Path, map: &Path, without_units: bool) -> Result<Scene, String> {
+    /// `day_night` names the light models the script chose; without them
+    /// the Lordaeron ones light the map.
+    pub fn load(
+        game_data: &Path,
+        map: &Path,
+        without_units: bool,
+        day_night: Option<(String, String)>,
+    ) -> Result<Scene, String> {
         let mut chain =
             ArchiveChain::open(game_data, map).map_err(|e| format!("{}: {e}", map.display()))?;
         let data = chain
             .read_map_file("war3map.w3e")
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
+        let (terrain_model, unit_model) = day_night.unwrap_or_else(|| {
+            (
+                ow3_render::daylight::DEFAULT_TERRAIN.to_owned(),
+                DEFAULT_UNIT_LIGHT.to_owned(),
+            )
+        });
+        let terrain_light = DayLight::load(&mut chain, &terrain_model);
+        let unit_light = DayLight::load(&mut chain, &unit_model);
         let textures = ow3_render::terrain::ground_textures(&mut chain, &terrain);
         let cliffs = crate::cliff_mesh::build(&mut chain, &terrain);
         // The corners of cliff tiles show the cliff type's ground.
@@ -75,6 +99,8 @@ impl Scene {
             groups,
             model_textures,
             animation,
+            terrain_light,
+            unit_light,
         })
     }
 }

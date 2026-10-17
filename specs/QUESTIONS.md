@@ -420,6 +420,20 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   64 showed under the model's edge. `GetLocationZ` keeps the plain
   heights.
 
+## Day/night lighting (`ow3-render::daylight`, the viewer)
+
+The ground is lit as SPEC-0017 says, from the terrain model that
+`SetDayNightModels` names (Lordaeron without a call). Choices where the
+spec is silent:
+
+- **Models** (open question 2) are lit by the same formula from the unit
+  model of the call (`DNCLordaeronUnit` without one). Water is not lit.
+- **Cliffs** take the model light, being models; the spec expects the
+  ground formula with their normals (open question 1).
+- **Time of day** is `GAME_STATE_TIME_OF_DAY` as the script sets it; the
+  day does not run yet, and without a script the viewer shows noon.
+- **Fog** is not drawn (open question 3).
+
 ## Math natives (`ow3-math::natives`)
 
 The eleven natives of SPEC-0011 reproduce all 12474 lines of

@@ -5,6 +5,7 @@
 
 pub mod animation;
 pub mod cliffs;
+pub mod daylight;
 pub mod image;
 pub mod model;
 pub mod terrain;

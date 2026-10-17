@@ -85,6 +85,16 @@ impl Sim {
         Some(line)
     }
 
+    /// The light models the script chose (SPEC-0017).
+    pub fn day_night_models(&self) -> Option<(String, String)> {
+        self.game.day_night_models()
+    }
+
+    /// The time of day in hours.
+    pub fn time_of_day(&self) -> f32 {
+        self.game.time_of_day()
+    }
+
     /// Lets `micros` of real time pass.
     pub fn advance(&mut self, micros: u64) {
         self.game.advance(micros);

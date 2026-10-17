@@ -56,6 +56,8 @@ const FIRST_HANDLE: u32 = 0x0010_0000;
 /// PROVISIONAL: ids the game takes before the players, so that `Player(0)`
 /// is 0x100008 as in SPEC-0006; the 16 players follow in order.
 const RESERVED_HANDLES: u32 = 8;
+/// `GAME_STATE_TIME_OF_DAY`, a float game state.
+const GAME_STATE_TIME_OF_DAY: i32 = 2;
 
 /// What a handle refers to.
 #[derive(Clone, Debug)]
@@ -386,6 +388,9 @@ pub struct State {
     world_bounds: [u32; 4],
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
+    /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
+    /// the script names them.
+    pub day_night_models: Option<(String, String)>,
     /// Damage constants (SPEC-0015).
     pub combat: crate::combat::Combat,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
@@ -430,6 +435,7 @@ impl State {
             world_bounds: [0; 4],
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
+            day_night_models: None,
             camera_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
@@ -894,6 +900,24 @@ impl<'a> Game<'a> {
     /// Game ticks so far (0.005 s of game time each).
     pub fn ticks(&self) -> u64 {
         self.state.borrow().ticks
+    }
+
+    /// The time of day in hours (`GAME_STATE_TIME_OF_DAY`).
+    ///
+    /// PROVISIONAL: the day does not run yet; without a value from the
+    /// script it is noon.
+    pub fn time_of_day(&self) -> f32 {
+        let state = self.state.borrow();
+        state
+            .setup
+            .float_game_states
+            .get(&GAME_STATE_TIME_OF_DAY)
+            .map_or(12.0, |&bits| f32::from_bits(bits))
+    }
+
+    /// The terrain and unit models the script chose for the light.
+    pub fn day_night_models(&self) -> Option<(String, String)> {
+        self.state.borrow().day_night_models.clone()
     }
 
     /// The ground height at (`x`, `y`) as `GetLocationZ` gives it.
@@ -1769,6 +1793,18 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                 .random
                 .real(real(&args[0]), real(&args[1]));
             Ok(Some(Value::Real(value)))
+        }
+    );
+    // The light of the day (SPEC-0017).
+    native!(
+        add,
+        state,
+        "native SetDayNightModels takes string terrainDNCFile, string unitDNCFile returns nothing",
+        |vm, state, args| {
+            let terrain = string(&args[0]).unwrap_or_default().to_owned();
+            let unit = string(&args[1]).unwrap_or_default().to_owned();
+            state.borrow_mut().day_night_models = Some((terrain, unit));
+            Ok(None)
         }
     );
     native!(

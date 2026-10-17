@@ -189,3 +189,42 @@ fn ground_tiles_of_the_tileset() {
         code(b"Ndrt")
     );
 }
+
+/// The model column of the table of SPEC-0017: white flat ground at eight
+/// hours, Lordaeron and Ashenvale.
+#[test]
+fn day_night_light() {
+    let Ok(mut chain) = ArchiveChain::game(&game_data()) else {
+        return;
+    };
+    let Some(lordaeron) =
+        ow3_render::daylight::DayLight::load(&mut chain, ow3_render::daylight::DEFAULT_TERRAIN)
+    else {
+        return;
+    };
+    let ashenvale = ow3_render::daylight::DayLight::load(
+        &mut chain,
+        "Environment\\DNC\\DNCAshenvale\\DNCAshenValeTerrain\\DNCAshenValeTerrain.mdl",
+    )
+    .unwrap();
+    let pixel = |light: &ow3_render::daylight::DayLight, hour: f32| {
+        light
+            .at(hour)
+            .shade([0.0, 0.0, 1.0])
+            .map(|c| (c * 255.0).round() as u8)
+    };
+    let table: [(f32, [u8; 3], [u8; 3]); 8] = [
+        (0.0, [80, 136, 204], [66, 121, 161]),
+        (3.0, [120, 161, 231], [98, 165, 223]),
+        (6.0, [246, 246, 253], [255, 255, 255]),
+        (9.0, [246, 246, 253], [255, 255, 255]),
+        (12.0, [246, 246, 253], [255, 255, 255]),
+        (15.0, [246, 246, 253], [255, 255, 255]),
+        (18.0, [236, 231, 250], [251, 255, 255]),
+        (21.0, [125, 177, 235], [115, 184, 234]),
+    ];
+    for (hour, l, a) in table {
+        assert_eq!(pixel(&lordaeron, hour), l, "Lordaeron {hour}");
+        assert_eq!(pixel(&ashenvale, hour), a, "Ashenvale {hour}");
+    }
+}

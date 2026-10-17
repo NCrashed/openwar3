@@ -3,8 +3,8 @@
 //!
 //! A file is `MDLX` followed by chunks: a four-character tag, a byte size
 //! and the data. Parsed here: `VERS`, `MODL`, `SEQS`, `GLBS`, `TEXS`,
-//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH` and `PIVT`. Other chunks
-//! (lights, particle emitters, ribbons, events, cameras, collision shapes,
+//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH`, `PIVT` and `LITE`. Other chunks
+//! (particle emitters, ribbons, events, cameras, collision shapes,
 //! texture animations) are kept as raw bytes.
 //!
 //! Animated values are stored as tracks of 32-bit words: the number of
@@ -170,6 +170,22 @@ pub struct Attachment {
     pub tracks: Vec<Track>,
 }
 
+/// A light object (`LITE`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Light {
+    pub node: Node,
+    /// 0 omnidirectional, 1 directional, 2 ambient.
+    pub kind: u32,
+    pub attenuation: [f32; 2],
+    /// As stored: blue, green, red.
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub ambient_color: [f32; 3],
+    pub ambient_intensity: f32,
+    /// `KLAS`, `KLAE`, `KLAC`, `KLAI`, `KLBI`, `KLBC`, `KLAV`.
+    pub tracks: Vec<Track>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
     pub version: u32,
@@ -184,6 +200,7 @@ pub struct Model {
     pub bones: Vec<Bone>,
     pub helpers: Vec<Node>,
     pub attachments: Vec<Attachment>,
+    pub lights: Vec<Light>,
     pub pivots: Vec<[f32; 3]>,
     /// Chunks not parsed, with their data, in file order.
     pub other_chunks: Vec<(RawCode, Vec<u8>)>,
@@ -308,6 +325,30 @@ fn object_end(r: &Reader, start: usize, size: u32) -> Result<usize> {
         });
     }
     Ok(end)
+}
+
+fn light(r: &mut Reader) -> Result<Light> {
+    let start = r.position();
+    let size = r.u32()?;
+    let end = object_end(r, start, size)?;
+    let node = node(r)?;
+    let kind = r.u32()?;
+    let attenuation = [r.f32()?, r.f32()?];
+    let color = vec3(r)?;
+    let intensity = r.f32()?;
+    let ambient_color = vec3(r)?;
+    let ambient_intensity = r.f32()?;
+    let tracks = tracks_until(r, end)?;
+    Ok(Light {
+        node,
+        kind,
+        attenuation,
+        color,
+        intensity,
+        ambient_color,
+        ambient_intensity,
+        tracks,
+    })
 }
 
 fn node(r: &mut Reader) -> Result<Node> {
@@ -558,6 +599,7 @@ impl Model {
                 b"HELP" => model.helpers = items(&mut c, node)?,
                 b"ATCH" => model.attachments = items(&mut c, attachment)?,
                 b"PIVT" => model.pivots = fixed(&mut c, 12, offset, vec3)?,
+                b"LITE" => model.lights = items(&mut c, light)?,
                 _ => {
                     model.other_chunks.push((tag, c.bytes(size)?.to_vec()));
                 }

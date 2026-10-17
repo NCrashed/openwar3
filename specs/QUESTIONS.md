@@ -335,8 +335,7 @@ anything yet:
   living units whose type has `isbldg`.
 - **`VersionGet`** is `VERSION_FROZEN_THRONE`.
 - **Not yet:** events of player and game states, players leaving,
-  dialogs, regions; unit orders and abilities (they wait for the unit
-  spec).
+  regions; unit orders and abilities (they wait for the unit spec).
 
 ## Leaderboards, multiboards and dialogs (`game::boards`)
 

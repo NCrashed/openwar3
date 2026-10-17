@@ -420,6 +420,29 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   64 showed under the model's edge. `GetLocationZ` keeps the plain
   heights.
 
+## Movement (`game::movement`)
+
+The move order follows SPEC-0018, part 1: heading and facing, the
+propulsion window, speed, per-tick positions and arrival. Choices where
+the spec is silent:
+
+- **Straight at the target.** The heading points exactly at the target;
+  the game's small wobble (open question 2) makes some steps a unit of
+  the last place shorter, so a footman walking 1000 east rests at
+  -2011.848 here and at -2011.933 in the game.
+- **Facing.** It reaches the heading, while the game keeps it about
+  0.85 degrees behind on a slow turn (verification 3: 10.70, 16.33, ...
+  where it gives 11.46, 17.19, ...).
+- **Arrival** is the plain distance below 15.6 (open question 1).
+- **Orders.** Only `IssuePointOrder(u, "move", x, y)`, and
+  `GetUnitCurrentOrder` gives 851986 while it lasts and 0 otherwise. An
+  attack order or `stop` ends it; a unit attacking does not walk to its
+  target. No paths, collisions or other orders (open questions 3 and 4).
+- **The first update** comes 6 ticks after the order.
+- **The clock** (SPEC-0017) steps 0.01 hours every 0.2 s, which gives
+  8.05000 after 1 s and 8.54996 after 11 s as measured, and 9.04992 where
+  the game showed 9.04987 after 21 s.
+
 ## Day/night lighting (`ow3-render::daylight`, the viewer)
 
 The ground is lit as SPEC-0017 says, from the terrain model that

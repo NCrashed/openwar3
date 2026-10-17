@@ -126,6 +126,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         facing: facing::from_degrees(at[2]),
         turn: None,
         attack: None,
+        movement: None,
         orient_interp: data.orient_interp,
         life,
         mana,

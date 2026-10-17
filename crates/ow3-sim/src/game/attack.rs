@@ -86,6 +86,8 @@ fn order(state: &mut State, h: u32, target: Option<u32>) -> bool {
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.attack = attack;
+        // A new order, attack or stop, ends a move order.
+        u.movement = None;
     }
     if attack.is_some() {
         // PROVISIONAL: the output is drawn at the order and not used.

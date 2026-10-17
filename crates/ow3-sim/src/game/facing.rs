@@ -50,7 +50,7 @@ pub fn to_degrees(radians: u32) -> u32 {
 }
 
 /// The first step and the largest step of `orientInterp`, in radians.
-fn steps(orient_interp: u8) -> (u32, u32) {
+pub(super) fn steps(orient_interp: u8) -> (u32, u32) {
     match orient_interp {
         // 0.03, 0.1
         1 => (0x3CF5_C28F, 0x3DCC_CCCD),

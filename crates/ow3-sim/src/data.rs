@@ -53,6 +53,12 @@ pub struct UnitType {
     pub primary: u32,
     /// Weapon 1 (SPEC-0016), if the type has one.
     pub weapon: Option<Weapon>,
+    /// Movement (SPEC-0018): speed (`spd`, units per second), turn rate
+    /// (`turnRate`, radians per update of 0.03 s) and propulsion window
+    /// (`propWin`, degrees), as reals.
+    pub speed: u32,
+    pub turn_rate: u32,
+    pub prop_window: u32,
 }
 
 /// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
@@ -277,13 +283,15 @@ impl ObjectData {
             melee,
             "Units\\UnitData.slk",
             "unitID",
-            &["orientInterp"],
+            &["orientInterp", "turnRate", "propWin"],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.orient_interp = values[0]
                     .as_deref()
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
+                unit.turn_rate = real(values[1].as_ref());
+                unit.prop_window = real(values[2].as_ref());
             }
         }
         // Weapon 1 (SPEC-0016). PROVISIONAL: reals are read like the other
@@ -335,6 +343,7 @@ impl ObjectData {
                 "defType",
                 "AGI",
                 "Primary",
+                "spd",
             ],
         )? {
             let b = Balance {
@@ -353,6 +362,7 @@ impl ObjectData {
                 unit.armor = real(values[9].as_ref());
                 unit.armor_type = armor_type(values[10].as_deref().unwrap_or(""));
                 unit.agility = real(values[11].as_ref());
+                unit.speed = real(values[13].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -418,6 +428,9 @@ impl ObjectData {
             if let Some(name) = def.text(b"udty") {
                 unit.armor_type = armor_type(name);
             }
+            unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
+            unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
+            unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
             if let Some(orient) = def.number(b"uori") {
                 unit.orient_interp = f32::from_bits(orient) as u8;
             }

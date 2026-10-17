@@ -48,6 +48,7 @@ pub use boards::Button;
 mod attack;
 mod enumerate;
 mod facing;
+mod movement;
 pub mod players;
 mod widgets;
 
@@ -149,6 +150,8 @@ pub struct Unit {
     turn: Option<facing::Turn>,
     /// The attack the unit is making (SPEC-0016).
     attack: Option<attack::Attacking>,
+    /// The move order it follows (SPEC-0018).
+    movement: Option<movement::Moving>,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,
@@ -183,6 +186,8 @@ pub struct UnitView {
     pub max_life: f32,
     pub mana: f32,
     pub max_mana: f32,
+    /// Moving under a move order now.
+    pub walking: bool,
 }
 
 /// An attack in progress, in ticks.
@@ -385,10 +390,12 @@ pub struct State {
     turning: Vec<u32>,
     /// Units attacking, in the order their attacks began.
     attacking: Vec<u32>,
+    /// Units with a move order, in the order given.
+    moving: Vec<u32>,
     /// Interface strings for `GetLocalizedString` (SPEC-0010).
     localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
-    world_bounds: [u32; 4],
+    pub world_bounds: [u32; 4],
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -434,6 +441,7 @@ impl State {
             ticks: 0,
             turning: Vec::new(),
             attacking: Vec::new(),
+            moving: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             heights: crate::heights::Heights::default(),
@@ -762,6 +770,12 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// One tick of game time, without the real time that `advance` feeds:
+    /// the sleep clock does not move. For tests that look at every tick.
+    pub fn step(&mut self) {
+        self.tick();
+    }
+
     fn tick(&mut self) {
         {
             let mut state = self.state.borrow_mut();
@@ -792,6 +806,8 @@ impl<'a> Game<'a> {
                     unit.mana.advance();
                 }
             }
+            // Moving units advance every tick, before the timers (SPEC-0018).
+            movement::step(state);
             state.turning.retain(|h| {
                 let Some(Object::Unit(unit)) = state.objects.get_mut(h) else {
                     return false;
@@ -816,6 +832,7 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
+        movement::updates(&mut self.state.borrow_mut());
         attack::hits(&mut self.vm, &self.state);
         self.park();
     }
@@ -909,6 +926,7 @@ impl<'a> Game<'a> {
                     max_life: f32::from_bits(u.life.max),
                     mana: f32::from_bits(u.mana.value()),
                     max_mana: f32::from_bits(u.mana.max),
+                    walking: u.movement.is_some_and(|m| m.walking()),
                 }),
                 _ => None,
             })
@@ -1910,6 +1928,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     players::register(&mut add, state);
     widgets::register(&mut add, state);
     attack::register(&mut add, state);
+    movement::register(&mut add, state);
     boards::register(&mut add, state);
 
     // PROVISIONAL: natives that make an object the simulation does not

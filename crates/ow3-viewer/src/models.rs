@@ -95,6 +95,8 @@ struct Animated {
     top: f32,
     /// The first sequence named Attack, if any.
     attack: Option<usize>,
+    /// The first sequence named Walk, if any.
+    walk: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
     palette: Vec<u32>,
     /// The first matrix of variant 0; variant `v` follows `v` blocks
@@ -120,6 +122,10 @@ pub enum UnitPose {
     Death(i32),
     /// Milliseconds since the start of its swing.
     Attack(i32),
+    /// Milliseconds since it started walking; the Walk sequence loops.
+    Walk(i32),
+    /// Stopped walking `since` milliseconds ago after walking `walked`.
+    Halt { walked: i32, since: i32 },
 }
 
 /// The animated models of a scene, posed each frame.
@@ -150,6 +156,10 @@ impl Animation {
                     .iter()
                     .position(|s| s.name.to_ascii_lowercase().starts_with("death"))
                     .unwrap_or(sequence);
+                let walk = model
+                    .sequences
+                    .iter()
+                    .position(|s| s.name.to_ascii_lowercase().starts_with("walk"));
                 let attack = model
                     .sequences
                     .iter()
@@ -167,6 +177,7 @@ impl Animation {
                     sequence,
                     death,
                     attack,
+                    walk,
                     top,
                     palette,
                     bone_base,
@@ -214,6 +225,8 @@ impl Animation {
             UnitPose::Stand => return None,
             UnitPose::Death(elapsed) => (animated.death, elapsed),
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
+            UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
+            UnitPose::Halt { walked, .. } => (animated.walk?, walked),
         };
         let start = Moment::start(&animated.model, sequence);
         let length = (start.interval[1] - start.interval[0]).max(0);
@@ -222,15 +235,28 @@ impl Animation {
             time => time.min(1_000) as i32,
         };
         let stand = || self.stand_pose(index, now, variant);
+        let looping = matches!(pose, UnitPose::Walk(_) | UnitPose::Halt { .. });
         let at = |frame: i32| {
+            let frame = if looping {
+                frame.rem_euclid(length + 1)
+            } else {
+                frame.clamp(0, length)
+            };
             self.palette_pose(
                 index,
                 Moment {
-                    frame: start.frame + frame.clamp(0, length),
+                    frame: start.frame + frame,
                     ..start
                 },
             )
         };
+        if let UnitPose::Halt { walked, since } = pose {
+            // Back to Stand from where the walk stopped.
+            if since >= blend {
+                return None;
+            }
+            return Some(mix(&at(walked), &stand(), since as f32 / blend as f32));
+        }
         if matches!(pose, UnitPose::Attack(_)) && elapsed > length {
             // Back to Stand from the last frame of the swing.
             let after = elapsed - length;

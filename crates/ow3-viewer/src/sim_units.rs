@@ -42,6 +42,10 @@ pub struct UnitDraw {
 pub struct Sim {
     game: Game<'static>,
     models: BTreeMap<i32, (String, f32)>,
+    /// Since when each unit walks, and when and after how long the walk
+    /// of each unit that stopped ended, in ticks.
+    walks: BTreeMap<u32, u64>,
+    halts: BTreeMap<u32, (u64, u64)>,
     /// The archives models are loaded from while it runs.
     pub chain: ArchiveChain,
 }
@@ -62,6 +66,8 @@ impl Sim {
         Ok(Sim {
             game,
             models,
+            walks: BTreeMap::new(),
+            halts: BTreeMap::new(),
             chain,
         })
     }
@@ -101,33 +107,56 @@ impl Sim {
     }
 
     /// The units to draw now.
-    pub fn draws(&self) -> Vec<UnitDraw> {
+    pub fn draws(&mut self) -> Vec<UnitDraw> {
         let now = self.game.ticks();
-        self.game
-            .units()
-            .into_iter()
-            .filter(|u| !u.hidden)
-            .filter_map(|u| {
-                let (model, scale) = self.models.get(&u.type_id)?;
-                let placement = Placement {
-                    model: model.clone(),
-                    replaceable: None,
-                    team: u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0),
-                    position: [u.x, u.y, self.game.ground_z(u.x, u.y)],
-                    angle: u.facing,
-                    scale: [*scale; 3],
-                };
-                Some(UnitDraw {
-                    matrix: crate::models::placement_matrix(&placement),
-                    model: placement.model,
-                    team: placement.team,
-                    handle: u.handle,
-                    life: (u.alive && u.max_life > 0.0)
-                        .then(|| (u.life / u.max_life).clamp(0.0, 1.0)),
-                    pose: pose(&u, now),
-                })
-            })
-            .collect()
+        let mut draws = Vec::new();
+        for u in self.game.units() {
+            let pose = self.pose(&u, now);
+            if u.hidden {
+                continue;
+            }
+            let Some((model, scale)) = self.models.get(&u.type_id) else {
+                continue;
+            };
+            let placement = Placement {
+                model: model.clone(),
+                replaceable: None,
+                team: u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0),
+                position: [u.x, u.y, self.game.ground_z(u.x, u.y)],
+                angle: u.facing,
+                scale: [*scale; 3],
+            };
+            draws.push(UnitDraw {
+                matrix: crate::models::placement_matrix(&placement),
+                model: placement.model,
+                team: placement.team,
+                handle: u.handle,
+                life: (u.alive && u.max_life > 0.0).then(|| (u.life / u.max_life).clamp(0.0, 1.0)),
+                pose,
+            });
+        }
+        draws
+    }
+
+    /// What unit `u` is doing at tick `now`: dead, swinging, walking or
+    /// standing. The start and end of walks are kept from frame to frame.
+    fn pose(&mut self, u: &UnitView, now: u64) -> UnitPose {
+        if u.walking {
+            self.halts.remove(&u.handle);
+            let since = *self.walks.entry(u.handle).or_insert(now);
+            return UnitPose::Walk(millis(now - since));
+        }
+        if let Some(since) = self.walks.remove(&u.handle) {
+            self.halts.insert(u.handle, (now, now - since));
+        }
+        let pose = pose(u, now);
+        match (pose, self.halts.get(&u.handle)) {
+            (UnitPose::Stand, Some(&(stopped, walked))) => UnitPose::Halt {
+                walked: millis(walked),
+                since: millis(now - stopped),
+            },
+            _ => pose,
+        }
     }
 }
 
@@ -184,6 +213,7 @@ mod tests {
             max_life: 1.0,
             mana: 0.0,
             max_mana: 0.0,
+            walking: false,
         }
     }
 

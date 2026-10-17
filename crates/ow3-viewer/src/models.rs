@@ -186,34 +186,81 @@ impl Animation {
 
     /// The bone matrices of model `index` in `pose`: `elapsed`
     /// milliseconds into its Death sequence, holding the last frame, or into
-    /// its Attack sequence. `None` for an attack past the end of the
-    /// sequence or a model without one: the unit stands then.
-    pub fn unit_pose(&self, index: usize, pose: UnitPose) -> Option<Vec<Mat4>> {
+    /// its Attack sequence. `None` when the unit simply stands in the phase
+    /// of `variant`: for an attack past the end of the sequence and the
+    /// blend after it, or a model without an Attack sequence.
+    ///
+    /// Changes between Stand and another sequence blend over the model's
+    /// blend time (150 ms when it gives none), the bone matrices mixed
+    /// linearly; `now` is the time of the Stand sequence.
+    pub fn unit_pose(
+        &self,
+        index: usize,
+        pose: UnitPose,
+        now: i32,
+        variant: u32,
+    ) -> Option<Vec<Mat4>> {
         let animated = &self.models[index];
         let (sequence, elapsed) = match pose {
             UnitPose::Stand => return None,
             UnitPose::Death(elapsed) => (animated.death, elapsed),
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
         };
-        let mut moment = Moment::start(&animated.model, sequence);
-        let length = (moment.interval[1] - moment.interval[0]).max(0);
+        let start = Moment::start(&animated.model, sequence);
+        let length = (start.interval[1] - start.interval[0]).max(0);
+        let blend = match animated.model.info.blend_time {
+            0 => 150,
+            time => time.min(1_000) as i32,
+        };
+        let stand = || self.stand_pose(index, now, variant);
+        let at = |frame: i32| {
+            self.palette_pose(
+                index,
+                Moment {
+                    frame: start.frame + frame.clamp(0, length),
+                    ..start
+                },
+            )
+        };
         if matches!(pose, UnitPose::Attack(_)) && elapsed > length {
-            return None;
+            // Back to Stand from the last frame of the swing.
+            let after = elapsed - length;
+            if after >= blend {
+                return None;
+            }
+            return Some(mix(&at(length), &stand(), after as f32 / blend as f32));
         }
-        moment.frame += elapsed.clamp(0, length);
+        let current = at(elapsed);
+        if elapsed < blend {
+            // Into the sequence from Stand.
+            return Some(mix(&stand(), &current, elapsed as f32 / blend as f32));
+        }
+        Some(current)
+    }
+
+    /// The bone matrices of model `index` at `moment`, in palette order.
+    fn palette_pose(&self, index: usize, moment: Moment) -> Vec<Mat4> {
+        let animated = &self.models[index];
         let pose = Pose::new(&animated.model, moment);
-        Some(
-            animated
-                .palette
-                .iter()
-                .map(|id| {
-                    pose.matrices
-                        .get(id)
-                        .copied()
-                        .unwrap_or(ow3_render::animation::IDENTITY)
-                })
-                .collect(),
-        )
+        animated
+            .palette
+            .iter()
+            .map(|id| {
+                pose.matrices
+                    .get(id)
+                    .copied()
+                    .unwrap_or(ow3_render::animation::IDENTITY)
+            })
+            .collect()
+    }
+
+    /// The Stand pose of variant `variant` of model `index` at `now`, as
+    /// [`Animation::bones`] gives it.
+    fn stand_pose(&self, index: usize, now: i32, variant: u32) -> Vec<Mat4> {
+        let animated = &self.models[index];
+        let variant = (variant % VARIANTS as u32) as i32;
+        let shift = now.wrapping_add(variant * VARIANT_SHIFT);
+        self.palette_pose(index, Moment::at(&animated.model, animated.sequence, shift))
     }
 
     /// The parts of model `index` for player `team`, with alpha slots.
@@ -279,6 +326,16 @@ impl Animation {
         }
         out
     }
+}
+
+/// `a` and `b` mixed: `t` 0 gives `a`, 1 gives `b`.
+fn mix(a: &[Mat4], b: &[Mat4], t: f32) -> Vec<Mat4> {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| {
+            std::array::from_fn(|c| std::array::from_fn(|r| a[c][r] + (b[c][r] - a[c][r]) * t))
+        })
+        .collect()
 }
 
 /// The bones of each matrix group of a geoset, as indices into `palette`.
@@ -548,5 +605,17 @@ mod tests {
         let groups = matrix_groups(&geoset, &[3, 7, 9]);
         assert_eq!(groups[0], ([1, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]));
         assert_eq!(groups[1], ([0, 2, 0, 0], [0.5, 0.5, 0.0, 0.0]));
+    }
+
+    /// Blending goes linearly from one pose to the other.
+    #[test]
+    fn mixing_poses() {
+        let a = [ow3_render::animation::IDENTITY];
+        let mut moved = ow3_render::animation::IDENTITY;
+        moved[3] = [10.0, 0.0, 0.0, 1.0];
+        let b = [moved];
+        assert_eq!(mix(&a, &b, 0.0), a);
+        assert_eq!(mix(&a, &b, 1.0), b);
+        assert_eq!(mix(&a, &b, 0.25)[0][3], [2.5, 0.0, 0.0, 1.0]);
     }
 }

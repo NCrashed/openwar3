@@ -452,7 +452,8 @@ impl Renderer {
         self.models.update(device, queue, elapsed);
     }
 
-    /// Places the units of the simulation; models of new kinds are read
+    /// Places the units of the simulation, `elapsed` milliseconds into the
+    /// animations; models of new kinds are read
     /// from `chain`.
     pub fn set_units(
         &mut self,
@@ -460,8 +461,9 @@ impl Renderer {
         queue: &wgpu::Queue,
         chain: &mut ow3_formats::mpq::ArchiveChain,
         units: &[crate::sim_units::UnitDraw],
+        elapsed: i32,
     ) {
-        self.models.set_units(device, queue, chain, units);
+        self.models.set_units(device, queue, chain, units, elapsed);
     }
 
     /// Draws the ground seen by `camera` into `target`.

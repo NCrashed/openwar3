@@ -439,6 +439,7 @@ impl ModelRenderer {
         queue: &wgpu::Queue,
         chain: &mut ArchiveChain,
         units: &[UnitDraw],
+        elapsed: i32,
     ) {
         // Models and groups first: they may add bone matrices.
         let mut drawn = Vec::with_capacity(units.len());
@@ -482,7 +483,10 @@ impl ModelRenderer {
             .map(|&(buffer, _)| (buffer, Vec::new()))
             .collect();
         for (unit, buffer, model) in drawn {
-            let bone_base = match self.animation.unit_pose(model, unit.pose) {
+            let bone_base = match self
+                .animation
+                .unit_pose(model, unit.pose, elapsed, unit.handle)
+            {
                 Some(matrices) => {
                     let base = first + self.unit_bones.len() as u32;
                     self.unit_bones.extend(matrices);

@@ -106,7 +106,13 @@ fn screenshot(
             left -= step;
         }
         let units = sim.draws();
-        renderer.set_units(&device, &queue, &mut sim.chain, &units);
+        renderer.set_units(
+            &device,
+            &queue,
+            &mut sim.chain,
+            &units,
+            (options.time * 1000.0) as i32,
+        );
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
@@ -271,6 +277,7 @@ impl ApplicationHandler for App {
                                 .create_view(&wgpu::TextureViewDescriptor::default());
                             let aspect = gpu.config.width as f32 / gpu.config.height as f32;
                             let now = std::time::Instant::now();
+                            let elapsed = self.started.elapsed().as_millis() as i32;
                             if let Some(sim) = &mut self.sim {
                                 let micros = now.duration_since(self.last_frame).as_micros();
                                 sim.advance(micros as u64);
@@ -280,10 +287,10 @@ impl ApplicationHandler for App {
                                     &gpu.queue,
                                     &mut sim.chain,
                                     &units,
+                                    elapsed,
                                 );
                             }
                             self.last_frame = now;
-                            let elapsed = self.started.elapsed().as_millis() as i32;
                             gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
                             gpu.renderer.draw(
                                 &gpu.device,

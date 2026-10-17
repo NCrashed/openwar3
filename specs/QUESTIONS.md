@@ -369,12 +369,9 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   corner, at the height of the lowest level, and raises each vertex by
   the corners' ground heights (layers excluded), interpolated
   bilinearly. A tile whose model cannot be read keeps its ground.
-- **Ramps** (open question 1): a ramp model uses the cliff type chosen as
-  for a cliff model on its first tile, and its origin is the bottom left
-  corner of the lower left of its two tiles (from the geometry of the
-  `CliffTrans` models). Tiles with a ramp corner that start no ramp
-  model and are not the second tile of one get no model and show their
-  ground; next to ramps this leaves visible gaps at the sides.
+- **Ramp model origin.** A ramp model's origin is the bottom left corner
+  of the lower left of its two tiles (from the geometry of the
+  `CliffTrans` models).
 - **`GetLocationZ`** interpolates as
   `lerp(lerp(bl, br, u), lerp(tl, tr, u), v)` with
   `lerp(a, b, t) = add(a, mul(sub(b, a), t))`; the order is not
@@ -384,8 +381,12 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
   depth colour and blended with its alpha, drawn after the models without
   writing depth. No animation, no shorelines.
-- **Two holes** in the cliffs of the north-east of `(4)LostTemple.w3x`
-  show through the ground; not explained yet.
+- **Two square holes** in the cliffs of the north-east of
+  `(4)LostTemple.w3x`, and a dark gap beside the ramp at tile (33, 30),
+  are still visible with the rules of SPEC-0014 for ramps. Every tile
+  without ground has model triangles over it, every cliff model of the
+  map is drawn with all its parts, and the map has no single-tile pits
+  or small water patches; the cause is not found yet.
 
 ## Math natives (`ow3-math::natives`)
 

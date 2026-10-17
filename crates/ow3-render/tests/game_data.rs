@@ -136,4 +136,20 @@ fn lost_temple_ramps() {
         ("ALHB", (24, 32), (1, 2))
     );
     assert_eq!((ramps.len(), names.len()), (58, 14), "{names:?}");
+    // Pond edges with ramp points H or L get cliff models.
+    let cliff = |x, y| ow3_render::cliffs::cliff_tile(&terrain, x, y).map(|c| c.letters);
+    assert_eq!(cliff(127, 110).as_deref(), Some("BACB"));
+    assert_eq!(cliff(127, 111).as_deref(), Some("BBAB"));
+    // Every cliff model of the map exists.
+    for y in 0..terrain.height - 1 {
+        for x in 0..terrain.width - 1 {
+            if let Some(tile) = ow3_render::cliffs::cliff_tile(&terrain, x, y) {
+                let exists = ["Cliffs", "CityCliffs"].iter().any(|dir| {
+                    let path = ow3_render::cliffs::model_path(dir, &tile.letters, 0);
+                    chain.contains(&path)
+                });
+                assert!(exists, "{} at ({x}, {y})", tile.letters);
+            }
+        }
+    }
 }

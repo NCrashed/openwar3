@@ -7,8 +7,10 @@
 //! tile. Tiles whose corners are all on one level have no model; the
 //! ground of a tile with a model is not drawn.
 //!
-//! PROVISIONAL (SPEC-0014 open question 1): tiles with a ramp flag on a
-//! corner get no model, and their ground is drawn as a slope.
+//! A tile with an `R` or `S` ramp corner is a ramp tile: it gets a ramp
+//! model when its pattern starts one (see [`ramp_tile`]) and never a cliff
+//! model; other tiles with corners on different levels get cliff models,
+//! ramp points or not.
 
 use ow3_formats::map::terrain::{Terrain, TerrainPoint};
 
@@ -73,7 +75,7 @@ pub fn cliff_tile(terrain: &Terrain, x: u32, y: u32) -> Option<CliffTile> {
     ];
     let levels = corners.map(TerrainPoint::layer_height);
     let lo = *levels.iter().min()?;
-    if levels.iter().all(|&l| l == lo) || corners.iter().any(|p| p.flags() & RAMP != 0) {
+    if levels.iter().all(|&l| l == lo) || is_ramp_tile(terrain, x, y) {
         return None;
     }
     let letter = |l: u8| char::from(b'A' + (l - lo).min(2));
@@ -178,6 +180,36 @@ fn letter(terrain: &Terrain, x: i64, y: i64) -> Option<char> {
     }
 }
 
+/// Whether tile (`x`, `y`) has an `R` or `S` corner.
+fn is_ramp_tile(terrain: &Terrain, x: i64, y: i64) -> bool {
+    [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)]
+        .into_iter()
+        .any(|(px, py)| matches!(letter(terrain, px, py), Some('R' | 'S')))
+}
+
+/// The cliff type of a ramp model on tile (`x`, `y`): of the tile and its
+/// east, west and north neighbours that are ramp tiles, the first corner
+/// (BL, BR, TL, TR per tile) on the highest level gives it, 15 counting
+/// as 0; type 0 without such a tile.
+fn ramp_cliff_type(terrain: &Terrain, x: i64, y: i64) -> u8 {
+    let mut best: Option<(u8, u8)> = None;
+    for (tx, ty) in [(x, y), (x + 1, y), (x - 1, y), (x, y + 1)] {
+        if !is_ramp_tile(terrain, tx, ty) {
+            continue;
+        }
+        for (px, py) in [(tx, ty), (tx + 1, ty), (tx, ty + 1), (tx + 1, ty + 1)] {
+            let Some(p) = point(terrain, px, py) else {
+                continue;
+            };
+            if best.is_none_or(|(level, _)| p.layer_height() > level) {
+                let ctex = p.cliff_texture();
+                best = Some((p.layer_height(), if ctex == NO_CLIFF { 0 } else { ctex }));
+            }
+        }
+    }
+    best.map_or(0, |(_, ctex)| ctex)
+}
+
 /// The patterns that start a ramp model and the offset of its second
 /// tile.
 const RAMP_PATTERNS: [(&str, (i64, i64)); 16] = [
@@ -229,7 +261,7 @@ pub fn ramp_tile(terrain: &Terrain, x: u32, y: u32) -> Option<RampTile> {
         .filter_map(|(px, py)| point(terrain, px, py))
         .map(TerrainPoint::layer_height)
         .min()?;
-    let (cliff_type, _) = cliff_source(terrain, x, y, &corners);
+    let cliff_type = ramp_cliff_type(terrain, x, y);
     Some(RampTile {
         letters: pattern.replace('R', "L"),
         origin: (ox as u32, oy as u32),
@@ -309,10 +341,47 @@ mod tests {
         // Levels 5 and 9 over 2: lowered to two above.
         let t = terrain(vec![at(2, 0, 0), at(5, 0, 0), at(9, 0, 0), at(3, 0, 0)], 2);
         assert_eq!(cliff_tile(&t, 0, 0).unwrap().letters, "CBCA");
-        let mut ramp = at(3, 0, 0);
-        ramp.flags_and_texture = RAMP << 4;
-        let t = terrain(vec![at(2, 0, 0), ramp, at(2, 0, 0), at(2, 0, 0)], 2);
-        assert_eq!(cliff_tile(&t, 0, 0), None);
+    }
+
+    fn ramp(level: u8) -> TerrainPoint {
+        let mut p = at(level, 0, 0);
+        p.flags_and_texture = RAMP << 4;
+        p
+    }
+
+    /// A ramp point that is `H` or `L` does not stop a cliff model; a tile
+    /// with an `R` corner gets none (SPEC-0014, "What each tile gets").
+    #[test]
+    fn ramp_corners() {
+        // A lone ramp point one level up: letter L, an ordinary cliff.
+        let t = terrain(vec![at(2, 0, 0), ramp(3), at(2, 0, 0), at(2, 0, 0)], 2);
+        assert_eq!(cliff_tile(&t, 0, 0).unwrap().letters, "AABA");
+        // A column of ramp points from level 2 to 3: the middle one is R.
+        let mut points = vec![at(2, 0, 0); 9];
+        points[1] = ramp(2);
+        points[4] = ramp(2);
+        points[7] = ramp(3);
+        let t = terrain(points, 3);
+        assert_eq!(letter(&t, 1, 1), Some('R'));
+        assert_eq!(cliff_tile(&t, 0, 1), None);
+        assert!(is_ramp_tile(&t, 0, 1));
+    }
+
+    /// The cliff type of a ramp: the first highest corner of the tile and
+    /// its east, west and north ramp neighbours; 15 counts as 0.
+    #[test]
+    fn ramp_cliff_types() {
+        let mut points = vec![at(2, 15, 0); 9];
+        points[1] = ramp(2);
+        points[4] = ramp(2);
+        let mut top = ramp(3);
+        top.cliff_and_layer = (1 << 4) | 3;
+        points[7] = top;
+        let t = terrain(points, 3);
+        assert_eq!(ramp_cliff_type(&t, 0, 1), 1);
+        // No ramp tile around: type 0.
+        let t = terrain(vec![at(2, 15, 0); 4], 2);
+        assert_eq!(ramp_cliff_type(&t, 0, 0), 0);
     }
 
     /// Without a cliff texture on the corners, the 5 x 5 points around

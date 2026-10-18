@@ -435,8 +435,8 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   camera or lie in the model's xy plane (`XYQuad`), turned so that the
   top of the texture points the way the particle moves (as the shore
   foam shows in the game). Not done: tails,
-  squirts, model space, sorting, light and fog; only placed models
-  (doodads, shorelines) emit, units do not. Their random numbers are the
+  squirts, model space, sorting, light and fog. Placed models and units
+  emit, units from where their animations are; their random numbers are the
   viewer's own. A placed model starts with 10 s of particles already
   simulated.
 - **Ground of ramp middles** (open question 2). The `CliffTrans` models

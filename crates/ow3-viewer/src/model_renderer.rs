@@ -207,6 +207,33 @@ impl ModelRenderer {
         &self.animation
     }
 
+    /// The units whose models have particle emitters, with where their
+    /// animations are at `elapsed` milliseconds.
+    pub fn unit_emitters(
+        &mut self,
+        chain: &mut ArchiveChain,
+        units: &[UnitDraw],
+        elapsed: i32,
+    ) -> Vec<crate::particles::UnitEmitters> {
+        units
+            .iter()
+            .filter_map(|unit| {
+                let model = self.animation.model(chain, &unit.model)?;
+                if self.animation.mdx(model).particle_emitters.is_empty() {
+                    return None;
+                }
+                Some(crate::particles::UnitEmitters {
+                    handle: unit.handle,
+                    model,
+                    matrix: unit.matrix,
+                    moment: self
+                        .animation
+                        .pose_moment(model, unit.pose, elapsed, unit.handle),
+                })
+            })
+            .collect()
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

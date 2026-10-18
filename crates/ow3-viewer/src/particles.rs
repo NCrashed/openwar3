@@ -5,14 +5,15 @@
 //! quads are drawn after the models, tested against the depth but not
 //! writing it, by the emitter's filter mode.
 //!
-//! PROVISIONAL: particles are not lit and not sorted by distance; the
-//! models play their Stand sequence from a phase of their own; only
-//! placed models (doodads, cliffs, shorelines) have particles, not units.
+//! PROVISIONAL: particles are not lit and not sorted by distance; placed
+//! models play their Stand sequence from a phase of their own, units are
+//! where their animations are in the simulation each frame.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
+use ow3_render::animation::Moment;
 use ow3_render::image::Image;
 use ow3_render::particles::{Emissions, XY_QUAD, look};
 
@@ -97,6 +98,18 @@ struct Placed {
     emissions: Emissions,
     /// Milliseconds its animation is ahead of the others.
     phase: i32,
+    /// For a unit, where it is in its animations now; a placed model plays
+    /// its Stand sequence.
+    moment: Option<Moment>,
+}
+
+/// A unit of the simulation with emitters: its handle, model, placement
+/// and where it is in its animations.
+pub struct UnitEmitters {
+    pub handle: u32,
+    pub model: usize,
+    pub matrix: Mat4,
+    pub moment: Moment,
 }
 
 pub struct Particles {
@@ -106,7 +119,11 @@ pub struct Particles {
     /// A bind group for every texture, by path.
     textures: Vec<wgpu::BindGroup>,
     texture_index: BTreeMap<String, usize>,
+    texture_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     placed: Vec<Placed>,
+    /// The units of the simulation with emitters, by handle.
+    units: BTreeMap<u32, Placed>,
     vertices: wgpu::Buffer,
     capacity: usize,
     /// Pipeline, texture and vertices of each run of quads.
@@ -229,26 +246,6 @@ impl Particles {
             mipmap_filter: wgpu::FilterMode::Linear,
             ..wgpu::SamplerDescriptor::default()
         });
-        let mut textures = Vec::new();
-        let mut texture_index = BTreeMap::new();
-        for (path, image) in images {
-            let view = crate::renderer::upload_texture(device, queue, image);
-            texture_index.insert(path.clone(), textures.len());
-            textures.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("particle texture"),
-                layout: &texture_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            }));
-        }
         let placed = emitters
             .iter()
             .enumerate()
@@ -257,21 +254,103 @@ impl Particles {
                 matrix,
                 emissions: Emissions::new(animation.mdx(model), i as u64 + 1),
                 phase: (i as i32 * 977) % 10_000,
+                moment: None,
             })
             .collect();
         let capacity = 4096;
-        Particles {
+        let mut particles = Particles {
             globals,
             globals_bind_group,
             pipelines,
-            textures,
-            texture_index,
+            texture_layout,
+            sampler,
+            textures: Vec::new(),
+            texture_index: BTreeMap::new(),
             placed,
+            units: BTreeMap::new(),
             vertices: vertex_buffer(device, capacity),
             capacity,
             draws: Vec::new(),
             last: None,
+        };
+        for (path, image) in images {
+            particles.add_texture(device, queue, path, image);
         }
+        particles
+    }
+
+    /// Makes `image` the texture of `path`.
+    fn add_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: &str,
+        image: &Image,
+    ) {
+        let view = crate::renderer::upload_texture(device, queue, image);
+        self.texture_index
+            .insert(path.to_owned(), self.textures.len());
+        self.textures
+            .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("particle texture"),
+                layout: &self.texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            }));
+    }
+
+    /// The units with emitters now: new ones start without particles, the
+    /// others go on from where they are, and those gone lose theirs. Their
+    /// textures are read from `chain` the first time.
+    pub fn set_units(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        animation: &Animation,
+        units: &[UnitEmitters],
+    ) {
+        let mut kept = BTreeMap::new();
+        for u in units {
+            let model = animation.mdx(u.model);
+            for e in &model.particle_emitters {
+                let Some(t) = model.textures.get(e.texture_id as usize) else {
+                    continue;
+                };
+                if t.replaceable_id != 0 || self.texture_index.contains_key(&t.path) {
+                    continue;
+                }
+                if let Some(image) = chain
+                    .read(&t.path)
+                    .and_then(|d| ow3_formats::blp::decode(&d).ok())
+                {
+                    self.add_texture(device, queue, &t.path, &Image::from(image));
+                }
+            }
+            let mut placed = self
+                .units
+                .remove(&u.handle)
+                .filter(|p| p.model == u.model)
+                .unwrap_or_else(|| Placed {
+                    model: u.model,
+                    matrix: u.matrix,
+                    emissions: Emissions::new(model, u64::from(u.handle)),
+                    phase: 0,
+                    moment: None,
+                });
+            placed.matrix = u.matrix;
+            placed.moment = Some(u.moment);
+            kept.insert(u.handle, placed);
+        }
+        self.units = kept;
     }
 
     /// Steps the particles to `elapsed` milliseconds and builds their
@@ -285,7 +364,8 @@ impl Particles {
         camera: &Camera,
         elapsed: i32,
     ) {
-        if self.placed.is_empty() {
+        if self.placed.is_empty() && self.units.is_empty() {
+            self.draws.clear();
             return;
         }
         let from = self.last.unwrap_or((elapsed - 10_000).max(0)).min(elapsed);
@@ -295,8 +375,10 @@ impl Particles {
         while t < elapsed {
             let next = (t + 50).min(elapsed);
             let dt = (next - t) as f32 / 1000.0;
-            for p in &mut self.placed {
-                let moment = animation.stand_moment(p.model, next + p.phase);
+            for p in self.placed.iter_mut().chain(self.units.values_mut()) {
+                let moment = p
+                    .moment
+                    .unwrap_or_else(|| animation.stand_moment(p.model, next + p.phase));
                 p.emissions
                     .step(animation.mdx(p.model), &p.matrix, moment, dt);
             }
@@ -309,7 +391,7 @@ impl Particles {
         let up = cross(right, f);
         // (pipeline, texture) -> vertices
         let mut runs: BTreeMap<(usize, usize), Vec<Vertex>> = BTreeMap::new();
-        for p in &self.placed {
+        for p in self.placed.iter().chain(self.units.values()) {
             let model = animation.mdx(p.model);
             for particle in &p.emissions.particles {
                 let Some(e) = model.particle_emitters.get(particle.emitter) else {

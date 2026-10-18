@@ -686,6 +686,9 @@ impl Renderer {
         elapsed: i32,
     ) {
         self.anchors = self.models.set_units(device, queue, chain, units, elapsed);
+        let emitters = self.models.unit_emitters(chain, units, elapsed);
+        self.particles
+            .set_units(device, queue, chain, self.models.animation(), &emitters);
     }
 
     /// Lays out the health bars of the units for a view of `size` pixels.

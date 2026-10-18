@@ -214,6 +214,46 @@ impl Animation {
         Moment::at(&animated.model, animated.sequence, elapsed)
     }
 
+    /// Where in its animations a unit of model `index` in `pose` is, as
+    /// [`Animation::unit_pose`] poses it but without the blends: the
+    /// sequence of the pose and the time in it, or Stand in the phase of
+    /// `variant` at `now`. For the particles of its emitters.
+    pub fn pose_moment(&self, index: usize, pose: UnitPose, now: i32, variant: u32) -> Moment {
+        let animated = &self.models[index];
+        let model = &animated.model;
+        let stand = || {
+            let shift = now.wrapping_add((variant % VARIANTS as u32) as i32 * VARIANT_SHIFT);
+            Moment::at(model, animated.sequence, shift)
+        };
+        let held = |sequence: usize, elapsed: i32| {
+            let mut moment = Moment::start(model, sequence);
+            let length = (moment.interval[1] - moment.interval[0]).max(0);
+            moment.frame += elapsed.clamp(0, length);
+            moment.global = now;
+            moment
+        };
+        match pose {
+            UnitPose::Stand => stand(),
+            UnitPose::Death(elapsed) => held(animated.death, elapsed),
+            UnitPose::Once(elapsed) => held(animated.sequence, elapsed),
+            UnitPose::Attack(elapsed) => match animated.attack {
+                Some(attack) => held(attack, elapsed),
+                None => stand(),
+            },
+            UnitPose::Walk(elapsed)
+            | UnitPose::Halt {
+                walked: elapsed, ..
+            } => match animated.walk {
+                Some(walk) => {
+                    let mut moment = Moment::at(model, walk, elapsed);
+                    moment.global = now;
+                    moment
+                }
+                None => stand(),
+            },
+        }
+    }
+
     /// The height of the top of model `index` in its Stand pose.
     pub fn model_top(&self, index: usize) -> f32 {
         self.models[index].top

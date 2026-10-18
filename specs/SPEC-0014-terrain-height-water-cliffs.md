@@ -56,7 +56,9 @@ the ramp code.
 - **Texture and animation.** The surface shows one frame of the
   texture `<texFile>NN.blp` (`NN` = 00 .. `numTex` - 1, two digits; for
   Northrend `ReplaceableTextures\Water\Water00.blp` .. `Water44.blp`,
-  128 x 128, no alpha). The frame is `floor(texRate * t) mod numTex`
+  128 x 128, no alpha). These names are looked up like the cliff
+  texture (rule 7): Northrend and Icecrown take the frames of their
+  tileset archive, which differ from the plain ones of `War3.mpq`. The frame is `floor(texRate * t) mod numTex`
   with `t` the game time in seconds (`texRate` 15 frames per second for
   Northrend, so the 45 frames take 3 s); frames are not blended. The
   animation stops while the game is paused. The origin of `t` is not
@@ -139,29 +141,31 @@ flags use other models (open question 1).
    texture, and their texture coordinates cover the whole atlas (rock in
    the upper half, ground in the lower half). With the cliff type's
    `texDir` and `texFile` (`ReplaceableTextures\Cliff`, `Cliff0` or
-   `Cliff1`) and the map's tileset letter `t`, the texture is the first
-   that exists of:
-   1. `<texDir>\<texFile>.blp` in the map;
-   2. `<texDir>\<t>_<texFile>.blp` in the game archives (`War3.mpq` has
-      them for A, B, C, D, F, G, N, Q, V, W, X, Y);
-   3. `<texDir>\<texFile>.blp` in the game archives.
-   A `<t>_<texFile>.blp` imported into the map is not used. So the
-   tilesets I, J, K, O, Z, which have no such files, would use the
-   plain `Cliff0` (Lordaeron dirt) and `Cliff1` (Lordaeron grass). This
-   does not hold for `CIsn` on tileset I, whose cliffs look icy unless
-   the map imports `Cliff1` (open question 6); J, K, O and Z were not
-   tested.
+   `Cliff1`), the texture is the file `<texDir>\<texFile>.blp`, looked
+   up like every game file (SPEC-0008, "Archive order"): first in the
+   map, then in the archive of the map's tileset (`<t>.mpq` inside the
+   game archives, for tileset letter `t`), then in the game archives
+   themselves. The tileset archives hold their own `Cliff0.blp` and
+   `Cliff1.blp` for the tilesets that need them: Northrend's are the
+   icy rock and snow also found as `N_Cliff0.blp` and `N_Cliff1.blp`
+   beside the plain ones (same contents); Icecrown's (`I.mpq` of
+   `War3x.mpq`) are blue stone bricks with tan stripes (`Cliff0`, used by
+   `CIrb`) and ice and snow (`Cliff1`, used by `CIsn`). A tileset without
+   its own copy (Lordaeron Summer, `L.mpq`) uses the plain `Cliff0`
+   (dirt) and `Cliff1` (grass) of `War3.mpq`. The `<t>_<texFile>.blp`
+   files beside the plain ones are not read by the game: imported into
+   a map, they changed nothing.
    Evidence: tileset N and I maps importing plain `Cliff0`/`Cliff1` in
-   red and green showed red and green cliffs on both; importing only
-   `N_`/`I_` versions changed nothing; without imports, `CNdi` cliffs
-   show icy rock (`N_Cliff0`) on N and brown dirt and rock (`Cliff0`) on I.
+   red and green showed red and green cliffs on both; importing into a
+   tileset I map the plain `Cliff1` of `War3.mpq` made its `CIsn` cliffs
+   grass green; without imports they show the textures of `I.mpq`. The
+   game opened `I.mpq` when it loaded the tileset I map (file accesses of
+   the process).
    The snow along the edges of `CNsn` cliffs is ground, see rule 8.
    On tileset I with cliff type `CIsn` (`texFile` `Cliff1`), replacing
    `Cliff1` by an image whose upper half is blue and lower half red made
    the visible faces of the cliff models almost entirely red: the models
-   show mostly the lower (ground, for `Cliff1` grass) half of the atlas.
-   Without the replacement the same faces look white and blue under the
-   Icecrown lighting; no other texture source was found (open question 6).
+   show mostly the lower (ground) half of the atlas.
 8. **Ground next to cliffs.** Every tile that gets a cliff model gives
    its four corner points the ground texture `groundTile` of its cliff
    type (`CliffTypes.slk`: `Ndrt` for `CNdi`, `Nsnw` for `CNsn`, ...),
@@ -304,16 +308,8 @@ leaves holes there.
    by cliff tiles of different types, whether a `groundTile` missing from
    the map's ground list is added, and what `upperTile` (only `COrd` sets
    one) does.
-6. Where the white and blue look of `CIsn` cliffs on tileset I comes
-   from. It is not lighting: importing into the map the very
-   `ReplaceableTextures\Cliff\Cliff1.blp` of `War3.mpq` (grass) made
-   the same cliffs green, so without the import the game draws them with
-   a texture other than that file. No other file of that name, and no
-   `I_Cliff1.blp`, exists in any archive of the installation, and only
-   the plain names `ReplaceableTextures\Cliff\Cliff0.blp` and
-   `...\Cliff1.blp` were found in the memory of the running game. The
-   cliff tops do not take the map's imported `Ice_Snow` ground texture
-   either.
+6. The cliff textures of the tilesets J, K, O and Z, and of those other
+   tilesets whose archive has no copy (not looked at one by one).
 7. The origin of the water animation clock, and whether it follows the
    game speed.
 8. Shoreline models: their animation (sequence, phase), height, scale and
@@ -371,7 +367,9 @@ leaves holes there.
 8. **Tileset I** (test map with `CIsn` and `CIrb` cliffs): without
    imports the `CIsn` cliffs look icy white and blue; with the `Cliff1`
    of `War3.mpq` imported unchanged into the map they show green grass
-   and brown rock (open question 6).
+   and brown rock. The same scene on tileset N and on tileset I with
+   all ground textures grey: the cliffs show the `Cliff0` and `Cliff1` of
+   `N.mpq` and of `I.mpq` respectively.
 9. **Cliffs on slopes.** Flat test map, three areas with a straight
    cliff line (one level, `CNsn`, grey 136 everywhere, Lordaeron noon):
    flat ground; ground rising towards the west by 0.25 per unit (ground

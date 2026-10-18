@@ -45,6 +45,7 @@ struct VertexIn {
     @location(10) bone_base: u32,
     @location(11) tint: vec3<f32>,
     @location(12) alpha_shift: u32,
+    @location(13) terrain_light: u32,
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -52,6 +53,7 @@ struct VertexOut {
     @location(1) uv: vec2<f32>,
     @location(2) alpha: f32,
     @location(3) tint: vec3<f32>,
+    @location(4) @interpolate(flat) terrain_light: u32,
 };
 
 @vertex
@@ -77,6 +79,7 @@ fn vs(v: VertexIn) -> VertexOut {
     out.uv = v.uv;
     out.alpha = alphas[v.alpha + v.alpha_shift];
     out.tint = v.tint;
+    out.terrain_light = v.terrain_light;
     return out;
 }
 
@@ -88,13 +91,18 @@ fn lit(v: VertexOut) -> vec4<f32> {
     if UNSHADED {
         return vec4<f32>(texel.rgb * v.tint, texel.a * v.alpha);
     }
+    // Cliffs take the light of the terrain, other models that of units.
+    var sun = globals.unit_sun;
+    var color = globals.unit_color;
+    var ambient = globals.unit_ambient;
+    if v.terrain_light == 1u {
+        sun = globals.terrain_sun;
+        color = globals.terrain_color;
+        ambient = globals.terrain_ambient;
+    }
     let n = normalize(v.normal);
-    let facing = max(dot(n, globals.unit_sun.xyz), 0.0);
-    let light = min(
-        globals.unit_sun.w * globals.unit_color.rgb * facing
-            + globals.unit_color.w * globals.unit_ambient.rgb,
-        vec3<f32>(1.0),
-    );
+    let facing = max(dot(n, sun.xyz), 0.0);
+    let light = min(sun.w * color.rgb * facing + color.w * ambient.rgb, vec3<f32>(1.0));
     return vec4<f32>(texel.rgb * v.tint * light, texel.a * v.alpha);
 }
 
@@ -279,7 +287,7 @@ impl ModelRenderer {
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4,
-                    10 => Uint32, 11 => Float32x3, 12 => Uint32
+                    10 => Uint32, 11 => Float32x3, 12 => Uint32, 13 => Uint32
                 ],
             },
         ];
@@ -555,6 +563,7 @@ impl ModelRenderer {
                 bone_base,
                 tint: unit.tint,
                 alpha_shift,
+                terrain_light: 0,
             });
             let m = unit.matrix;
             let top = self.animation.model_top(model);

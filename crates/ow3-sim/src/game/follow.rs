@@ -314,8 +314,10 @@ fn decide(
     // A chase with a new goal: a new chase path; the attacker's own path
     // stays when its waypoint does (SPEC-0019).
     if walker.chase.is_some() && order != follow.order {
-        let (waypoints, reached) = path::high_level(grid, at, order, class)
-            .map_or_else(|| (Vec::new(), false), |found| (found.points, found.reached));
+        let (waypoints, reached) = path::high_level(grid, at, order, class).map_or_else(
+            || (Vec::new(), false),
+            |found| (found.points, found.reached),
+        );
         let (old_goal, old_final) = (follow.goal, follow.final_goal);
         follow.waypoints = waypoints;
         follow.reached = reached;

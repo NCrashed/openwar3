@@ -122,6 +122,9 @@ fn slerp(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
 pub struct Moment {
     pub interval: [i32; 2],
     pub frame: i32,
+    /// Milliseconds the model has been animated, for the tracks of global
+    /// sequences, which loop on their own lengths whatever the sequence.
+    pub global: i32,
 }
 
 impl Moment {
@@ -135,10 +138,12 @@ impl Moment {
         Moment {
             interval,
             frame: interval[0],
+            global: 0,
         }
     }
 
-    /// `elapsed` milliseconds into sequence `index`, looping.
+    /// `elapsed` milliseconds into sequence `index`, looping; global
+    /// sequences are `elapsed` in too.
     pub fn at(model: &Model, index: usize, elapsed: i32) -> Moment {
         let mut moment = Moment::start(model, index);
         let length = moment.interval[1] - moment.interval[0];
@@ -147,6 +152,7 @@ impl Moment {
         } else {
             0
         };
+        moment.global = elapsed;
         moment
     }
 }
@@ -157,12 +163,11 @@ pub fn track_value(model: &Model, track: &Track, moment: Moment) -> Option<Vec<f
     let (interval, frame) = match track.global_sequence {
         Some(g) => {
             let length = model.global_sequences.get(g as usize).copied().unwrap_or(0) as i32;
-            // Global sequences run from the start of the moment's sequence.
-            let elapsed = moment.frame - moment.interval[0];
+            // Global sequences run on their own clock, not the sequence's.
             (
                 [0, length],
                 if length > 0 {
-                    elapsed.rem_euclid(length)
+                    moment.global.rem_euclid(length)
                 } else {
                     0
                 },
@@ -390,10 +395,32 @@ mod tests {
         }
     }
 
+    /// A track of a global sequence runs on its own clock: 1200 ms into a
+    /// sequence of 1000 ms it is at 1200 of its 1500, not at 199.
+    #[test]
+    fn global_sequences_keep_their_own_time() {
+        let model = Model {
+            global_sequences: vec![1500],
+            ..Model::default()
+        };
+        let mut t = track(
+            b"KGTR",
+            vec![key(0, &[0.0; 3]), key(1500, &[15.0, 0.0, 0.0])],
+        );
+        t.global_sequence = Some(0);
+        let at = Moment {
+            interval: [0, 1000],
+            frame: 199,
+            global: 1200,
+        };
+        assert_eq!(track_value(&model, &t, at).unwrap(), [12.0, 0.0, 0.0]);
+    }
+
     fn moment(frame: i32) -> Moment {
         Moment {
             interval: [0, 1000],
             frame,
+            global: frame,
         }
     }
 
@@ -419,6 +446,7 @@ mod tests {
         let other = Moment {
             interval: [3000, 4000],
             frame: 3500,
+            global: 500,
         };
         assert_eq!(track_value(&model, &t, other), None);
     }

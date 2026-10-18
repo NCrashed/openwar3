@@ -68,6 +68,9 @@ pub struct Instance {
     /// Added to the alpha slots of its vertices, for an instance with
     /// alphas of its own (0 for the shared ones).
     pub alpha_shift: u32,
+    /// 1: lit by the light of the terrain (cliffs), 0: by that of units
+    /// (SPEC-0017).
+    pub terrain_light: u32,
 }
 
 /// One material layer of one geoset.
@@ -258,6 +261,7 @@ impl Animation {
                 index,
                 Moment {
                     frame: start.frame + frame,
+                    global: now,
                     ..start
                 },
             )
@@ -391,6 +395,7 @@ impl Animation {
         let length = (start.interval[1] - start.interval[0]).max(0);
         let moment = Moment {
             frame: start.frame + elapsed.clamp(0, length),
+            global: elapsed,
             ..start
         };
         let values = self.alphas[first..]
@@ -647,6 +652,7 @@ pub fn load(
             bone_base: animated.bone_base + variant * animated.palette.len() as u32,
             tint: [1.0; 3],
             alpha_shift: 0,
+            terrain_light: 0,
         });
     }
     let groups: Vec<Group> = groups

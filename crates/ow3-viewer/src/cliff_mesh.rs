@@ -331,6 +331,8 @@ pub fn build(chain: &mut ArchiveChain, terrain: &Terrain) -> Cliffs {
                 bone_base: 0,
                 tint: [1.0; 3],
                 alpha_shift: 0,
+                // Cliffs are ground: they take the light of the terrain.
+                terrain_light: 1,
             }],
         })
         .collect();

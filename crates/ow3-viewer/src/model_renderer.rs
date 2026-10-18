@@ -460,8 +460,14 @@ impl ModelRenderer {
                 instances: index,
             });
         }
-        // Opaque parts first, then the blended kinds over them.
-        self.parts.sort_by_key(|p| (p.kind, p.unshaded));
+        // Opaque and alpha-tested parts first, in the order of their models'
+        // geosets and layers: a later layer on the same faces wins, as the
+        // team colour of a rifleman's cloak over the cloak of an earlier
+        // geoset. Then the blended kinds over them. The sort is stable.
+        self.parts.sort_by_key(|p| match p.kind {
+            Kind::Opaque | Kind::Tested => None,
+            kind => Some(kind),
+        });
         index
     }
 

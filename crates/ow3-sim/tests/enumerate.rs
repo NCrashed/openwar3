@@ -271,3 +271,48 @@ endfunction
     game.run("main");
     assert_eq!(game.output(), ["true", "false", "true", "false"]);
 }
+
+/// SPEC-0009: a hero type with hero data starts with 1 skill point, a
+/// hero made from a footman with 0, and a non-hero has none.
+#[test]
+fn hero_skill_points() {
+    let natives = "native GetHeroSkillPoints takes unit whichHero returns integer";
+    let script = format!(
+        "{natives}{PRINT}{}",
+        r#"
+function Show takes integer id returns nothing
+    call Print(I2S(GetHeroSkillPoints(CreateUnit(Player(0), id, 0, 0, 0))))
+endfunction
+function main takes nothing returns nothing
+    call Show('Hpal')
+    call Show('H000')
+    call Show('Hf00')
+    call Show('hfoo')
+endfunction
+"#
+    );
+    let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
+    let script = ow3_jass::parse(&script).unwrap();
+    let refs = [&declarations, &script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    for (code, hero_data) in [
+        (b"Hpal", true),
+        (b"H000", true),
+        (b"Hf00", false),
+        (b"hfoo", false),
+    ] {
+        let t = ow3_sim::data::UnitType {
+            hero_data,
+            hp: 100f32.to_bits(),
+            ..Default::default()
+        };
+        game.state
+            .borrow_mut()
+            .data
+            .units
+            .insert(i32::from_be_bytes(*code), t);
+    }
+    game.run("main");
+    assert_eq!(game.output(), ["1", "1", "0", "0"]);
+}

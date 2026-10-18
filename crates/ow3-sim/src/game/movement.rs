@@ -462,6 +462,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Boolean(done)))
         }
     );
+    // The same order to the point of a location (`IssuePointOrderLocBJ`).
+    native!(
+        add,
+        state,
+        "native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let at = super::enumerate::location(&state, handle(&args[2]));
+            let (Some(h), Some(name), Some((x, y))) = (handle(&args[0]), string(&args[1]), at)
+            else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let done = point_order(&mut state, h, name, [x, y]);
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
     native!(
         add,
         state,

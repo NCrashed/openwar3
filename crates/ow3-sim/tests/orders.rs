@@ -34,6 +34,9 @@ native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unit
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
 native GetTriggerUnit takes nothing returns unit
 native KillUnit takes unit whichUnit returns nothing
+type location extends agent
+native Location takes real x, real y returns location
+native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean
 globals
     unit a = null
     unit t = null
@@ -248,6 +251,30 @@ fn patrol() {
 }
 
 /// A new move to the same point while walking costs one tick.
+/// `IssuePointOrderLoc` is the point order to the location's point.
+#[test]
+fn point_order_to_a_location() {
+    let units = "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)";
+    let (Some(mut by_point), Some(mut by_location)) = (
+        game(
+            units,
+            "call IssuePointOrder(a, \"move\", -1000, -1500)",
+            |_| {},
+        ),
+        game(
+            units,
+            "call IssuePointOrderLoc(a, \"move\", Location(-1000, -1500))",
+            |_| {},
+        ),
+    ) else {
+        return;
+    };
+    let a = run(&mut by_point, 400);
+    let b = run(&mut by_location, 400);
+    assert_eq!(a, b);
+    assert!(a.last().unwrap().1[0].x > -2900.0);
+}
+
 #[test]
 fn same_move_again() {
     let units = "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)";

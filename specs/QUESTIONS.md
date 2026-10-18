@@ -255,8 +255,8 @@ where the spec is silent:
   only `UNIT_TYPE_HERO` and `UNIT_TYPE_DEAD`.
 - **Conditional life regeneration.** There is no time of day or blight
   yet, so `regenHP` of a type whose `regenType` is `night`, `day` or
-  `blight` never applies; only a hero's strength part does. The map's
-  `uhrt` field is not read.
+  `blight` never applies; only a hero's strength part does. A map's
+  own regeneration type (`uhrt`) replaces that of the base type.
 - **Regeneration arithmetic.** The elapsed time is a sum of `dt` per
   tick, and a hero's first step after creation is `sub(dt, 0.0001)`. This
   matches the footman and paladin life columns of

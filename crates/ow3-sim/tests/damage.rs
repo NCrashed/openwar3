@@ -30,6 +30,7 @@ native ConvertWeaponType takes integer i returns weapontype
 native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit
 native GetWidgetLife takes widget whichWidget returns real
 native CreateItem takes integer itemid, real x, real y returns item
+native IsItemVisible takes item whichItem returns boolean
 native CreateDestructable takes integer objectid, real x, real y, real face, real scale, integer variation returns destructable
 native CreateTrigger takes nothing returns trigger
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
@@ -103,6 +104,9 @@ function main takes nothing returns nothing
     call TriggerAddAction(itemdied, function ItemDied)
     call UnitDamageTarget(source, rat, 5, true, false, ConvertAttackType(5), ConvertDamageType(4), ConvertWeaponType(0))
     call Print("item life " + R2S(GetWidgetLife(rat)))
+    if IsItemVisible(rat) then
+        call Print("item visible")
+    endif
 endfunction
 "#;
 
@@ -129,6 +133,7 @@ fn damage_and_events() {
             "item 0.750 tree 0.250",
             "item died, no killer",
             "item life 0.000",
+            "item visible",
         ]
     );
 }

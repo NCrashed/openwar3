@@ -666,6 +666,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Integer(level)))
         }
     );
+    // A hero starts with 1 skill point when its type has hero data, with
+    // 0 when it is made from another type (SPEC-0009). PROVISIONAL: there
+    // are no levels and no skills to spend them on yet.
+    native!(
+        add,
+        state,
+        "native GetHeroSkillPoints takes unit whichHero returns integer",
+        |vm, state, args| {
+            let state = state.borrow();
+            let points = state.unit(handle(&args[0])).map_or(0, |u| {
+                let data = state.data.units.get(&u.type_id);
+                i32::from(is_hero(u.type_id) && data.is_some_and(|t| t.hero_data))
+            });
+            Ok(Some(Value::Integer(points)))
+        }
+    );
     native!(
         add,
         state,
@@ -1192,6 +1208,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 state.items.retain(|&i| i != h);
             }
             Ok(None)
+        }
+    );
+    // An item stays visible even at 0 life (SPEC-0015). PROVISIONAL:
+    // items cannot be hidden or picked up yet.
+    native!(
+        add,
+        state,
+        "native IsItemVisible takes item whichItem returns boolean",
+        |vm, state, args| {
+            let visible = item(&state.borrow(), handle(&args[0])).is_some();
+            Ok(Some(Value::Boolean(visible)))
         }
     );
     native!(

@@ -30,6 +30,9 @@ pub struct UnitType {
     pub hp: u32,
     /// A building (`isbldg` in `UnitBalance.slk`).
     pub building: bool,
+    /// The type has the data of a hero: it is a hero type of the game or
+    /// a map's type based on one (SPEC-0009, skill points).
+    pub hero_data: bool,
     /// Max mana and the mana a new unit has.
     pub max_mana: u32,
     pub start_mana: u32,
@@ -339,6 +342,7 @@ impl ObjectData {
                 id,
                 UnitType {
                     name: values[0].clone().filter(|n| !n.is_empty()),
+                    hero_data: is_hero(id),
                     ..UnitType::default()
                 },
             );
@@ -475,8 +479,7 @@ impl ObjectData {
         }
         // A custom unit has its own string id, "custom_" and its raw code,
         // or none for a hero, and takes its balance numbers from its base
-        // unless it sets them (SPEC-0009, SPEC-0013). PROVISIONAL: a
-        // custom regeneration type (`uhrt`) is not read.
+        // unless it sets them (SPEC-0009, SPEC-0013).
         // Changes to standard types come first, then the map's own types.
         // PROVISIONAL: a custom type starts from its base as the map has
         // changed it.
@@ -500,6 +503,9 @@ impl ObjectData {
                 if let Some(v) = def.number(field) {
                     *slot = v;
                 }
+            }
+            if let Some(name) = def.text(b"uhrt") {
+                b.regen_type = RegenType::parse(name);
             }
             apply(&mut unit, def.id, &b);
             unit.armor = def.number(b"udef").unwrap_or(unit.armor);

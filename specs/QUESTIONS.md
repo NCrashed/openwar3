@@ -531,6 +531,20 @@ the spec is silent:
   keeps its facing too (it wobbled by 0.001 rad otherwise). If the
   target dies by another's hit, the unit walks on at once (not
   measured). Any other order taken ends the attack-move.
+- **Retaliation and call for help** (SPEC-0019): a weapon hit on an idle
+  unit makes it and the idle units round it acquire the attacker, all
+  drawing their reaction delays from the tick of the hit, the victim
+  first and the helpers in the order of their creation (open). The call
+  reaches `CallForHelp + 180` round the victim's centre, a circle (the
+  spec's area is open; 180 fits all its distances). Helpers are units
+  of the victim's player, or of a player passive and with help response
+  toward it that it asks for help (help request); only that both
+  directions with all flags answer and help response alone does not is
+  measured. Units without a weapon and workers (`peon` in `type` of
+  `UnitBalance.slk`) neither retaliate nor help; damage by scripts calls
+  no help. In verification 10 the thrower drew twice before the hit,
+  here once (its acquisition there is not described), so the test checks
+  the order of the draws and not the game's 45 and 15 ticks.
 - **Order ids** (SPEC-0019): `attackground` is known to `OrderId` but
   not taken as an order (no spec of its behaviour). A target `move`
   walks to where the target is when ordered, and an immediate `move`

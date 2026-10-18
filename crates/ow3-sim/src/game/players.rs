@@ -41,6 +41,7 @@ const SLOT_EMPTY: i32 = 0;
 const SLOT_PLAYING: i32 = 1;
 const ALLIANCE_PASSIVE: i32 = 0;
 const ALLIANCE_HELP_REQUEST: i32 = 1;
+const ALLIANCE_HELP_RESPONSE: i32 = 2;
 const ALLIANCE_SHARED_VISION: i32 = 5;
 const PLAYER_STATE_GIVES_BOUNTY: i32 = 7;
 const MAP_LOCK_ALLIANCE_CHANGES: i32 = 1024;
@@ -289,6 +290,23 @@ impl Setup {
     /// `IsPlayerAlly(a, b)`: the passive alliance flag from `a` to `b`.
     pub fn is_ally(&self, a: i32, b: i32) -> bool {
         self.alliances.contains(&(a, b, ALLIANCE_PASSIVE))
+    }
+
+    /// Whether units of `helper` answer a call for help of units of
+    /// `caller` (SPEC-0019, "Retaliation and call for help"): the same
+    /// player, or `helper` passive and with help response toward `caller`,
+    /// which asks for help from `helper`. PROVISIONAL: the game was tested
+    /// with all of these in both directions, and with help response alone
+    /// (no answer); which flags are needed is open.
+    pub fn helps(&self, helper: i32, caller: i32) -> bool {
+        helper == caller
+            || (self.is_ally(helper, caller)
+                && self
+                    .alliances
+                    .contains(&(helper, caller, ALLIANCE_HELP_RESPONSE))
+                && self
+                    .alliances
+                    .contains(&(caller, helper, ALLIANCE_HELP_REQUEST)))
     }
 }
 

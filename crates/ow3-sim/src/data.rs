@@ -28,6 +28,8 @@ pub struct UnitType {
     pub name: Option<String>,
     /// Hit points, as a bit pattern of a real.
     pub hp: u32,
+    /// A worker (`peon` among the classes of `type` in `UnitBalance.slk`).
+    pub worker: bool,
     /// A building (`isbldg` in `UnitBalance.slk`).
     pub building: bool,
     /// The type has the data of a hero: it is a hero type of the game or
@@ -422,6 +424,7 @@ impl ObjectData {
                 "Primary",
                 "spd",
                 "collision",
+                "type",
             ],
         )? {
             let b = Balance {
@@ -442,6 +445,9 @@ impl ObjectData {
                 unit.agility = real(values[11].as_ref());
                 unit.speed = real(values[13].as_ref());
                 unit.collision = real(values[14].as_ref());
+                unit.worker = values[15]
+                    .as_deref()
+                    .is_some_and(|t| t.split(',').any(|c| c.trim().eq_ignore_ascii_case("peon")));
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,

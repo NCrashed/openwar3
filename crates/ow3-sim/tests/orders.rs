@@ -838,3 +838,70 @@ fn attack_move() {
         }
     }
 }
+
+/// Verification 10 of SPEC-0019, retaliation: a glaive thrower attacks an
+/// idle footman; at the first damage the footman and the one 300 away
+/// acquire the thrower, those 1200 and 1500 away do not. They wait their
+/// reaction delays from the tick of the damage, the damaged one drawing
+/// first.
+#[test]
+fn retaliation() {
+    let units = "set a = CreateUnit(Player(1), 'ebal', 0, 1000, 270)\n    set t = CreateUnit(Player(0), 'hfoo', 0, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', 300, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', 1200, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', -1500, 0, 270)";
+    let orders = format!("{units}\n    call IssueTargetOrder(a, \"attack\", t)");
+    let Some(mut game) = game("", &orders, |_| {}) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 600);
+    let damage = path
+        .iter()
+        .find(|p| p.1.get(1).is_some_and(|u| u.life < u.max_life))
+        .unwrap()
+        .0;
+    let at = |tick: u64| &path.iter().find(|p| p.0 == tick).unwrap().1;
+    let targets: Vec<Option<u32>> = at(damage)[1..].iter().map(|u| u.target).collect();
+    let thrower = Some(at(damage)[0].handle);
+    assert_eq!(targets, [thrower, thrower, None, None]);
+    let turn = |unit: usize| {
+        path.windows(2)
+            .filter(|w| w[0].0 >= damage)
+            .find(|w| w[0].1[unit].facing != w[1].1[unit].facing)
+            .map(|w| w[1].0 - damage)
+    };
+    // Here the thrower drew only for its order (0.31 ticks), so the victim
+    // draws the second delay (0.77) and the helper the third (42.84),
+    // each turning at the first update at or after the damage plus its
+    // delay. (In the game the thrower drew twice, the victim and the
+    // helper getting the third and fourth: 45 and 15 ticks.)
+    let update_after = |delay: f64| {
+        let mut t = damage + delay.ceil() as u64;
+        while t % 6 != 1 {
+            t += 1;
+        }
+        t - damage
+    };
+    assert_eq!(
+        (turn(1), turn(2)),
+        (Some(update_after(0.766)), Some(update_after(42.838)))
+    );
+}
+
+/// SPEC-0019, call for help with `CallForHelp` 600: idle footmen 750 away
+/// answer, one 800 away does not, nor do a peasant next to the victim and
+/// a footman walking past.
+#[test]
+fn call_for_help_reach() {
+    let orders = "set a = CreateUnit(Player(1), 'ebal', 0, 1000, 270)\n    set t = CreateUnit(Player(0), 'hfoo', 0, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', 750, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', -530, -530, 270)\n    call CreateUnit(Player(0), 'hfoo', 0, -800, 270)\n    call CreateUnit(Player(0), 'hpea', 100, 0, 270)\n    call IssuePointOrder(CreateUnit(Player(0), 'hfoo', -200, 0, 270), \"move\", -3000, -3000)\n    call IssueTargetOrder(a, \"attack\", t)";
+    let Some(mut game) = game("", orders, |_| {}) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 600);
+    let damage = path
+        .iter()
+        .find(|p| p.1.get(1).is_some_and(|u| u.life < u.max_life))
+        .unwrap()
+        .0;
+    let units = &path.iter().find(|p| p.0 == damage).unwrap().1;
+    let thrower = Some(units[0].handle);
+    let targets: Vec<Option<u32>> = units[1..].iter().map(|u| u.target).collect();
+    assert_eq!(targets, [thrower, thrower, thrower, None, None, None]);
+}

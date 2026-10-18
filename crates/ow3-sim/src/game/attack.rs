@@ -147,6 +147,10 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             // A kill on an attack-move: the unit walks on after its
             // backswing (SPEC-0019).
             let mut s = state.borrow_mut();
+            // The victim and its friends answer the hit (SPEC-0019).
+            if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                super::movement::retaliate(&mut s, target, h);
+            }
             if !standing(&s, target) {
                 let tick = s.ticks;
                 let backswing = match s.objects.get(&h) {

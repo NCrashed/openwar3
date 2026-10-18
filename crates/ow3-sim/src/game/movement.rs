@@ -1276,3 +1276,70 @@ impl Targets {
         best.map(|b| b.4)
     }
 }
+
+/// How much farther than `CallForHelp` idle units hear a call for help
+/// (SPEC-0019: about 175; 180 fits all the distances measured).
+const CALL_REACH: f32 = 180.0;
+
+/// The hit of `attacker` on `victim` (SPEC-0019, "Retaliation and call
+/// for help"): an idle victim acquires the attacker whatever the distance,
+/// and so do the idle units within `CallForHelp` and a little of it that
+/// answer its call, in the order of their creation; all of them wait
+/// their reaction delay from this tick, the victim drawing first.
+///
+/// PROVISIONAL: only units with a weapon answer, workers (`peon`) never;
+/// the area is a circle round the victim's centre (its exact shape is
+/// open); only hits of weapons call for help, not scripted damage.
+pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
+    let tick = state.ticks;
+    let (Some(v), Some(a)) = (state.unit(Some(victim)), state.unit(Some(attacker))) else {
+        return;
+    };
+    let (owner, x, y, at) = (v.owner, real_of(v.x), real_of(v.y), [a.x, a.y]);
+    if !enemies(state, owner, a.owner) {
+        return;
+    }
+    let answers = |h: u32| match state.objects.get(&h) {
+        Some(Object::Unit(u)) => {
+            u.alive
+                && !u.paused
+                && u.attack.is_none()
+                && u.attack_move.is_none()
+                && u.movement.is_none_or(|m| !m.ordered())
+                && state
+                    .data
+                    .units
+                    .get(&u.type_id)
+                    .is_some_and(|t| t.weapon.is_some() && !t.worker)
+        }
+        _ => false,
+    };
+    if !answers(victim) {
+        return;
+    }
+    let reach = real_of(state.combat.call_for_help) + CALL_REACH;
+    let mut responders = vec![victim];
+    for &h in &state.units {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
+        let (dx, dy) = (real_of(u.x) - x, real_of(u.y) - y);
+        if h != victim
+            && h != attacker
+            && dx * dx + dy * dy <= reach * reach
+            && state.setup.helps(u.owner, owner)
+            && answers(h)
+        {
+            responders.push(h);
+        }
+    }
+    for h in responders {
+        if order(state, h, Order::Attack { target: attacker }, 0, at) {
+            let delay = mul(
+                state.game_random[REACTION].fraction(),
+                state.combat.reaction_delay,
+            );
+            react(state, h, tick, delay);
+        }
+    }
+}

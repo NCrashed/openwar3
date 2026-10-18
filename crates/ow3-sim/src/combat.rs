@@ -47,6 +47,9 @@ pub struct Combat {
     /// The longest reaction delay of attack orders in seconds
     /// (`ReactionDelay` of `[Misc]` in `Units\MiscData.txt`, SPEC-0019).
     pub reaction_delay: u32,
+    /// How far idle units hear a call for help, about this plus 180
+    /// (`CallForHelp` of `[Misc]` in `Units\MiscGame.txt`, SPEC-0019).
+    pub call_for_help: u32,
 }
 
 impl Default for Combat {
@@ -57,6 +60,7 @@ impl Default for Combat {
             agi_defense_base: 0,
             agi_defense_bonus: 0,
             reaction_delay: s2r("0.25"),
+            call_for_help: s2r("600"),
         }
     }
 }
@@ -82,6 +86,7 @@ impl Combat {
                 "AgiDefenseBase" => combat.agi_defense_base = s2r(value),
                 "AgiDefenseBonus" => combat.agi_defense_bonus = s2r(value),
                 "ReactionDelay" => combat.reaction_delay = s2r(value),
+                "CallForHelp" => combat.call_for_help = s2r(value),
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {
                         for (slot, v) in combat.bonus[attack].iter_mut().zip(value.split(',')) {

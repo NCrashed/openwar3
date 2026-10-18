@@ -127,7 +127,22 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
 `light = L * 1.3 * 0.6157 + 0.2 * A = (0.313, 0.533, 0.799)`, which is
 `(80, 136, 204)` on a white texture; the game showed `(79, 135, 203)`.
 
-### Sloped ground
+### Models
+
+Units, destructables and doodads (`war3map.doo`) are lit by the same
+formula of "Colour of the ground", with three differences:
+
+- the light comes from the **unit** day/night model of
+  `SetDayNightModels` (`DNCLordaeronUnit` without a call) instead of the
+  terrain model;
+- `N` is the normal of the model's vertex, turned with the model;
+- the clamp at 1 per channel applies as for the ground.
+
+The shadow map (`war3map.shd`) does not darken units: a unit standing in
+full shadow looked the same as without shadow. (Cliff models are lit as
+ground, SPEC-0014 rule 9; water by the unit light without the clamp,
+SPEC-0014.)
+
 
 The ground is lit per corner point and the light is interpolated over
 the tile:
@@ -215,13 +230,16 @@ rule 9).
 
 1. Water was not measured. Normals of points on the edge of the map
    (missing neighbours) were not measured.
-2. The unit model (`...Unit.mdx`) and how units, doodads and destructables
-   are lit.
+2. Models: animated normals (bones), team colour, material flags
+   (unshaded, two-sided) and other filter modes than opaque were not
+   tested; the same model placed as a doodad was drawn about 1.22 times
+   larger and about 26 units further east than as a unit or
+   destructable (not explained).
 3. Fog, and whether the light changes with `SetDayNightModels` called
    during the game (only calls in `main` were tested).
 4. The time between the samples of 3 hours was not measured; the samples
    at 3:00 and 21:00 fall inside Hermite segments and match.
-5. Shadows: whether units, doodads and water are darkened by
+5. Shadows: whether destructables, doodads and water are darkened by
    `war3map.shd`; maps whose size in tiles is not a multiple of 4 (the
    last, partial block); sample positions were measured to within about
    5 world units (all measured positions lay 3 to 5 units west of the
@@ -299,4 +317,17 @@ values are 0 or 1 below the model:
 7. **Cliff levels.** A 3 x 3 block of points one level up, raw heights
    all equal: the ground on the plateau and next to it is 131, like flat
    ground.
+8. **Models.** A test model of six horizontal squares with set normals
+   (up; towards the sun `D`; away from it; east; west; up and tilted 0.3
+   to the west), grey texture 136, put in place of the footman model, of
+   a destructable (`LTbr`) and of a doodad (`LOca`), facing 0, Lordaeron
+   light. Noon: 136, 136, 136, `(34, 34, 40)`, `(34, 34, 40)`, 136 for
+   all three; the unit light gives `(34.3, 34.3, 40.0)` for the squares
+   without sunlight, the terrain light would give `(22.8, 22.8, 26.7)`.
+   0:00: `(46, 79, 119)` (up), `(67, 115, 136)` (towards the sun),
+   `(13, 22, 32)`, `(13, 22, 32)`, `(50, 85, 128)` (west), `(56, 95,
+   136)` (tilted); the unit light gives `(46.9, 79.7, 119.6)`, `(68.2,
+   115.9, 136)`, `(12.8, 21.7, 32.6)`, `(50.2, 85.4, 128.1)`, `(56.2,
+   95.6, 136)`. The footman model in a map whose `war3map.shd` is all
+   shadow: the same values as without it.
 

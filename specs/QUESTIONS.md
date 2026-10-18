@@ -421,9 +421,9 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 - **Water surface** follows SPEC-0014: the frame of the game time (from
   4.98 s, inside the range of verification 11; open question 7), squares
   of `cells` tiles from the map's corner, depth colour and alpha, the
-  unit light unclamped, blended over the drawn ground. The blend is done
-  in linear colour as all drawing of the viewer, where the game's
-  formula is in display values. Without the simulation the viewer's
+  unit light unclamped, blended over the drawn ground. All colours of
+  the viewer are computed on the texture values as shown, without an
+  sRGB conversion, as the formulas of the specs are. Without the simulation the viewer's
   own clock drives the frames. No waves (the spec finds none); drawn after the
   models without writing depth.
 - **Shoreline models** are placed by SPEC-0014 at the water surface, at

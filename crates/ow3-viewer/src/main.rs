@@ -127,7 +127,7 @@ fn screenshot(
     out: &PathBuf,
 ) -> Result<(), String> {
     let (device, queue) = pollster::block_on(renderer::headless_device())?;
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut renderer = Renderer::new(&device, &queue, format, scene);
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
@@ -243,8 +243,11 @@ impl App {
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("the surface does not suit the adapter")?;
         let capabilities = surface.get_capabilities(&adapter);
-        if let Some(&srgb) = capabilities.formats.iter().find(|f| f.is_srgb()) {
-            config.format = srgb;
+        // Colours are computed on the values of the textures as they are
+        // shown, as the formulas of the specs are (SPEC-0017): a surface
+        // without the sRGB conversion.
+        if let Some(&plain) = capabilities.formats.iter().find(|f| !f.is_srgb()) {
+            config.format = plain;
         }
         surface.configure(&device, &config);
         let depth = renderer::depth_view(&device, config.width, config.height);

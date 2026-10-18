@@ -23,7 +23,7 @@ fn renders_a_map_offscreen() {
             return;
         }
     };
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
     let renderer = Renderer::new(&device, &queue, format, &scene);
     let camera = Camera::new(ow3_viewer::terrain_mesh::centre(&scene.terrain));
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, 160, 90);

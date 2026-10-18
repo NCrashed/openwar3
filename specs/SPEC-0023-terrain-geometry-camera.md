@@ -48,6 +48,29 @@ ground raised by 128 (and by 256), where `GetLocationZ` is 128 (256), the
 eye was 1036 (1087) above the low ground for `d` = 1000, i.e. the target
 was at about 36 (87). On flat ground the eye is at height `d` above it.
 
+### Where models are drawn
+
+- **Doodads** of `war3map.doo` are drawn at the scale
+  `clamp(scale, minScale, maxScale) * defScale`, with `scale` the value
+  stored in `war3map.doo` and the three limits from `Doodads\Doodads.slk`
+  of `War3Patch.mpq` (the `War3.mpq` copy differs: `LOca` has `maxScale`
+  1 there, 1.4 in the patch). Measured, as model size / unit model size:
+  `LPcr` (1, 0.8, 1.2): stored 0.5, 0.9, 1.0, 1.1, 2.0 -> 0.83, 0.92,
+  1.00, 1.14, 1.22; `BOth` (0.95, 0.9, 1): 1.0, 2.0 -> 0.96, 0.96;
+  `LOca` (1.2, 1, 1.4): 0.5, 1.0, 2.0 -> 1.2, 1.2, 1.65.
+- **Doodads with a pathing texture** are moved to the grid like
+  buildings (SPEC-0022, "Snapping"): `LOca` (`2x2Default`) stored at
+  x or y = 0, 400, -400, 256, -256 was drawn at 32, 416, -416, 288,
+  -224, which is `64 * floor(p / 64) + 32` (for -256 this differs from
+  the building rule, which gives -288). Doodads without a pathing
+  texture (`LPcr`, `BOth`) were drawn at their stored position (within
+  about 1 unit).
+- **Units** (footmen and a peasant, facings 0, 90, 180 and 270, at 12
+  positions on and off the 32 grid) were drawn 16 west and 16 south of
+  `GetUnitX` / `GetUnitY` (measured offsets -14 to -18.5 and -14.5 to
+  -17; `GetUnitX` returned the given position). Destructables were not
+  measured this way.
+
 ## Edge cases
 
 - The stretch of the 4:3 frame depends on the window: on a 4:3 screen
@@ -60,6 +83,9 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 2. The near and far planes (`CAMERA_FIELD_FARZ`) and fog.
 3. Whether the field of view applies the same way in full-screen modes
    and with the `fixedaspect` video setting.
+4. Why unit models are drawn 16 west and south of the unit's position
+   (only standing units of two types tested), and the snapping of
+   doodads with other pathing texture sizes.
 
 ## Sources
 

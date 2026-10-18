@@ -410,4 +410,11 @@ leaves holes there.
     Ground falling by 12.5 per point under the same surface: the
     straight models stand on the tiles between depths 21.4 and 33.9, not
     at the visible edge of the water (depth 0).
+14. **Water of `(12)IceCrown`** in the game (the original map, no
+    imports, noon), deep water near (0, -8960): turquoise, mean pixel
+    `(46, 125, 133)`. The frames of `N.mpq` (mean about `(3, 96, 81)`)
+    explain it; the blue plain frames of `War3.mpq` (about
+    `(105, 117, 183)`) cannot (they would need ground under the water
+    with red near 0 and green above 200). The World Editor shows the blue
+    frames.
 

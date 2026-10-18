@@ -31,7 +31,8 @@ archives. It holds tileset versions of shared file names: the cliff
 textures `ReplaceableTextures\Cliff\Cliff0.blp` and `Cliff1.blp`, the 45
 water frames, building splats (`ReplaceableTextures\Splats\...`) and a
 few creep skins (SPEC-0014, rule 7). Its order relative to
-`War3Patch.mpq` was not tested.
+`War3Patch.mpq` does not matter for the shipped files: `War3Patch.mpq`
+contains none of the 174 file names of the tileset archives.
 
 A map may replace `Scripts\common.j` and `Scripts\Blizzard.j`; the game
 compiles and runs the map's copies. With a map copy of `Blizzard.j` in

@@ -212,16 +212,22 @@ swing):
   as for `GetRandomReal`, and the delay is `mul(x, ReactionDelay)`.
 - **When it starts.** For an order given by a script in tick `o`
   (ticks numbered as in SPEC-0018 "Phase from the start of the game";
-  an order given in `main` has `o` = 0), the unit acts at its first
-  update at or after `o + 1 + delay` (delay in ticks): it turns towards
-  the target, and walks if the target is out of range. A unit that is
-  already in range and facing the target starts its swing one update
-  later, i.e. at the first update at or after `o + 7 + delay`, and hits
-  `dmgpt1` later.
+  an order given in `main` counts as given in tick 1), the unit acts at
+  its first update that is at or after `o + delay` (delay in ticks) and
+  not earlier than tick `o + 2` (the update in the tick right after the
+  order never acts on it): it turns towards the target, and walks if the
+  target is out of range. A unit that is already in range and facing
+  the target starts its swing one update later and hits `dmgpt1` after
+  that.
   - Out of range (footman 600 from its target, facing it), first facing
     change and first motion: (order tick, delay in ticks -> update):
-    (50, 5.41 -> 61), (53, 0.31 -> 55), (300, 0.31 -> 307). The last one
-    rules out `o + delay` (which gives 301).
+    (50, 5.41 -> 61), (53, 0.31 -> 55), (300, 0.31 -> 307: not the
+    update of tick 301).
+  - Attackers of verification 6 (orders in tick 201, from a 0 s timer
+    started in the action of a 1 s timer event; units created in the
+    same tick), first turn: delays 0.31, 0.77, 42.84, 10.51, 24.76,
+    15.09, 3.43, 1.37, 17.42 -> 205, 205, 247, 217, 229, 217, 205, 205,
+    223 (`o + 1 + delay` would give 223 and 211 for 15.09 and 3.43).
   - In range (footman next to its target, turning by a few degrees),
     first facing change: (50, 0.31 -> 55), (50, 5.41 -> 61), (50, 6.58
     -> 61), (50, 11.66 -> 67), (53, 0.31 -> 55), (53, 5.41 -> 61).

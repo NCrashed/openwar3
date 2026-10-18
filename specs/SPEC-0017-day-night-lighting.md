@@ -143,6 +143,7 @@ full shadow looked the same as without shadow. (Cliff models are lit as
 ground, SPEC-0014 rule 9; water by the unit light without the clamp,
 SPEC-0014.)
 
+### Sloped ground
 
 The ground is lit per corner point and the light is interpolated over
 the tile:

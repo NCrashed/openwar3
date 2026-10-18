@@ -39,7 +39,7 @@ use std::rc::Rc;
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{NativeFn, Vm};
 use ow3_math::natives::{arc_cosine, cos, sin, sqrt};
-use ow3_math::{add, div, i2r, mul, sub};
+use ow3_math::{add, div, floor, i2r, mul, sub};
 
 use super::{Object, State, follow, handle, real, string};
 use crate::random::REACTION;
@@ -155,6 +155,14 @@ impl Moving {
     /// The id of the order while it is on.
     pub fn order_id(&self) -> i32 {
         if self.arrived { 0 } else { self.order_id }
+    }
+
+    /// The target of the attack order while it is on.
+    pub fn target(&self) -> Option<u32> {
+        match self.order {
+            Order::Attack { target } if !self.arrived => Some(target),
+            _ => None,
+        }
     }
 }
 
@@ -377,22 +385,30 @@ pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            let (tick, clock) = (state.ticks, state.move_clock);
+            let tick = state.ticks;
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
-            // A walking unit stops at once and stands during the delay.
-            if let (true, Some(Object::Unit(u))) = (done, state.objects.get_mut(&h)) {
-                if let Some(m) = u.movement.as_mut() {
-                    m.reaction = Some((tick, delay));
-                    m.walking = false;
-                    m.restart = false;
-                    m.skip = false;
-                    m.commit(clock);
-                    m.velocity = [0, 0];
-                }
+            if done {
+                react(state, h, tick, delay);
             }
             done
         }
         _ => false,
+    }
+}
+
+/// The unit `h` waits `delay` seconds counted from `from`: a walking unit
+/// stops at once and stands during the delay (SPEC-0019).
+fn react(state: &mut State, h: u32, from: u64, delay: u32) {
+    let clock = state.move_clock;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        if let Some(m) = u.movement.as_mut() {
+            m.reaction = Some((from, delay));
+            m.walking = false;
+            m.restart = false;
+            m.skip = false;
+            m.commit(clock);
+            m.velocity = [0, 0];
+        }
     }
 }
 
@@ -865,52 +881,66 @@ pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
     a != b && a != NEUTRAL_PASSIVE && b != NEUTRAL_PASSIVE && !state.setup.is_ally(a, b)
 }
 
-/// Idle units with a weapon look for enemies at their updates (SPEC-0019,
-/// "Acquisition"): the nearest enemy unit whose centre is within
-/// `acquire` and both collision sizes becomes the target of an attack of
-/// their own, which `GetUnitCurrentOrder` shows as 0.
-///
-/// PROVISIONAL: a unit looks every 6 ticks from its creation on, from the
-/// first update (the game's first look comes at a random update from the
-/// 1st to the 24th, open question 2); the nearest enemy is taken, the
-/// earlier created one on a tie.
+/// 100 ticks (0.5 s) between the acquisition checks of a unit.
+const ACQUIRE_PERIOD: u64 = 100;
+/// The tick counted from a unit's creation that SPEC-0019 calls 0, as the
+/// timers count it (a 0.5 s timer of the map initialisation fires at our
+/// tick 101).
+const ACQUIRE_OFFSET: u64 = 1;
+const HUNDRED: u32 = 0x42C8_0000;
+const HALF: u32 = 0x3F00_0000;
+
+/// Idle units with a weapon look for enemies on their own schedule
+/// (SPEC-0019, "Acquisition by idle units"): `floor(100 * x)` ticks after
+/// their creation and then every 100 ticks, with `x` drawn when they were
+/// created. Of the enemies whose centres are within `acquire` and both
+/// collision sizes a unit takes the nearest unit, a structure only when
+/// there is no unit, and on equal distances the one with the smaller y,
+/// then x. The target becomes that of an attack of its own, which
+/// `GetUnitCurrentOrder` shows as 0, after the reaction delay counted
+/// from the exact time of the check.
 pub(super) fn acquisitions(state: &mut State) {
     let tick = state.ticks;
-    let idle: Vec<u32> = state
+    // (handle, x, start of the schedule).
+    let due: Vec<(u32, u32, u64)> = state
         .units
         .iter()
-        .copied()
-        .filter(|h| match state.objects.get(h) {
-            Some(Object::Unit(u)) => {
-                u.alive
+        .filter_map(|&h| match state.objects.get(&h) {
+            Some(Object::Unit(u))
+                if u.alive
+                    && !u.paused
                     && u.attack.is_none()
-                    && u.movement.is_none_or(|m| !m.ordered())
-                    && tick > u.born
-                    && (tick - u.born) % UPDATE == 0
-            }
-            _ => false,
-        })
-        .collect();
-    if idle.is_empty() {
-        return;
-    }
-    // The possible targets, by x: (x, y, collision, owner, creation
-    // order, handle).
-    let mut targets: Vec<(f32, f32, u32, i32, usize, u32)> = state
-        .units
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &h)| match state.objects.get(&h) {
-            Some(Object::Unit(o)) if o.alive && !o.hidden => {
-                let collision = state.data.units.get(&o.type_id).map_or(0, |d| d.collision);
-                Some((real_of(o.x), real_of(o.y), collision, o.owner, i, h))
+                    && u.movement.is_none_or(|m| !m.ordered()) =>
+            {
+                let x = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE)?;
+                let start = u.born + ACQUIRE_OFFSET;
+                let first = start + real_of(floor(mul(x, HUNDRED))) as u64;
+                (tick >= first && (tick - first) % ACQUIRE_PERIOD == 0).then_some((h, x, start))
             }
             _ => None,
         })
         .collect();
-    targets.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.4.cmp(&b.4)));
+    if due.is_empty() {
+        return;
+    }
+    // The possible targets, by x: (x, y, collision, owner, structure,
+    // handle).
+    let mut targets: Vec<(f32, f32, u32, i32, bool, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| match state.objects.get(&h) {
+            Some(Object::Unit(o)) if o.alive && !o.hidden => {
+                let data = state.data.units.get(&o.type_id);
+                let collision = data.map_or(0, |d| d.collision);
+                let structure = data.is_some_and(|d| d.building);
+                Some((real_of(o.x), real_of(o.y), collision, o.owner, structure, h))
+            }
+            _ => None,
+        })
+        .collect();
+    targets.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let widest = targets.iter().map(|t| real_of(t.2)).fold(0.0f32, f32::max);
-    for h in idle {
+    for (h, phase, start) in due {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
@@ -923,8 +953,9 @@ pub(super) fn acquisitions(state: &mut State) {
         }
         let reach = add(data.acquire, data.collision);
         let from = targets.partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
-        let mut best: Option<(f32, usize, u32)> = None;
-        for &(ox, oy, collision, other_owner, i, other) in &targets[from..] {
+        // (structure, squared distance, y, x, handle).
+        let mut best: Option<(bool, f32, f32, f32, u32)> = None;
+        for &(ox, oy, collision, other_owner, structure, other) in &targets[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
             // every pair in the engine arithmetic is slow.
@@ -936,18 +967,30 @@ pub(super) fn acquisitions(state: &mut State) {
                 continue;
             }
             let distance = dx * dx + dy * dy;
+            let key = (structure, distance, oy, ox, other);
             if distance <= limit * limit
-                && best.is_none_or(|(d, j, _)| distance < d || (distance == d && i < j))
+                && best.is_none_or(|b| {
+                    (key.0, key.1, key.2, key.3) < (b.0, b.1, b.2, b.3)
+                })
             {
-                best = Some((distance, i, other));
+                best = Some(key);
             }
         }
-        if let Some((_, _, target)) = best {
-            let Some(Object::Unit(o)) = state.objects.get(&target) else {
-                continue;
-            };
-            let at = [o.x, o.y];
-            order(state, h, Order::Attack { target }, 0, at);
+        let Some((.., target)) = best else {
+            continue;
+        };
+        let Some(Object::Unit(o)) = state.objects.get(&target) else {
+            continue;
+        };
+        let at = [o.x, o.y];
+        if order(state, h, Order::Attack { target }, 0, at) {
+            // The delay runs from the exact time of the check, `0.5 * x`
+            // seconds after the start of the schedule.
+            let delay = mul(
+                state.game_random[REACTION].fraction(),
+                state.combat.reaction_delay,
+            );
+            react(state, h, start, add(delay, mul(phase, HALF)));
         }
     }
 }

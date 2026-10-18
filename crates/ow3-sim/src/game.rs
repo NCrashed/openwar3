@@ -79,7 +79,7 @@ pub enum Object {
     Force(BTreeSet<i32>),
     /// Unit handles in the order they were added.
     Group(Vec<u32>),
-    Unit(Unit),
+    Unit(Box<Unit>),
     Destructable(Destructable),
     Item(Item),
     Leaderboard(boards::Leaderboard),
@@ -159,6 +159,13 @@ pub struct Unit {
     movement: Option<movement::Moving>,
     /// The tick the unit was created at.
     born: u64,
+    /// A unit with a weapon looks for targets `100 * x` ticks after its
+    /// creation and then every 100 ticks, `x` (a real in `0..1`) drawn
+    /// when it is created (SPEC-0019, "Acquisition by idle units");
+    /// [`NO_PHASE`] for a unit without a weapon.
+    acquire_phase: u32,
+    /// `PauseUnit`: the unit does not act.
+    paused: bool,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -175,6 +182,10 @@ pub struct Unit {
     /// A building's pathing texture in the grid (SPEC-0022).
     footprint: Option<Box<obstacles::Footprint>>,
 }
+
+/// The acquisition phase of a unit that never acquires (a NaN, never
+/// drawn).
+const NO_PHASE: u32 = u32::MAX;
 
 /// How a player sees a unit, for the colour of its selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,6 +218,8 @@ pub struct UnitView {
     pub max_mana: f32,
     /// Moving under a move order now.
     pub walking: bool,
+    /// The target of its attack order, given or acquired.
+    pub target: Option<u32>,
 }
 
 /// An attack in progress, in ticks.
@@ -977,6 +990,7 @@ impl<'a> Game<'a> {
                     mana: f32::from_bits(u.mana.value()),
                     max_mana: f32::from_bits(u.mana.max),
                     walking: u.movement.is_some_and(|m| m.walking()),
+                    target: u.movement.and_then(|m| m.target()),
                 }),
                 _ => None,
             })

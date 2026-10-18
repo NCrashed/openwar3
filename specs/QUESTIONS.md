@@ -493,13 +493,19 @@ the spec is silent:
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.
-- **Acquisition** (SPEC-0019): an idle unit with a weapon looks for an
-  enemy at every update from the first one after its creation; the
-  game's first look comes at a random update from the 1st to the 24th
-  (the draw is open). The nearest enemy within `acquire` and both
-  collisions is taken, the earlier created one on a tie (not measured).
-  The distance check uses plain reals, which can differ from the engine
-  arithmetic in the last place.
+- **Acquisition** (SPEC-0019): the checks, the choice of target and the
+  reaction delay follow the spec; verification 8 matches for both
+  seeds, and so do the turns at tick 10. The tick 0 of a unit's
+  schedule is one tick after its creation, as for the timers (a 0.5 s
+  timer of the map initialisation fires at our tick 101); units created
+  later in a running game are assumed to count the same way. The
+  reaction delay of an acquisition is added to `0.5 * x` and counted
+  from that tick 0, which equals counting from the exact time of the
+  check, but its rounding is not measured. Units that are not idle and
+  paused units do not acquire, buildings with weapons acquire like
+  units (open in the spec); `PauseUnit` only stops the acquisition so
+  far. The distance check uses plain
+  reals, which can differ from the engine arithmetic in the last place.
 - **The clock** (SPEC-0017) past midnight starts again from the hour
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.

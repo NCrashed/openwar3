@@ -23,6 +23,7 @@ native IssueTargetOrder takes unit whichUnit, string order, widget targetWidget 
 native IssueImmediateOrder takes unit whichUnit, string order returns boolean
 native GetUnitCurrentOrder takes unit whichUnit returns integer
 native SetRandomSeed takes integer seed returns nothing
+native PauseUnit takes unit whichUnit, boolean flag returns nothing
 globals
     unit a = null
     unit t = null
@@ -269,6 +270,97 @@ fn idle_footmen_acquire() {
         let last = &path.last().unwrap().1;
         let moved = last[0].x != -3000.0 || last[1].x != (-3000 + gap) as f32;
         assert_eq!(moved, takes, "{gap}");
+    }
+}
+
+/// Verification 8 of SPEC-0019: a paused enemy footman at the centre and
+/// 20 footmen on a circle of radius 300 round it, created after it at
+/// the map initialisation after `SetRandomSeed`. Each circle footman
+/// acquires the centre `floor(100 * x)` ticks after its creation (our
+/// ticks are one later); with seed 7 the ones acquiring at 3 and 8 start
+/// to turn at 10.
+#[test]
+fn acquisition_ticks() {
+    for (seed, expected) in [
+        (
+            7,
+            [
+                3, 8, 18, 22, 26, 31, 36, 44, 45, 46, 48, 68, 70, 72, 81, 84, 88, 88, 90, 94,
+            ],
+        ),
+        (
+            8,
+            [
+                1, 5, 13, 16, 19, 32, 33, 33, 40, 46, 67, 69, 70, 73, 79, 81, 85, 89, 91, 96,
+            ],
+        ),
+    ] {
+        let mut units = format!(
+            "call SetRandomSeed({seed})\n    set t = CreateUnit(Player(1), 'hfoo', 0, 0, 0)\n    call PauseUnit(t, true)"
+        );
+        for i in 0..20 {
+            let angle = (i as f64 * 18.0).to_radians();
+            units += &format!(
+                "\n    call CreateUnit(Player(0), 'hfoo', {:.3}, {:.3}, 0)",
+                300.0 * angle.cos(),
+                300.0 * angle.sin()
+            );
+        }
+        let Some(mut game) = game(&units, "", |_| {}) else {
+            return;
+        };
+        let path = run(&mut game, 120);
+        let first = |unit: usize, seen: &dyn Fn(&UnitView, &UnitView) -> bool| {
+            path.iter()
+                .zip(&path[1..])
+                .find(|(a, b)| seen(&a.1[unit], &b.1[unit]))
+                .map(|(_, b)| b.0 - 1)
+        };
+        let mut acquired: Vec<(u64, usize)> = (1..=20)
+            .map(|i| (first(i, &|_, b| b.target.is_some()).unwrap(), i))
+            .collect();
+        acquired.sort();
+        let ticks: Vec<u64> = acquired.iter().map(|a| a.0).collect();
+        assert_eq!(ticks, expected, "seed {seed}");
+        if seed == 7 {
+            for &(_, i) in &acquired[..2] {
+                assert_eq!(first(i, &|a, b| a.facing != b.facing), Some(10), "turn");
+            }
+        }
+    }
+}
+
+/// The choice of target of SPEC-0019: a unit before a nearer structure,
+/// and between enemies at the same distance the one with the smaller y,
+/// then the smaller x.
+#[test]
+fn acquisition_choice() {
+    let enemy = |kind: &str, x: i32, y: i32| {
+        format!(
+            "\n    set t = CreateUnit(Player(1), '{kind}', {x}, {y}, 0)\n    call PauseUnit(t, true)"
+        )
+    };
+    // Eight enemies exactly 300 away.
+    let around: String = [(300, 0), (240, 180), (0, 300), (-180, 240), (-300, 0)]
+        .iter()
+        .chain(&[(-240, -180), (0, -300), (180, -240)])
+        .map(|&(x, y)| enemy("hfoo", x, y))
+        .collect();
+    let level = enemy("hfoo", 300, -300) + &enemy("hfoo", -300, -300);
+    for (enemies, at) in [
+        (enemy("hfoo", 300, 0) + &enemy("hhou", -128, 0), (300.0, 0.0)),
+        (enemy("hhou", -128, 0) + &enemy("hfoo", 300, 0), (300.0, 0.0)),
+        (around, (0.0, -300.0)),
+        (level, (-300.0, -300.0)),
+    ] {
+        let units = format!("set a = CreateUnit(Player(0), 'hfoo', 0, 0, 0){enemies}");
+        let Some(mut game) = game(&units, "", |_| {}) else {
+            return;
+        };
+        let path = run(&mut game, 120);
+        let last = &path.last().unwrap().1;
+        let target = last.iter().find(|u| Some(u.handle) == last[0].target);
+        assert_eq!(target.map(|u| (u.x, u.y)), Some(at), "{enemies}");
     }
 }
 

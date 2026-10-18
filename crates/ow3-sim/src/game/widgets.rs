@@ -122,6 +122,13 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
     let facing = facing::from_degrees(at[2]);
     let ((x, y), footprint) =
         super::obstacles::place_building(state, type_id, snap(at[0]), snap(at[1]), facing);
+    // The phase of its acquisition checks, from the generator of the
+    // damage dice (SPEC-0019).
+    let acquire_phase = if data.weapon.is_some() {
+        state.game_random[crate::random::ATTACK_DICE].fraction()
+    } else {
+        super::NO_PHASE
+    };
     let unit = Unit {
         owner,
         type_id,
@@ -132,6 +139,8 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         attack: None,
         movement: None,
         born: state.ticks,
+        acquire_phase,
+        paused: false,
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -143,7 +152,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         resources: 0,
         footprint: footprint.map(Box::new),
     };
-    let h = state.create(Object::Unit(unit));
+    let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
     Some(h)
 }
@@ -791,7 +800,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         }
     );
     type Move = fn(&mut Unit, &[Value], &State);
-    let moves: [(&str, Move); 5] = [
+    let moves: [(&str, Move); 6] = [
         (
             "native SetUnitX takes unit whichUnit, real newX returns nothing",
             |u, args, state| u.x = world_relative(real(&args[1]), state.world_bounds[0]),
@@ -816,6 +825,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             "native ShowUnit takes unit whichUnit, boolean show returns nothing",
             |u, args, _| u.hidden = args[1] != Value::Boolean(true),
         ),
+        (
+            "native PauseUnit takes unit whichUnit, boolean flag returns nothing",
+            |u, args, _| u.paused = args[1] == Value::Boolean(true),
+        ),
     ];
     for (declaration, apply) in moves {
         native!(add, state, declaration, |vm, state, args| {
@@ -825,7 +838,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             {
                 apply(&mut unit, args, &state);
                 if let Some(u) = unit_mut(&mut state, handle(&args[0])) {
-                    *u = unit;
+                    *u = *unit;
                 }
             }
             Ok(None)
@@ -875,6 +888,18 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 .unit(handle(&args[0]))
                 .map_or(0, |u| u.user_data);
             Ok(Some(Value::Integer(data)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IsUnitPaused takes unit whichUnit returns boolean",
+        |vm, state, args| {
+            let paused = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .is_some_and(|u| u.paused);
+            Ok(Some(Value::Boolean(paused)))
         }
     );
     native!(

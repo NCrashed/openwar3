@@ -51,9 +51,10 @@ endfunction
 function main takes nothing returns nothing
     local trigger t = CreateTrigger()
     local unit target
-    call SetRandomSeed(777)
     set knight = CreateUnit(Player(0), 'hkni', 0, 0, 0)
     set target = CreateUnit(Player(15), 'hfoo', 100, 0, 180)
+    // After the units, which draw from the generator of the dice.
+    call SetRandomSeed(777)
     call TriggerRegisterUnitEvent(t, target, ConvertUnitEvent(52))
     call TriggerAddAction(t, function Hit)
     set clock = CreateTimer()

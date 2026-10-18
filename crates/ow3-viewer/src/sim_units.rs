@@ -371,6 +371,7 @@ mod tests {
             mana: 0.0,
             max_mana: 0.0,
             walking: false,
+            target: None,
         }
     }
 

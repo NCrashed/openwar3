@@ -202,6 +202,18 @@ impl Animation {
         index
     }
 
+    /// The data of model `index`.
+    pub fn mdx(&self, index: usize) -> &Model {
+        &self.models[index].model
+    }
+
+    /// Where model `index` is `elapsed` milliseconds into its Stand
+    /// sequence, its global sequences too.
+    pub fn stand_moment(&self, index: usize, elapsed: i32) -> Moment {
+        let animated = &self.models[index];
+        Moment::at(&animated.model, animated.sequence, elapsed)
+    }
+
     /// The height of the top of model `index` in its Stand pose.
     pub fn model_top(&self, index: usize) -> f32 {
         self.models[index].top

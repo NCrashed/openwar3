@@ -158,6 +158,7 @@ pub struct Renderer {
     globals_bind_group: wgpu::BindGroup,
     layers: Vec<GpuLayer>,
     models: ModelRenderer,
+    particles: crate::particles::Particles,
     water_pipeline: wgpu::RenderPipeline,
     water: Option<GpuLayer>,
     /// The type of the water, for its animation, and the frame shown.
@@ -607,6 +608,14 @@ impl Renderer {
             let view = upload_layers(device, queue, frames);
             gpu_layer(layer, &view, &repeat)
         });
+        let particles = crate::particles::Particles::new(
+            device,
+            queue,
+            format,
+            &scene.animation,
+            &scene.emitters,
+            &scene.particle_textures,
+        );
         let models = ModelRenderer::new(
             device,
             queue,
@@ -623,6 +632,7 @@ impl Renderer {
             globals_bind_group,
             layers,
             models,
+            particles,
             water_pipeline,
             water,
             water_kind: scene.water.as_ref().map(|(_, _, kind)| kind.clone()),
@@ -638,6 +648,18 @@ impl Renderer {
             unit_light: PLAIN_LIGHT,
             shadow_area,
         }
+    }
+
+    /// Moves the particles to `elapsed` milliseconds, facing `camera`.
+    pub fn prepare_particles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        elapsed: i32,
+    ) {
+        self.particles
+            .update(device, queue, self.models.animation(), camera, elapsed);
     }
 
     /// The water shows the frame of game time `seconds` (SPEC-0014).
@@ -854,6 +876,8 @@ impl Renderer {
                 pass.set_index_buffer(water.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..water.count, 0, 0..1);
             }
+            // Particles over the water: the foam of the shores lies on it.
+            self.particles.draw(&mut pass);
             self.overlay.draw(&mut pass);
         }
         queue.submit([encoder.finish()]);

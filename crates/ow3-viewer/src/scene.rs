@@ -33,6 +33,10 @@ pub struct Scene {
     /// The day/night models of the ground and of units (SPEC-0017).
     pub terrain_light: Option<DayLight>,
     pub unit_light: Option<DayLight>,
+    /// Placed models with particle emitters: model index and placement.
+    pub emitters: Vec<(usize, crate::camera::Mat4)>,
+    /// The textures of the particles, by path.
+    pub particle_textures: BTreeMap<String, Image>,
     /// The shadows the editor baked (`war3map.shd`), if any.
     pub shadows: Option<ow3_formats::map::shadows::Shadows>,
 }
@@ -110,17 +114,49 @@ impl Scene {
         let tiles = ow3_render::terrain::ground_tiles(&mut chain, &terrain);
         let painted = crate::cliff_mesh::repaint(&terrain, &tiles, &cliffs.grounds);
         let layers = terrain_mesh::build(&painted, &textures, &cliffs.covered);
+        let depths = ow3_render::water::depths(&mut chain);
         let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
-            let depths = ow3_render::water::depths(&mut chain);
             let mesh = terrain_mesh::water(&terrain, &kind, depths);
             let frames = water_frames(&mut chain, &kind);
             (mesh, frames, kind)
         });
         let water = water.filter(|(mesh, ..)| !mesh.indices.is_empty());
-        let placements = crate::objects::placements(&mut chain, without_units);
-        let (mut groups, mut model_textures, animation) = models::load(&mut chain, &placements);
+        let mut placements = crate::objects::placements(&mut chain, without_units);
+        // The foam along the shores (SPEC-0014).
+        if let Some((_, _, kind)) = &water {
+            placements.extend(crate::shore::placements(&terrain, kind, depths));
+        }
+        let (mut groups, mut model_textures, mut animation) = models::load(&mut chain, &placements);
         model_textures.extend(models::textures(&mut chain, &cliffs.groups));
         groups.extend(cliffs.groups);
+        // The placed models with particle emitters, and their textures.
+        let mut emitters = Vec::new();
+        let mut particle_textures = BTreeMap::new();
+        for placement in &placements {
+            let Some(index) = animation.model(&mut chain, &placement.model) else {
+                continue;
+            };
+            let model = animation.mdx(index);
+            if model.particle_emitters.is_empty() {
+                continue;
+            }
+            for e in &model.particle_emitters {
+                let path = model
+                    .textures
+                    .get(e.texture_id as usize)
+                    .filter(|t| t.replaceable_id == 0)
+                    .map(|t| t.path.clone());
+                if let Some(path) = path
+                    && !particle_textures.contains_key(&path)
+                    && let Some(image) = chain
+                        .read(&path)
+                        .and_then(|d| ow3_formats::blp::decode(&d).ok())
+                {
+                    particle_textures.insert(path, Image::from(image));
+                }
+            }
+            emitters.push((index, models::placement_matrix(placement)));
+        }
         Ok(Scene {
             terrain,
             textures,
@@ -132,6 +168,8 @@ impl Scene {
             terrain_light,
             unit_light,
             shadows,
+            emitters,
+            particle_textures,
         })
     }
 }

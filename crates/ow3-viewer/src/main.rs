@@ -167,6 +167,7 @@ fn screenshot(
         });
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
+    renderer.prepare_particles(&device, &queue, &camera, (options.time * 1000.0) as i32);
     light(&mut renderer, scene, sim_hour);
     renderer.set_game_time(sim_seconds);
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
@@ -411,6 +412,8 @@ impl App {
             );
         }
         gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
+        gpu.renderer
+            .prepare_particles(&gpu.device, &gpu.queue, &self.camera, elapsed);
         let hour = self.sim.as_ref().map_or(12.0, Sim::time_of_day);
         let seconds = self
             .sim

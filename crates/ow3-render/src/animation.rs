@@ -48,7 +48,7 @@ pub fn transform_point(m: &Mat4, p: Vec3) -> Vec3 {
     out
 }
 
-fn transform_direction(m: &Mat4, d: Vec3) -> Vec3 {
+pub fn transform_direction(m: &Mat4, d: Vec3) -> Vec3 {
     let mut out = [0.0; 3];
     for (r, value) in out.iter_mut().enumerate() {
         *value = m[0][r] * d[0] + m[1][r] * d[1] + m[2][r] * d[2];
@@ -260,6 +260,9 @@ fn nodes(model: &Model) -> BTreeMap<u32, &Node> {
     }
     for helper in &model.helpers {
         nodes.insert(helper.object_id, helper);
+    }
+    for emitter in &model.particle_emitters {
+        nodes.insert(emitter.node.object_id, &emitter.node);
     }
     for attachment in &model.attachments {
         nodes.insert(attachment.node.object_id, &attachment.node);

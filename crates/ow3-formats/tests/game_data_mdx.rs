@@ -49,6 +49,17 @@ fn inconsistency(model: &Model) -> Option<String> {
             return Some(format!("geoset {g}: material {}", geoset.material_id));
         }
     }
+    for (e, emitter) in model.particle_emitters.iter().enumerate() {
+        if emitter.texture_id as usize >= model.textures.len() {
+            return Some(format!(
+                "particle emitter {e}: texture {}",
+                emitter.texture_id
+            ));
+        }
+        if emitter.rows == 0 || emitter.columns == 0 {
+            return Some(format!("particle emitter {e}: no texture cells"));
+        }
+    }
     for (m, material) in model.materials.iter().enumerate() {
         for layer in &material.layers {
             if layer.texture_id as usize >= model.textures.len() {
@@ -65,7 +76,7 @@ fn every_model_parses() {
     let mut parsed = 0;
     let mut failures = Vec::new();
     let mut other_chunks: BTreeMap<String, usize> = BTreeMap::new();
-    let (mut vertices, mut bones) = (0usize, 0usize);
+    let (mut vertices, mut bones, mut emitters) = (0usize, 0usize, 0usize);
     for archive in ["War3.mpq", "War3x.mpq"] {
         let path = root.join(archive);
         if !path.exists() {
@@ -95,6 +106,7 @@ fn every_model_parses() {
                         .map(|g| g.vertices.len())
                         .sum::<usize>();
                     bones += model.bones.len();
+                    emitters += model.particle_emitters.len();
                     parsed += 1;
                 }
                 Err(e) => failures.push(format!("{archive} {name}: {e}")),
@@ -102,9 +114,10 @@ fn every_model_parses() {
         }
     }
     eprintln!(
-        "{parsed} models, {vertices} vertices, {bones} bones; unparsed chunks: {other_chunks:?}"
+        "{parsed} models, {vertices} vertices, {bones} bones, {emitters} particle emitters; unparsed chunks: {other_chunks:?}"
     );
     assert!(parsed > 3000, "{parsed}");
+    assert!(emitters > 1000, "{emitters}");
     assert!(
         failures.is_empty(),
         "{} failures:\n{}",

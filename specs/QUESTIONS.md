@@ -423,8 +423,19 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   unit light unclamped, blended over the drawn ground. The blend is done
   in linear colour as all drawing of the viewer, where the game's
   formula is in display values. Without the simulation the viewer's
-  own clock drives the frames. No shorelines, no waves; drawn after the
+  own clock drives the frames. No waves (the spec finds none); drawn after the
   models without writing depth.
+- **Shoreline models** are placed by SPEC-0014 at the water surface, at
+  their own scale, playing their first sequence (Stand 2) from a phase
+  of their own (open question 8); several variations go by the tile.
+- **Particles** (`PRE2`) follow the plain reading of the public format
+  documentation (`ow3-render::particles`): emission, cone, speed and
+  variation, gravity, the three segments, head cells; quads face the
+  camera or lie in the model's xy plane (`XYQuad`). Not done: tails,
+  squirts, model space, sorting, light and fog; only placed models
+  (doodads, shorelines) emit, units do not. Their random numbers are the
+  viewer's own. A placed model starts with 10 s of particles already
+  simulated.
 - **Ground of ramp middles** (open question 2). The `CliffTrans` models
   are half a level up at the corner of the letter `R` (heights 128, 64, 0
   from `H` over `R` to the far end). The viewer draws ground points with

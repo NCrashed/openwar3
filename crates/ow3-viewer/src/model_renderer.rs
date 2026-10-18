@@ -202,6 +202,11 @@ pub struct ModelRenderer {
 }
 
 impl ModelRenderer {
+    /// How the models move.
+    pub fn animation(&self) -> &Animation {
+        &self.animation
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -3,7 +3,7 @@
 //!
 //! A file is `MDLX` followed by chunks: a four-character tag, a byte size
 //! and the data. Parsed here: `VERS`, `MODL`, `SEQS`, `GLBS`, `TEXS`,
-//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH`, `PIVT` and `LITE`. Other chunks
+//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH`, `PIVT`, `LITE` and `PRE2`. Other chunks
 //! (particle emitters, ribbons, events, cameras, collision shapes,
 //! texture animations) are kept as raw bytes.
 //!
@@ -186,6 +186,53 @@ pub struct Light {
     pub tracks: Vec<Track>,
 }
 
+/// A particle emitter of the second kind (`PRE2`): it sends out textured
+/// quads from its node, which age through three segments of colour,
+/// alpha and size.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParticleEmitter2 {
+    pub node: Node,
+    /// Units per second, its variation as a share, the half angle of the
+    /// cone of directions in degrees, and the fall in units per second
+    /// squared.
+    pub speed: f32,
+    pub variation: f32,
+    pub latitude: f32,
+    pub gravity: f32,
+    /// Seconds a particle lives.
+    pub lifespan: f32,
+    /// Particles per second.
+    pub emission_rate: f32,
+    /// The size of the area particles start in.
+    pub width: f32,
+    pub length: f32,
+    /// 0 blend, 1 additive, 2 modulate, 3 modulate 2x, 4 alpha key.
+    pub filter_mode: u32,
+    /// The texture is cut into `rows` by `columns` cells.
+    pub rows: u32,
+    pub columns: u32,
+    /// 0 head, 1 tail, 2 both.
+    pub head_or_tail: u32,
+    pub tail_length: f32,
+    /// The share of the life at which the middle segment is reached.
+    pub time: f32,
+    /// As stored: blue, green, red, for the start, middle and end.
+    pub segment_colors: [[f32; 3]; 3],
+    pub segment_alphas: [u8; 3],
+    pub segment_scaling: [f32; 3],
+    /// Cells of the texture shown over the life: start, end and repeat,
+    /// for the head in its first and second part and for the tail.
+    pub head_intervals: [u32; 3],
+    pub head_decay_intervals: [u32; 3],
+    pub tail_intervals: [u32; 3],
+    pub tail_decay_intervals: [u32; 3],
+    pub texture_id: u32,
+    pub squirt: u32,
+    pub priority_plane: i32,
+    pub replaceable_id: u32,
+    /// `KP2S`, `KP2R`, `KP2L`, `KP2G`, `KP2E`, `KP2N`, `KP2W`, `KP2V`.
+    pub tracks: Vec<Track>,
+}
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
     pub version: u32,
@@ -201,6 +248,7 @@ pub struct Model {
     pub helpers: Vec<Node>,
     pub attachments: Vec<Attachment>,
     pub lights: Vec<Light>,
+    pub particle_emitters: Vec<ParticleEmitter2>,
     pub pivots: Vec<[f32; 3]>,
     /// Chunks not parsed, with their data, in file order.
     pub other_chunks: Vec<(RawCode, Vec<u8>)>,
@@ -347,6 +395,69 @@ fn light(r: &mut Reader) -> Result<Light> {
         intensity,
         ambient_color,
         ambient_intensity,
+        tracks,
+    })
+}
+
+fn particle_emitter2(r: &mut Reader) -> Result<ParticleEmitter2> {
+    let start = r.position();
+    let size = r.u32()?;
+    let end = object_end(r, start, size)?;
+    let node = node(r)?;
+    let speed = r.f32()?;
+    let variation = r.f32()?;
+    let latitude = r.f32()?;
+    let gravity = r.f32()?;
+    let lifespan = r.f32()?;
+    let emission_rate = r.f32()?;
+    let width = r.f32()?;
+    let length = r.f32()?;
+    let filter_mode = r.u32()?;
+    let rows = r.u32()?;
+    let columns = r.u32()?;
+    let head_or_tail = r.u32()?;
+    let tail_length = r.f32()?;
+    let time = r.f32()?;
+    let segment_colors = [vec3(r)?, vec3(r)?, vec3(r)?];
+    let segment_alphas = [r.u8()?, r.u8()?, r.u8()?];
+    let segment_scaling = vec3(r)?;
+    let mut interval = || -> Result<[u32; 3]> { Ok([r.u32()?, r.u32()?, r.u32()?]) };
+    let head_intervals = interval()?;
+    let head_decay_intervals = interval()?;
+    let tail_intervals = interval()?;
+    let tail_decay_intervals = interval()?;
+    let texture_id = r.u32()?;
+    let squirt = r.u32()?;
+    let priority_plane = r.u32()? as i32;
+    let replaceable_id = r.u32()?;
+    let tracks = tracks_until(r, end)?;
+    Ok(ParticleEmitter2 {
+        node,
+        speed,
+        variation,
+        latitude,
+        gravity,
+        lifespan,
+        emission_rate,
+        width,
+        length,
+        filter_mode,
+        rows,
+        columns,
+        head_or_tail,
+        tail_length,
+        time,
+        segment_colors,
+        segment_alphas,
+        segment_scaling,
+        head_intervals,
+        head_decay_intervals,
+        tail_intervals,
+        tail_decay_intervals,
+        texture_id,
+        squirt,
+        priority_plane,
+        replaceable_id,
         tracks,
     })
 }
@@ -600,6 +711,7 @@ impl Model {
                 b"ATCH" => model.attachments = items(&mut c, attachment)?,
                 b"PIVT" => model.pivots = fixed(&mut c, 12, offset, vec3)?,
                 b"LITE" => model.lights = items(&mut c, light)?,
+                b"PRE2" => model.particle_emitters = items(&mut c, particle_emitter2)?,
                 _ => {
                     model.other_chunks.push((tag, c.bytes(size)?.to_vec()));
                 }

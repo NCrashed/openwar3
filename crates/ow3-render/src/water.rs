@@ -27,6 +27,8 @@ pub struct Depths {
     pub min: f32,
     pub deep: f32,
     pub max: f32,
+    /// Deeper than this a corner gets shoreline models (`WavesDepth`).
+    pub waves: f32,
 }
 
 /// The values shipped with the game, for when the file cannot be read.
@@ -36,6 +38,7 @@ impl Default for Depths {
             min: 10.0,
             deep: 64.0,
             max: 72.0,
+            waves: 25.0,
         }
     }
 }
@@ -54,6 +57,11 @@ pub struct WaterType {
     /// second (`texRate`).
     pub frames: u32,
     pub rate: f32,
+    /// The directory of the shoreline models (`shoreDir`) and, for a
+    /// straight shore, an outside and an inside corner, their file name
+    /// and number of variations (`shoreSFile`, `shoreSVar`, ...).
+    pub shore_dir: String,
+    pub shores: [(String, u32); 3],
     /// Tiles covered by one repeat of the texture.
     pub cells: f32,
 }
@@ -139,6 +147,7 @@ pub fn depths(chain: &mut ArchiveChain) -> Depths {
             "MinDepth" => depths.min = value,
             "DeepLevel" => depths.deep = value,
             "MaxDepth" => depths.max = value,
+            "WavesDepth" => depths.waves = value,
             _ => {}
         }
     }
@@ -177,6 +186,12 @@ pub fn water_type(chain: &mut ArchiveChain, tileset: u8) -> Option<WaterType> {
             colour("Dmax"),
         ],
         texture: text("texFile"),
+        shore_dir: text("shoreDir"),
+        shores: [
+            (text("shoreSFile"), number("shoreSVar") as u32),
+            (text("shoreOCFile"), number("shoreOCVar") as u32),
+            (text("shoreICFile"), number("shoreICVar") as u32),
+        ],
         frames: number("numTex").max(1.0) as u32,
         rate: number("texRate"),
         cells: number("cells").max(1.0),
@@ -245,6 +260,8 @@ mod animation {
             height: 0.0,
             colours: [[0; 4]; 4],
             texture: String::new(),
+            shore_dir: String::new(),
+            shores: Default::default(),
             frames: 45,
             rate: 15.0,
             cells: 2.0,

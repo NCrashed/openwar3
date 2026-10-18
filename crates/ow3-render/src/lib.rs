@@ -8,6 +8,7 @@ pub mod cliffs;
 pub mod daylight;
 pub mod image;
 pub mod model;
+pub mod particles;
 pub mod shadows;
 pub mod terrain;
 pub mod water;

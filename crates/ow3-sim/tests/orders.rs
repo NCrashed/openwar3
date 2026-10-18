@@ -186,19 +186,22 @@ fn approach() {
 }
 
 /// The turning table of SPEC-0019: a knight next to a target at `a`
-/// degrees from its heading, first damage in ticks after the order.
+/// degrees from its heading, first damage in ticks after the order. The
+/// table was measured with orders at no exact tick; given in an update
+/// tick, the order makes the knight wait 12 ticks before it turns or
+/// swings ("When it starts": order + 7 + 0.31), 6 more than the table.
 #[test]
 fn knight_turns_before_it_strikes() {
     for (a, ticks) in [
-        (0.0f32, 138),
-        (30.0, 144),
-        (45.0, 150),
-        (60.0, 150),
-        (90.0, 156),
-        (120.0, 162),
-        (135.0, 168),
-        (150.0, 168),
-        (180.0, 174),
+        (0.0f32, 138 + 6),
+        (30.0, 144 + 6),
+        (45.0, 150 + 6),
+        (60.0, 150 + 6),
+        (90.0, 156 + 6),
+        (120.0, 162 + 6),
+        (135.0, 168 + 6),
+        (150.0, 168 + 6),
+        (180.0, 174 + 6),
     ] {
         let (s, c) = a.to_radians().sin_cos();
         let units = format!(
@@ -332,10 +335,11 @@ fn idle_footmen_acquire() {
 }
 
 /// Verification 8 of SPEC-0019: a paused enemy footman at the centre and
-/// 20 footmen on a circle of radius 300 round it, created after it at
-/// the map initialisation after `SetRandomSeed`. Each circle footman
-/// acquires the centre `floor(100 * x)` ticks after its creation (our
-/// ticks are one later, as a timer of 0.5 * x s would fire).
+/// 20 footmen on a circle of radius 300 round it, created after it in
+/// tick 201 of the game, after `SetRandomSeed`. Counted from the tick of
+/// the creation, each circle footman acquires the centre in tick
+/// `floor(100 * x)`; with seed 7 the first ones turn at the first update
+/// after `100 * x` plus their reaction delays: 10, 10, 34 and 64.
 #[test]
 fn acquisition_ticks() {
     for (seed, expected) in [
@@ -352,26 +356,32 @@ fn acquisition_ticks() {
             ],
         ),
     ] {
-        let mut units = format!(
-            "call SetRandomSeed({seed})\n    set t = CreateUnit(Player(1), 'hfoo', 0, 0, 0)\n    call PauseUnit(t, true)"
+        let mut create = format!(
+            "    call SetRandomSeed({seed})\n    set t = CreateUnit(Player(1), 'hfoo', 0, 0, 0)\n    call PauseUnit(t, true)\n"
         );
         for i in 0..20 {
             let angle = (i as f64 * 18.0).to_radians();
-            units += &format!(
-                "\n    call CreateUnit(Player(0), 'hfoo', {:.3}, {:.3}, 0)",
+            create += &format!(
+                "    call CreateUnit(Player(0), 'hfoo', {:.3}, {:.3}, 0)\n",
                 300.0 * angle.cos(),
                 300.0 * angle.sin()
             );
         }
-        let Some(mut game) = game(&units, "", |_| {}) else {
+        // From the orders at tick 103, a timer for tick 201.
+        let orders = format!(
+            "call TimerStart(CreateTimer(), 0.49, false, function Create)\n---\nfunction Create takes nothing returns nothing\n{create}endfunction"
+        );
+        let Some(mut game) = game("", &orders, |_| {}) else {
             return;
         };
-        let path = run(&mut game, 120);
+        let path = run(&mut game, 400);
+        let created = path.iter().find(|p| !p.1.is_empty()).unwrap().0;
+        assert_eq!(created, 201);
         let first = |unit: usize, seen: &dyn Fn(&UnitView, &UnitView) -> bool| {
-            path.iter()
-                .zip(&path[1..])
-                .find(|(a, b)| seen(&a.1[unit], &b.1[unit]))
-                .map(|(_, b)| b.0 - 1)
+            path.windows(2)
+                .filter(|w| !w[0].1.is_empty())
+                .find(|w| seen(&w[0].1[unit], &w[1].1[unit]))
+                .map(|w| w[1].0 - created)
         };
         let mut acquired: Vec<(u64, usize)> = (1..=20)
             .map(|i| (first(i, &|_, b| b.target.is_some()).unwrap(), i))
@@ -379,10 +389,14 @@ fn acquisition_ticks() {
         acquired.sort();
         let ticks: Vec<u64> = acquired.iter().map(|a| a.0).collect();
         assert_eq!(ticks, expected, "seed {seed}");
-        // The turns at tick 10 of the verification are not checked: with
-        // the update cycle of SPEC-0018 ("Phase from the start of the
-        // game") no counting of the ticks gives both the acquisitions and
-        // the turns of the table (QUESTIONS.md, "Acquisition").
+        if seed == 7 {
+            let turn = |tick: u64| {
+                let i = acquired.iter().find(|a| a.0 == tick).unwrap().1;
+                first(i, &|a, b| a.facing != b.facing)
+            };
+            let turns = [turn(3), turn(8), turn(22), turn(18)];
+            assert_eq!(turns, [Some(10), Some(10), Some(34), Some(64)]);
+        }
     }
 }
 
@@ -445,8 +459,8 @@ fn acquisition_choice() {
 }
 
 /// The reaction delay of SPEC-0019: with seed 777 (0.0329 s, past the
-/// first update) a knight next to its target hits one update later than
-/// with seed 7.
+/// seven ticks after the order) a knight next to its target hits one update
+/// later than with seed 7.
 #[test]
 fn reaction_delay_waits_an_update() {
     let units = "set a = CreateUnit(Player(0), 'hkni', 0, 0, 0)\n    set t = CreateUnit(Player(15), 'hpea', 100, 0, 0)";
@@ -463,7 +477,8 @@ fn reaction_delay_waits_an_update() {
         .find(|(_, u)| u[1].life < u[1].max_life)
         .unwrap()
         .0;
-    assert_eq!(hit - ORDER_TICK, 138 + 6);
+    // The swing at 121 for the order at 103 (SPEC-0019, "When it starts").
+    assert_eq!(hit - ORDER_TICK, 121 - 103 + 132);
 }
 
 /// SPEC-0019: a walking unit given an attack order stops at once and
@@ -847,7 +862,11 @@ fn attack_move() {
 #[test]
 fn retaliation() {
     let units = "set a = CreateUnit(Player(1), 'ebal', 0, 1000, 270)\n    set t = CreateUnit(Player(0), 'hfoo', 0, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', 300, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', 1200, 0, 270)\n    call CreateUnit(Player(0), 'hfoo', -1500, 0, 270)";
-    let orders = format!("{units}\n    call IssueTargetOrder(a, \"attack\", t)");
+    // The thrower comes 0.5 s before its order, and acquires the footman
+    // at its own first check (SPEC-0019, verification 10).
+    let orders = format!(
+        "{units}\n    call TimerStart(CreateTimer(), 0.5, false, function Attack)\n---\nfunction Attack takes nothing returns nothing\n    call IssueTargetOrder(a, \"attack\", t)\nendfunction"
+    );
     let Some(mut game) = game("", &orders, |_| {}) else {
         return;
     };
@@ -867,11 +886,10 @@ fn retaliation() {
             .find(|w| w[0].1[unit].facing != w[1].1[unit].facing)
             .map(|w| w[1].0 - damage)
     };
-    // Here the thrower drew only for its order (0.31 ticks), so the victim
-    // draws the second delay (0.77) and the helper the third (42.84),
-    // each turning at the first update at or after the damage plus its
-    // delay. (In the game the thrower drew twice, the victim and the
-    // helper getting the third and fourth: 45 and 15 ticks.)
+    // The thrower drew twice (its acquisition and its order), so the victim
+    // draws the third delay (42.84 ticks) and the helper the fourth
+    // (10.51), each turning at the first update at or after the damage
+    // plus its delay.
     let update_after = |delay: f64| {
         let mut t = damage + delay.ceil() as u64;
         while t % 6 != 1 {
@@ -881,7 +899,7 @@ fn retaliation() {
     };
     assert_eq!(
         (turn(1), turn(2)),
-        (Some(update_after(0.766)), Some(update_after(42.838)))
+        (Some(update_after(42.838)), Some(update_after(10.514)))
     );
 }
 

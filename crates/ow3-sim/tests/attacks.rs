@@ -90,13 +90,10 @@ fn knight_attacks() {
         game.advance(25_000);
     }
     assert!(game.state.borrow().errors.is_empty());
-    // Rounded as R2S shows them; hits 1.5 s apart. The game's first hit
-    // came at 0.715 s; here it comes at 0.695 s, dmgpt1 (0.66 s) after the
-    // update of tick 7 where the order of `main` is taken (SPEC-0018,
-    // "Phase from the start of the game"), the reaction delay of seed 777
-    // (0.0329 s) being over. Which update the game swung from is open
-    // (QUESTIONS.md, "Chasing"), so only the damage and the spacing of the
-    // hits are checked.
+    // Rounded as R2S shows them; hits 1.5 s apart, the first one in tick
+    // 151 (SPEC-0019, "When it starts": the order of `main` at tick 0, the
+    // delay of seed 777, 6.58 ticks, counted from tick 7, the swing at
+    // the update of tick 19 and the hit dmgpt1, 132 ticks, later).
     let output = game.output();
     let hits: Vec<(&str, f32)> = output[1..]
         .iter()

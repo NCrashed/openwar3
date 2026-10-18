@@ -495,28 +495,27 @@ the spec is silent:
   c-CH5 (verification 6) all 13 attackers start and swing at the spec's
   ticks. The tests of the SPEC-0019 tables give their orders in an
   update tick (0.51 s), so that they are taken 6 ticks later as in the
-  game's tests. The knight of SPEC-0016 (ordered in `main`) now hits
-  0.02 s earlier than the game shows: the hit at 0.715 s needs a swing
-  from tick 11, which is no update tick (question for the analyst).
+  game's tests. The reaction delay of an attack order by a script is
+  split: a unit out of reach starts to walk at its first update at or
+  after the order plus the delay (c-CH5, all 13 attackers), one in reach
+  turns or swings only at its first update at or after the order plus 7
+  ticks plus the delay (the 16 knights of SPEC-0019, the knight of
+  SPEC-0016 hitting in tick 151, the turning table 6 ticks later than
+  printed). The spec gives the second rule for all orders; the first is
+  inferred from c-CH5 (question for the analyst: does a walking start
+  wait for order + 7 + delay?).
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.
 - **Acquisition** (SPEC-0019): the checks, the choice of target and the
   reaction delay follow the spec; the acquisition ticks of verification
-  8 match for both seeds. Its turns at tick 10 no longer do with the
-  update cycle of SPEC-0018 ("Phase from the start of the game", updates
-  7, 13, ...): the first footman acquires in game tick 4 (3 in the
-  table), its reaction delay of 0.31 ticks ends before the update of
-  tick 7, and it turns there; the table's 10 is no update tick when
-  the acquisitions count as here, and 13 if the table counts 3 lower as
-  the maps do, but then the acquisition ticks would be 3 later too.
-  Which counting the table uses is a question for the analyst. The tick 0 of a unit's
-  schedule is one tick after its creation, as for the timers (a 0.5 s
-  timer of the map initialisation fires at our tick 101); units created
-  later in a running game are assumed to count the same way. The
+  8 match for both seeds, and so do the turns at 10, 10, 34 and 64
+  (units created in tick 201 as in the game's test). A unit's checks
+  fall in the tick `floor(100 * x)` after its creation, and the
   reaction delay of an acquisition is added to `0.5 * x` and counted
-  from that tick 0, which equals counting from the exact time of the
-  check, but its rounding is not measured. Units that are not idle and
+  from the tick of the creation, which equals counting from the exact
+  time of the check, but its rounding is not measured. Units created
+  in `main` (tick 0) are assumed to count the same way. Units that are not idle and
   paused units do not acquire, buildings with weapons acquire like
   units (open in the spec); `PauseUnit` only stops the acquisition so
   far. The distance check uses plain reals, which can differ from the
@@ -542,9 +541,10 @@ the spec is silent:
   directions with all flags answer and help response alone does not is
   measured. Units without a weapon and workers (`peon` in `type` of
   `UnitBalance.slk`) neither retaliate nor help; damage by scripts calls
-  no help. In verification 10 the thrower drew twice before the hit,
-  here once (its acquisition there is not described), so the test checks
-  the order of the draws and not the game's 45 and 15 ticks.
+  no help. In verification 10 the victim and the helper draw the third
+  and fourth delays as in the game, and turn 46 and 16 ticks after the
+  damage instead of 45 and 15: the hit lands in the tick of the swing's
+  damage point here, the glaive's flight is not modelled.
 - **Order ids** (SPEC-0019): `attackground` is known to `OrderId` but
   not taken as an order (no spec of its behaviour). A target `move`
   walks to where the target is when ordered, and an immediate `move`

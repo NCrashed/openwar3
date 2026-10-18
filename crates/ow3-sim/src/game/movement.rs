@@ -49,6 +49,9 @@ pub const ORDER_SMART: i32 = 851_971;
 pub const ORDER_ATTACK: i32 = 851_983;
 pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
+/// Ticks from an order given by a script to the start of its reaction delay
+/// (SPEC-0019, "When it starts").
+const ORDER_DELAY_START: u64 = 7;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
 /// The ticks of the update cycle, the same for all units, are those equal
@@ -140,6 +143,9 @@ pub struct Moving {
     /// Updates until an attacker renews its goal point; `None` before
     /// the first goal of a chase.
     chase: Option<u32>,
+    /// The tick from which a delay before the first swing counts and the
+    /// delay, for an attack ordered by a script (SPEC-0019).
+    swing_gate: Option<(u64, u32)>,
     /// The next goal of a resumed chase comes with an update standing.
     renew_stands: bool,
 }
@@ -322,6 +328,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             chase: None,
             renew_stands: false,
+            swing_gate: None,
             ..m
         },
         None => Moving {
@@ -341,6 +348,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             chase: None,
             renew_stands: false,
+            swing_gate: None,
         },
     };
     // A new path is searched at the next update (SPEC-0020).
@@ -437,6 +445,13 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
                 react(state, h, tick, delay);
+                // The swing waits for the delay counted 7 ticks after the
+                // order (SPEC-0019, "When it starts").
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                    && let Some(m) = u.movement.as_mut()
+                {
+                    m.swing_gate = Some((tick + ORDER_DELAY_START, delay));
+                }
             }
             done
         }
@@ -738,7 +753,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
         let waiting = m.reaction.is_some_and(|(from, delay)| {
-            let waited = mul(i2r((tick - from) as i32), crate::timers::TICK);
+            let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
             real_of(waited) < real_of(delay)
         });
         if !waiting {
@@ -800,11 +815,24 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // In range: stand, turn to the target and strike
                         // once the turn left is below 0.2 radians.
                         let (h, d) = heading_and_turn(&m, goal);
-                        if real_of(d).abs() < ATTACK_ANGLE {
+                        let gate_open = m.swing_gate.is_none_or(|(from, delay)| {
+                            let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
+                            real_of(waited) >= real_of(delay)
+                        });
+                        if !gate_open {
+                            // In reach before the delay counted from 7
+                            // ticks after the order is over: it stands,
+                            // and turns only then (SPEC-0019, "When it
+                            // starts"; a walking start counts the delay
+                            // from the order itself, c-CH5).
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                        } else if real_of(d).abs() < ATTACK_ANGLE {
                             m.heading = h;
                             m.walking = false;
                             m.velocity = [0, 0];
                             m.arrived = true;
+                            m.swing_gate = None;
                             begin_attack = Some(target);
                         } else {
                             motion(&mut m, goal, false, speed, turn_rate, window);
@@ -1038,10 +1066,6 @@ pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
 
 /// 100 ticks (0.5 s) between the acquisition checks of a unit.
 const ACQUIRE_PERIOD: u64 = 100;
-/// The tick counted from a unit's creation that SPEC-0019 calls 0, as the
-/// timers count it (a 0.5 s timer of the map initialisation fires at our
-/// tick 101).
-const ACQUIRE_OFFSET: u64 = 1;
 /// The first check of an attack-move after its order, or after a kill.
 const ATTACK_MOVE_FIRST: u64 = 102;
 const HUNDRED: u32 = 0x42C8_0000;
@@ -1174,7 +1198,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let Some(phase) = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE) else {
             continue;
         };
-        let start = u.born + ACQUIRE_OFFSET;
+        // The checks fall in the tick `floor(100 * x)` after the creation,
+        // and the delay counts from `100 * x` exactly (SPEC-0019,
+        // verification 8).
+        let start = u.born;
         let first = start + real_of(floor(mul(phase, HUNDRED))) as u64;
         if tick >= first && (tick - first) % ACQUIRE_PERIOD == 0 {
             due.push((h, Check::Idle { phase, start }));

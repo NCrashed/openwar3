@@ -597,9 +597,12 @@ silent:
   pitch); `SetCameraField` from scripts is not applied.
 - **Where models are drawn**: doodads at `clamp(scale, minScale,
   maxScale) * defScale` per axis, those with a pathing texture moved to
-  `64 floor(p / 64) + 32` whatever its size (only 2 x 2 measured); unit
-  models 16 west and 16 south of the unit, their selection circles and
-  bars with them; destructables at their stored place and scale.
+  `64 floor(p / 64) + 32` whatever its size (only 2 x 2 measured); the
+  models of units of size classes 1 and 3 16 west and 16 south of the
+  unit (the centre of their footprint), buildings at their place, the
+  selection circles and bars with the models; the map's own collision
+  sizes are not read for units placed in the editor (`--no-sim`);
+  destructables at their stored place and scale.
 
 ## Day/night lighting (`ow3-render::daylight`, the viewer)
 

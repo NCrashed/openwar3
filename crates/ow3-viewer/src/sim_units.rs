@@ -254,12 +254,19 @@ impl Sim {
             let Some(look) = self.models.get(&u.type_id) else {
                 continue;
             };
-            // The model is drawn 16 west and 16 south of the unit
-            // (SPEC-0023, "Where models are drawn"; why is open).
-            let (x, y) = (
-                u.x - crate::objects::UNIT_MODEL_SHIFT,
-                u.y - crate::objects::UNIT_MODEL_SHIFT,
-            );
+            // The model is drawn at the centre of the unit's footprint
+            // (SPEC-0023, "Where models are drawn").
+            let shift = self
+                .game
+                .state
+                .borrow()
+                .data
+                .units
+                .get(&u.type_id)
+                .map_or(0.0, |t| {
+                    crate::objects::unit_model_shift(t.collision, t.building)
+                });
+            let (x, y) = (u.x - shift, u.y - shift);
             let placement = Placement {
                 model: look.model.clone(),
                 replaceable: None,

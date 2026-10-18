@@ -49,10 +49,19 @@ struct Look {
     selection: f32,
 }
 
-/// How far west and south of its position a unit's model is drawn
-/// (SPEC-0023, "Where models are drawn"; measured on standing footmen and
-/// a peasant, the reason is open).
-pub const UNIT_MODEL_SHIFT: f32 = 16.0;
+/// How far west and south of its position the model of a unit with
+/// `collision` (a real, as a bit pattern) is drawn (SPEC-0023, "Where
+/// models are drawn"): at the centre of its footprint on the grid of
+/// paths, which for the size classes 1 and 3 (SPEC-0020) has its extra
+/// cell to the west and south. Buildings are drawn at their position.
+/// PROVISIONAL: walking units (drawn about 9 further ahead) and flying
+/// ones are not measured.
+pub fn unit_model_shift(collision: u32, building: bool) -> f32 {
+    match ow3_sim::path::size_class(collision) {
+        1 | 3 if !building => 16.0,
+        _ => 0.0,
+    }
+}
 
 /// Where and how large a doodad of `war3map.doo` is drawn (SPEC-0023,
 /// "Where models are drawn"), from `Doodads\Doodads.slk`.
@@ -208,6 +217,20 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
         );
     }
     let mut unit_looks = unit_looks(chain);
+    // Collision sizes and building flags, for where unit models are drawn.
+    // PROVISIONAL: the map's own changes to them are not read here.
+    let balance: BTreeMap<RawCode, (u32, bool)> = table(
+        chain,
+        "Units\\UnitBalance.slk",
+        "unitBalanceID",
+        &["collision", "isbldg"],
+    )
+    .into_iter()
+    .map(|(id, v)| {
+        let collision = v[0].trim().parse::<f32>().unwrap_or(0.0).to_bits();
+        (id, (collision, v[1].trim() == "1"))
+    })
+    .collect();
     let unit_ids: std::collections::BTreeSet<RawCode> = unit_looks.keys().copied().collect();
     for (id, v) in table(chain, "Units\\ItemData.slk", "itemID", &["file"]) {
         unit_looks.insert(
@@ -257,12 +280,13 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
                 continue;
             };
             let team = u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0);
-            // Units, not items, are drawn shifted (see `UNIT_MODEL_SHIFT`).
-            let shift = if unit_ids.contains(&u.kind) {
-                UNIT_MODEL_SHIFT
-            } else {
-                0.0
-            };
+            // Units, not items, are drawn at the centre of their footprint.
+            let shift = balance
+                .get(&u.kind)
+                .filter(|_| unit_ids.contains(&u.kind))
+                .map_or(0.0, |&(collision, building)| {
+                    unit_model_shift(collision, building)
+                });
             placements.push(Placement {
                 model: model_path(look, u.variation),
                 replaceable: None,
@@ -353,6 +377,25 @@ mod tests {
     /// `LOca` (1.2, 1, 1.4) at 1.2, 1.2 and 1.68; `LOca`, which has a
     /// pathing texture, moves from 0, 400, -400, 256, -256 to 32, 416,
     /// -416, 288, -224.
+    /// SPEC-0023: the table of collision sizes and model shifts; buildings
+    /// are not shifted.
+    #[test]
+    fn unit_models_at_their_footprints() {
+        let shift = |c: f32, building| unit_model_shift(c.to_bits(), building);
+        for (collision, expected) in [
+            (0.0, 0.0),
+            (8.0, 0.0),
+            (15.0, 0.0),
+            (16.0, 16.0),
+            (31.0, 16.0),
+            (32.0, 0.0),
+            (48.0, 16.0),
+        ] {
+            assert_eq!(shift(collision, false), expected, "{collision}");
+        }
+        assert_eq!(shift(31.0, true), 0.0);
+    }
+
     #[test]
     fn doodad_scale_and_grid() {
         let pcr = DoodadRule {

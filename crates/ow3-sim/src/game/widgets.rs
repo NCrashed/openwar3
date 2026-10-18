@@ -235,6 +235,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         turn: None,
         attack: None,
         movement: None,
+        attack_move: None,
         born: state.ticks,
         acquire_phase,
         paused: false,

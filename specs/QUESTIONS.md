@@ -524,6 +524,13 @@ the spec is silent:
   runs after all the checks of the tick, unit by unit in the order of
   acquisition; only `GetTriggerUnit` is set (the spec names no response
   for the target).
+- **Attack-move** (SPEC-0019): checks, choice, stop and reaction, and the
+  walk on after the kill follow the spec; verification 9 matches for
+  all ten acquisitions and nine resumptions when the orders come in a
+  tick 0 modulo 6 as in the game's test. A unit in its reaction delay
+  keeps its facing too (it wobbled by 0.001 rad otherwise). If the
+  target dies by another's hit, the unit walks on at once (not
+  measured). Any other order taken ends the attack-move.
 - **Order ids** (SPEC-0019): `attackground` is known to `OrderId` but
   not taken as an order (no spec of its behaviour). A target `move`
   walks to where the target is when ordered, and an immediate `move`

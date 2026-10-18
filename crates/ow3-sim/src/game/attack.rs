@@ -144,6 +144,22 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 attack_type,
                 DAMAGE_TYPE_NORMAL,
             );
+            // A kill on an attack-move: the unit walks on after its
+            // backswing (SPEC-0019).
+            let mut s = state.borrow_mut();
+            if !standing(&s, target) {
+                let tick = s.ticks;
+                let backswing = match s.objects.get(&h) {
+                    Some(Object::Unit(u)) => s
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .and_then(|t| t.weapon.as_ref())
+                        .map_or(1, |w| ticks(w.backswing)),
+                    _ => 1,
+                };
+                super::movement::killed(&mut s, h, tick, backswing);
+            }
         }
         // One tick after the swing a target that has left the attacker's
         // reach is chased.

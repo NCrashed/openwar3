@@ -155,6 +155,8 @@ pub struct Unit {
     turn: Option<facing::Turn>,
     /// The attack the unit is making (SPEC-0016).
     attack: Option<attack::Attacking>,
+    /// An `attack` order to a point in progress (SPEC-0019).
+    attack_move: Option<movement::AttackMove>,
     /// The move order it follows (SPEC-0018).
     movement: Option<movement::Moving>,
     /// The tick the unit was created at.
@@ -935,6 +937,7 @@ impl<'a> Game<'a> {
         }
         self.state.borrow_mut().timers.end_tick(tick);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);

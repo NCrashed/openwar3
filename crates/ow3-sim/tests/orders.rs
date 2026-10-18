@@ -787,3 +787,54 @@ fn night_regeneration() {
         }
     }
 }
+
+/// Verification 9 of SPEC-0019, attack-move: ten footmen ordered to
+/// attack towards points 5000 east, paused enemy footmen beside their
+/// ways. They acquire at the first check (order + 102 + 100 j) with an
+/// enemy in range, stand, and turn or walk again at the first update
+/// after the reaction delay, the delays drawn in the order of the
+/// acquisitions.
+#[test]
+fn attack_move() {
+    // The orders come in a tick 0 modulo 6, as in the game's test (whose
+    // updates came 805 and 907 ticks after them), from a timer of 0.025 s.
+    let mut go = String::new();
+    for k in 0..10 {
+        let y = -9000 + 1500 * k;
+        go += &format!(
+            "    set a = CreateUnit(Player(0), 'hfoo', -3000, {y}, 0)\n    call IssuePointOrder(a, \"attack\", 2000, {y})\n    set t = CreateUnit(Player(1), 'hfoo', {}, {}, 0)\n    call PauseUnit(t, true)\n",
+            -1500 + 100 * k,
+            y + 250
+        );
+    }
+    let orders = format!(
+        "call TimerStart(CreateTimer(), 0.025, false, function Go)\n---\nfunction Go takes nothing returns nothing\n{go}endfunction"
+    );
+    let Some(mut game) = game("", &orders, |_| {}) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 1700);
+    let order = path.iter().find(|p| !p.1.is_empty()).unwrap().0;
+    assert_eq!(order % 6, 0);
+    let acquired = [802, 902, 902, 1002, 1102, 1202, 1202, 1302, 1402, 1502];
+    let again = [805, 907, 949, 1015, 1129, 1219, 1207, 1309, 1423];
+    for k in 0..10 {
+        let unit = 2 * k;
+        let first = path
+            .iter()
+            .find(|p| p.1.get(unit).is_some_and(|u| u.target.is_some()))
+            .map(|p| p.0 - order);
+        assert_eq!(first, Some(acquired[k]), "acquisition of {k}");
+        if k < 9 {
+            let moved = path
+                .windows(2)
+                .filter(|w| w[0].0 > order + acquired[k])
+                .find(|w| {
+                    let (a, b) = (&w[0].1[unit], &w[1].1[unit]);
+                    (a.x, a.y, a.facing) != (b.x, b.y, b.facing)
+                })
+                .map(|w| w[1].0 - order);
+            assert_eq!(moved, Some(again[k]), "again of {k}");
+        }
+    }
+}

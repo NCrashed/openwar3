@@ -359,21 +359,57 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
-    match (name, here) {
-        ("move", _) => order(state, h, Order::Point, ORDER_MOVE, target),
-        ("attack", _) => order(state, h, Order::Point, ORDER_ATTACK, target),
-        ("patrol", Some(home)) => order(state, h, Order::Patrol { home }, ORDER_PATROL, target),
-        // The unit obeys, but the native gives false (SPEC-0019).
-        ("smart", _) => {
-            order(state, h, Order::Point, ORDER_SMART, target);
-            false
+    let (taken, done) = match (name, here) {
+        ("move", _) => {
+            let done = order(state, h, Order::Point, ORDER_MOVE, target);
+            (done, done)
         }
-        _ => false,
+        ("attack", _) => {
+            let done = order(state, h, Order::Point, ORDER_ATTACK, target);
+            (done, done)
+        }
+        ("patrol", Some(home)) => {
+            let done = order(state, h, Order::Patrol { home }, ORDER_PATROL, target);
+            (done, done)
+        }
+        // The unit obeys, but the native gives false (SPEC-0019).
+        ("smart", _) => (order(state, h, Order::Point, ORDER_SMART, target), false),
+        _ => (false, false),
+    };
+    if taken {
+        // An attack to a point checks for enemies on the way, the first
+        // time 102 ticks later (SPEC-0019, "Attack-move with enemies").
+        let attack_move = (name == "attack").then(|| AttackMove {
+            point: target,
+            next_check: state.ticks + ATTACK_MOVE_FIRST,
+            resume_at: None,
+        });
+        set_attack_move(state, h, attack_move);
     }
+    done
 }
 
-/// `IssueTargetOrder(h, name, target)`: only `attack` so far.
+/// `IssueTargetOrder(h, name, target)`: `attack` and `move`. A new order
+/// ends an attack-move.
 pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    let done = target_order_taken(state, h, name, target);
+    if done {
+        set_attack_move(state, h, None);
+    }
+    done
+}
+
+/// `IssueImmediateOrder(h, name)`: `stop`, `holdposition` and `move`. A
+/// new order ends an attack-move.
+pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
+    let done = immediate_order_taken(state, h, name);
+    if done {
+        set_attack_move(state, h, None);
+    }
+    done
+}
+
+fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> bool {
     if name == "move" {
         // PROVISIONAL: the game takes it with the current order `move`
         // (SPEC-0019); how a unit follows its target is not specified, so
@@ -424,8 +460,7 @@ fn react(state: &mut State, h: u32, from: u64, delay: u32) {
     }
 }
 
-/// `IssueImmediateOrder(h, name)`: `stop` and `holdposition`.
-pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
+fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
     match name {
         "stop" | "holdposition" => halt(state, h),
         // PROVISIONAL: the game takes it and the current order reads 0
@@ -610,6 +645,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let order = match state.unit(handle(&args[0])) {
+                // An attack-move reads `attack` all along (SPEC-0019).
+                Some(u) if u.attack_move.is_some() => ORDER_ATTACK,
                 Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
                 None => 0,
@@ -874,10 +911,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
+        // A unit in its reaction delay stands, its facing too (SPEC-0019).
         let heading = normal(m.heading);
-        let (facing, step) = super::facing::follow(u.facing, heading, m.facing_step, orient);
-        u.facing = facing;
-        m.facing_step = step;
+        if !waiting {
+            let (facing, step) = super::facing::follow(u.facing, heading, m.facing_step, orient);
+            u.facing = facing;
+            m.facing_step = step;
+        }
         let facing_done = u.facing == heading;
         if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;
@@ -1002,77 +1042,219 @@ const ACQUIRE_PERIOD: u64 = 100;
 /// timers count it (a 0.5 s timer of the map initialisation fires at our
 /// tick 101).
 const ACQUIRE_OFFSET: u64 = 1;
+/// The first check of an attack-move after its order, or after a kill.
+const ATTACK_MOVE_FIRST: u64 = 102;
 const HUNDRED: u32 = 0x42C8_0000;
 const HALF: u32 = 0x3F00_0000;
 
-/// Idle units with a weapon look for enemies on their own schedule
-/// (SPEC-0019, "Acquisition by idle units"): `floor(100 * x)` ticks after
-/// their creation and then every 100 ticks, with `x` drawn when they were
-/// created. Of the enemies whose centres are within `acquire` and both
-/// collision sizes a unit takes the nearest unit, a structure only when
-/// there is no unit, and on equal distances the one with the smaller y,
-/// then x. The target becomes that of an attack of its own, which
-/// `GetUnitCurrentOrder` shows as 0, after the reaction delay counted
-/// from the exact time of the check. Gives the units that acquired a
-/// target, in that order.
-pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
-    let tick = state.ticks;
-    // (handle, x, start of the schedule).
-    let due: Vec<(u32, u32, u64)> = state
-        .units
-        .iter()
-        .filter_map(|&h| match state.objects.get(&h) {
-            Some(Object::Unit(u))
-                if u.alive
-                    && !u.paused
-                    && u.attack.is_none()
-                    && u.movement.is_none_or(|m| !m.ordered()) =>
-            {
-                let x = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE)?;
-                let start = u.born + ACQUIRE_OFFSET;
-                let first = start + real_of(floor(mul(x, HUNDRED))) as u64;
-                (tick >= first && (tick - first) % ACQUIRE_PERIOD == 0).then_some((h, x, start))
-            }
-            _ => None,
-        })
-        .collect();
-    if due.is_empty() {
-        return Vec::new();
+/// An `attack` order to a point (SPEC-0019, "Attack-move with enemies"):
+/// the point, the tick of the next check for enemies, and after a kill
+/// the tick at which the unit walks on (the end of its backswing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttackMove {
+    point: [u32; 2],
+    next_check: u64,
+    resume_at: Option<u64>,
+}
+
+fn set_attack_move(state: &mut State, h: u32, attack_move: Option<AttackMove>) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.attack_move = attack_move;
     }
-    // The possible targets, by x: (x, y, collision, owner, structure,
-    // handle).
-    let mut targets: Vec<(f32, f32, u32, i32, bool, u32)> = state
+}
+
+/// Unit `h` on an attack-move killed its target with the hit of `tick`:
+/// it walks on after its backswing, and checks again 102 ticks after the
+/// kill (SPEC-0019).
+pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(a) = u.attack_move.as_mut()
+    {
+        a.resume_at = Some(tick + backswing);
+        a.next_check = tick + ATTACK_MOVE_FIRST;
+    }
+}
+
+/// Attack-moves going on after a kill, and ending at their point.
+pub(super) fn attack_moves(state: &mut State) {
+    let tick = state.ticks;
+    let units: Vec<(u32, AttackMove)> = state
         .units
         .iter()
         .filter_map(|&h| match state.objects.get(&h) {
-            Some(Object::Unit(o)) if o.alive && !o.hidden => {
-                let data = state.data.units.get(&o.type_id);
-                let collision = data.map_or(0, |d| d.collision);
-                let structure = data.is_some_and(|d| d.building);
-                Some((real_of(o.x), real_of(o.y), collision, o.owner, structure, h))
-            }
+            Some(Object::Unit(u)) if u.alive => u.attack_move.map(|a| (h, a)),
             _ => None,
         })
         .collect();
-    targets.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
-    let widest = targets.iter().map(|t| real_of(t.2)).fold(0.0f32, f32::max);
-    let mut acquired = Vec::new();
-    for (h, phase, start) in due {
+    for (h, a) in units {
+        if a.resume_at == Some(tick) {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.attack = None;
+            }
+            order(state, h, Order::Point, ORDER_ATTACK, a.point);
+            set_attack_move(
+                state,
+                h,
+                Some(AttackMove {
+                    resume_at: None,
+                    ..a
+                }),
+            );
+            continue;
+        }
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
-        let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
-        let Some(data) = state.data.units.get(&u.type_id) else {
-            continue;
-        };
-        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 {
+        if a.resume_at.is_some() || u.attack.is_some() {
             continue;
         }
+        match u.movement {
+            Some(m) if m.ordered() => {}
+            // Arrived at the point: the order ends.
+            Some(m) if m.order == Order::Point => set_attack_move(state, h, None),
+            // PROVISIONAL: the target is gone without a hit of this unit
+            // (not measured); it walks on.
+            _ => {
+                order(state, h, Order::Point, ORDER_ATTACK, a.point);
+            }
+        }
+    }
+}
+
+/// Why a unit looks for enemies now.
+#[derive(Clone, Copy)]
+enum Check {
+    /// An idle unit at its own schedule: the phase drawn at its creation
+    /// and the tick its schedule counts from.
+    Idle { phase: u32, start: u64 },
+    /// A unit walking an attack-move.
+    AttackMove,
+}
+
+/// Units with a weapon look for enemies (SPEC-0019): idle ones on their
+/// own schedule, `floor(100 * x)` ticks after their creation and then
+/// every 100 ticks, with `x` drawn when they were created ("Acquisition by
+/// idle units"); units walking an attack-move every 100 ticks from 102
+/// ticks after the order ("Attack-move with enemies"). Of the enemies
+/// whose centres are within `acquire` and both collision sizes a unit
+/// takes the nearest unit, a structure only when there is no unit, and on
+/// equal distances the one with the smaller y, then x. An idle unit
+/// attacks it on its own (`GetUnitCurrentOrder` 0) after the reaction
+/// delay counted from the exact time of the check; an attack-move stops
+/// at once and attacks after the reaction delay counted from the check's
+/// tick, its order staying `attack`. Gives the units that acquired a
+/// target, in that order.
+pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
+    let tick = state.ticks;
+    let mut due: Vec<(u32, Check)> = Vec::new();
+    for i in 0..state.units.len() {
+        let h = state.units[i];
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        if !u.alive || u.paused {
+            continue;
+        }
+        if let Some(a) = u.attack_move.as_mut() {
+            if a.next_check == tick {
+                a.next_check += ACQUIRE_PERIOD;
+                let walking = u.attack.is_none()
+                    && a.resume_at.is_none()
+                    && u.movement
+                        .is_some_and(|m| m.ordered() && m.order == Order::Point);
+                if walking {
+                    due.push((h, Check::AttackMove));
+                }
+            }
+            continue;
+        }
+        if u.attack.is_some() || u.movement.is_some_and(|m| m.ordered()) {
+            continue;
+        }
+        let Some(phase) = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE) else {
+            continue;
+        };
+        let start = u.born + ACQUIRE_OFFSET;
+        let first = start + real_of(floor(mul(phase, HUNDRED))) as u64;
+        if tick >= first && (tick - first) % ACQUIRE_PERIOD == 0 {
+            due.push((h, Check::Idle { phase, start }));
+        }
+    }
+    if due.is_empty() {
+        return Vec::new();
+    }
+    let targets = Targets::new(state);
+    let mut acquired = Vec::new();
+    for (h, check) in due {
+        let Some(target) = targets.nearest_enemy(state, h) else {
+            continue;
+        };
+        let Some(Object::Unit(o)) = state.objects.get(&target) else {
+            continue;
+        };
+        let at = [o.x, o.y];
+        let (order_id, from, extra) = match check {
+            Check::Idle { phase, start } => (0, start, mul(phase, HALF)),
+            Check::AttackMove => (ORDER_ATTACK, tick, 0),
+        };
+        if order(state, h, Order::Attack { target }, order_id, at) {
+            let delay = mul(
+                state.game_random[REACTION].fraction(),
+                state.combat.reaction_delay,
+            );
+            react(state, h, from, add(delay, extra));
+            acquired.push(h);
+        }
+    }
+    acquired
+}
+
+/// The units that can be targets, by x: (x, y, collision, owner,
+/// structure, handle), and the widest collision among them.
+struct Targets {
+    list: Vec<(f32, f32, u32, i32, bool, u32)>,
+    widest: f32,
+}
+
+impl Targets {
+    fn new(state: &State) -> Targets {
+        let mut list: Vec<(f32, f32, u32, i32, bool, u32)> = state
+            .units
+            .iter()
+            .filter_map(|&h| match state.objects.get(&h) {
+                Some(Object::Unit(o)) if o.alive && !o.hidden => {
+                    let data = state.data.units.get(&o.type_id);
+                    let collision = data.map_or(0, |d| d.collision);
+                    let structure = data.is_some_and(|d| d.building);
+                    Some((real_of(o.x), real_of(o.y), collision, o.owner, structure, h))
+                }
+                _ => None,
+            })
+            .collect();
+        list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let widest = list.iter().map(|t| real_of(t.2)).fold(0.0f32, f32::max);
+        Targets { list, widest }
+    }
+
+    /// The enemy unit `h` takes within its acquisition range, by the rule
+    /// above.
+    fn nearest_enemy(&self, state: &State, h: u32) -> Option<u32> {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            return None;
+        };
+        let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
+        let data = state.data.units.get(&u.type_id)?;
+        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 {
+            return None;
+        }
         let reach = add(data.acquire, data.collision);
-        let from = targets.partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
+        let widest = self.widest;
+        let from = self
+            .list
+            .partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
         // (structure, squared distance, y, x, handle).
         let mut best: Option<(bool, f32, f32, f32, u32)> = None;
-        for &(ox, oy, collision, other_owner, structure, other) in &targets[from..] {
+        for &(ox, oy, collision, other_owner, structure, other) in &self.list[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
             // every pair in the engine arithmetic is slow.
@@ -1091,23 +1273,6 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                 best = Some(key);
             }
         }
-        let Some((.., target)) = best else {
-            continue;
-        };
-        let Some(Object::Unit(o)) = state.objects.get(&target) else {
-            continue;
-        };
-        let at = [o.x, o.y];
-        if order(state, h, Order::Attack { target }, 0, at) {
-            // The delay runs from the exact time of the check, `0.5 * x`
-            // seconds after the start of the schedule.
-            let delay = mul(
-                state.game_random[REACTION].fraction(),
-                state.combat.reaction_delay,
-            );
-            react(state, h, start, add(delay, mul(phase, HALF)));
-            acquired.push(h);
-        }
+        best.map(|b| b.4)
     }
-    acquired
 }

@@ -789,3 +789,136 @@ fn chases_by_paths() {
     );
     assert!(damage.contains(&(0, 806)), "{damage:?}");
 }
+
+/// The positions the PF and B maps print (`T tick unit x y facing order`,
+/// reals as bit patterns), by unit: (tick, x, y, order).
+fn orders(output: &[String]) -> std::collections::BTreeMap<u32, Vec<(u32, f32, f32, i32)>> {
+    let mut out: std::collections::BTreeMap<u32, Vec<(u32, f32, f32, i32)>> = Default::default();
+    for line in output {
+        let f: Vec<&str> = line.split(' ').collect();
+        if f.len() < 7 || f[0] != "T" {
+            continue;
+        }
+        let real = |s: &str| f32::from_bits(s.parse::<i32>().unwrap() as u32);
+        out.entry(f[2].parse().unwrap()).or_default().push((
+            f[1].parse().unwrap(),
+            real(f[3]),
+            real(f[4]),
+            f[6].parse().unwrap(),
+        ));
+    }
+    out
+}
+
+/// SPEC-0022, verifications 4 and 5: walkers past buildings (c-BW1) and
+/// past green-only obstacles (c-BC1, and c-BC2 with `.wpm` cells instead).
+/// The maps count ticks 2 lower than the spec and print every 6 ticks
+/// later on, so the spec's tick 292 is compared with the printed tick
+/// after it (one tick of motion, 1.35, at most apart) and the end of the
+/// order with the 6 printed ticks before it.
+#[test]
+fn walkers_past_buildings() {
+    // (map, unit, position at 292, order ends, rest)
+    let cases: [(&str, u32, (f32, f32), u32, (f32, f32)); 11] = [
+        (
+            "c-BW1.w3x",
+            0,
+            (-2358.3994, -7836.124),
+            1127,
+            (-1311.9971, -7993.6968),
+        ),
+        (
+            "c-BW1.w3x",
+            2,
+            (-2315.6211, -6057.0381),
+            1061,
+            (-1307.7354, -6004.7988),
+        ),
+        (
+            "c-BW1.w3x",
+            4,
+            (-2324.4551, -3903.0527),
+            1085,
+            (-1310.3691, -3997.1836),
+        ),
+        (
+            "c-BW1.w3x",
+            6,
+            (-2311.2285, -1999.9893),
+            1037,
+            (-1315.082, -2000.0352),
+        ),
+        (
+            "c-BW1.w3x",
+            8,
+            (-2318.332, 65.1357),
+            1055,
+            (-1310.5762, 1.8174),
+        ),
+        (
+            "c-BW1.w3x",
+            10,
+            (-2311.6348, 2017.46),
+            1043,
+            (-1308.6797, 2000.5273),
+        ),
+        (
+            "c-BC1.w3x",
+            0,
+            (-2111.5938, -6016.5),
+            742,
+            (-1514.4121, -6001.7783),
+        ),
+        (
+            "c-BC1.w3x",
+            1,
+            (-2114.875, -2947.0303),
+            760,
+            (-1513.5557, -2994.5225),
+        ),
+        (
+            "c-BC1.w3x",
+            2,
+            (-2122.5381, 86.3047),
+            767,
+            (-1510.2676, 3.2852),
+        ),
+        (
+            "c-BC2.w3x",
+            0,
+            (-2111.5938, -6016.5),
+            742,
+            (-1514.4121, -6001.7783),
+        ),
+        (
+            "c-BC2.w3x",
+            1,
+            (-2114.875, -2947.0303),
+            760,
+            (-1513.5557, -2994.5225),
+        ),
+    ];
+    for map in ["c-BW1.w3x", "c-BC1.w3x", "c-BC2.w3x"] {
+        let Some(output) = run(map, 7.0) else {
+            return;
+        };
+        let tracks = orders(&output);
+        for &(_, unit, at, end, (rx, ry)) in cases.iter().filter(|c| c.0 == map) {
+            let track = &tracks[&unit];
+            let near = track.iter().find(|p| p.0 + 2 >= 292).unwrap();
+            let off = (near.1 - at.0).hypot(near.2 - at.1);
+            assert!(off <= 1.5, "{map} unit {unit} at tick 292: {near:?}");
+            let ended = track.iter().find(|p| p.3 == 0).unwrap().0 + 2;
+            assert!(
+                (ended - 6 + 1..=ended).contains(&end),
+                "{map} unit {unit}: order ends by {ended}"
+            );
+            let rest = track.last().unwrap();
+            let off = (rest.1 - rx).hypot(rest.2 - ry);
+            assert!(
+                off <= 0.07,
+                "{map} unit {unit} rests at {rest:?}, {off} off"
+            );
+        }
+    }
+}

@@ -282,6 +282,18 @@ mod tests {
         assert_eq!((f32::from_bits(x), f32::from_bits(y)), (-6784.0, -5984.0));
     }
 
+    /// The angles of `war3map.doo` in radians, as the floats of 0, pi / 2,
+    /// pi and 3 pi / 2, turn as 0, 90, 180 and 270 degrees (SPEC-0022).
+    #[test]
+    fn angles_of_the_doodad_file() {
+        use super::super::facing::{from_degrees, to_degrees};
+        let stored = |radians: u32| from_degrees(to_degrees(radians));
+        assert_eq!(turn_of(stored(0)), Turn::Left);
+        assert_eq!(turn_of(stored(0x3FC9_0FDB)), Turn::Half);
+        assert_eq!(turn_of(stored(0x4049_0FDB)), Turn::Right);
+        assert_eq!(turn_of(stored(0x4096_CBE4)), Turn::None);
+    }
+
     #[test]
     fn only_exact_angles_turn() {
         let deg = |d: f32| super::super::facing::from_degrees(d.to_bits());

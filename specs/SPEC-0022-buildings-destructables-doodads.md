@@ -55,7 +55,12 @@ object's position:
    0, 90 and 180 rotate the texture (the facing as stored, so 89.99999
    from a facing of 90 counts as 90): by 90 degrees counter-clockwise,
    by 180 degrees, and by 90 degrees clockwise. Any other angle
-   (270, 360, 0.5, 45, 89.5, ...) leaves the texture as it is. For a
+   (270, 360, 0.5, 45, 89.5, ...) leaves the texture as it is. In
+   `war3map.doo` the angle is stored in radians: written as the floats
+   of 0, pi / 2, pi and 3 pi / 2 (`0`, `0x3FC90FDB`, `0x40490FDB`,
+   `0x4096CBE4`) it gave the same cells as `CreateDestructable` with 0,
+   90, 180 and 270 degrees (bridge `DTsb`, whose texture tells all four
+   turns apart), so those values count as 0, 90, 180 and 270. For a
    cell `(i, j)` relative to the texture centre (`i`, `j` from `-w/2`
    to `w/2 - 1`), 90 degrees counter-clockwise gives `(-j - 1, i)`,
    180 degrees `(-i - 1, -j - 1)`, 90 degrees clockwise
@@ -155,17 +160,37 @@ Flat test map, `.wpm` without obstacles, map corner at (-12288, -12288).
    only the 16 red cells of `Gate1PathDeath` block (x 436..455,
    y 444..447 as the texture shows them); a killed `LTlt` blocks
    nothing.
-4. **Walkers past buildings.** Footmen from (-2700, y) to (-1300, y),
-   a building at (-2000, y + d): town hall `htow` (d = 0 and -150),
-   barracks `hbar` (d = 40), necropolis `unpl` facing 0 (d = -60) and
-   270 (d = 100), farm `hhou` (d = 30); y = -8000, -6000, ..., 2000. A
-   model following SPEC-0018, SPEC-0020 and this spec reproduced all six
-   trajectories within 0.07 world units at every tick.
-5. **Green only.** Destructables `YTac` (4x4Cyan, blue and green) at
-   (-2000, -6000) and `YTab` (2x2Cyan) at (-2000, -3000), footmen from
-   (-2500, y) to (-1500, y): both walkers took a high-level detour but
-   crossed the cells in their local paths; a model with the rule of
-   SPEC-0020 (0x04 only for the high-level search) reproduced them
-   within 0.01, one blocking the cells in every check missed by up to
-   34 world units. The same with `.wpm` cells of byte 0x44 in place of
-   the destructables (test BC2): the same trajectories.
+4. **Walkers past buildings.** Footmen ordered at tick 0 from
+   (-2700, y) to (-1300, y), first update at tick 4, a building of
+   `Player(0)` created at (-2000, y + d) at the same time:
+
+   | y | Building, facing | d | Position at tick 292 | Order ends (tick) | Rest |
+   |---|---|---|---|---|---|
+   | -8000 | `htow`, 0 | 0 | (-2358.3994, -7836.1240) | 1127 | (-1311.9971, -7993.6968) |
+   | -6000 | `hbar`, 0 | 40 | (-2315.6211, -6057.0381) | 1061 | (-1307.7354, -6004.7988) |
+   | -4000 | `unpl`, 0 | -60 | (-2324.4551, -3903.0527) | 1085 | (-1310.3691, -3997.1836) |
+   | -2000 | `unpl`, 270 | 100 | (-2311.2285, -1999.9893) | 1037 | (-1315.0820, -2000.0352) |
+   | 0 | `hhou`, 0 | 30 | (-2318.3320, 65.1357) | 1055 | (-1310.5762, 1.8174) |
+   | 2000 | `htow`, 0 | -150 | (-2311.6348, 2017.4600) | 1043 | (-1308.6797, 2000.5273) |
+
+   A model following SPEC-0018, SPEC-0020 and this spec reproduced all
+   six trajectories within 0.07 world units at every tick.
+5. **Green only.** Footmen ordered at tick 0 from (-2500, y) to
+   (-1500, y); destructables `YTac` (4x4Cyan: blue and green, no red)
+   at (-2000, -6000) and `YTab` (2x2Cyan) at (-2000, -3000), and a tree
+   `LTlt` at (-2000, 0) for comparison (test BC1):
+
+   | y | Obstacle | Position at tick 292 | Order ends (tick) | Rest |
+   |---|---|---|---|---|
+   | -6000 | `YTac` | (-2111.5938, -6016.5000) | 742 | (-1514.4121, -6001.7783) |
+   | -3000 | `YTab` | (-2114.8750, -2947.0303) | 760 | (-1513.5557, -2994.5225) |
+   | 0 | `LTlt` | (-2122.5381, 86.3047) | 767 | (-1510.2676, 3.2852) |
+
+   The cyan walkers took a high-level detour but crossed the cyan cells
+   in their local paths. With the two cyan destructables replaced by
+   `.wpm` cells of byte 0x44 on the same cells (x 320..323, y 196..199
+   and x 320..321, y 290..291, in units of 32) the two walkers had
+   exactly the same positions at every logged tick (test BC2). A model
+   with the rule of SPEC-0020 (0x04 only for the high-level search)
+   reproduced both within 0.01 world units; one that blocked the cells in
+   every check missed by up to 34.

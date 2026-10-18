@@ -124,6 +124,9 @@ pub struct Renderer {
     water_pipeline: wgpu::RenderPipeline,
     water: Option<GpuLayer>,
     overlay: Overlay,
+    /// Selection circles, made when first needed.
+    circles: Option<crate::circles::Circles>,
+    format: wgpu::TextureFormat,
     /// The units placed last, for health bars and picking.
     anchors: Vec<UnitAnchor>,
     /// The unit picked with the mouse.
@@ -482,6 +485,8 @@ impl Renderer {
             water_pipeline,
             water,
             overlay: Overlay::new(device, format),
+            circles: None,
+            format,
             anchors: Vec::new(),
             selected: None,
             terrain_light: PLAIN_LIGHT,
@@ -523,13 +528,54 @@ impl Renderer {
                 Some(Bar {
                     at: a.head,
                     fill: a.life?,
-                    selected: self.selected == Some(a.handle),
                 })
             })
             .collect();
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         self.overlay
             .set(device, queue, &bars, &camera.view_projection(aspect), size);
+    }
+
+    /// Lays out the selection circle of the selected unit on the ground of
+    /// height `ground(x, y)`, its texture read from `chain`.
+    pub fn prepare_circles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        camera: &Camera,
+        aspect: f32,
+        ground: impl Fn(f32, f32) -> f32,
+    ) {
+        use crate::circles::{Circle, Circles, Settings};
+        use ow3_sim::game::Relation;
+        let format = self.format;
+        let circles = self
+            .circles
+            .get_or_insert_with(|| Circles::new(device, format, Settings::load(chain)));
+        let settings = circles.settings();
+        let list: Vec<Circle> = self
+            .anchors
+            .iter()
+            .filter(|a| self.selected == Some(a.handle) && a.life.is_some())
+            .map(|a| Circle {
+                centre: [a.foot[0], a.foot[1]],
+                scale: a.selection,
+                colour: match a.relation {
+                    Some(Relation::Friend) => settings.friend,
+                    Some(Relation::Enemy) => settings.enemy,
+                    _ => settings.neutral,
+                },
+            })
+            .collect();
+        circles.set(
+            device,
+            queue,
+            chain,
+            &list,
+            &camera.view_projection(aspect),
+            ground,
+        );
     }
 
     /// The unit under pixel (`x`, `y`) of a view of `size` pixels: the one
@@ -542,7 +588,8 @@ impl Renderer {
             crate::overlay::project(&m, p).map(|[x, y]| [(x + 1.0) * w / 2.0, (1.0 - y) * h / 2.0])
         };
         let mut best: Option<(f32, u32)> = None;
-        for a in &self.anchors {
+        // Handle 0: effects, which cannot be picked.
+        for a in self.anchors.iter().filter(|a| a.handle != 0) {
             let (Some(foot), Some(head)) = (screen(a.foot), screen(a.head)) else {
                 continue;
             };
@@ -630,6 +677,9 @@ impl Renderer {
                 pass.set_vertex_buffer(0, layer.vertices.slice(..));
                 pass.set_index_buffer(layer.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..layer.count, 0, 0..1);
+            }
+            if let Some(circles) = &self.circles {
+                circles.draw(&mut pass);
             }
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
             self.models.draw(&mut pass);

@@ -43,12 +43,14 @@ struct VertexIn {
     @location(8) m2: vec4<f32>,
     @location(9) m3: vec4<f32>,
     @location(10) bone_base: u32,
+    @location(11) tint: vec3<f32>,
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) alpha: f32,
+    @location(3) tint: vec3<f32>,
 };
 
 @vertex
@@ -73,6 +75,7 @@ fn vs(v: VertexIn) -> VertexOut {
     out.normal = (model * skinned * vec4<f32>(v.normal, 0.0)).xyz;
     out.uv = v.uv;
     out.alpha = alphas[v.alpha];
+    out.tint = v.tint;
     return out;
 }
 
@@ -85,7 +88,7 @@ fn lit(v: VertexOut) -> vec4<f32> {
             + globals.unit_color.w * globals.unit_ambient.rgb,
         vec3<f32>(1.0),
     );
-    return vec4<f32>(texel.rgb * light, texel.a * v.alpha);
+    return vec4<f32>(texel.rgb * v.tint * light, texel.a * v.alpha);
 }
 
 @fragment
@@ -265,7 +268,7 @@ impl ModelRenderer {
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4,
-                    10 => Uint32
+                    10 => Uint32, 11 => Float32x3
                 ],
             },
         ];
@@ -510,6 +513,7 @@ impl ModelRenderer {
             lists.entry(buffer).or_default().push(Instance {
                 matrix: unit.matrix,
                 bone_base,
+                tint: unit.tint,
             });
             let m = unit.matrix;
             let top = self.animation.model_top(model);
@@ -522,6 +526,8 @@ impl ModelRenderer {
                     m[3][2] + m[2][2] * top,
                 ],
                 life: unit.life,
+                selection: unit.selection,
+                relation: unit.relation,
             });
         }
         for (buffer, instances) in lists {
@@ -637,4 +643,6 @@ pub struct UnitAnchor {
     pub foot: [f32; 3],
     pub head: [f32; 3],
     pub life: Option<f32>,
+    pub selection: f32,
+    pub relation: Option<ow3_sim::game::Relation>,
 }

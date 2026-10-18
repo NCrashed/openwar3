@@ -2,6 +2,7 @@
 //! heights, drawn with wgpu, in a window or into an image.
 
 pub mod camera;
+pub mod circles;
 pub mod cliff_mesh;
 pub mod controls;
 pub mod model_renderer;

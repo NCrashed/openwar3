@@ -627,7 +627,7 @@ fn walk(m: &mut Moving, direction: u32, window: u32, turn_rate: u32, speed: u32)
 const NEUTRAL_PASSIVE: i32 = 15;
 
 /// Whether units of `a` take units of `b` for enemies.
-fn enemies(state: &State, a: i32, b: i32) -> bool {
+pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
     a != b && a != NEUTRAL_PASSIVE && b != NEUTRAL_PASSIVE && !state.setup.is_ally(a, b)
 }
 

@@ -45,6 +45,18 @@ struct Look {
     variations: u32,
     replaceable: Option<(u32, String)>,
     scale: f32,
+    /// The selection scale of a unit (`scale` of `Units\unitUI.slk`).
+    selection: f32,
+}
+
+/// How a unit type looks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnitLook {
+    pub model: String,
+    pub scale: f32,
+    /// The selection scale, which times `ScaleFactor` of `[SelectionCircle]`
+    /// in `UI\MiscData.txt` gives the size of its selection circle.
+    pub selection: f32,
 }
 
 /// The given columns of each row of an SLK table, by raw code.
@@ -125,6 +137,7 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
                 variations: v[1].parse().unwrap_or(1),
                 replaceable,
                 scale: 1.0,
+                selection: 1.0,
             },
         );
     }
@@ -136,6 +149,7 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
                 variations: v[1].parse().unwrap_or(1),
                 replaceable: None,
                 scale: 1.0,
+                selection: 1.0,
             },
         );
     }
@@ -149,6 +163,7 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
                 variations: 1,
                 replaceable: None,
                 scale: 1.0,
+                selection: 1.0,
             },
         );
     }
@@ -197,25 +212,32 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
     placements
 }
 
-/// The model and scale of every unit type of `Units\unitUI.slk`, by raw
+/// The look of every unit type of `Units\unitUI.slk` and the map, by raw
 /// code value.
-pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, (String, f32)> {
+pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, UnitLook> {
     unit_looks(chain)
         .into_iter()
-        .map(|(id, look)| (i32::from_be_bytes(id.0), (model_path(&look, 0), look.scale)))
+        .map(|(id, look)| {
+            let unit = UnitLook {
+                model: model_path(&look, 0),
+                scale: look.scale,
+                selection: look.selection,
+            };
+            (i32::from_be_bytes(id.0), unit)
+        })
         .collect()
 }
 
 /// The look of every unit type: `Units\unitUI.slk`, then the map's
 /// changes to standard types and its own types (`war3map.w3u`), which
-/// start from their base and may set the model (`umdl`) and its scale
-/// (`usca`).
+/// start from their base and may set the model (`umdl`), its scale
+/// (`usca`) and the selection scale (`ussc`).
 fn unit_looks(chain: &mut ArchiveChain) -> BTreeMap<RawCode, Look> {
     let mut looks: BTreeMap<RawCode, Look> = table(
         chain,
         "Units\\unitUI.slk",
         "unitUIID",
-        &["file", "modelScale"],
+        &["file", "modelScale", "scale"],
     )
     .into_iter()
     .map(|(id, v)| {
@@ -224,6 +246,7 @@ fn unit_looks(chain: &mut ArchiveChain) -> BTreeMap<RawCode, Look> {
             variations: 1,
             replaceable: None,
             scale: number(&v[1], 1.0),
+            selection: number(&v[2], 1.0),
         };
         (id, look)
     })
@@ -248,6 +271,7 @@ fn unit_looks(chain: &mut ArchiveChain) -> BTreeMap<RawCode, Look> {
             match (&m.field.0, &m.value) {
                 (b"umdl", ObjectValue::String(file)) => look.file = file.clone(),
                 (b"usca", ObjectValue::Real(s) | ObjectValue::Unreal(s)) => look.scale = *s,
+                (b"ussc", ObjectValue::Real(s) | ObjectValue::Unreal(s)) => look.selection = *s,
                 _ => {}
             }
         }

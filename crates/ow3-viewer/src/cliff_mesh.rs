@@ -328,6 +328,7 @@ pub fn build(chain: &mut ArchiveChain, terrain: &Terrain) -> Cliffs {
             instances: vec![Instance {
                 matrix: IDENTITY,
                 bone_base: 0,
+                tint: [1.0; 3],
             }],
         })
         .collect();

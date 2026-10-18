@@ -46,14 +46,11 @@ pub struct Bar {
     pub at: [f32; 3],
     /// The share of life, 0 to 1.
     pub fill: f32,
-    pub selected: bool,
 }
 
 /// Bar size in pixels.
 const BAR_WIDTH: f32 = 36.0;
 const BAR_HEIGHT: f32 = 5.0;
-/// Pixels of the outline around a selected unit's bar.
-const OUTLINE: f32 = 2.0;
 /// Pixels between the top of a unit and its bar.
 const LIFT: f32 = 8.0;
 
@@ -90,16 +87,6 @@ fn triangles(bars: &[Bar], view_projection: &Mat4, size: (u32, u32)) -> Vec<Vert
         // A few pixels above the head, whatever the zoom.
         let (px, py) = (cx * w / 2.0, cy * h / 2.0 + LIFT);
         let (hw, hh) = (BAR_WIDTH / 2.0, BAR_HEIGHT / 2.0);
-        if bar.selected {
-            let o = OUTLINE;
-            rect(
-                px - hw - o,
-                py - hh - o,
-                px + hw + o,
-                py + hh + o,
-                [1.0, 1.0, 1.0, 1.0],
-            );
-        }
         rect(px - hw, py - hh, px + hw, py + hh, [0.0, 0.0, 0.0, 0.8]);
         let fill = bar.fill.clamp(0.0, 1.0);
         // Green when full, through yellow, to red when nearly dead.
@@ -233,7 +220,6 @@ mod tests {
         let bar = Bar {
             at: [0.0, 0.0, 0.0],
             fill: 0.5,
-            selected: false,
         };
         let v = triangles(&[bar], &m, (400, 400));
         assert_eq!(v.len(), 12);
@@ -242,14 +228,5 @@ mod tests {
         let filled = width(&v[6..12]) * 200.0;
         assert!((full - BAR_WIDTH).abs() < 1e-3, "{full}");
         assert!((filled - (BAR_WIDTH - 2.0) / 2.0).abs() < 1e-3, "{filled}");
-        let selected = triangles(
-            &[Bar {
-                selected: true,
-                ..bar
-            }],
-            &m,
-            (400, 400),
-        );
-        assert_eq!(selected.len(), 18);
     }
 }

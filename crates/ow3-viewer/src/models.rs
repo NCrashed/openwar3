@@ -63,6 +63,8 @@ impl ModelVertex {
 pub struct Instance {
     pub matrix: Mat4,
     pub bone_base: u32,
+    /// A colour the model's texels are multiplied with.
+    pub tint: [f32; 3],
 }
 
 /// One material layer of one geoset.
@@ -126,6 +128,9 @@ pub enum UnitPose {
     Walk(i32),
     /// Stopped walking `since` milliseconds ago after walking `walked`.
     Halt { walked: i32, since: i32 },
+    /// Milliseconds into its Stand sequence played once, for effects such
+    /// as the confirmation of an order.
+    Once(i32),
 }
 
 /// The animated models of a scene, posed each frame.
@@ -227,6 +232,7 @@ impl Animation {
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
+            UnitPose::Once(elapsed) => (animated.sequence, elapsed),
         };
         let start = Moment::start(&animated.model, sequence);
         let length = (start.interval[1] - start.interval[0]).max(0);
@@ -250,6 +256,9 @@ impl Animation {
                 },
             )
         };
+        if let UnitPose::Once(elapsed) = pose {
+            return Some(at(elapsed));
+        }
         if let UnitPose::Halt { walked, since } = pose {
             // Back to Stand from where the walk stopped.
             if since >= blend {
@@ -603,6 +612,7 @@ pub fn load(
         group.instances.push(Instance {
             matrix: placement_matrix(placement),
             bone_base: animated.bone_base + variant * animated.palette.len() as u32,
+            tint: [1.0; 3],
         });
     }
     let groups: Vec<Group> = groups

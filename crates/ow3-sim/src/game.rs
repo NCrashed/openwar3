@@ -168,6 +168,14 @@ pub struct Unit {
     resources: i32,
 }
 
+/// How a player sees a unit, for the colour of its selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relation {
+    Friend,
+    Neutral,
+    Enemy,
+}
+
 /// A unit as [`Game::units`] shows it, for drawing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnitView {
@@ -981,6 +989,20 @@ impl<'a> Game<'a> {
 
     pub fn issue_immediate_order(&mut self, unit: u32, order: &str) -> bool {
         movement::immediate_order(&mut self.state.borrow_mut(), unit, order)
+    }
+
+    /// How player `player` sees unit `unit`: its own or an ally's, an
+    /// enemy's or neither (neutral passive, for one).
+    pub fn relation(&self, player: i32, unit: u32) -> Option<Relation> {
+        let state = self.state.borrow();
+        let owner = state.unit(Some(unit))?.owner;
+        Some(if owner == player || state.setup.is_ally(player, owner) {
+            Relation::Friend
+        } else if movement::enemies(&state, player, owner) {
+            Relation::Enemy
+        } else {
+            Relation::Neutral
+        })
     }
 
     /// Whether units `a` and `b` belong to enemies.

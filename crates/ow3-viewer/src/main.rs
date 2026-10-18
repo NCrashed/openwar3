@@ -1,4 +1,4 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]]`
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, Escape quits. A left click selects a unit;
@@ -34,6 +34,10 @@ struct Options {
     time: f32,
     /// Draw the units placed in the editor instead of running the script.
     no_sim: bool,
+    /// The unit selected in a screenshot, and a point it is sent to at
+    /// `time`, 0.25 s before the picture.
+    select: Option<u32>,
+    order: Option<[f32; 2]>,
 }
 
 fn options() -> Result<Options, String> {
@@ -45,6 +49,8 @@ fn options() -> Result<Options, String> {
         camera: None,
         time: 0.0,
         no_sim: false,
+        select: None,
+        order: None,
     };
     let mut map = None;
     while let Some(arg) = args.next() {
@@ -65,6 +71,21 @@ fn options() -> Result<Options, String> {
                 options.camera = Some(numbers.map_err(|_| "bad --camera")?);
             }
             "--no-sim" => options.no_sim = true,
+            "--select" => {
+                options.select = Some(
+                    value("--select")?
+                        .trim()
+                        .parse()
+                        .map_err(|_| "bad --select")?,
+                );
+            }
+            "--order" => {
+                let v = value("--order")?;
+                let (x, y) = v.split_once(',').ok_or("--order is <x>,<y>")?;
+                let x = x.trim().parse().map_err(|_| "bad --order")?;
+                let y = y.trim().parse().map_err(|_| "bad --order")?;
+                options.order = Some([x, y]);
+            }
             "--time" => {
                 options.time = value("--time")?.trim().parse().map_err(|_| "bad --time")?;
             }
@@ -72,7 +93,7 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim]")?;
+    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]]")?;
     Ok(options)
 }
 
@@ -104,6 +125,7 @@ fn screenshot(
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
+    renderer.selected = options.select;
     if let Some(sim) = sim {
         // The simulation takes at most a few seconds of real time at once.
         let mut left = (f64::from(options.time) * 1e6) as u64;
@@ -111,6 +133,14 @@ fn screenshot(
             let step = left.min(1_000_000);
             sim.advance(step);
             left -= step;
+        }
+        // An order at `--time`, drawn 0.25 s later.
+        if let (Some(unit), Some([x, y])) = (options.select, options.order) {
+            let z = ow3_viewer::terrain_mesh::ground_z(&scene.terrain, x, y);
+            if let Some(line) = sim.command(unit, None, Some([x, y, z]), false) {
+                println!("{line}");
+            }
+            sim.advance(250_000);
         }
         sim_hour = sim.time_of_day();
         let units = sim.draws();
@@ -120,6 +150,15 @@ fn screenshot(
             &mut sim.chain,
             &units,
             (options.time * 1000.0) as i32,
+        );
+        let terrain = &scene.terrain;
+        renderer.prepare_circles(
+            &device,
+            &queue,
+            &mut sim.chain,
+            &camera,
+            w as f32 / h as f32,
+            |x, y| ow3_viewer::terrain_mesh::ground_z(terrain, x, y),
         );
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
@@ -341,6 +380,15 @@ impl App {
             let units = sim.draws();
             gpu.renderer
                 .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);
+            let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
+            gpu.renderer.prepare_circles(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.chain,
+                &self.camera,
+                aspect,
+                |x, y| ow3_viewer::terrain_mesh::ground_z(terrain, x, y),
+            );
         }
         gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
         let hour = self.sim.as_ref().map_or(12.0, Sim::time_of_day);

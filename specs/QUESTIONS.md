@@ -425,6 +425,20 @@ The move order follows SPEC-0018, part 1: heading and facing, the
 propulsion window, speed, per-tick positions and arrival. Choices where
 the spec is silent:
 
+- **Paths** (SPEC-0020). Point orders and patrols follow the paths of
+  the pathing map; attacks, chases and maps without a `war3map.wpm` go
+  straight. The high-level search stops after 400 iterations (open
+  question 1); a unit whose block is not free walks straight to the
+  order point; a local path that cannot leave its start cell counts as
+  walked; the search budgets shared between units (open question 4) and
+  repeated blocks (open question 3) are left out. Against the PF maps
+  the units of the spec's tables come to rest within its tolerances,
+  except two: the PF2 footman and the collision 64 unit are blocked at
+  the same tick and place as in the game and take the same new path,
+  but end it one update early (520 and 574 instead of 526 and 580) and
+  rest 1.9 and 2.3 away. The first update of a unit ordered when it is
+  created came 4 ticks after the order in the PF maps, as the spec
+  says; the phase rule behind it (SPEC-0018) is still open.
 - **Straight at the target.** The heading points exactly at the target;
   the game's small wobble (open question 2) makes some steps a unit of
   the last place shorter, so a footman walking 1000 east rests at

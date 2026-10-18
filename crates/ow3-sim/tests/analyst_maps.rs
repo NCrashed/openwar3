@@ -582,3 +582,72 @@ fn custom_unit_type() {
     assert_eq!(target.weapon, footman.weapon);
     assert_eq!(target.name.as_deref(), Some("custom_hv03"));
 }
+
+/// The positions the PF maps print every tick (`T tick unit x y ...`, reals
+/// as bit patterns), by unit: (tick, x, y).
+fn tracks(output: &[String]) -> std::collections::BTreeMap<u32, Vec<(u32, f32, f32)>> {
+    let mut tracks: std::collections::BTreeMap<u32, Vec<(u32, f32, f32)>> = Default::default();
+    for line in output {
+        let f: Vec<&str> = line.split(' ').collect();
+        if f.len() < 5 || f[0] != "T" {
+            continue;
+        }
+        let real = |s: &str| f32::from_bits(s.parse::<i32>().unwrap() as u32);
+        tracks.entry(f[2].parse().unwrap()).or_default().push((
+            f[1].parse().unwrap(),
+            real(f[3]),
+            real(f[4]),
+        ));
+    }
+    tracks
+}
+
+/// Where a unit came to rest and its last tick of motion.
+fn rest(track: &[(u32, f32, f32)]) -> ((f32, f32), u32) {
+    let last = track.last().unwrap();
+    let moved = track
+        .windows(2)
+        .filter(|w| (w[0].1, w[0].2) != (w[1].1, w[1].2))
+        .map(|w| w[1].0)
+        .next_back()
+        .unwrap_or(0);
+    ((last.1, last.2), moved)
+}
+
+/// SPEC-0020, verification: where the units of PF1 and PF2 come to rest
+/// round their walls, and their last tick of motion (the maps print every
+/// 6 ticks after the start, so within 6). Collision 0 and 40 are open in
+/// the spec; the PF2 footman and collision 64 end one update early after
+/// their block (specs/QUESTIONS.md) and are left out.
+#[test]
+fn paths_round_walls() {
+    // (map, unit, rest x, rest y, last moving tick, tolerance)
+    let cases = [
+        ("c-PF1.w3x", 0, -1507.54, -6007.75, 989, 1.5),
+        ("c-PF1.w3x", 2, -1503.87, 4.38, 851, 1.5),
+        ("c-PF1.w3x", 3, -1507.72, 3010.23, 1127, 3.4),
+        ("c-PF2.w3x", 0, -1506.70, -8894.89, 995, 1.5),
+        ("c-PF2.w3x", 1, -1509.09, -6892.18, 983, 1.5),
+        ("c-PF2.w3x", 3, -1507.10, -2893.71, 1031, 1.5),
+        ("c-PF2.w3x", 5, -1507.68, 1107.82, 1031, 1.5),
+        ("c-PF2.w3x", 9, -1505.94, 9105.19, 791, 1.5),
+    ];
+    for map in ["c-PF1.w3x", "c-PF2.w3x"] {
+        let Some(output) = run(map, 8.0) else {
+            return;
+        };
+        let tracks = tracks(&output);
+        for &(_, unit, x, y, last, tolerance) in cases.iter().filter(|c| c.0 == map) {
+            let ((rx, ry), moved) = rest(&tracks[&unit]);
+            let off = (rx - x).hypot(ry - y);
+            assert!(
+                off <= tolerance,
+                "{map} unit {unit}: rest ({rx}, {ry}), {off} off"
+            );
+            assert!(
+                moved.abs_diff(last) <= 6,
+                "{map} unit {unit}: last moving {moved} for {last}"
+            );
+        }
+    }
+}

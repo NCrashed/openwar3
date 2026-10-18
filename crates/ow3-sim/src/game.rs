@@ -48,6 +48,7 @@ pub use boards::Button;
 mod attack;
 mod enumerate;
 mod facing;
+mod follow;
 mod movement;
 pub mod players;
 mod widgets;
@@ -407,6 +408,10 @@ pub struct State {
     localized: BTreeMap<String, String>,
     /// The whole map, as bit patterns of reals: min x, min y, max x, max y.
     pub world_bounds: [u32; 4],
+    /// Where ground units may walk (SPEC-0020), and the paths units
+    /// follow, by handle.
+    grid: Option<crate::path::Grid>,
+    paths: std::collections::BTreeMap<u32, follow::Follow>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -455,6 +460,8 @@ impl State {
             moving: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
+            grid: None,
+            paths: std::collections::BTreeMap::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -654,6 +661,7 @@ impl<'a> Game<'a> {
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
         state.heights = map.heights.clone();
+        state.grid = map.pathing.clone();
         state.combat = map.combat.clone();
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();

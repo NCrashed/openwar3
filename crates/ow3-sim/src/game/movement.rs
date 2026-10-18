@@ -20,11 +20,13 @@
 //! motion at once). Other new orders given to a unit that is moving take
 //! effect at its next update, and its first motion comes a tick late.
 //!
-//! PROVISIONAL: units go straight at their target (no path finding, no
-//! collisions, no small heading wobble, SPEC-0018 open question 2); the
+//! On a map with a pathing map, point orders and patrols go round its
+//! obstacles by the paths of SPEC-0020 (`game::follow`).
+//!
+//! PROVISIONAL: other units are no obstacles, and attackers walk straight
+//! at their goal; no small heading wobble (SPEC-0018 open question 2); the
 //! arrival test compares squared distances in cells (open question 1);
-//! the first update comes 6 ticks after the order; attackers walk to the
-//! target's position at each update, without the goal points of a chase.
+//! the first update comes 6 ticks after the order.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -34,7 +36,7 @@ use ow3_jass::vm::{NativeFn, Vm};
 use ow3_math::natives::{atan2, cos, sin};
 use ow3_math::{add, i2r, mul, sub};
 
-use super::{Object, State, handle, real, string};
+use super::{Object, State, follow, handle, real, string};
 use crate::random::REACTION;
 
 /// Order ids that `GetUnitCurrentOrder` gives (SPEC-0019).
@@ -224,6 +226,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             chase: None,
         },
     };
+    // A new path is searched at the next update (SPEC-0020).
+    state.paths.remove(&h);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = Some(moving);
         u.attack = None;
@@ -307,6 +311,7 @@ pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
 
 /// `stop` and `holdposition`: the unit stands where it is now.
 fn halt(state: &mut State, h: u32) -> bool {
+    state.paths.remove(&h);
     let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
         return false;
     };
@@ -433,6 +438,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let Some(mut m) = u.movement else {
             continue;
         };
+        let pos = [u.x, u.y];
+        let class = crate::path::size_class(data.map_or(0, |t| t.collision));
         if !alive {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.movement = None;
@@ -465,7 +472,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
-                        let here = relative([u.x, u.y], min);
+                        let here = relative(pos, min);
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             _ => {
@@ -489,7 +496,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 }
             }
             if !m.arrived {
-                let here = relative([u.x, u.y], min);
+                let here = relative(pos, min);
                 let goal = relative(m.target, min);
                 let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
                 // The squared distance in cells.
@@ -512,23 +519,48 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     } else {
                         walk(&mut m, direction, window, turn_rate, speed);
                     }
-                } else if distance <= real_of(mul(ARRIVAL, ARRIVAL)) {
-                    if let Order::Patrol { home } = m.order {
-                        // Back the other way, turning on the spot.
-                        m.order = Order::Patrol { home: m.target };
-                        m.target = home;
-                        m.walking = false;
-                        m.velocity = [0, 0];
-                        let goal = relative(home, min);
-                        let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
-                        walk(&mut m, atan2(dy, dx), window, turn_rate, speed);
-                    } else {
-                        m.arrived = true;
-                        m.walking = false;
-                        m.velocity = [0, 0];
-                    }
                 } else {
-                    walk(&mut m, direction, window, turn_rate, speed);
+                    // Round the obstacles of the pathing map (SPEC-0020), or
+                    // straight without one.
+                    let mut steer = if state.grid.is_some() {
+                        follow::steer(state, h, here, goal, class, tick)
+                    } else if distance <= real_of(mul(ARRIVAL, ARRIVAL)) {
+                        follow::Steer::Arrived
+                    } else {
+                        follow::Steer::Walk(goal)
+                    };
+                    if steer == follow::Steer::Arrived {
+                        if let Order::Patrol { home } = m.order {
+                            // Back the other way, turning on the spot.
+                            m.order = Order::Patrol { home: m.target };
+                            m.target = home;
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                            state.paths.remove(&h);
+                            let goal = relative(home, min);
+                            steer = if state.grid.is_some() {
+                                follow::steer(state, h, here, goal, class, tick)
+                            } else {
+                                follow::Steer::Walk(goal)
+                            };
+                        } else {
+                            m.arrived = true;
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                            state.paths.remove(&h);
+                        }
+                    }
+                    match steer {
+                        follow::Steer::Walk(to) => {
+                            let (dx, dy) = (sub(to[0], here[0]), sub(to[1], here[1]));
+                            walk(&mut m, atan2(dy, dx), window, turn_rate, speed);
+                        }
+                        follow::Steer::Stand => {
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                        }
+                        follow::Steer::Arrived => {}
+                    }
                 }
             }
         }

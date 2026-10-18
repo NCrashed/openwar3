@@ -914,7 +914,8 @@ impl Grid {
         if c0 == c1 {
             self.newly_free(None, c1, class)
         } else {
-            self.newly_free(Some(c0), c1, class)
+            // As a search step, corners included.
+            self.step(c0, c1, class)
         }
     }
 }

@@ -95,3 +95,41 @@ fn local_path_of_pf2() {
         assert!(close(*a, b, 1e-3), "{got:?}");
     }
 }
+
+fn grid_of(name: &str) -> Option<Grid> {
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    let map = data.join("Maps/Test-ow3").join(name);
+    if !map.exists() {
+        return None;
+    }
+    ow3_sim::map::Map::load(&data, &map).unwrap().pathing
+}
+
+/// The footman of PF1 (class 1) from (-2500, -6000) to (-1500, -6000):
+/// its high-level list in world coordinates.
+#[test]
+fn high_level_list_of_pf1() {
+    let Some(grid) = grid_of("c-PF1.w3x") else {
+        return;
+    };
+    let found = high_level(&grid, cells(-2500.0, -6000.0), cells(-1500.0, -6000.0), 1).unwrap();
+    let world: Vec<[f32; 2]> = found
+        .points
+        .iter()
+        .map(|p| p.map(|c| f32::from_bits(c) * 64.0 - 12288.0))
+        .collect();
+    let expected = [
+        [-2500.0, -6000.0],
+        [-2512.0, -6160.0],
+        [-2000.0, -6416.0],
+        [-1744.0, -6352.0],
+        [-1500.0, -6000.0],
+    ];
+    assert_eq!(world.len(), expected.len(), "{world:?}");
+    for (a, b) in world.iter().zip(expected) {
+        assert!(
+            (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01,
+            "{world:?}"
+        );
+    }
+}

@@ -72,6 +72,8 @@ pub struct Follow {
     next: Next,
     /// The first tick at which the unit may search again.
     hold_until: u64,
+    /// The order point in cells the waypoints were searched to.
+    order: [u32; 2],
     /// Updates the unit still stands waiting for another unit.
     wait: u32,
 }
@@ -227,9 +229,18 @@ pub struct Walker {
     pub class: u8,
     /// Its squared speed at the start of the update.
     pub squared_speed: u32,
-    /// For an attacker, its target's position now (relative to the world
-    /// corner) and its range in cells (SPEC-0019).
-    pub chase: Option<([u32; 2], u32)>,
+    /// For an attacker, how it chases (SPEC-0019).
+    pub chase: Option<Chase>,
+}
+
+/// What a chase needs at an update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chase {
+    /// The target's position now, relative to the world corner.
+    pub target: [u32; 2],
+    /// The attack range alone and with both collision sizes, in cells.
+    pub range: u32,
+    pub reach: u32,
 }
 
 /// What `walker` does at this update on its way to its order point;
@@ -260,6 +271,7 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
             next: Next::Search,
             hold_until: 0,
             wait: 0,
+            order: order_cells,
         };
         follow.take_segment(order_cells);
         follow
@@ -298,8 +310,39 @@ fn decide(
         follow.wait -= 1;
         return Steer::Stand(to_world(follow.goal));
     }
+    let order = to_cells(walker.order);
+    // A chase with a new goal: a new chase path; the attacker's own path
+    // stays when its waypoint does (SPEC-0019).
+    if walker.chase.is_some() && order != follow.order {
+        let (waypoints, reached) = path::high_level(grid, at, order, class)
+            .map_or_else(|| (Vec::new(), false), |found| (found.points, found.reached));
+        let (old_goal, old_final) = (follow.goal, follow.final_goal);
+        follow.waypoints = waypoints;
+        follow.reached = reached;
+        follow.current = 0;
+        follow.order = order;
+        follow.take_segment(order);
+        if follow.final_goal || old_final || follow.goal != old_goal {
+            follow.next = Next::Search;
+        }
+        if follow.waypoints.is_empty() {
+            return Steer::Walk(walker.order);
+        }
+    }
+    // A waypoint of a chase path is passed in range of the attack: the
+    // attacker stands this update with a new path to the next one.
+    let mut passed = false;
+    if let Some(chase) = walker.chase
+        && follow.next == Next::Walk
+        && !follow.final_goal
+        && super::movement::in_range(walker.here, to_world(follow.goal), chase.reach)
+    {
+        follow.take_segment(order);
+        follow.next = Next::Search;
+        passed = true;
+    }
     if follow.next == Next::Segment {
-        follow.take_segment(to_cells(walker.order));
+        follow.take_segment(order);
         follow.next = Next::Search;
     }
     let segment_goal = to_world(follow.goal);
@@ -314,9 +357,14 @@ fn decide(
         }
         let found = match walker.chase {
             // A chase searches to where its target is now, up to its range.
-            Some((target, range)) if follow.final_goal => {
-                path::local_near(&seen, at, to_cells(target), class, LOCAL_LIMIT, range)
-            }
+            Some(chase) if follow.final_goal => path::local_near(
+                &seen,
+                at,
+                to_cells(chase.target),
+                class,
+                LOCAL_LIMIT,
+                chase.range,
+            ),
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
         budget.used += found.iterations;
@@ -332,6 +380,9 @@ fn decide(
             1.min(follow.local.len() - 1)
         };
         follow.next = Next::Walk;
+        if passed {
+            return Steer::Stand(segment_goal);
+        }
     }
     // Arrival at the point walked to.
     let last = follow.local.len() - 1;

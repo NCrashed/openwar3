@@ -1007,6 +1007,24 @@ pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Fo
         heap: Heap::new(),
         closest: ((0, 0, 0), i64::MAX),
     };
+    // A start block that is not free gives way to the free neighbouring
+    // block nearest to the start (SPEC-0019, a chase next to a wall).
+    // PROVISIONAL: nearest by the centre of the block, the first of the
+    // neighbours in their search order on a tie (open question 6).
+    let sb = if search.grid.holding(0, sb.0, sb.1) == Some(State::Free) {
+        sb
+    } else {
+        let distance = |b: (i32, i32)| {
+            let c = [i2r(2 * b.0 + 1), i2r(2 * b.1 + 1)];
+            let (dx, dy) = (sub(c[0], s[0]), sub(c[1], s[1]));
+            real(add(mul(dx, dx), mul(dy, dy)))
+        };
+        NEIGHBOURS
+            .iter()
+            .map(|(dx, dy)| (sb.0 + dx, sb.1 + dy))
+            .filter(|&(u, v)| search.grid.holding(0, u, v) == Some(State::Free))
+            .min_by(|&a, &b| distance(a).total_cmp(&distance(b)))?
+    };
     let start = search.node_from(sb, 0)?;
     let goal = search.node_from(gb, 0);
     if goal == Some(start) {

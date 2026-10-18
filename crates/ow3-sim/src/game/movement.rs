@@ -588,6 +588,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let mut in_reach = false;
             let mut renewed = false;
             let mut target_now = [0, 0];
+            let mut full_reach = reach;
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
@@ -595,10 +596,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             _ => {
+                                // A new goal; the paths follow it
+                                // (`game::follow`).
                                 m.target = at;
                                 m.chase = Some(countdown(here, relative(at, min)));
-                                // A new goal is walked to by a new path.
-                                state.paths.remove(&h);
                                 renewed = true;
                             }
                         }
@@ -610,9 +611,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         };
                         // The swing starts with the target or the goal in
                         // range (SPEC-0019).
-                        let reach = add(reach, mul(other, CELL));
-                        in_reach = in_range(here, target_now, reach)
-                            || in_range(here, relative(m.target, min), reach);
+                        full_reach = add(reach, mul(other, CELL));
+                        in_reach = in_range(here, target_now, full_reach)
+                            || in_range(here, relative(m.target, min), full_reach);
                     }
                     _ => {
                         m.arrived = true;
@@ -649,7 +650,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             order: goal,
                             class,
                             squared_speed: follow::squared_speed(m.velocity),
-                            chase: Some((target_now, range_cells)),
+                            chase: Some(follow::Chase {
+                                target: target_now,
+                                range: range_cells,
+                                reach: full_reach,
+                            }),
                         };
                         let steer = follow::steer(state, &walker, tick);
                         // The goal taken 66 ticks after a chase resumes
@@ -761,7 +766,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
 /// `reach` the range and both collision sizes in cells: the squared
 /// distance in cells below `R * R` or within 0.001 of it, with `R` at
 /// least 0.49.
-fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
+pub(super) fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
     let r = if real_of(reach) < real_of(ARRIVAL) {
         ARRIVAL
     } else {
@@ -823,8 +828,14 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
         m.renew_stands = true;
     }
     let data = state.data.units.get(&u.type_id);
-    let class = crate::path::size_class(data.map_or(0, |t| t.collision));
+    let own = data.map_or(0, |t| t.collision);
+    let class = crate::path::size_class(own);
     let range = data.and_then(|t| t.weapon.as_ref()).map_or(0, |w| w.range);
+    let other = state
+        .unit(Some(target))
+        .and_then(|t| state.data.units.get(&t.type_id))
+        .map_or(0, |t| t.collision);
+    let reach = add(add(mul(range, CELL), mul(own, CELL)), mul(other, CELL));
     if state.grid.is_some() {
         let goal = relative(at, min);
         let walker = follow::Walker {
@@ -833,7 +844,11 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             order: goal,
             class,
             squared_speed: 0,
-            chase: Some((goal, mul(range, CELL))),
+            chase: Some(follow::Chase {
+                target: goal,
+                range: mul(range, CELL),
+                reach,
+            }),
         };
         follow::steer(state, &walker, tick);
     }

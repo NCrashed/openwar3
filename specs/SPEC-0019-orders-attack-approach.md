@@ -163,16 +163,36 @@ at the time the goal was last taken, and takes a new goal only from
 time to time:
 
 - **Taking a goal.** The goal is the target's position at that moment.
-  At once a new path is searched from the attacker's position: a
-  high-level search to the goal, then the local search of SPEC-0020 with
-  two differences. Its goal point is the target's position at the time
-  of that local search. It ends at the first cell removed from the heap
-  whose centre is within the attack range `rangeN1 / 32` (cells, not
-  counting the collision sizes) of that point, and that cell's centre is
-  the end of the path. A path that ends this way counts as a search that
-  met no unpassable cell, so the attacker walks straight to its end
-  (SPEC-0020, step 2). The target is moving, so it is not an obstacle
-  for the search (SPEC-0021).
+  The chase keeps two paths: a high-level path of the chase from the
+  attacker's position to the goal, and the attacker's own path to the
+  current waypoint of that high-level path (chosen by the look-ahead of
+  SPEC-0020, step 1), followed as in SPEC-0020 and SPEC-0021. When the
+  current waypoint is the goal itself, the attacker's local search
+  differs in two points: its goal point is the target's position at the
+  time of that local search, and it ends at the first cell removed from
+  the heap whose centre is within the attack range `rangeN1 / 32`
+  (cells, not counting the collision sizes) of that point; that cell's
+  centre is the end of the path. Whether the attacker starts with the
+  first point of the path or walks straight to its end is decided as
+  usual (SPEC-0020, step 2: straight only if the search met no
+  unpassable cell). The target is moving, so it is not an obstacle for
+  the search (SPEC-0021).
+- **Waypoints of the chase path** are reached by the range test: at an
+  update at which the attacker is within `rangeN1 + c_a + c_t` (the
+  range test above) of the current waypoint, the next waypoint is taken
+  by the look-ahead, the attacker stands still for that update, and it
+  gets a new path from its position along the rest of the chase path.
+  (Footman behind a wall: the waypoint was taken over at 134.8 from it,
+  not at 142.9 one update before.)
+- **A new goal and the existing path.** When a new goal is taken and it
+  is the same point as before (a target that does not move), nothing
+  changes. Otherwise the chase path is searched again; if its current
+  waypoint is the same point as the attacker's current waypoint, the
+  attacker keeps its own path, else it gets a new one at once.
+- **Start in a block that is not free.** When the attacker stands next
+  to a wall so that its level-0 block is not free, the high-level search
+  started from the free neighbouring block nearest to the attacker (one
+  case, open question 6).
 - **Schedule.** Right after a goal is taken a countdown is set to
   `round(0.33 * d)` clamped to 16 .. 132 (with 0.33 the real
   `s2r("0.33")`; `d` the distance from the attacker to the new goal in
@@ -182,11 +202,12 @@ time to time:
   every 17 updates, 102 ticks. (Static analysis: 165 is added to the
   countdown in one mode of the mover that was not seen in the tests.)
 - **Start of the attack.** At each update, before moving, the attacker
-  stops and starts its swing if the target is within the range test
-  above, or if the goal point is within about the same distance; for the
-  goal point the limit lay between 134.65 and 136.68 world units in the
-  tests (footman against a peasant, `rangeN1 + c_a + c_t` = 137; see
-  Open questions). So a swing at a target that walks away starts from
+  stops and starts its swing if the target or the goal point is within
+  the range test above (`rangeN1 + c_a + c_t`). In 15 swings against a
+  goal point the distances at the swing were 129.4 to 134.5 and at the
+  update before 137.5 to 142.6 (footman against a peasant, limit 137);
+  one swing came an update later than this rule gives (at 136.68 the
+  attacker walked on; open question 2). So a swing at a target that walks away starts from
   farther than the static limit: from 178 to 218 behind a target
   walking away at 150 (start distances 200 to 650, 9 tests), 214 at
   180, 239 at 210, 251 at 240 (static limit 152).
@@ -246,8 +267,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 1. Whether other orders and the acquisition of targets use the reaction
    delay as well.
-2. The exact limit for the goal point at which the attacker starts its
-   swing (between 134.65 and 136.68 for a footman chasing a peasant);
+2. One chase in which the attacker did not start its swing at a goal
+   point 136.68 away (limit 137);
    what makes the attacker take a new goal 66 ticks after a chase
    resumes; when a moved target makes the attacker take a new goal at
    once; earlier observations of an attacker following the target's
@@ -258,6 +279,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
 4. Queued orders, group orders, formation movement.
 5. Orders on units of other players, `hold position` with enemies in
    range.
+6. How the start block is chosen when the attacker's own block is not
+   free (one case seen), and what the attacker does when no free block
+   is near.
 
 ## Sources
 
@@ -299,3 +323,27 @@ An idle unit with a weapon attacks an enemy unit on its own:
    tick for the first, second and fourth rows over the whole test
    (up to 1140 ticks) and for the third row up to tick 1108, where the
    game did not yet start the third swing (open question 2).
+6. **Swing start against the goal point.** 13 footmen at (-2500 -
+   0.625 k, -10000 + 1600 k), k = 0 .. 12, each attacking a peasant of
+   `Player(15)` at (-2000, y) that walks east to (2000, y), all ordered
+   at tick 0 (`SetRandomSeed(7)`; the reaction delays differ per
+   attacker): first motion and the update of the first swing:
+
+   | k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+   | First motion | 5 | 5 | 47 | 17 | 29 | 17 | 5 | 5 | 23 | 17 | 29 | 29 | 47 |
+   | Swing (update) | 706 | 706 | after 840 | 802 | 820 | 802 | 712 | 712 | 814 | 802 | 826 | 826 | after 840 |
+
+   A model with the range test as the limit gave all eleven swings at
+   the same updates and the positions within 0.1 world units.
+7. **Chase round a wall.** Walls of unwalkable cells at
+   -2000 <= x < -1968, y0 - 400 <= y < y0 + 400; footman at (-2500, y0)
+   attacking a peasant-based target at (-1850, y0): standing (move speed
+   0; y0 = -6000), walking east to (150, y0) (y0 = -3000), walking north
+   to (-1850, y0 + 2000) (y0 = 0). The standing target was hit at
+   tick 908 (swing from update 802), the northbound one at 721 (from
+   616); the eastbound one was not caught in 1000 ticks. In the first
+   row the attacker stood still at update 388 when it took over the
+   waypoint (-2000, -6416) of the chase path. A model following this spec
+   reproduced all three attackers within 0.015 world units at every
+   tick.

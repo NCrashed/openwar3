@@ -790,6 +790,10 @@ fn chases_by_paths() {
     assert!(damage.contains(&(0, 806)), "{damage:?}");
 }
 
+/// A walker of SPEC-0022: map, unit, position at tick 292, the tick its
+/// order ends and where it rests.
+type Walker = (&'static str, u32, (f32, f32), u32, (f32, f32));
+
 /// The positions the PF and B maps print (`T tick unit x y facing order`,
 /// reals as bit patterns), by unit: (tick, x, y, order).
 fn orders(output: &[String]) -> std::collections::BTreeMap<u32, Vec<(u32, f32, f32, i32)>> {
@@ -817,9 +821,11 @@ fn orders(output: &[String]) -> std::collections::BTreeMap<u32, Vec<(u32, f32, f
 /// after it (one tick of motion, 1.35, at most apart) and the end of the
 /// order with the 6 printed ticks before it.
 #[test]
+// The numbers are written as the spec gives them.
+#[allow(clippy::excessive_precision)]
 fn walkers_past_buildings() {
     // (map, unit, position at 292, order ends, rest)
-    let cases: [(&str, u32, (f32, f32), u32, (f32, f32)); 11] = [
+    let cases: [Walker; 11] = [
         (
             "c-BW1.w3x",
             0,

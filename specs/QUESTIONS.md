@@ -452,10 +452,11 @@ the spec is silent:
   players are not told apart. On c-OM461 the stands of the first and
   fourth pairs come within 0.06 of the game; the second and third pairs
   turn the other way, on one unit of the last place of the squared
-  speeds, as in the spec. There the westward footman of the first pair
-  and the knight of the fourth stand once more after their detours (a
-  held search, a turn by `propWin`), which the spec does not show; the
-  budget itself was not checked against a map.
+  speeds, as in the spec. The westward footman's stands of the spec's
+  table come out (394..437 there, about 393..435 here), the knight's
+  only in part (322..341 and 376..389 there; 321..339 and 375..387
+  here, but not 352..359). On c-UO2 the four walkers created first
+  start one update after the other eight, as the spec says.
 - **Movement arithmetic** (SPEC-0018). The movement clock starts at 0
   with the first tick of the game (open question 2); the extra commits
   between updates are left out, so the footman of verification 1 rests

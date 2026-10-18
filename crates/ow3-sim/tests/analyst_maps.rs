@@ -712,3 +712,30 @@ fn buildings_move_to_the_grid() {
         assert_eq!(placed[&unit], (x, y), "unit {unit}");
     }
 }
+
+/// SPEC-0021, shared budget (c-UO2): the first searches of the walkers
+/// created last use up the budget of 1100 iterations, so the four walkers
+/// created first queue and start moving one update after the other eight.
+/// The walkers are the units of even index.
+#[test]
+fn searches_share_a_budget() {
+    let Some(output) = run("c-UO2.w3x", 4.0) else {
+        return;
+    };
+    let tracks = tracks(&output);
+    let first_motion = |unit: u32| {
+        let track = &tracks[&unit];
+        track
+            .windows(2)
+            .find(|w| (w[0].1, w[0].2) != (w[1].1, w[1].2))
+            .map(|w| w[1].0)
+            .unwrap()
+    };
+    let late: Vec<u32> = (0..4).map(|k| first_motion(2 * k)).collect();
+    let early: Vec<u32> = (4..12).map(|k| first_motion(2 * k)).collect();
+    assert!(early.iter().all(|&t| t == early[0]), "{early:?}");
+    assert!(
+        late.iter().all(|&t| t == early[0] + 6),
+        "{late:?} after {early:?}"
+    );
+}

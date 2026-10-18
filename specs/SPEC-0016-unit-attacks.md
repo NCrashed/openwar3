@@ -109,6 +109,32 @@ whose type is in `splashTargs`, at the same time as the target:
 Each damaged unit gets its own `EVENT_UNIT_DAMAGED` with the attacker as
 the source, all in the tick of the hit.
 
+The glaive thrower (`ebal`, `weapTp1` `aline`, areas 25, 50, 150, shares
+0.4 and 0.25) behaves the same way against a target that does not move:
+units up to 40 from the target took 0.4, from 60 to 140 took 0.25, from
+160 on nothing, in every direction; units on the line of the shot before
+or behind the target took nothing more.
+
+### Spill and bounce
+
+- **Spill** (`spillDist`, `spillRadius`, `damageLoss`): `spillDist` is 0
+  in all shipped weapon data and is raised by the upgrades `Rhhb` and
+  `Repb` (effect `rasd`, +200). A gryphon rider (`hgry`, `mline`,
+  `spillRadius` 50, `damageLoss` 0.2) of a player with `Rhhb` that hit a
+  target 400 east of it also damaged the units behind the target on the
+  line of the shot: those 80 to 230 beyond the target and at most 50 to
+  the side (a unit 40 behind the target, one 55 to the side and one 260
+  behind were not hit). The damage came in steps as the hammer flew on,
+  41 and 81 ticks after the hit on the target, and each damaged unit
+  took 0.8 of what the previous one took (0.8, 0.64, 0.512, 0.41,
+  0.328, ...; the order was not always that of the distance). Without
+  the upgrade there was no spill. A glaive thrower with `Repb` showed no
+  spill (open question 7).
+- **Bounce** (`mbounce`: huntress `esen`, `targCount1` 2, `Farea1` 400,
+  `damageLoss1` 0.5): 33 ticks after the hit on the target the glaive
+  hit the nearest other unit (150 away; units at 300, 380, 450 and 600
+  were not hit) for 0.5 of the target's damage.
+
 ## Edge cases
 
 - A melee weapon (`weapTp1` `normal`) applies its damage at the damage
@@ -129,6 +155,10 @@ the source, all in the tick of the hit.
    unit, one direction of shot), area damage of `aline` and `mline`
    weapons (`spillDist`, `spillRadius`, `damageLoss`), `targCount`, and
    area damage against structures and trees.
+7. Spill and bounce: the exact start and end of the spill along the
+   line, its order and timing, why the glaive thrower with `Repb` did not
+   spill, bounces with more targets (`targCount`, upgrade `Remg`) and the
+   choice of the bounce target.
 
 ## Sources
 

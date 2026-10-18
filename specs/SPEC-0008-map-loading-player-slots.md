@@ -21,6 +21,18 @@ same file, the one with the highest priority wins:
 | `War3x.mpq` | 1 |
 | `War3.mpq` | 0 |
 
+**Tileset archives.** The game archives contain one archive per tileset,
+`<t>.mpq` for tileset letter `t` (`War3x.mpq`: A, B, C, D, F, G, I, J, K,
+L, N, O, Q, V, W, X, Y, Z; `War3.mpq`: the same without I, J, K, O, Z;
+the copies of both for the same letter were the same in the files
+compared). When a map is loaded, the archive of its tileset (the letter
+of `war3map.w3e`) is searched after the map and before the game
+archives. It holds tileset versions of shared file names: the cliff
+textures `ReplaceableTextures\Cliff\Cliff0.blp` and `Cliff1.blp`, the 45
+water frames, building splats (`ReplaceableTextures\Splats\...`) and a
+few creep skins (SPEC-0014, rule 7). Its order relative to
+`War3Patch.mpq` was not tested.
+
 A map may replace `Scripts\common.j` and `Scripts\Blizzard.j`; the game
 compiles and runs the map's copies. With a map copy of `Blizzard.j` in
 which `GetPlayerStartLocationX` returns `12345.0`, the map script saw

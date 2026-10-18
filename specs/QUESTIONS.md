@@ -528,8 +528,15 @@ spec is silent:
 
 - **Models** (open question 2) are lit by the same formula from the unit
   model of the call (`DNCLordaeronUnit` without one). Water is not lit.
-- **Cliffs** take the model light, being models; the spec expects the
-  ground formula with their normals (open question 1).
+- **Cliffs** take the ground light with their own normals (SPEC-0014
+  rule 9).
+- **Shadows** of `war3map.shd` darken the ground and the cliff models
+  by the formula of the spec; units, doodads and water are not darkened
+  (open question 5). The renderer interpolates the block samples by
+  linear filtering of an 8-bit texture, so border values of 0.5 are
+  stored as 128/255. A block cut by the map edge counts its missing
+  cells as without shadow, and the 3 to 5 units the game's samples lie
+  west of the formula are not applied.
 - **Time of day** is `GAME_STATE_TIME_OF_DAY` as the script sets it; the
   day does not run yet, and without a script the viewer shows noon.
 - **Fog** is not drawn (open question 3).

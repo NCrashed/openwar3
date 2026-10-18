@@ -20,6 +20,26 @@ const CLEAR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
+/// The baked shadows of `war3map.shd` (SPEC-0017, "Shadows") for the
+/// shaders that declare `globals.shadow_area`, `shadow_map` and
+/// `shadow_sampler`: `shaded` moves a texture colour towards the colour
+/// of shadow by the shadow amount at a world point, before the light.
+/// The map holds the samples of `ow3_render::shadows`, block by block,
+/// and linear filtering between the samples of a block interpolates them.
+pub(crate) const SHADOW_WGSL: &str = r#"
+const SHADOW_COLOUR: vec3<f32> = vec3<f32>(0.048, 0.048, 0.095);
+const SHADOW_AMOUNT: f32 = 0.502;
+
+fn shaded(texel: vec4<f32>, world: vec2<f32>) -> vec4<f32> {
+    let offset = world - globals.shadow_area.xy;
+    let block = floor(offset / 512.0);
+    let samples = block * 16.0 + (offset - block * 512.0) * (15.0 / 512.0);
+    let uv = (samples + 0.5) / globals.shadow_area.zw;
+    let s = textureSampleLevel(shadow_map, shadow_sampler, uv, 0.0).r;
+    return vec4<f32>(texel.rgb + s * SHADOW_AMOUNT * (SHADOW_COLOUR - texel.rgb), texel.a);
+}
+"#;
+
 const SHADER: &str = r#"
 struct Globals {
     view_projection: mat4x4<f32>,
@@ -32,7 +52,8 @@ struct Globals {
     unit_sun: vec4<f32>,
     unit_color: vec4<f32>,
     unit_ambient: vec4<f32>,
-    // The world rectangle of the shadow map: lower left corner and size.
+    // The shadow map: the lower left corner of the map, and the size of
+    // the sample grid.
     shadow_area: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -69,20 +90,9 @@ fn vs(v: VertexIn) -> VertexOut {
     return out;
 }
 
-// How much light reaches a point of the ground in the baked shadows
-// (war3map.shd). PROVISIONAL: the darkness is matched to a screenshot of
-// the game, no spec gives it.
-const SHADOW_LIGHT: f32 = 0.55;
-
-fn shadow(world: vec2<f32>) -> f32 {
-    let uv = (world - globals.shadow_area.xy) / globals.shadow_area.zw;
-    let s = textureSample(shadow_map, shadow_sampler, uv).r;
-    return mix(1.0, SHADOW_LIGHT, s);
-}
-
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(atlas, atlas_sampler, v.uv, v.cell);
+    let texel = shaded(textureSample(atlas, atlas_sampler, v.uv, v.cell), v.world);
     let n = normalize(v.normal);
     let facing = max(dot(n, globals.terrain_sun.xyz), 0.0);
     let light = min(
@@ -90,7 +100,7 @@ fn fs(v: VertexOut) -> @location(0) vec4<f32> {
             + globals.terrain_color.w * globals.terrain_ambient.rgb,
         vec3<f32>(1.0),
     );
-    return vec4<f32>(texel.rgb * light * shadow(v.world) * v.tint.rgb, texel.a);
+    return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
 }
 
 @fragment
@@ -156,7 +166,8 @@ pub struct Renderer {
     /// The light of the ground and of models (SPEC-0017).
     pub terrain_light: Lighting,
     pub unit_light: Lighting,
-    /// The world rectangle of the shadow map of `war3map.shd`.
+    /// The shadow map: the lower left corner of the map and the size of
+    /// the sample grid.
     shadow_area: [f32; 4],
 }
 
@@ -189,19 +200,19 @@ fn mip_chain(image: &Image) -> Vec<Image> {
     levels
 }
 
-/// The shadow map of `scene` as a one-channel texture (1 in shadow), and
-/// the world rectangle it covers: lower left corner and size.
+/// The shadow samples of `scene` (`ow3_render::shadows`) as a one-channel
+/// texture, and the lower left corner of the map and the grid size.
 fn shadow_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &Scene,
 ) -> (wgpu::TextureView, [f32; 4]) {
     let (width, height, texels) = match &scene.shadows {
-        Some(s) => (
-            s.width,
-            s.height,
-            s.cells.iter().map(|&c| if c { 255 } else { 0 }).collect(),
-        ),
+        Some(s) => {
+            let (width, height, values) = ow3_render::shadows::samples(s);
+            let texels = values.iter().map(|v| (v * 255.0).round() as u8).collect();
+            (width, height, texels)
+        }
         None => (1, 1, vec![0u8]),
     };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -238,12 +249,7 @@ fn shadow_texture(
         },
     );
     let t = &scene.terrain;
-    let area = [
-        t.origin_x,
-        t.origin_y,
-        width as f32 * 32.0,
-        height as f32 * 32.0,
-    ];
+    let area = [t.origin_x, t.origin_y, width as f32, height as f32];
     (
         texture.create_view(&wgpu::TextureViewDescriptor::default()),
         area,
@@ -379,7 +385,7 @@ impl Renderer {
     ) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{SHADER}{SHADOW_WGSL}").into()),
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
@@ -493,8 +499,8 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // The shadow map, one texel per cell of 32, rows from the bottom as
-        // in the file; without one, a single texel without shadow.
+        // The shadow samples, block by block, rows from the bottom as in
+        // the file; without a shadow map, a single texel without shadow.
         let (shadow_view, shadow_area) = shadow_texture(device, queue, scene);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadows"),

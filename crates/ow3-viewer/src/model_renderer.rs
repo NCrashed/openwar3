@@ -105,15 +105,13 @@ fn lit(v: VertexOut) -> vec4<f32> {
         color = globals.terrain_color;
         ambient = globals.terrain_ambient;
     }
-    // Cliffs lie in the baked shadows of the ground too (PROVISIONAL: as
-    // dark as there, matched to a screenshot of the game).
-    let uv = (v.world - globals.shadow_area.xy) / globals.shadow_area.zw;
-    let shaded = textureSampleLevel(shadow_map, shadow_sampler, uv, 0.0).r;
-    let shadow = select(1.0, mix(1.0, 0.55, shaded), v.terrain_light == 1u);
+    // Cliffs lie in the baked shadows like the ground (SPEC-0014 rule 9);
+    // whether other models do is not known.
+    let colour = select(texel.rgb, shaded(texel, v.world).rgb, v.terrain_light == 1u);
     let n = normalize(v.normal);
     let facing = max(dot(n, sun.xyz), 0.0);
     let light = min(sun.w * color.rgb * facing + color.w * ambient.rgb, vec3<f32>(1.0));
-    return vec4<f32>(texel.rgb * v.tint * light * shadow, texel.a * v.alpha);
+    return vec4<f32>(colour * v.tint * light, texel.a * v.alpha);
 }
 
 @fragment
@@ -215,7 +213,9 @@ impl ModelRenderer {
     ) -> ModelRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("models"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{SHADER}{}", crate::renderer::SHADOW_WGSL).into(),
+            ),
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("model texture"),

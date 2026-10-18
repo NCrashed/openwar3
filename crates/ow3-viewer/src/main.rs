@@ -1,7 +1,8 @@
 //! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt]`
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
-//! zooms, Q/E turn, R/F tilt, Escape quits. A left click selects a unit;
+//! zooms, Q/E turn, R/F tilt, C prints the camera as a `--camera`
+//! argument, Escape quits. A left click selects a unit;
 //! a right click then sends it to the ground point or attacks the enemy
 //! clicked (with Ctrl held, any unit clicked), and H stops it. The unit
 //! under the mouse shows its circle and health bar; with Alt held every
@@ -307,6 +308,14 @@ impl ApplicationHandler for App {
                     && let Some(unit) = gpu.renderer.selected
                 {
                     sim.stop(unit);
+                }
+                // C: prints the camera as a `--camera` argument.
+                if matches!(name.as_str(), "c" | "C") && state == ElementState::Pressed {
+                    let c = &self.camera;
+                    println!(
+                        "--camera {:.0},{:.0},{:.0},{:.1},{:.1}",
+                        c.target[0], c.target[1], c.distance, c.yaw, c.pitch
+                    );
                 }
                 if let Some(action) = Action::of_key(&name) {
                     self.controls.key(action, state == ElementState::Pressed);

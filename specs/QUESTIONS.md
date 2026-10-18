@@ -530,6 +530,11 @@ spec is silent:
   model of the call (`DNCLordaeronUnit` without one). Water is not lit.
 - **Cliffs** take the ground light with their own normals (SPEC-0014
   rule 9).
+- **Ground normals** come from the heights of the neighbouring points
+  without their cliff layers, so the ground beside a cliff is lit as
+  flat (open question 1); with the layers it leaned by about 27 degrees
+  there. Cliff models placed on uneven ground keep the normals of the
+  model.
 - **Shadows** of `war3map.shd` darken the ground and the cliff models
   by the formula of the spec; units, doodads and water are not darkened
   (open question 5). The renderer interpolates the block samples by

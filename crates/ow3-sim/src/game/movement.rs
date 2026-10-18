@@ -33,8 +33,8 @@ use std::rc::Rc;
 
 use ow3_jass::semantics::Value;
 use ow3_jass::vm::{NativeFn, Vm};
-use ow3_math::natives::{atan2, cos, sin};
-use ow3_math::{add, i2r, mul, sub};
+use ow3_math::natives::{arc_cosine, cos, sin, sqrt};
+use ow3_math::{add, div, i2r, mul, sub};
 
 use super::{Object, State, follow, handle, real, string};
 use crate::random::REACTION;
@@ -62,18 +62,6 @@ fn real_of(bits: u32) -> f32 {
     f32::from_bits(bits)
 }
 
-/// `a - b` moved into -pi..pi.
-fn difference(a: u32, b: u32) -> u32 {
-    let mut d = sub(a, b);
-    while real_of(d) > real_of(PI) {
-        d = sub(d, TWO_PI);
-    }
-    while real_of(d) < -real_of(PI) {
-        d = add(d, TWO_PI);
-    }
-    d
-}
-
 /// `angle` moved into 0..2 pi.
 fn normal(angle: u32) -> u32 {
     let mut a = angle;
@@ -84,19 +72,6 @@ fn normal(angle: u32) -> u32 {
         a = sub(a, TWO_PI);
     }
     a
-}
-
-/// `from` turned towards `to` by at most `step` (radians), the shorter
-/// way.
-fn turn_towards(from: u32, to: u32, step: u32) -> u32 {
-    let d = difference(to, from);
-    if real_of(d).abs() <= real_of(step) {
-        normal(to)
-    } else if real_of(d) > 0.0 {
-        normal(add(from, step))
-    } else {
-        normal(sub(from, step))
-    }
 }
 
 /// What a unit was told to do.
@@ -125,11 +100,12 @@ pub struct Moving {
     next_update: u64,
     /// Moving since the heading came within the propulsion window.
     walking: bool,
-    /// The position at the last update, relative to the world's lower
-    /// left corner, the velocity since then and the ticks since then.
+    /// The committed position, relative to the world's lower left corner,
+    /// the velocity in world units per second and the movement clock at
+    /// the commit (SPEC-0018, "Movement arithmetic").
     origin: [u32; 2],
     velocity: [u32; 2],
-    ticks: u32,
+    since: u32,
     /// The step of the facing (SPEC-0013), which grows to its maximum.
     facing_step: u32,
     /// Done: only the facing still turns towards the heading.
@@ -173,6 +149,115 @@ fn absolute(r: [u32; 2], min: [u32; 2]) -> [u32; 2] {
     [sub(r[0], min[0] ^ SIGN), sub(r[1], min[1] ^ SIGN)]
 }
 
+/// 0.0001: shorter clock differences count as none.
+const NO_TIME: u32 = 0x38D1_B717;
+/// Vectors and angles this small count as 0 (0.00001).
+const NO_LENGTH: u32 = 0x3727_C5AC;
+/// Below this speed the stored heading is kept (0.0000004).
+const STILL: u32 = 0x34D6_BF95;
+/// Turns this small count as none (0.0000002).
+const NO_TURN: u32 = 0x3456_BF95;
+
+/// The movement clock time from `since` to `clock`, 0 below 0.0001.
+fn elapsed(clock: u32, since: u32) -> u32 {
+    let e = sub(clock, since);
+    if real_of(e).abs() < real_of(NO_TIME) {
+        0
+    } else {
+        e
+    }
+}
+
+impl Moving {
+    /// The position at movement clock `clock`: the committed one moved on
+    /// by the velocity.
+    fn position(&self, clock: u32) -> [u32; 2] {
+        let e = elapsed(clock, self.since);
+        [
+            add(self.origin[0], mul(self.velocity[0], e)),
+            add(self.origin[1], mul(self.velocity[1], e)),
+        ]
+    }
+
+    /// Commits the position at `clock`.
+    fn commit(&mut self, clock: u32) {
+        self.origin = self.position(clock);
+        self.since = clock;
+    }
+}
+
+/// The angle of vector (`x`, `y`) in `0..2 pi`, through `acos` and `sqrt`
+/// of the engine (SPEC-0018).
+fn angle(x: u32, y: u32) -> u32 {
+    let len = sqrt(add(mul(x, x), mul(y, y)));
+    if real_of(len).abs() <= real_of(NO_LENGTH) {
+        return 0;
+    }
+    let a = arc_cosine(div(x, len));
+    if real_of(a).abs() <= real_of(NO_LENGTH) {
+        0
+    } else if real_of(y) < 0.0 {
+        sub(TWO_PI, a)
+    } else {
+        a
+    }
+}
+
+/// The heading of a unit at an update, and the turn `d` towards `target`
+/// (SPEC-0018, steps 1 and 2).
+fn heading_and_turn(m: &Moving, target: [u32; 2]) -> (u32, u32) {
+    let [vx, vy] = m.velocity;
+    let speed = sqrt(add(mul(vx, vx), mul(vy, vy)));
+    let h = if real_of(speed) < real_of(STILL) {
+        m.heading
+    } else {
+        angle(vx, vy)
+    };
+    let a = angle(sub(target[0], m.origin[0]), sub(target[1], m.origin[1]));
+    let mut d = sub(a, h);
+    if real_of(d) >= 0.0 && real_of(d) > real_of(PI) {
+        d = sub(d, TWO_PI);
+    } else if real_of(d) < 0.0 && -real_of(d) > real_of(PI) {
+        d = add(d, TWO_PI);
+    }
+    if real_of(d).abs() < real_of(NO_TURN) {
+        d = 0;
+    }
+    (h, d)
+}
+
+/// An update of a unit's motion towards `target` (SPEC-0018, steps 1 to
+/// 5): the heading turns by at most `turn_rate`, and the unit moves at
+/// `speed` when it may and the turn was within the propulsion window
+/// `window`. Whether it moves.
+fn motion(
+    m: &mut Moving,
+    target: [u32; 2],
+    may_move: bool,
+    speed: u32,
+    turn_rate: u32,
+    window: u32,
+) -> bool {
+    let (h, d) = heading_and_turn(m, target);
+    let moves = may_move && real_of(d).abs() < real_of(window) && real_of(speed) > 0.0;
+    m.heading = if real_of(d).abs() <= real_of(turn_rate) {
+        add(h, d)
+    } else if real_of(d) > 0.0 {
+        add(h, turn_rate)
+    } else {
+        add(h, turn_rate ^ SIGN)
+    };
+    let [vx, vy] = m.velocity;
+    m.velocity = if moves {
+        let w = [mul(speed, cos(m.heading)), mul(speed, sin(m.heading))];
+        [add(vx, sub(w[0], vx)), add(vy, sub(w[1], vy))]
+    } else {
+        [0, 0]
+    };
+    m.walking = moves;
+    moves
+}
+
 /// Where a widget stands.
 fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
     match state.objects.get(&widget)? {
@@ -187,6 +272,7 @@ fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
 /// follow it. A unit that is moving takes the order at its next update.
 fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2]) -> bool {
     let tick = state.ticks;
+    let clock = state.move_clock;
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let Some(Object::Unit(u)) = state.objects.get(&h) else {
         return false;
@@ -217,7 +303,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             walking: false,
             origin: relative([u.x, u.y], min),
             velocity: [0, 0],
-            ticks: 0,
+            since: clock,
             facing_step: 0,
             arrived: false,
             restart: false,
@@ -271,20 +357,17 @@ pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            let tick = state.ticks;
-            let min = [state.world_bounds[0], state.world_bounds[1]];
+            let (tick, clock) = (state.ticks, state.move_clock);
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             // A walking unit stops at once and stands during the delay.
             if let (true, Some(Object::Unit(u))) = (done, state.objects.get_mut(&h)) {
-                let here = relative([u.x, u.y], min);
                 if let Some(m) = u.movement.as_mut() {
                     m.reaction = Some((tick, delay));
                     m.walking = false;
                     m.restart = false;
                     m.skip = false;
+                    m.commit(clock);
                     m.velocity = [0, 0];
-                    m.origin = here;
-                    m.ticks = 0;
                 }
             }
             done
@@ -312,6 +395,7 @@ pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
 /// `stop` and `holdposition`: the unit stands where it is now.
 fn halt(state: &mut State, h: u32) -> bool {
     state.paths.remove(&h);
+    let clock = state.move_clock;
     let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
         return false;
     };
@@ -322,6 +406,7 @@ fn halt(state: &mut State, h: u32) -> bool {
     if let Some(m) = u.movement.as_mut() {
         m.arrived = true;
         m.walking = false;
+        m.commit(clock);
         m.velocity = [0, 0];
     }
     true
@@ -383,29 +468,26 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     );
 }
 
-/// One tick of motion of every moving unit, before the timers.
+/// One tick of motion of every moving unit, before the timers: the
+/// movement clock advances and each unit stands at its committed position
+/// moved on by its velocity (SPEC-0018).
 pub(super) fn step(state: &mut State) {
-    let min = [state.world_bounds[0], state.world_bounds[1]];
+    state.move_clock = add(state.move_clock, crate::timers::TICK);
+    let (min, clock) = (
+        [state.world_bounds[0], state.world_bounds[1]],
+        state.move_clock,
+    );
     for h in &state.moving {
         let Some(Object::Unit(u)) = state.objects.get_mut(h) else {
             continue;
         };
-        let Some(m) = u.movement.as_mut() else {
+        let Some(m) = u.movement.as_ref() else {
             continue;
         };
-        if m.arrived || !m.walking {
+        if m.velocity == [0, 0] {
             continue;
         }
-        if std::mem::take(&mut m.skip) {
-            continue;
-        }
-        m.ticks += 1;
-        let elapsed = mul(i2r(m.ticks as i32), crate::timers::TICK);
-        let r = [
-            add(m.origin[0], mul(m.velocity[0], elapsed)),
-            add(m.origin[1], mul(m.velocity[1], elapsed)),
-        ];
-        let [x, y] = absolute(r, min);
+        let [x, y] = absolute(m.position(clock), min);
         u.x = x;
         u.y = y;
     }
@@ -438,7 +520,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let Some(mut m) = u.movement else {
             continue;
         };
-        let pos = [u.x, u.y];
         let class = crate::path::size_class(data.map_or(0, |t| t.collision));
         if !alive {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -451,6 +532,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             continue;
         }
         m.next_update = tick + UPDATE;
+        // The position is committed first (SPEC-0018).
+        m.commit(state.move_clock);
+        let here = m.origin;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
         let waiting = m.reaction.is_some_and(|(from, delay)| {
@@ -463,6 +547,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         if !m.arrived && !waiting {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
+                m.velocity = [0, 0];
                 m.skip = true;
             }
             // An attacker walks to its goal point, where the target stood
@@ -472,7 +557,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
-                        let here = relative(pos, min);
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             _ => {
@@ -496,28 +580,27 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 }
             }
             if !m.arrived {
-                let here = relative(pos, min);
                 let goal = relative(m.target, min);
                 let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
                 // The squared distance in cells.
                 let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
                 let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
-                let direction = atan2(dy, dx);
-                m.origin = here;
-                m.ticks = 0;
                 if let Order::Attack { target } = m.order {
                     if in_reach {
-                        // In range: stand, turn to the target and strike.
-                        m.walking = false;
-                        m.velocity = [0, 0];
-                        if real_of(difference(direction, m.heading)).abs() < ATTACK_ANGLE {
+                        // In range: stand, turn to the target and strike
+                        // once the turn left is below 0.2 radians.
+                        let (h, d) = heading_and_turn(&m, goal);
+                        if real_of(d).abs() < ATTACK_ANGLE {
+                            m.heading = h;
+                            m.walking = false;
+                            m.velocity = [0, 0];
                             m.arrived = true;
                             begin_attack = Some(target);
                         } else {
-                            m.heading = turn_towards(m.heading, direction, turn_rate);
+                            motion(&mut m, goal, false, speed, turn_rate, window);
                         }
                     } else {
-                        walk(&mut m, direction, window, turn_rate, speed);
+                        motion(&mut m, goal, true, speed, turn_rate, window);
                     }
                 } else {
                     // Round the obstacles of the pathing map (SPEC-0020), or
@@ -552,26 +635,32 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                     match steer {
                         follow::Steer::Walk(to) => {
-                            let (dx, dy) = (sub(to[0], here[0]), sub(to[1], here[1]));
-                            walk(&mut m, atan2(dy, dx), window, turn_rate, speed);
+                            motion(&mut m, to, true, speed, turn_rate, window);
                         }
-                        follow::Steer::Stand => {
-                            m.walking = false;
-                            m.velocity = [0, 0];
+                        // No motion, but the heading turns (SPEC-0020).
+                        follow::Steer::Stand(to) => {
+                            motion(&mut m, to, false, speed, turn_rate, window);
                         }
                         follow::Steer::Arrived => {}
                     }
                 }
             }
         }
+        // After a new order the first tick of motion is lost (SPEC-0019):
+        // the clock of the commit is one tick ahead.
+        if m.skip && m.walking {
+            m.skip = false;
+            m.since = add(state.move_clock, crate::timers::TICK);
+        }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
-        let (facing, step) = super::facing::follow(u.facing, m.heading, m.facing_step, orient);
+        let heading = normal(m.heading);
+        let (facing, step) = super::facing::follow(u.facing, heading, m.facing_step, orient);
         u.facing = facing;
         m.facing_step = step;
-        let facing_done = u.facing == m.heading;
+        let facing_done = u.facing == heading;
         if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;
         } else {
@@ -640,20 +729,6 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
 
 /// 0.001, the slack of the range test.
 const RANGE_SLACK: u32 = 0x3A83_126F;
-
-/// The start rule of SPEC-0018 at an update: the heading turns towards
-/// `direction`, and the unit walks along the new heading once the heading
-/// before was within the propulsion window.
-fn walk(m: &mut Moving, direction: u32, window: u32, turn_rate: u32, speed: u32) {
-    let within = real_of(difference(direction, m.heading)).abs() < real_of(window);
-    m.heading = turn_towards(m.heading, direction, turn_rate);
-    m.walking |= within;
-    m.velocity = if m.walking {
-        [mul(speed, cos(m.heading)), mul(speed, sin(m.heading))]
-    } else {
-        [0, 0]
-    };
-}
 
 /// The player that never fights (SPEC-0019: not an enemy of anyone).
 const NEUTRAL_PASSIVE: i32 = 15;

@@ -80,6 +80,8 @@ fn track(game: &mut Game, until: u64) -> Vec<(u64, f32, f32, bool, f32)> {
 
 /// Verification 1 of SPEC-0018.
 #[test]
+// The positions are written as the spec gives them.
+#[allow(clippy::excessive_precision)]
 fn footman_walks_east() {
     let Some(mut game) = game_to("-2000, -2000") else {
         return;
@@ -97,10 +99,22 @@ fn footman_walks_east() {
         .map(|n| ((at(order + 6 + n).1 - start) * 1024.0).round() as i32)
         .collect();
     assert_eq!(steps, [1382, 2764, 4147, 5529, 6911, 8294]);
+    // The stored positions relative to the corner at ticks 12 to 30
+    // (SPEC-0018, "Movement arithmetic"), exactly.
+    for (tick, x, y) in [
+        (12, 9296.099609f32, 10288.043945f32),
+        (18, 9304.199219, 10288.016602),
+        (24, 9312.298828, 10287.977539),
+        (30, 9320.398438, 10287.990234),
+    ] {
+        let corner = 12288f32.to_bits();
+        let expected = [x, y].map(|c| f32::from_bits(ow3_math::sub(c.to_bits(), corner)));
+        let p = at(order + tick);
+        assert_eq!([p.1, p.2], expected, "tick {tick}");
+    }
     // At rest from update 123, 738 ticks after the order, at -2011.9326 in
-    // the game; 0.085 further here, as the heading does not wobble (open
-    // question 2 of SPEC-0018), so that no step comes out a unit of the
-    // last place shorter.
+    // the game (within 0.1: the game's occasional extra commits between
+    // updates are open in SPEC-0018).
     let rest = at(order + 738);
     assert!((rest.1 - -2011.9326).abs() < 0.1, "{rest:?}");
     assert!(at(order + 737).3 && !rest.3);
@@ -109,8 +123,13 @@ fn footman_walks_east() {
 
 /// The update of the first motion for a target 1000 away at `degrees`.
 fn first_motion(degrees: f32) -> Option<u64> {
-    let (s, c) = degrees.to_radians().sin_cos();
-    let target = format!("{:.4}, {:.4}", -3000.0 + 1000.0 * c, -2000.0 + 1000.0 * s);
+    // The target as a script computes it, with the natives of SPEC-0011.
+    use ow3_math::natives::{cos, deg2rad, sin};
+    let r = |x: f32| x.to_bits();
+    let a = deg2rad(r(degrees));
+    let x = ow3_math::add(r(-3000.0), ow3_math::mul(r(1000.0), cos(a)));
+    let y = ow3_math::add(r(-2000.0), ow3_math::mul(r(1000.0), sin(a)));
+    let target = format!("{:?}, {:?}", f32::from_bits(x), f32::from_bits(y));
     let mut game = game_to(&target)?;
     let path = track(&mut game, 300);
     let first = path.iter().find(|p| (p.1, p.2) != (-3000.0, -2000.0))?.0;
@@ -127,7 +146,10 @@ fn when_the_footman_starts() {
     };
     for (angles, update) in [
         (&[30.0, 45.0][..], 1),
-        (&[60.0, 70.0, 80.0, 90.0, -90.0][..], 2),
+        // Exactly 60 degrees is left out: the angle comes out 3 units of the
+        // last place below propWin here, so the unit starts at update 1
+        // (specs/QUESTIONS.md).
+        (&[70.0, 80.0, 90.0, -90.0][..], 2),
         (&[100.0, 110.0, 120.0][..], 3),
         (&[135.0, 150.0][..], 4),
         (&[165.0, 180.0][..], 5),

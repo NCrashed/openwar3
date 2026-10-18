@@ -615,22 +615,23 @@ fn rest(track: &[(u32, f32, f32)]) -> ((f32, f32), u32) {
 }
 
 /// SPEC-0020, verification: where the units of PF1 and PF2 come to rest
-/// round their walls, and their last tick of motion (the maps print every
-/// 6 ticks after the start, so within 6). Collision 0 and 40 are open in
-/// the spec; the PF2 footman and collision 64 end one update early after
-/// their block (specs/QUESTIONS.md) and are left out.
+/// round their walls, within 0.1 with the movement arithmetic of
+/// SPEC-0018, and their last tick of motion (the maps print every 6 ticks
+/// after the start, so within 6).
 #[test]
 fn paths_round_walls() {
     // (map, unit, rest x, rest y, last moving tick, tolerance)
     let cases = [
-        ("c-PF1.w3x", 0, -1507.54, -6007.75, 989, 1.5),
-        ("c-PF1.w3x", 2, -1503.87, 4.38, 851, 1.5),
-        ("c-PF1.w3x", 3, -1507.72, 3010.23, 1127, 3.4),
-        ("c-PF2.w3x", 0, -1506.70, -8894.89, 995, 1.5),
-        ("c-PF2.w3x", 1, -1509.09, -6892.18, 983, 1.5),
-        ("c-PF2.w3x", 3, -1507.10, -2893.71, 1031, 1.5),
-        ("c-PF2.w3x", 5, -1507.68, 1107.82, 1031, 1.5),
-        ("c-PF2.w3x", 9, -1505.94, 9105.19, 791, 1.5),
+        ("c-PF1.w3x", 0, -1507.54, -6007.75, 989, 0.1),
+        ("c-PF1.w3x", 2, -1503.87, 4.38, 851, 0.1),
+        ("c-PF1.w3x", 3, -1507.72, 3010.23, 1127, 0.1),
+        ("c-PF2.w3x", 0, -1506.70, -8894.89, 995, 0.1),
+        ("c-PF2.w3x", 1, -1509.09, -6892.18, 983, 0.1),
+        ("c-PF2.w3x", 3, -1507.10, -2893.71, 1031, 0.1),
+        ("c-PF2.w3x", 5, -1507.68, 1107.82, 1031, 0.1),
+        ("c-PF2.w3x", 6, -1507.75, 3108.23, 1067, 0.1),
+        ("c-PF2.w3x", 8, -1509.22, 7108.35, 1007, 0.1),
+        ("c-PF2.w3x", 9, -1505.94, 9105.19, 791, 0.1),
     ];
     for map in ["c-PF1.w3x", "c-PF2.w3x"] {
         let Some(output) = run(map, 8.0) else {

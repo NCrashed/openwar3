@@ -275,6 +275,18 @@ fn sqrt_core(x: u32) -> u32 {
     mul(t, scale)
 }
 
+/// The square root behind `SquareRoot`, without its rule for arguments
+/// below 0.001 (0 for zero and negative patterns), as the movement code
+/// uses it (SPEC-0018).
+pub fn sqrt(x: u32) -> u32 {
+    sqrt_core(x)
+}
+
+/// The arc cosine behind `Acos`, without its range check (SPEC-0018).
+pub fn arc_cosine(x: u32) -> u32 {
+    arc(x, true)
+}
+
 /// `SquareRoot(x)`: 0 below 0.001 in magnitude and for negative `x`.
 pub fn square_root(x: u32) -> u32 {
     if tiny(x) || real(x) < 0.0 {

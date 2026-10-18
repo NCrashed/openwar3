@@ -47,8 +47,10 @@ pub struct Follow {
     /// The segment goal in cells, and whether it is the order point.
     goal: [u32; 2],
     final_goal: bool,
-    /// The local path in cells and the point walked to.
+    /// The local path in cells, whether it ends short of its goal, and the
+    /// point walked to.
     local: Vec<[u32; 2]>,
+    partial: bool,
     target: usize,
     /// What the next update must do first.
     next: Next,
@@ -71,8 +73,8 @@ enum Next {
 pub enum Steer {
     /// Turn and move towards this point (relative to the world corner).
     Walk([u32; 2]),
-    /// No motion and no turn.
-    Stand,
+    /// No motion, the heading turning towards this point.
+    Stand([u32; 2]),
     /// At the order point.
     Arrived,
 }
@@ -142,6 +144,7 @@ pub fn steer(
             final_goal: true,
             local: Vec::new(),
             target: 0,
+            partial: false,
             next: Next::Search,
             hold_until: 0,
         };
@@ -155,26 +158,39 @@ pub fn steer(
         follow.take_segment(order_cells);
         follow.next = Next::Search;
     }
+    let segment_goal = to_world(follow.goal);
     if follow.next == Next::Search {
         if tick < follow.hold_until {
-            return Steer::Stand;
+            return Steer::Stand(segment_goal);
         }
         let found = path::local(grid, at, follow.goal, class, LOCAL_LIMIT);
         if found.iterations >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;
-        follow.target = 1.min(follow.local.len() - 1);
+        follow.partial = !found.reached;
+        // A search that met nothing in the way walks straight to the end.
+        follow.target = if found.clear {
+            follow.local.len() - 1
+        } else {
+            1.min(follow.local.len() - 1)
+        };
         follow.next = Next::Walk;
     }
     // Arrival at the point walked to.
     let last = follow.local.len() - 1;
     if follow.target == last && (last == 0 || close(at, follow.local[last])) {
+        let reached = follow.local[last];
+        if follow.partial {
+            // The end of a path that did not get there: search again.
+            follow.next = Next::Search;
+            return Steer::Stand(segment_goal);
+        }
         if follow.final_goal {
             return Steer::Arrived;
         }
         follow.next = Next::Segment;
-        return Steer::Stand;
+        return Steer::Stand(to_world(reached));
     }
     if close(at, follow.local[follow.target]) {
         follow.target = farthest_seen(grid, at, &follow.local, follow.target, class);
@@ -183,7 +199,7 @@ pub fn steer(
     if !grid.ahead_free(at, target, class) {
         follow.next = Next::Search;
         follow.local.clear();
-        return Steer::Stand;
+        return Steer::Stand(segment_goal);
     }
     Steer::Walk(to_world(target))
 }

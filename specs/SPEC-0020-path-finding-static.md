@@ -264,9 +264,12 @@ the high-level search from its position to the order point. Then:
    becomes the current waypoint. If the sum never reaches 10.0, the
    segment goal is the order point.
 2. **Local path.** A local search from the unit's position to the
-   segment goal (class of the unit, limit 700). The unit's **target**
-   is the first point of the path after the start point; it is not
-   shortcut yet.
+   segment goal (class of the unit, limit 700). If any cell the search
+   tested on its way was not passable (for a step or a ring check of an
+   expanded cell), the unit's **target** is the first point of the path
+   after the start point, and it is not shortcut yet. If the search met
+   no unpassable cell at all, the target is the last point of the path
+   (the unit walks straight to it).
 3. **Each update**, before moving:
    - **Arrival at the target**: if the squared distance in cells from
      the unit to the target is at most `0.49 * 0.49` (engine
@@ -277,7 +280,11 @@ the high-level search from its position to the order point. Then:
      goal is a waypoint, the unit **stands still for this update**
      (no motion, no turn), and at the next update a new segment goal is
      taken (step 1 from the reached waypoint) and searched (step 2). If
-     it is the order point, the order ends (SPEC-0018 arrival).
+     it is the order point, the order ends (SPEC-0018 arrival). If it is
+     the end of a local path that did not reach its goal (the search
+     ended at the closest node), the unit stands still for this update
+     and searches again from its position to the same segment goal at
+     the next update.
    - **Look-ahead check**: take the cell of the unit, `c0`, and the cell
      of the point one cell length ahead towards the target (the target
      itself when it is closer than one cell), `c1`. The cells of the
@@ -287,6 +294,12 @@ the high-level search from its position to the order point. Then:
      drops its local path and at the next update searches again from
      its position to the same segment goal (step 2).
    - Otherwise it turns and moves towards the target by SPEC-0018.
+   - **At every update at which the unit stands still** because of one
+     of the rules above, its heading still turns towards a point by the
+     turning rule of SPEC-0018, without motion: towards the segment goal
+     after a block, a throttled search or a partial path end, and
+     towards the reached last point of the local path at the end of a
+     segment.
 4. **Search throttle.** The game counts unit update cycles (one every 6
    ticks). After a search that took 64 or more iterations, the same
    unit cannot search again until 10 cycles (60 ticks) after it; until
@@ -319,32 +332,30 @@ first one that cannot be seen.
   in the tests this happened when a unit cut close past the corner of a
   wall (footman, knight, collision 8, collision 64, abomination).
 - A unit with collision 0 walked straight to the first segment goal
-  from its first update instead of to the first point of its local path
-  (open question 2).
+  from its first update: its search met no unpassable cell (the
+  straight-walk rule of step 2).
 
 ## Open questions
 
 1. Which iteration limit the high-level search uses: the unit's path
    object held 400 and a second path object 5000; in the tests both
    gave the same lists.
-2. Collision 0 (see Edge cases).
+2. (Resolved: collision 0, see step 2.)
 3. What happens when a unit is blocked again soon after a block: the
    game keeps a per-path counter, set at the first block to 2 or to 7
    or 8 (from a random number, so the block may draw from a random
    generator; which one is not known), and does something not yet
    observed when it runs down. Also which point decides between 2 and
    7/8 (a distance of 12 cells is involved).
-4. Budget shared between units: static analysis shows per-category
-   budgets of heap iterations per pair of update cycles (local searches
-   1100) and a queue of waiting paths. Not tested with several units
-   searching at once.
+4. (Moved: the budget shared between units is SPEC-0021.)
 5. Arrival at a high-level waypoint itself (as opposed to the end of a
    local path) was never seen to matter.
-6. Units, buildings and doodads as obstacles, cliffs and water,
-   unreachable targets, iteration limits being hit, warps.
-7. An abomination blocked next to a wall turned only 11 degrees at its
-   first update after the block instead of `turnRate` (22.9); the
-   difference stayed below 3.4 world units.
+6. Buildings and doodads as obstacles, cliffs and water, unreachable
+   targets, iteration limits being hit, warps. Units as obstacles are
+   SPEC-0021.
+7. (Resolved: the abomination that turned only 11 degrees after a
+   block had already turned towards its segment goal at the update of
+   the block, see "At every update at which the unit stands still".)
 
 ## Sources
 
@@ -409,10 +420,10 @@ high-level list (blocks, goal first) `(168.5625,52.9375) (164.75,55.75)
 (162.75,57.75) (162.75,58.75) (160.75,58.75) (152.75,56.75)
 (152.9375,51.375)`.
 
-An implementation following this spec reproduced all these trajectories
-within 1.5 world units at every tick, except: collision 0 (open
-question 2); collision 40, where the game's unit stood at x = -1920.05,
-0.05 left of a cell boundary that the model, 0.07 further right, did not
-reach, so only the game was blocked at tick 604 (the small heading
-changes of SPEC-0018 decide such cases); and the abomination (open
-question 7, within 3.4).
+An implementation following this spec and the movement arithmetic of
+SPEC-0018 reproduced these trajectories within 0.1 world units at
+every tick (collision 8, 40 and 0 run alone: largest differences 0.013,
+0.030 and 0.016). With straight-line movement in ordinary floating
+point instead, the differences stayed within 1.5 except for the
+collision 40 unit, whose block at tick 604 depends on 0.05 world units
+next to a cell boundary.

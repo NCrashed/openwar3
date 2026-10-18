@@ -327,6 +327,9 @@ pub struct Found {
     /// closest to it.
     pub reached: bool,
     pub iterations: u32,
+    /// Whether the search tested no cell that was not passable (local
+    /// search only; the unit then walks straight to the end, SPEC-0020).
+    pub clear: bool,
 }
 
 /// The cell of a point.
@@ -347,8 +350,10 @@ pub fn local(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Fo
             points: vec![s, g],
             reached: true,
             iterations: 0,
+            clear: true,
         };
     }
+    let mut clear = true;
     let mut nodes: HashMap<(i32, i32), Node<(i32, i32)>> = HashMap::new();
     let mut heap = Heap::new();
     let distance = |c: (i32, i32)| {
@@ -379,10 +384,11 @@ pub fn local(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Fo
             }
             for (dx, dy) in NEIGHBOURS {
                 let n = (c.0 + dx, c.1 + dy);
-                if !(0..grid.width).contains(&n.0)
-                    || !(0..grid.height).contains(&n.1)
-                    || !grid.step(c, n, class)
-                {
+                if !(0..grid.width).contains(&n.0) || !(0..grid.height).contains(&n.1) {
+                    continue;
+                }
+                if !grid.step(c, n, class) {
+                    clear = false;
                     continue;
                 }
                 let cost = node.g + if dx != 0 && dy != 0 { 21 } else { 15 };
@@ -437,6 +443,7 @@ pub fn local(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Fo
         points,
         reached,
         iterations,
+        clear,
     }
 }
 
@@ -781,6 +788,7 @@ pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Fo
             points: vec![to_blocks(s), to_blocks(g)],
             reached: true,
             iterations: 0,
+            clear: false,
         });
     }
     search.nodes.insert(
@@ -858,6 +866,7 @@ pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Fo
         points,
         reached,
         iterations,
+        clear: false,
     })
 }
 

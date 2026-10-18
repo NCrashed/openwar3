@@ -430,23 +430,20 @@ the spec is silent:
   straight. The high-level search stops after 400 iterations (open
   question 1); a unit whose block is not free walks straight to the
   order point; a local path that cannot leave its start cell counts as
-  walked; the search budgets shared between units (open question 4) and
-  repeated blocks (open question 3) are left out. Against the PF maps
-  the units of the spec's tables come to rest within its tolerances,
-  except two: the PF2 footman and the collision 64 unit are blocked at
-  the same tick and place as in the game and take the same new path,
-  but end it one update early (520 and 574 instead of 526 and 580) and
-  rest 1.9 and 2.3 away. The first update of a unit ordered when it is
-  created came 4 ticks after the order in the PF maps, as the spec
-  says; the phase rule behind it (SPEC-0018) is still open.
-- **Straight at the target.** The heading points exactly at the target;
-  the game's small wobble (open question 2) makes some steps a unit of
-  the last place shorter, so a footman walking 1000 east rests at
-  -2011.848 here and at -2011.933 in the game: 0.085 apart, beyond the
-  0.02 of verification 1. Each step is truncated to 1/1024 of the
-  stored coordinate, so a heading slightly off the line drops whole
-  units of the last place (up to 0.001 an update), more than the 0.0002
-  that the spec estimates.
+  walked; repeated blocks (open question 3) are left out. Against the
+  PF maps the ten units of the spec's tables come to rest within 0.025
+  of the game. The first update of a unit ordered when it is created
+  came 4 ticks after the order in the PF maps, as the spec says; the
+  phase rule behind it (SPEC-0018) is still open.
+- **Movement arithmetic** (SPEC-0018). The movement clock starts at 0
+  with the first tick of the game (open question 2); the extra commits
+  between updates are left out, so the footman of verification 1 rests
+  within 0.1 of the game while its first 116 ticks are exact. A target
+  at exactly 60 degrees from the heading comes out 3 units of the last
+  place below `propWin` 60 (`mul(60, pi/180)`), so the footman starts
+  at update 1, where the game started at update 2: either the game's
+  test target lay a little farther round, or `propWin` reaches radians
+  another way.
 - **Facing brake.** The tables of `SPEC-0013-facing-brake.tsv`, one per
   `orientInterp`, are interpolated linearly in the engine arithmetic
   (log-log in the spec, which needs logarithms the simulation does not

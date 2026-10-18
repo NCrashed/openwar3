@@ -411,6 +411,9 @@ pub struct State {
     /// Where ground units may walk (SPEC-0020), and the paths units
     /// follow, by handle.
     grid: Option<crate::path::Grid>,
+    /// The clock of the movement system: 0.005 added every tick in the
+    /// engine arithmetic (SPEC-0018).
+    move_clock: u32,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
@@ -461,6 +464,7 @@ impl State {
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             grid: None,
+            move_clock: 0,
             paths: std::collections::BTreeMap::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),

@@ -739,3 +739,53 @@ fn searches_share_a_budget() {
         "{late:?} after {early:?}"
     );
 }
+
+/// SPEC-0019, verification 5 (c-CH1, rows 1 and 4): chases by paths. The
+/// map counts ticks 2 lower than the spec's table (as c-UO2 shows), so
+/// its ticks are compared with the table's less 2. Row 1: swings from the
+/// updates 322 and 688, chase resumed with first motion at 533 and 893,
+/// one update standing at 598 and 958, damage at 427 (428 here) and 788;
+/// row 4: a swing from 706, damage at 806.
+#[test]
+fn chases_by_paths() {
+    let Some(output) = run("c-CH1.w3x", 6.0) else {
+        return;
+    };
+    let tracks = tracks(&output);
+    // First tick without motion and first tick with motion again, in the
+    // spec's ticks.
+    let stands = |unit: u32| -> Vec<(u32, u32)> {
+        let mut out = Vec::new();
+        let mut since = None;
+        for w in tracks[&unit].windows(2) {
+            let still = (w[0].1, w[0].2) == (w[1].1, w[1].2);
+            match (still, since) {
+                (true, None) => since = Some(w[1].0 + 2),
+                (false, Some(s)) => {
+                    out.push((s, w[1].0 + 2));
+                    since = None;
+                }
+                _ => {}
+            }
+        }
+        out
+    };
+    let row1 = stands(2);
+    for stand in [(323, 533), (599, 605), (689, 893), (959, 965)] {
+        assert!(row1.contains(&stand), "{stand:?} not in {row1:?}");
+    }
+    assert!(stands(0).contains(&(707, 911)), "{:?}", stands(0));
+    let damage: Vec<(u32, u32)> = output
+        .iter()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(' ').collect();
+            (f.len() >= 3 && f[0] == "D")
+                .then(|| (f[2].parse().unwrap(), f[1].parse::<u32>().unwrap() + 2))
+        })
+        .collect();
+    assert!(
+        damage.contains(&(2, 428)) && damage.contains(&(2, 788)),
+        "{damage:?}"
+    );
+    assert!(damage.contains(&(0, 806)), "{damage:?}");
+}

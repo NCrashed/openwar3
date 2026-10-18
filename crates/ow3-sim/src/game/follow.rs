@@ -227,6 +227,9 @@ pub struct Walker {
     pub class: u8,
     /// Its squared speed at the start of the update.
     pub squared_speed: u32,
+    /// For an attacker, its target's position now (relative to the world
+    /// corner) and its range in cells (SPEC-0019).
+    pub chase: Option<([u32; 2], u32)>,
 }
 
 /// What `walker` does at this update on its way to its order point;
@@ -309,7 +312,13 @@ fn decide(
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
         }
-        let found = path::local(&seen, at, follow.goal, class, LOCAL_LIMIT);
+        let found = match walker.chase {
+            // A chase searches to where its target is now, up to its range.
+            Some((target, range)) if follow.final_goal => {
+                path::local_near(&seen, at, to_cells(target), class, LOCAL_LIMIT, range)
+            }
+            _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
+        };
         budget.used += found.iterations;
         if budget.used >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;

@@ -129,6 +129,9 @@ pub struct Weapon {
     /// `cool1` and `dmgpt1` in seconds, `rangeN1`, as reals.
     pub cooldown: u32,
     pub damage_point: u32,
+    /// `backSw1`: seconds from the damage to the end of the swing, as a
+    /// real (SPEC-0019).
+    pub backswing: u32,
     pub range: u32,
     /// The JASS attack type of `atkType1` (1 for `normal`, 2 `pierce`,
     /// ..., 0 `spells`).
@@ -366,6 +369,7 @@ impl ObjectData {
             "unitWeapID",
             &[
                 "dmgplus1", "dice1", "sides1", "cool1", "dmgpt1", "rangeN1", "atkType1", "acquire",
+                "backSw1",
             ],
         )? {
             let Some(unit) = data.units.get_mut(&id) else {
@@ -382,6 +386,7 @@ impl ObjectData {
                     sides: int(&values[2]).unwrap_or(0),
                     cooldown: real(values[3].as_ref()),
                     damage_point: real(values[4].as_ref()),
+                    backswing: real(values[8].as_ref()),
                     range: real(values[5].as_ref()),
                     attack_type,
                 });
@@ -535,6 +540,7 @@ impl ObjectData {
                 weapon.sides = int(b"ua1s", weapon.sides);
                 weapon.cooldown = def.number(b"ua1c").unwrap_or(weapon.cooldown);
                 weapon.damage_point = def.number(b"udp1").unwrap_or(weapon.damage_point);
+                weapon.backswing = def.number(b"ubs1").unwrap_or(weapon.backswing);
                 weapon.range = def.number(b"ua1r").unwrap_or(weapon.range);
                 weapon
             });

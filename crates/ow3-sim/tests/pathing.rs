@@ -133,3 +133,24 @@ fn high_level_list_of_pf1() {
         );
     }
 }
+
+/// The chase path of SPEC-0019, verification 5 (first row, tick 20): on
+/// open ground a footman (class 1, `rangeN1` 90) at (305.875, 290.25)
+/// chasing a target at (321.5, 277.75) walks 14 cell steps to the centre
+/// (319.5, 278.5), the first cell within 90 / 32 of the target.
+#[test]
+fn chase_path_ends_in_range() {
+    let grid = Grid::from_cells(768, 768, vec![true; 768 * 768]);
+    let found = ow3_sim::path::local_near(
+        &grid,
+        point(305.875, 290.25),
+        point(321.5, 277.75),
+        1,
+        700,
+        (90.0f32 / 32.0).to_bits(),
+    );
+    let got: Vec<[f32; 2]> = found.points.iter().map(|p| p.map(f32::from_bits)).collect();
+    assert_eq!(got.len(), 15, "{got:?}");
+    assert_eq!(*got.last().unwrap(), [319.5, 278.5], "{got:?}");
+    assert!(found.clear && found.reached);
+}

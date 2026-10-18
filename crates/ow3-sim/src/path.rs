@@ -521,8 +521,40 @@ fn centre(c: (i32, i32)) -> [u32; 2] {
 /// The local search from `s` to `g` (cells) for a unit of class `class`,
 /// with at most `limit` iterations.
 pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Found {
+    search(grid, s, g, class, limit, None)
+}
+
+/// The local search of a chase (SPEC-0019): to `g`, but ending at the
+/// first cell removed from the heap whose centre is within `range`
+/// (cells) of `g`, at that centre.
+pub fn local_near(
+    grid: &impl Cells,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+    range: u32,
+) -> Found {
+    search(grid, s, g, class, limit, Some(range))
+}
+
+fn search(
+    grid: &impl Cells,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+    within: Option<u32>,
+) -> Found {
+    let near = |c: (i32, i32)| {
+        within.is_some_and(|r| {
+            let p = centre(c);
+            let (dx, dy) = (sub(p[0], g[0]), sub(p[1], g[1]));
+            real(add(mul(dx, dx), mul(dy, dy))) <= real(mul(r, r))
+        })
+    };
     let (start, goal) = (cell_of(s), cell_of(g));
-    if start == goal {
+    if within.is_none() && start == goal {
         return Found {
             points: vec![s, g],
             reached: true,
@@ -549,12 +581,18 @@ pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32)
     let (mut closest, mut best) = (start, distance(start));
     let mut iterations = 0;
     let mut reached = false;
+    let mut end_near = None;
     while let Some((_, (c, g_then))) = heap.pop() {
         iterations += 1;
         let node = nodes[&c];
         // An entry left behind when the cell got a cheaper cost.
         if node.g == g_then && !node.closed {
             nodes.get_mut(&c).unwrap().closed = true;
+            if near(c) {
+                // A chase's path ends near the target.
+                end_near = Some(c);
+                break;
+            }
             if c == goal {
                 reached = true;
                 break;
@@ -601,7 +639,17 @@ pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32)
             break;
         }
     }
-    let end = if reached { goal } else { closest };
+    let end = match end_near {
+        Some(c) => {
+            // PROVISIONAL: SPEC-0019 counts such a path as clear; that was
+            // seen on open ground, and a chase round a wall would walk into
+            // it, so here only a search that met nothing in the way is.
+            reached = true;
+            c
+        }
+        None if reached => goal,
+        None => closest,
+    };
     let mut cells = vec![end];
     while let Some(parent) = nodes[cells.last().unwrap()].parent {
         cells.push(parent);
@@ -613,7 +661,7 @@ pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32)
         .enumerate()
         .map(|(i, &c)| match i {
             0 => s,
-            _ if i == last && reached => g,
+            _ if i == last && reached && end_near.is_none() => g,
             _ => centre(c),
         })
         .collect();

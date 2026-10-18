@@ -475,17 +475,19 @@ the spec is silent:
 - **Orders** follow SPEC-0019: `move`, `patrol`, `attack` and `smart` to
   a point, `attack` on a target, `stop` and `holdposition`. The reaction
   delay applies to `attack` on a target only (open question 1).
-- **Chasing** (SPEC-0019 open question 2): the goal point is the
-  target's position at the update the countdown runs out, without the
-  lag of 2 to 60 ticks or the direct following that depend on path
-  finding; a moved target does not renew the goal at once. After a hit
-  the attacker chases a target out of reach at once (the backswing is
-  not modelled) and without the pause 66 ticks later. A unit that
-  reaches its goal before its weapon is ready stands until `cool1` after
-  the last hit. The attacker walks to its goal point as a point order
-  of SPEC-0020 and SPEC-0021 would, with a new path at every new goal,
-  and stops in range of the goal point by SPEC-0019; how the game's
-  chase uses its paths has not been compared with the game.
+- **Chasing** (SPEC-0019 open question 2). The swing starts with the
+  target or the goal point within the range test, so the goal's limit
+  is the target's 137 for a footman against a peasant, where the game
+  stopped somewhere between 134.65 and 136.68. A path that ends within
+  the attack range counts as clear only when its search met nothing in
+  the way: the spec counts every such path as clear, which was seen on
+  open ground, but then an attacker chasing round a wall walks into it
+  and searches again for ever. A moved target does not renew the goal
+  at once. A unit that reaches its goal before its weapon is ready
+  stands until `cool1` after the last hit. Against c-CH1 (rows 1 and 4
+  of verification 5, the map counting ticks 2 lower) the swings,
+  resumptions and standing updates come at the spec's ticks, the
+  damage too except the first of row 1, one tick late (428 for 427).
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.

@@ -25,11 +25,13 @@
 //! (`game::follow`). Positions, headings and velocities follow the
 //! movement arithmetic of SPEC-0018, and all units share one update cycle.
 //!
-//! PROVISIONAL: attackers walk to their goal points by the same paths, a
-//! new one at every new goal (SPEC-0019 has not compared chases with path
-//! finding); the extra commits between updates (SPEC-0018 open question
-//! 2) are left out; the arrival test compares squared distances in cells
-//! (open question 1).
+//! Attackers walk to their goal points by the same paths, a new one at
+//! every new goal, searched to the target up to the attack range
+//! (SPEC-0019).
+//!
+//! PROVISIONAL: the extra commits between updates (SPEC-0018 open
+//! question 2) are left out; the arrival test compares squared distances
+//! in cells (open question 1).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -135,6 +137,8 @@ pub struct Moving {
     /// Updates until an attacker renews its goal point; `None` before
     /// the first goal of a chase.
     chase: Option<u32>,
+    /// The next goal of a resumed chase comes with an update standing.
+    renew_stands: bool,
 }
 
 impl Moving {
@@ -306,6 +310,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: m.walking || m.restart,
             reaction: None,
             chase: None,
+            renew_stands: false,
             ..m
         },
         None => Moving {
@@ -324,6 +329,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             skip: false,
             reaction: None,
             chase: None,
+            renew_stands: false,
         },
     };
     // A new path is searched at the next update (SPEC-0020).
@@ -536,6 +542,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let range = t.weapon.as_ref().map_or(0, |w| w.range);
             add(mul(range, CELL), mul(t.collision, CELL))
         });
+        let range_cells = mul(
+            data.and_then(|t| t.weapon.as_ref()).map_or(0, |w| w.range),
+            CELL,
+        );
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
@@ -576,9 +586,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // when the goal was last renewed, and is in reach when the
             // goal is.
             let mut in_reach = false;
+            let mut renewed = false;
+            let mut target_now = [0, 0];
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
+                        target_now = relative(at, min);
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             _ => {
@@ -586,6 +599,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.chase = Some(countdown(here, relative(at, min)));
                                 // A new goal is walked to by a new path.
                                 state.paths.remove(&h);
+                                renewed = true;
                             }
                         }
                         let other = match state.objects.get(&target) {
@@ -594,8 +608,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             }
                             _ => 0,
                         };
-                        in_reach =
-                            in_range(here, relative(m.target, min), add(reach, mul(other, CELL)));
+                        // The swing starts with the target or the goal in
+                        // range (SPEC-0019).
+                        let reach = add(reach, mul(other, CELL));
+                        in_reach = in_range(here, target_now, reach)
+                            || in_range(here, relative(m.target, min), reach);
                     }
                     _ => {
                         m.arrived = true;
@@ -632,8 +649,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             order: goal,
                             class,
                             squared_speed: follow::squared_speed(m.velocity),
+                            chase: Some((target_now, range_cells)),
                         };
-                        match follow::steer(state, &walker, tick) {
+                        let steer = follow::steer(state, &walker, tick);
+                        // The goal taken 66 ticks after a chase resumes
+                        // comes with an update standing (SPEC-0019).
+                        let steer = if renewed && std::mem::take(&mut m.renew_stands) {
+                            follow::Steer::Stand(goal)
+                        } else {
+                            steer
+                        };
+                        match steer {
                             follow::Steer::Walk(to) => {
                                 motion(&mut m, to, true, speed, turn_rate, window);
                             }
@@ -657,6 +683,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         order,
                         class,
                         squared_speed,
+                        chase: None,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -775,10 +802,40 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
     in_range(relative([u.x, u.y], min), relative(at, min), reach)
 }
 
-/// Unit `h` takes up its attack on `target` again, walking after it.
+/// Unit `h` takes up its attack on `target` again after its swing
+/// (SPEC-0019): the goal is where the target is now, its path is searched
+/// at once, the unit moves from its next update on, and at its 12th
+/// update it takes a new goal with an update standing.
 pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
-    if let Some(at) = position_of(state, target) {
-        order(state, h, Order::Attack { target }, order_id, at);
+    let Some(at) = position_of(state, target) else {
+        return;
+    };
+    if !order(state, h, Order::Attack { target }, order_id, at) {
+        return;
+    }
+    let (tick, min) = (state.ticks, [state.world_bounds[0], state.world_bounds[1]]);
+    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        return;
+    };
+    let here = relative([u.x, u.y], min);
+    if let Some(m) = u.movement.as_mut() {
+        m.chase = Some(11);
+        m.renew_stands = true;
+    }
+    let data = state.data.units.get(&u.type_id);
+    let class = crate::path::size_class(data.map_or(0, |t| t.collision));
+    let range = data.and_then(|t| t.weapon.as_ref()).map_or(0, |w| w.range);
+    if state.grid.is_some() {
+        let goal = relative(at, min);
+        let walker = follow::Walker {
+            handle: h,
+            here,
+            order: goal,
+            class,
+            squared_speed: 0,
+            chase: Some((goal, mul(range, CELL))),
+        };
+        follow::steer(state, &walker, tick);
     }
 }
 

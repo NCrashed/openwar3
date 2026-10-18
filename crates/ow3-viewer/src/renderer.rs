@@ -131,6 +131,10 @@ pub struct Renderer {
     anchors: Vec<UnitAnchor>,
     /// The unit picked with the mouse.
     pub selected: Option<u32>,
+    /// The unit under the mouse, which shows its circle and bar.
+    pub hovered: Option<u32>,
+    /// Alt is held: every unit shows its bar.
+    pub all_bars: bool,
     /// The light of the ground and of models (SPEC-0017).
     pub terrain_light: Lighting,
     pub unit_light: Lighting,
@@ -489,6 +493,8 @@ impl Renderer {
             format,
             anchors: Vec::new(),
             selected: None,
+            hovered: None,
+            all_bars: false,
             terrain_light: PLAIN_LIGHT,
             unit_light: PLAIN_LIGHT,
         }
@@ -521,9 +527,12 @@ impl Renderer {
         camera: &Camera,
         size: (u32, u32),
     ) {
+        // As in the game: every bar while Alt is held, otherwise only the
+        // one of the unit under the mouse.
         let bars: Vec<Bar> = self
             .anchors
             .iter()
+            .filter(|a| self.all_bars || self.hovered == Some(a.handle))
             .filter_map(|a| {
                 Some(Bar {
                     at: a.head,
@@ -546,8 +555,9 @@ impl Renderer {
         );
     }
 
-    /// Lays out the selection circle of the selected unit on the ground of
-    /// height `ground(x, y)`, its texture read from `chain`.
+    /// Lays out the selection circles of the selected unit and the one under
+    /// the mouse on the ground of height `ground(x, y)`, their textures read
+    /// from `chain`.
     pub fn prepare_circles(
         &mut self,
         device: &wgpu::Device,
@@ -567,7 +577,10 @@ impl Renderer {
         let list: Vec<Circle> = self
             .anchors
             .iter()
-            .filter(|a| self.selected == Some(a.handle) && a.life.is_some())
+            .filter(|a| {
+                a.life.is_some()
+                    && (self.selected == Some(a.handle) || self.hovered == Some(a.handle))
+            })
             .map(|a| Circle {
                 centre: [a.foot[0], a.foot[1]],
                 scale: a.selection,

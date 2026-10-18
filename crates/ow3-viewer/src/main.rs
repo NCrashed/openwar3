@@ -1,9 +1,11 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt]`
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, Escape quits. A left click selects a unit;
 //! a right click then sends it to the ground point or attacks the enemy
-//! clicked (with Ctrl held, any unit clicked), and H stops it. The map's
+//! clicked (with Ctrl held, any unit clicked), and H stops it. The unit
+//! under the mouse shows its circle and health bar; with Alt held every
+//! unit shows its bar (`--alt` in screenshots). The map's
 //! script runs in the simulation, which places the units (`--no-sim`: the
 //! units placed in the editor instead). With `--screenshot` the view
 //! `--time` seconds in is drawn into a PNG file without a window, on a GPU
@@ -38,6 +40,8 @@ struct Options {
     /// `time`, 0.25 s before the picture.
     select: Option<u32>,
     order: Option<[f32; 2]>,
+    /// Every health bar shown, as with Alt held.
+    alt: bool,
 }
 
 fn options() -> Result<Options, String> {
@@ -51,6 +55,7 @@ fn options() -> Result<Options, String> {
         no_sim: false,
         select: None,
         order: None,
+        alt: false,
     };
     let mut map = None;
     while let Some(arg) = args.next() {
@@ -71,6 +76,7 @@ fn options() -> Result<Options, String> {
                 options.camera = Some(numbers.map_err(|_| "bad --camera")?);
             }
             "--no-sim" => options.no_sim = true,
+            "--alt" => options.alt = true,
             "--select" => {
                 options.select = Some(
                     value("--select")?
@@ -93,7 +99,7 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]]")?;
+    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt]")?;
     Ok(options)
 }
 
@@ -126,6 +132,7 @@ fn screenshot(
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
     renderer.selected = options.select;
+    renderer.all_bars = options.alt;
     if let Some(sim) = sim {
         // The simulation takes at most a few seconds of real time at once.
         let mut left = (f64::from(options.time) * 1e6) as u64;
@@ -199,6 +206,8 @@ struct App {
     cursor: (f32, f32),
     /// Whether Ctrl is held: a right click then attacks any unit.
     ctrl: bool,
+    /// Whether Alt is held: every unit shows its health bar.
+    alt: bool,
     /// Frames since `counted`, for the frame rate in the title.
     frames: u32,
     counted: std::time::Instant,
@@ -312,6 +321,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.ctrl = modifiers.state().control_key();
+                self.alt = modifiers.state().alt_key();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
@@ -380,6 +390,11 @@ impl App {
             let units = sim.draws();
             gpu.renderer
                 .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);
+            // The unit under the mouse, as the units stand in this frame.
+            let size = (gpu.config.width, gpu.config.height);
+            gpu.renderer.hovered =
+                gpu.renderer
+                    .pick(self.cursor.0, self.cursor.1, &self.camera, size);
             let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
             gpu.renderer.prepare_circles(
                 &gpu.device,
@@ -394,6 +409,7 @@ impl App {
         let hour = self.sim.as_ref().map_or(12.0, Sim::time_of_day);
         light(&mut gpu.renderer, &self.scene, hour);
         let size = (gpu.config.width, gpu.config.height);
+        gpu.renderer.all_bars = self.alt;
         gpu.renderer
             .prepare_overlay(&gpu.device, &gpu.queue, &self.camera, size);
         match gpu.surface.get_current_texture() {
@@ -487,6 +503,7 @@ fn main() -> ExitCode {
         controls: Controls::new(camera),
         cursor: (0.0, 0.0),
         ctrl: false,
+        alt: false,
         frames: 0,
         counted: std::time::Instant::now(),
         fps: 0.0,

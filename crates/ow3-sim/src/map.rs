@@ -75,6 +75,9 @@ pub struct Map {
     pub world_bounds: Bounds,
     /// Ground heights (SPEC-0014).
     pub heights: crate::heights::Heights,
+    /// Where ground units may walk (SPEC-0020), if the map has a
+    /// `war3map.wpm`.
+    pub pathing: Option<crate::path::Grid>,
     /// Damage constants (SPEC-0015).
     pub combat: crate::combat::Combat,
     /// Unit, destructable and item types.
@@ -135,6 +138,13 @@ impl Map {
             max_y: terrain.origin_y + (terrain.height.saturating_sub(1)) as f32 * CELL,
         };
         let heights = crate::heights::Heights::new(&terrain);
+        let pathing = archives
+            .read_map_file("war3map.wpm")
+            .map(|d| {
+                ow3_formats::map::pathing::Pathing::parse(&d).map_err(|e| error("war3map.wpm", e))
+            })
+            .transpose()?
+            .map(|p| crate::path::Grid::new(&p));
         // The melee flag of war3map.w3i chooses the constants (SPEC-0015).
         let combat = crate::combat::Combat::load(archives, info.flags & 0x04 != 0);
         let data = ObjectData::load(archives, info.flags & 0x04 != 0)?;
@@ -147,6 +157,7 @@ impl Map {
             destructables,
             world_bounds,
             heights,
+            pathing,
             combat,
             data,
             localized,

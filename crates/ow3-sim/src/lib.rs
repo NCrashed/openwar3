@@ -10,6 +10,7 @@ pub mod data;
 pub mod game;
 pub mod heights;
 pub mod map;
+pub mod path;
 pub mod random;
 pub mod sleep;
 pub mod timers;

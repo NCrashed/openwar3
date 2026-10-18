@@ -513,18 +513,13 @@ the spec is silent:
   c-CH5 (verification 6) all 13 attackers start and swing at the spec's
   ticks. The tests of the SPEC-0019 tables give their orders in an
   update tick (0.51 s), so that they are taken 6 ticks later as in the
-  game's tests. An attack order by a script makes the unit turn and walk
-  from its first update at or after the order plus 1 plus the delay,
-  and swing no earlier than the first update at or after the order plus
-  7 plus the delay ("When it starts"). The knights of SPEC-0019 and
-  SPEC-0016 match; of the turning table every turning knight matches,
-  the facing one is 6 ticks later than printed. In c-CH5 attackers 5, 6
-  and 10 (delays ending 0.1 to 0.6 ticks before an update) start one
-  update late: the table needs the first update 5 ticks after the
-  orders, the simulation has it 4 after them. The orders come from a
-  0 s timer started by the action of `TriggerRegisterTimerEvent` of
-  1.00 s; in which tick the game runs them is a question for the
-  analyst.
+  game's tests. An attack order by a script makes the unit act at its
+  first update at or after the order plus the delay but not before the
+  order plus 2 ticks (an order of `main` counting as given in tick 1),
+  and swing one update later at the earliest ("When it starts"). The
+  knights of SPEC-0019 and SPEC-0016 and all 13 attackers of c-CH5
+  match; of the turning table every turning knight matches, the facing
+  one is 6 ticks later than printed.
 - **Weapons** (SPEC-0016): a type has the weapons `weapsOn` turns on; a
   target is hit by the first one whose `targs` name one of the target's
   `targType` classes, else by weapon 1. Destructables count as `debris`

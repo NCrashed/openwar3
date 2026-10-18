@@ -190,8 +190,8 @@ fn approach() {
 
 /// The turning table of SPEC-0019: a knight next to a target at `a`
 /// degrees from its heading, first damage in ticks after the order given
-/// in an update tick. The knight turns from the update after order + 1 +
-/// 0.31 and swings no earlier than the update after order + 7 + 0.31
+/// in an update tick. The knight turns at the first update at or after
+/// order + 0.31, but not before order + 2, and swings one update later
 /// ("When it starts"): every turning knight hits at the table's tick, the
 /// one facing its target 6 ticks later than printed (the table was
 /// measured with orders at no exact tick; the exact series of the spec

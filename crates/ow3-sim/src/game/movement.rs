@@ -49,10 +49,9 @@ pub const ORDER_SMART: i32 = 851_971;
 pub const ORDER_ATTACK: i32 = 851_983;
 pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
-/// Ticks from an order given by a script to the start of the reaction delay
-/// before its first swing; the delay before turning and walking starts 1
-/// tick after the order (SPEC-0019, "When it starts").
-const ORDER_DELAY_START: u64 = 7;
+/// A unit acts on an order by a script no earlier than this many ticks
+/// after it (SPEC-0019, "When it starts").
+const ORDER_FIRST_ACT: u64 = 2;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
 /// The ticks of the update cycle, the same for all units, are those equal
@@ -138,15 +137,19 @@ pub struct Moving {
     restart: bool,
     /// The first tick of motion after a restart is lost.
     skip: bool,
-    /// The tick of an attack order and its reaction delay in seconds: the
-    /// unit acts on the order from its first update after the delay.
-    reaction: Option<(u64, u32)>,
+    /// The tick the reaction delay counts from, the delay in seconds and
+    /// the earliest tick of the update that may act: the unit acts on the
+    /// order from its first update after both.
+    reaction: Option<(u64, u32, u64)>,
+    /// An attack ordered by a script: the update at which the unit acts
+    /// cannot start its swing yet (SPEC-0019, "When it starts").
+    swing_waits: bool,
     /// Updates until an attacker renews its goal point; `None` before
     /// the first goal of a chase.
     chase: Option<u32>,
-    /// The tick from which a delay before the first swing counts and the
-    /// delay, for an attack ordered by a script (SPEC-0019).
-    swing_gate: Option<(u64, u32)>,
+    /// The earliest tick of the first swing of an attack ordered by a
+    /// script: the update after the one at which the unit acted.
+    swing_gate: Option<u64>,
     /// The next goal of a resumed chase comes with an update standing.
     renew_stands: bool,
 }
@@ -330,6 +333,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             chase: None,
             renew_stands: false,
             swing_gate: None,
+            swing_waits: false,
             ..m
         },
         None => Moving {
@@ -350,6 +354,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             chase: None,
             renew_stands: false,
             swing_gate: None,
+            swing_waits: false,
         },
     };
     // A new path is searched at the next update (SPEC-0020).
@@ -445,15 +450,16 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             let tick = state.ticks;
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
-                // It turns and walks from the delay counted 1 tick after the
-                // order (SPEC-0019, "When it starts").
-                react(state, h, tick + 1, delay);
-                // The swing waits for the delay counted 7 ticks after the
-                // order (SPEC-0019, "When it starts").
+                // It acts at its first update at or after the order plus
+                // the delay, not before the order plus 2 ticks; an order
+                // of `main` counts as given in tick 1. It swings one update
+                // later at the earliest (SPEC-0019, "When it starts").
+                let given = tick.max(1);
+                react(state, h, given, delay, given + ORDER_FIRST_ACT);
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                     && let Some(m) = u.movement.as_mut()
                 {
-                    m.swing_gate = Some((tick + ORDER_DELAY_START, delay));
+                    m.swing_waits = true;
                 }
             }
             done
@@ -462,13 +468,14 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
     }
 }
 
-/// The unit `h` waits `delay` seconds counted from `from`: a walking unit
-/// stops at once and stands during the delay (SPEC-0019).
-fn react(state: &mut State, h: u32, from: u64, delay: u32) {
+/// The unit `h` waits `delay` seconds counted from `from`, and acts no
+/// earlier than tick `earliest`: a walking unit stops at once and stands
+/// during the delay (SPEC-0019).
+fn react(state: &mut State, h: u32, from: u64, delay: u32, earliest: u64) {
     let clock = state.move_clock;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         if let Some(m) = u.movement.as_mut() {
-            m.reaction = Some((from, delay));
+            m.reaction = Some((from, delay, earliest));
             m.walking = false;
             m.restart = false;
             m.skip = false;
@@ -758,12 +765,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let here = m.origin;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
-        let waiting = m.reaction.is_some_and(|(from, delay)| {
+        let waiting = m.reaction.is_some_and(|(from, delay, earliest)| {
             let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
-            real_of(waited) < real_of(delay)
+            tick < earliest || real_of(waited) < real_of(delay)
         });
         if !waiting {
             m.reaction = None;
+            // An attack ordered by a script swings from the next update on.
+            if std::mem::take(&mut m.swing_waits) {
+                m.swing_gate = Some(tick + UPDATE);
+            }
         }
         if !m.arrived && !waiting {
             if std::mem::take(&mut m.restart) {
@@ -821,18 +832,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // In range: stand, turn to the target and strike
                         // once the turn left is below 0.2 radians.
                         let (h, d) = heading_and_turn(&m, goal);
-                        let gate_open = m.swing_gate.is_none_or(|(from, delay)| {
-                            let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
-                            real_of(waited) >= real_of(delay)
-                        });
+                        let gate_open = m.swing_gate.is_none_or(|from| tick >= from);
                         if real_of(d).abs() < ATTACK_ANGLE {
                             m.heading = h;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            // The swing waits one update more than the
-                            // turn: until the delay counted from 7 ticks
-                            // after the order is over (SPEC-0019, "When
-                            // it starts").
+                            // The swing of an attack ordered by a script
+                            // waits for the update after the one at which
+                            // the unit acted (SPEC-0019, "When it
+                            // starts").
                             if gate_open {
                                 m.arrived = true;
                                 m.swing_gate = None;
@@ -1236,7 +1244,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            react(state, h, from, add(delay, extra));
+            react(state, h, from, add(delay, extra), from);
             acquired.push(h);
         }
     }
@@ -1373,7 +1381,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            react(state, h, tick, delay);
+            react(state, h, tick, delay, tick);
         }
     }
 }

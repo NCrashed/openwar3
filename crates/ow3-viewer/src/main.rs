@@ -132,6 +132,7 @@ fn screenshot(
     let camera = camera(scene, options.camera.as_deref());
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
+    let mut sim_seconds = options.time;
     renderer.selected = options.select;
     renderer.all_bars = options.alt;
     if let Some(sim) = sim {
@@ -151,6 +152,7 @@ fn screenshot(
             sim.advance(250_000);
         }
         sim_hour = sim.time_of_day();
+        sim_seconds = sim.game_seconds();
         let units = sim.draws();
         renderer.set_units(
             &device,
@@ -171,6 +173,7 @@ fn screenshot(
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
     light(&mut renderer, scene, sim_hour);
+    renderer.set_game_time(sim_seconds);
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -416,6 +419,11 @@ impl App {
         }
         gpu.renderer.animate(&gpu.device, &gpu.queue, elapsed);
         let hour = self.sim.as_ref().map_or(12.0, Sim::time_of_day);
+        let seconds = self
+            .sim
+            .as_ref()
+            .map_or(elapsed as f32 / 1000.0, Sim::game_seconds);
+        gpu.renderer.set_game_time(seconds);
         light(&mut gpu.renderer, &self.scene, hour);
         let size = (gpu.config.width, gpu.config.height);
         gpu.renderer.all_bars = self.alt;

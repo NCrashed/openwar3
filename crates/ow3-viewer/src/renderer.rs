@@ -55,6 +55,8 @@ struct Globals {
     // The shadow map: the lower left corner of the map, and the size of
     // the sample grid.
     shadow_area: vec4<f32>,
+    // The frame of the water texture in x.
+    water: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
@@ -105,7 +107,13 @@ fn fs(v: VertexOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(atlas, atlas_sampler, v.uv, v.cell) * v.tint;
+    // SPEC-0014, "Colour and blending": the frame of the time, times the
+    // colour of the depth and the light of the unit model for a normal
+    // straight up, not clamped; its alpha blends it over the drawn ground.
+    let texel = textureSample(atlas, atlas_sampler, v.uv, u32(globals.water.x));
+    let light = globals.unit_sun.w * globals.unit_color.rgb * max(globals.unit_sun.z, 0.0)
+        + globals.unit_color.w * globals.unit_ambient.rgb;
+    return vec4<f32>(texel.rgb * v.tint.rgb * light, v.tint.a);
 }
 "#;
 
@@ -120,6 +128,7 @@ struct Globals {
     unit_color: [f32; 4],
     unit_ambient: [f32; 4],
     shadow_area: [f32; 4],
+    water: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -151,6 +160,9 @@ pub struct Renderer {
     models: ModelRenderer,
     water_pipeline: wgpu::RenderPipeline,
     water: Option<GpuLayer>,
+    /// The type of the water, for its animation, and the frame shown.
+    water_kind: Option<ow3_render::water::WaterType>,
+    water_frame: u32,
     overlay: Overlay,
     /// Selection circles, made when first needed.
     circles: Option<crate::circles::Circles>,
@@ -591,8 +603,8 @@ impl Renderer {
             anisotropy_clamp: 16,
             ..wgpu::SamplerDescriptor::default()
         });
-        let water = scene.water.as_ref().map(|(layer, image)| {
-            let view = upload_layers(device, queue, std::slice::from_ref(image));
+        let water = scene.water.as_ref().map(|(layer, frames, _)| {
+            let view = upload_layers(device, queue, frames);
             gpu_layer(layer, &view, &repeat)
         });
         let models = ModelRenderer::new(
@@ -613,6 +625,8 @@ impl Renderer {
             models,
             water_pipeline,
             water,
+            water_kind: scene.water.as_ref().map(|(_, _, kind)| kind.clone()),
+            water_frame: 0,
             overlay: Overlay::new(device, format),
             circles: None,
             format,
@@ -623,6 +637,13 @@ impl Renderer {
             terrain_light: PLAIN_LIGHT,
             unit_light: PLAIN_LIGHT,
             shadow_area,
+        }
+    }
+
+    /// The water shows the frame of game time `seconds` (SPEC-0014).
+    pub fn set_game_time(&mut self, seconds: f32) {
+        if let Some(kind) = &self.water_kind {
+            self.water_frame = ow3_render::water::frame(kind, seconds);
         }
     }
 
@@ -787,6 +808,7 @@ impl Renderer {
             unit_color,
             unit_ambient,
             shadow_area: self.shadow_area,
+            water: [self.water_frame as f32, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

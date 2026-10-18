@@ -227,6 +227,11 @@ impl Sim {
         self.game.day_night_models()
     }
 
+    /// The game time in seconds: 0.005 s a tick.
+    pub fn game_seconds(&self) -> f32 {
+        self.game.ticks() as f32 * 0.005
+    }
+
     /// The time of day in hours.
     pub fn time_of_day(&self) -> f32 {
         self.game.time_of_day()

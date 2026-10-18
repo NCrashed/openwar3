@@ -21,8 +21,9 @@ pub struct Scene {
     pub terrain: Terrain,
     pub textures: Vec<Option<Image>>,
     pub layers: Vec<Layer>,
-    /// The water surface and its texture, if the map has water.
-    pub water: Option<(Layer, Image)>,
+    /// The water surface, the frames of its texture and its type, if the
+    /// map has water.
+    pub water: Option<(Layer, Vec<Image>, ow3_render::water::WaterType)>,
     /// Models with their placements (cliffs included), and the textures
     /// they use by path.
     pub groups: Vec<Group>,
@@ -36,20 +37,42 @@ pub struct Scene {
     pub shadows: Option<ow3_formats::map::shadows::Shadows>,
 }
 
-/// The first frame of the water texture `path` (without the frame
-/// number), or plain white.
-fn water_texture(chain: &mut ArchiveChain, path: &str) -> Image {
-    chain
-        .read(&format!("{path}00.blp"))
-        .and_then(|d| ow3_formats::blp::decode(&d).ok())
-        .map_or_else(
-            || {
-                let mut white = Image::new(1, 1);
-                white.set(0, 0, [255; 4]);
-                white
-            },
-            Image::from,
-        )
+/// The frames of the water texture of `kind`: `<texFile>00.blp` to
+/// `numTex - 1` (SPEC-0014). A frame that is missing, or of another size
+/// than the first, is plain white, and so is a texture without frames.
+fn water_frames(chain: &mut ArchiveChain, kind: &ow3_render::water::WaterType) -> Vec<Image> {
+    let white = || {
+        let mut white = Image::new(1, 1);
+        white.set(0, 0, [255; 4]);
+        white
+    };
+    let mut frames: Vec<Image> = Vec::new();
+    for n in 0..kind.frames {
+        let frame = chain
+            .read(&format!("{}{n:02}.blp", kind.texture))
+            .and_then(|d| ow3_formats::blp::decode(&d).ok())
+            .map(Image::from);
+        match (frame, frames.first()) {
+            (Some(f), None) => frames.push(f),
+            (Some(f), Some(first)) if (f.width, f.height) == (first.width, first.height) => {
+                frames.push(f)
+            }
+            (_, Some(first)) => {
+                let mut blank = Image::new(first.width, first.height);
+                for y in 0..first.height {
+                    for x in 0..first.width {
+                        blank.set(x, y, [255; 4]);
+                    }
+                }
+                frames.push(blank);
+            }
+            (None, None) => frames.push(white()),
+        }
+    }
+    if frames.is_empty() {
+        frames.push(white());
+    }
+    frames
 }
 
 impl Scene {
@@ -90,9 +113,10 @@ impl Scene {
         let water = ow3_render::water::water_type(&mut chain, terrain.tileset).map(|kind| {
             let depths = ow3_render::water::depths(&mut chain);
             let mesh = terrain_mesh::water(&terrain, &kind, depths);
-            (mesh, water_texture(&mut chain, &kind.texture))
+            let frames = water_frames(&mut chain, &kind);
+            (mesh, frames, kind)
         });
-        let water = water.filter(|(mesh, _)| !mesh.indices.is_empty());
+        let water = water.filter(|(mesh, ..)| !mesh.indices.is_empty());
         let placements = crate::objects::placements(&mut chain, without_units);
         let (mut groups, mut model_textures, animation) = models::load(&mut chain, &placements);
         model_textures.extend(models::textures(&mut chain, &cliffs.groups));

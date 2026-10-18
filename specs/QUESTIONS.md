@@ -417,10 +417,14 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
   `lerp(a, b, t) = add(a, mul(sub(b, a), t))`; the order is not
   specified. Outside the grid it takes the nearest edge. Small raised
   areas (open question 3) follow the formula.
-- **Water surface** (open question 4): the first frame
-  `<texFile>00.blp`, repeating every `cells` tiles, multiplied by the
-  depth colour and blended with its alpha, drawn after the models without
-  writing depth. No animation, no shorelines.
+- **Water surface** follows SPEC-0014: the frame of the game time (from
+  4.98 s, inside the range of verification 11; open question 7), squares
+  of `cells` tiles from the map's corner, depth colour and alpha, the
+  unit light unclamped, blended over the drawn ground. The blend is done
+  in linear colour as all drawing of the viewer, where the game's
+  formula is in display values. Without the simulation the viewer's
+  own clock drives the frames. No shorelines, no waves; drawn after the
+  models without writing depth.
 - **Ground of ramp middles** (open question 2). The `CliffTrans` models
   are half a level up at the corner of the letter `R` (heights 128, 64, 0
   from `H` over `R` to the far end). The viewer draws ground points with
@@ -561,7 +565,7 @@ The ground is lit as SPEC-0017 says, from the terrain model that
 spec is silent:
 
 - **Models** (open question 2) are lit by the same formula from the unit
-  model of the call (`DNCLordaeronUnit` without one). Water is not lit.
+  model of the call (`DNCLordaeronUnit` without one), and so is water.
 - **Cliffs** take the ground light with their own normals (SPEC-0014
   rule 9).
 - **Sloped ground** is lit at the corner points and interpolated over

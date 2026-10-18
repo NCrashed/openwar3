@@ -50,8 +50,24 @@ pub struct WaterType {
     pub colours: [[u8; 4]; 4],
     /// The texture path without the frame number and extension.
     pub texture: String,
+    /// The number of frames of the texture (`numTex`) and frames per
+    /// second (`texRate`).
+    pub frames: u32,
+    pub rate: f32,
     /// Tiles covered by one repeat of the texture.
     pub cells: f32,
+}
+
+/// The game time at which the water shows its frame 0 (SPEC-0014,
+/// "Texture and animation"). PROVISIONAL: the spec found "about 5.0 s"
+/// (open question 7); 4.98 lies in the range its paused frames allow.
+pub const ANIMATION_START: f32 = 4.98;
+
+/// The frame of water `kind` at game time `seconds`:
+/// `floor(texRate * t) mod numTex`, without blending.
+pub fn frame(kind: &WaterType, seconds: f32) -> u32 {
+    let n = (kind.rate * (seconds - ANIMATION_START)).floor() as i64;
+    n.rem_euclid(i64::from(kind.frames.max(1))) as u32
 }
 
 /// Whether a tile with these corners shows water.
@@ -161,6 +177,8 @@ pub fn water_type(chain: &mut ArchiveChain, tileset: u8) -> Option<WaterType> {
             colour("Dmax"),
         ],
         texture: text("texFile"),
+        frames: number("numTex").max(1.0) as u32,
+        rate: number("texRate"),
         cells: number("cells").max(1.0),
     })
 }
@@ -212,5 +230,29 @@ mod tests {
         assert_eq!(colour_index(64.0, depths), 222);
         assert_eq!(colour_index(72.0, depths), 255);
         assert_eq!(colour_index(41.0, depths), 127);
+    }
+}
+
+#[cfg(test)]
+mod animation {
+    use super::*;
+
+    /// Verification 11 of SPEC-0014: paused at game times 1.005 s plus
+    /// 4.0 .. 7.3 s the Northrend water showed these frames.
+    #[test]
+    fn frames_of_the_paused_game() {
+        let kind = WaterType {
+            height: 0.0,
+            colours: [[0; 4]; 4],
+            texture: String::new(),
+            frames: 45,
+            rate: 15.0,
+            cells: 2.0,
+        };
+        let shown: Vec<u32> = [4.0, 4.05, 4.1, 4.2, 4.5, 5.0, 6.0, 7.3]
+            .iter()
+            .map(|t| frame(&kind, 1.005 + t))
+            .collect();
+        assert_eq!(shown, [0, 1, 1, 3, 7, 15, 30, 4]);
     }
 }

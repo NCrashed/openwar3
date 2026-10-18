@@ -80,8 +80,14 @@ fn vs(v: VertexIn) -> VertexOut {
     return out;
 }
 
+// Layers with shading flag 1 are drawn without light.
+override UNSHADED: bool = false;
+
 fn lit(v: VertexOut) -> vec4<f32> {
     let texel = textureSample(skin, skin_sampler, v.uv);
+    if UNSHADED {
+        return vec4<f32>(texel.rgb * v.tint, texel.a * v.alpha);
+    }
     let n = normalize(v.normal);
     let facing = max(dot(n, globals.unit_sun.xyz), 0.0);
     let light = min(
@@ -149,11 +155,13 @@ struct GpuPart {
     count: u32,
     bind_group: wgpu::BindGroup,
     kind: Kind,
+    unshaded: bool,
     instances: usize,
 }
 
 pub struct ModelRenderer {
-    pipelines: BTreeMap<Kind, wgpu::RenderPipeline>,
+    /// By kind and whether the parts are unshaded.
+    pipelines: BTreeMap<(Kind, bool), wgpu::RenderPipeline>,
     instance_buffers: Vec<Instances>,
     parts: Vec<GpuPart>,
     animation: Animation,
@@ -304,39 +312,45 @@ impl ModelRenderer {
             (Kind::Additive, "fs_blended", Some(additive), false),
             (Kind::Modulated, "fs_modulated", Some(modulate), false),
         ] {
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &vertex_layouts,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                // Many model faces are meant to be seen from both sides.
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: depth_write,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
-            pipelines.insert(kind, pipeline);
+            for unshaded in [false, true] {
+                let constants = [("UNSHADED", f64::from(u8::from(unshaded)))];
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &vertex_layouts,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(entry),
+                        compilation_options: wgpu::PipelineCompilationOptions {
+                            constants: &constants,
+                            ..Default::default()
+                        },
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    // Many model faces are meant to be seen from both sides.
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: depth_write,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+                pipelines.insert((kind, unshaded), pipeline);
+            }
         }
         // Textures repeat, except on parts that ask for their edges to be
         // kept (cliffs, whose atlas halves must not run into each other).
@@ -442,11 +456,12 @@ impl ModelRenderer {
                 count: part.indices.len() as u32,
                 bind_group: bind_group.clone(),
                 kind: kind(part.filter_mode),
+                unshaded: part.unshaded,
                 instances: index,
             });
         }
         // Opaque parts first, then the blended kinds over them.
-        self.parts.sort_by_key(|p| p.kind);
+        self.parts.sort_by_key(|p| (p.kind, p.unshaded));
         index
     }
 
@@ -596,9 +611,10 @@ impl ModelRenderer {
             if instances.count == 0 {
                 continue;
             }
-            if current != Some(part.kind) {
-                pass.set_pipeline(&self.pipelines[&part.kind]);
-                current = Some(part.kind);
+            let key = (part.kind, part.unshaded);
+            if current != Some(key) {
+                pass.set_pipeline(&self.pipelines[&key]);
+                current = Some(key);
             }
             pass.set_bind_group(1, &part.bind_group, &[]);
             pass.set_vertex_buffer(0, part.vertices.slice(..));

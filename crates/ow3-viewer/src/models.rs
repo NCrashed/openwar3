@@ -77,6 +77,9 @@ pub struct Part {
     pub indices: Vec<u32>,
     pub texture: String,
     pub filter_mode: u32,
+    /// Drawn without light (shading flag 1 of the layer), like the team
+    /// colour under a skin.
+    pub unshaded: bool,
     /// The texture keeps its edges instead of repeating.
     pub clamp: bool,
 }
@@ -520,6 +523,7 @@ fn animated_parts(
                 indices: indices.clone(),
                 texture,
                 filter_mode: layer.filter_mode,
+                unshaded: layer.shading_flags & 1 != 0,
                 clamp: false,
             });
         }
@@ -572,6 +576,7 @@ pub fn parts(model: &Model, textures: &[Option<String>]) -> Vec<Part> {
                 indices: indices.clone(),
                 texture,
                 filter_mode: layer.filter_mode,
+                unshaded: layer.shading_flags & 1 != 0,
                 clamp: false,
             });
         }

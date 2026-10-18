@@ -116,14 +116,18 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
     // A hero's regeneration starts 0.0001 s after it is created.
     life.delayed = is_hero(type_id);
     mana.delayed = is_hero(type_id);
-    // Positions snap to a quarter (SPEC-0013).
+    // Positions snap to a quarter (SPEC-0013), a building's to the grid
+    // of its pathing texture, which it puts in the grid (SPEC-0022).
     let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
+    let facing = facing::from_degrees(at[2]);
+    let ((x, y), footprint) =
+        super::obstacles::place_building(state, type_id, snap(at[0]), snap(at[1]), facing);
     let unit = Unit {
         owner,
         type_id,
-        x: snap(at[0]),
-        y: snap(at[1]),
-        facing: facing::from_degrees(at[2]),
+        x,
+        y,
+        facing,
         turn: None,
         attack: None,
         movement: None,
@@ -137,6 +141,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         hidden: false,
         user_data: 0,
         resources: 0,
+        footprint: footprint.map(Box::new),
     };
     let h = state.create(Object::Unit(unit));
     state.units.push(h);
@@ -154,6 +159,9 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
 fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32>) {
     let (registrations, owner, dying_thread) = {
         let mut state = state.borrow_mut();
+        // A dead destructable blocks by its texture of death, a dead
+        // building no more (SPEC-0022).
+        super::obstacles::died(&mut state, widget);
         let owner = state.unit(Some(widget)).map(|u| u.owner);
         let owner_handle = owner.map(|id| state.player_handle(id));
         let dying_thread = state.context;
@@ -532,6 +540,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if let Some(h) = unit
                 && matches!(state.objects.get(&h), Some(Object::Unit(_)))
             {
+                super::obstacles::died(&mut state, h);
                 state.objects.remove(&h);
                 state.units.retain(|&u| u != h);
             }
@@ -1001,15 +1010,33 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 None if state.data.destructables.is_empty() => UNKNOWN_LIFE,
                 None => return Ok(Some(Value::Handle(None))),
             };
+            // The facing follows z in `CreateDestructableZ`.
+            let face = if declaration.contains("real z,") {
+                4
+            } else {
+                3
+            };
+            let facing = facing::from_degrees(real(&args[face]));
+            let (x, y) = super::obstacles::place_destructable(
+                &state,
+                type_id,
+                real(&args[1]),
+                real(&args[2]),
+                facing,
+                !dead,
+            );
             let h = state.create(Object::Destructable(Destructable {
                 type_id,
-                x: real(&args[1]),
-                y: real(&args[2]),
+                x,
+                y,
                 life: if dead { 0 } else { max_life },
                 max_life,
                 alive: !dead,
+                facing,
+                footprint: super::obstacles::Footprint::default(),
             }));
             state.destructables.push(h);
+            super::obstacles::refresh_destructable(&mut state, h);
             Ok(Some(Value::Handle(Some(h))))
         });
     }
@@ -1022,6 +1049,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if let Some(h) = handle(&args[0])
                 && matches!(state.objects.get(&h), Some(Object::Destructable(_)))
             {
+                super::obstacles::gone(&mut state, h);
                 state.objects.remove(&h);
                 state.destructables.retain(|&d| d != h);
             }

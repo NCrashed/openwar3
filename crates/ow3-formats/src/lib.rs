@@ -10,3 +10,4 @@ pub mod map;
 pub mod mdx;
 pub mod mpq;
 pub mod slk;
+pub mod tga;

@@ -39,9 +39,19 @@ SPEC-0013, for the test maps -12288).
 
 ### Pathing cells
 
-A cell is **passable for a ground unit** if its `.wpm` byte has neither
-0x02 nor 0x04 set. (Checked against process memory for all 256 byte
-values; the test walls used `.wpm` byte 0xCA.)
+For a ground unit a cell counts as passable:
+
+- in the **high-level search** (the block states below) if its `.wpm`
+  byte has neither 0x02 (not walkable) nor 0x04 (not flyable) set;
+- in the **local search**, in **seeing a point** and in the
+  **look-ahead check** if its `.wpm` byte does not have 0x02 set; 0x04
+  alone does not matter there.
+
+(The flags of the grid were checked against process memory for all 256
+byte values; the test walls used `.wpm` byte 0xCA. A wall of cells with
+only 0x04 set made footmen take a high-level detour while their local
+paths crossed those cells: test BC2 of SPEC-0022, both walkers within
+0.01 world units of a model with this rule.)
 
 ### Size classes and footprints
 

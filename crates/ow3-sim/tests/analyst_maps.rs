@@ -681,3 +681,34 @@ fn units_wait_for_each_other() {
         );
     }
 }
+
+/// SPEC-0022, verification 1 (c-BG2): buildings move to the grid of their
+/// pathing textures; the necropolis at facings 0, 90, 180 and 270 and the
+/// farm, as `GetUnitX` and `GetUnitY` give them.
+#[test]
+fn buildings_move_to_the_grid() {
+    let Some(output) = run("c-BG2.w3x", 3.0) else {
+        return;
+    };
+    let placed: std::collections::BTreeMap<u32, (f32, f32)> = output
+        .iter()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(' ').collect();
+            let real = |s: &str| f32::from_bits(s.parse::<i32>().ok()? as u32).into();
+            (f.len() >= 4 && f[0] == "S").then(|| {
+                let x: Option<f32> = real(f[2]);
+                let y: Option<f32> = real(f[3]);
+                Some((f[1].parse().ok()?, (x?, y?)))
+            })?
+        })
+        .collect();
+    for (unit, x, y) in [
+        (0, -8000.0, -8000.0),
+        (1, -6784.0, -8000.0),
+        (2, -5568.0, -8000.0),
+        (3, -4352.0, -8000.0),
+        (9, -7936.0, -4992.0),
+    ] {
+        assert_eq!(placed[&unit], (x, y), "unit {unit}");
+    }
+}

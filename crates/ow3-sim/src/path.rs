@@ -26,12 +26,20 @@ fn floor(bits: u32) -> i32 {
 
 const HALF: u32 = 0x3F00_0000;
 
-/// Which cells a ground unit may stand on.
+/// Which cells a ground unit may stand on: the pathing map, with the
+/// footprints of buildings and destructables on top (SPEC-0022).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grid {
     width: i32,
     height: i32,
-    passable: Vec<bool>,
+    /// Cells of the pathing map without 0x02 (walkable) and without 0x04
+    /// (flyable).
+    walk: Vec<bool>,
+    fly: Vec<bool>,
+    /// How many footprints block each cell for walking (red) and flying
+    /// (green).
+    red: Vec<u16>,
+    green: Vec<u16>,
     /// Block states of levels 0 to 3.
     levels: [Level; 4],
 }
@@ -52,82 +60,143 @@ enum State {
     Mixed,
 }
 
+/// The state of a square from those of its four quarters.
+fn combined(children: [State; 4]) -> State {
+    let blocked = children.iter().filter(|&&s| s == State::Blocked).count();
+    if children.contains(&State::Mixed) || (1..=3).contains(&blocked) {
+        State::Mixed
+    } else if blocked == 4 {
+        State::Blocked
+    } else {
+        State::Free
+    }
+}
+
 impl Grid {
-    /// The grid of a `war3map.wpm`: a cell is passable when neither 0x02
-    /// nor 0x04 is set.
+    /// The grid of a `war3map.wpm` (SPEC-0020): 0x02 closes a cell for
+    /// walking, 0x04 for flying, which the high-level search also heeds.
     pub fn new(pathing: &ow3_formats::map::pathing::Pathing) -> Grid {
-        let passable = pathing.cells.iter().map(|&v| v & 0x06 == 0).collect();
-        Grid::from_cells(pathing.width as i32, pathing.height as i32, passable)
+        let walk = pathing.cells.iter().map(|&v| v & 0x02 == 0).collect();
+        let fly = pathing.cells.iter().map(|&v| v & 0x04 == 0).collect();
+        Grid::from_layers(pathing.width as i32, pathing.height as i32, walk, fly)
     }
 
-    /// A grid of `width` x `height` cells, row by row from the bottom.
+    /// A grid of `width` x `height` walkable or closed cells, row by row
+    /// from the bottom.
     pub fn from_cells(width: i32, height: i32, passable: Vec<bool>) -> Grid {
+        let fly = vec![true; passable.len()];
+        Grid::from_layers(width, height, passable, fly)
+    }
+
+    fn from_layers(width: i32, height: i32, walk: Vec<bool>, fly: Vec<bool>) -> Grid {
+        let cells = walk.len();
         let mut grid = Grid {
             width,
             height,
-            passable,
+            walk,
+            fly,
+            red: vec![0; cells],
+            green: vec![0; cells],
             levels: [(); 4].map(|_| Level {
                 columns: 0,
                 rows: 0,
                 states: Vec::new(),
             }),
         };
-        // Level 0 from the cells, up to the block beyond the edge.
-        let (columns, rows) = (width / 2 + 1, height / 2 + 1);
-        let mut states = Vec::with_capacity((columns * rows) as usize);
-        for v in 0..rows {
-            for u in 0..columns {
-                let blocked = [(0, 0), (1, 0), (0, 1), (1, 1)]
-                    .iter()
-                    .filter(|(dx, dy)| !grid.passable(2 * u + dx, 2 * v + dy))
-                    .count();
-                states.push(match blocked {
-                    0 => State::Free,
-                    4 => State::Blocked,
-                    _ => State::Mixed,
-                });
-            }
-        }
-        grid.levels[0] = Level {
-            columns,
-            rows,
-            states,
-        };
-        for l in 1..4 {
-            let (columns, rows) = ((width / 2) >> l, (height / 2) >> l);
-            let (columns, rows) = (columns + 1, rows + 1);
-            let mut states = Vec::with_capacity((columns * rows) as usize);
-            for v in 0..rows {
-                for u in 0..columns {
-                    let children = [(0, 0), (1, 0), (0, 1), (1, 1)]
-                        .map(|(du, dv)| grid.state(l - 1, 2 * u + du, 2 * v + dv));
-                    let blocked = children.iter().filter(|&&s| s == State::Blocked).count();
-                    states.push(
-                        if children.contains(&State::Mixed) || (1..=3).contains(&blocked) {
-                            State::Mixed
-                        } else if blocked == 4 {
-                            State::Blocked
-                        } else {
-                            State::Free
-                        },
-                    );
-                }
-            }
+        // Level 0 up to the block beyond the edge, then the larger squares.
+        for l in 0..4 {
+            let (columns, rows) = (((width / 2) >> l) + 1, ((height / 2) >> l) + 1);
             grid.levels[l as usize] = Level {
                 columns,
                 rows,
-                states,
+                states: vec![State::Free; (columns * rows) as usize],
             };
+            for v in 0..rows {
+                for u in 0..columns {
+                    let state = grid.computed(l, u, v);
+                    grid.levels[l as usize].states[(v * columns + u) as usize] = state;
+                }
+            }
         }
         grid
     }
 
-    /// Whether cell (`x`, `y`) is passable by the pathing map; cells
-    /// outside are not.
+    /// The state of square (`u`, `v`) of level `l` from the cells or from
+    /// the squares of the level below.
+    fn computed(&self, l: i32, u: i32, v: i32) -> State {
+        if l == 0 {
+            let blocked = [(0, 0), (1, 0), (0, 1), (1, 1)]
+                .iter()
+                .filter(|(dx, dy)| !self.quad_free(2 * u + dx, 2 * v + dy))
+                .count();
+            match blocked {
+                0 => State::Free,
+                4 => State::Blocked,
+                _ => State::Mixed,
+            }
+        } else {
+            combined(
+                [(0, 0), (1, 0), (0, 1), (1, 1)]
+                    .map(|(du, dv)| self.state(l - 1, 2 * u + du, 2 * v + dv)),
+            )
+        }
+    }
+
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        ((0..self.width).contains(&x) && (0..self.height).contains(&y))
+            .then(|| (y * self.width + x) as usize)
+    }
+
+    /// Whether cell (`x`, `y`) is walkable: by the pathing map and no red
+    /// footprint (the local search, seeing and the look-ahead check).
+    /// Cells outside are not.
     pub fn passable(&self, x: i32, y: i32) -> bool {
-        (0..self.width).contains(&x)
-            && (0..self.height).contains(&y)
-            && self.passable[(y * self.width + x) as usize]
+        self.index(x, y)
+            .is_some_and(|i| self.walk[i] && self.red[i] == 0)
+    }
+
+    /// Whether cell (`x`, `y`) is free for the high-level search: also
+    /// flyable and without a green footprint.
+    fn quad_free(&self, x: i32, y: i32) -> bool {
+        self.index(x, y)
+            .is_some_and(|i| self.walk[i] && self.fly[i] && self.red[i] == 0 && self.green[i] == 0)
+    }
+
+    /// Adds (`add`) or removes the footprint with cells `red` and `green`
+    /// (SPEC-0022), and brings the quadtree up to date.
+    pub fn stamp(&mut self, red: &[(i32, i32)], green: &[(i32, i32)], add: bool) {
+        let mut blocks = std::collections::BTreeSet::new();
+        for (cells, counts) in [(red, 0), (green, 1)] {
+            for &(x, y) in cells {
+                let Some(i) = self.index(x, y) else {
+                    continue;
+                };
+                let count = if counts == 0 {
+                    &mut self.red[i]
+                } else {
+                    &mut self.green[i]
+                };
+                *count = if add {
+                    count.saturating_add(1)
+                } else {
+                    count.saturating_sub(1)
+                };
+                blocks.insert((x >> 1, y >> 1));
+            }
+        }
+        for l in 0..4 {
+            let squares: std::collections::BTreeSet<(i32, i32)> =
+                blocks.iter().map(|&(u, v)| (u >> l, v >> l)).collect();
+            for (u, v) in squares {
+                let level = &self.levels[l as usize];
+                if u >= level.columns || v >= level.rows {
+                    continue;
+                }
+                let state = self.computed(l, u, v);
+                let columns = self.levels[l as usize].columns;
+                self.levels[l as usize].states[(v * columns + u) as usize] = state;
+            }
+        }
     }
 
     /// The state of square (`u`, `v`) of level `l` (in squares of that

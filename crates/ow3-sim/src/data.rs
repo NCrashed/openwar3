@@ -63,6 +63,60 @@ pub struct UnitType {
     pub collision: u32,
     /// How far the unit looks for enemies on its own (`acquire`, SPEC-0019).
     pub acquire: u32,
+    /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
+    /// SPEC-0022), as a key of [`ObjectData::path_textures`].
+    pub path_texture: Option<String>,
+}
+
+/// The pathing of a destructable type (`DestructableData.slk`,
+/// SPEC-0022): textures alive and dead, as keys of
+/// [`ObjectData::path_textures`], and `fixedRot` in degrees as a real
+/// (negative: the facing given at creation).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DestructablePath {
+    pub alive: Option<String>,
+    pub dead: Option<String>,
+    pub fixed_rotation: u32,
+}
+
+/// A pathing texture: one pixel per cell, rows from the bottom; red
+/// pixels close a cell for walking, green ones for flying (SPEC-0022).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PathTexture {
+    pub width: i32,
+    pub height: i32,
+    pub red: Vec<bool>,
+    pub green: Vec<bool>,
+}
+
+impl PathTexture {
+    fn from_tga(tga: &ow3_formats::tga::Tga) -> PathTexture {
+        let pixels: Vec<[u8; 4]> = (0..tga.height)
+            .flat_map(|y| (0..tga.width).map(move |x| (x, y)))
+            .map(|(x, y)| tga.at(x, y))
+            .collect();
+        PathTexture {
+            width: tga.width as i32,
+            height: tga.height as i32,
+            red: pixels.iter().map(|p| p[0] == 255).collect(),
+            green: pixels.iter().map(|p| p[1] == 255).collect(),
+        }
+    }
+}
+
+/// The archive path of a pathing texture named in a table: `None` for
+/// `_`, `none` or nothing; `.tga` added when the name has no extension.
+fn path_texture_name(text: Option<&str>) -> Option<String> {
+    let name = text?.trim();
+    if name.is_empty() || name == "_" || name.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let name = if name.to_ascii_lowercase().ends_with(".tga") {
+        name.to_owned()
+    } else {
+        format!("{name}.tga")
+    };
+    Some(name.to_ascii_lowercase())
 }
 
 /// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
@@ -148,6 +202,10 @@ pub struct ObjectData {
     pub items: BTreeMap<i32, u32>,
     pub destructable_armor: BTreeMap<i32, Option<usize>>,
     pub item_armor: BTreeMap<i32, Option<usize>>,
+    /// The pathing of destructable types and the textures that buildings
+    /// and destructables use, by lower-case archive path (SPEC-0022).
+    pub destructable_paths: BTreeMap<i32, DestructablePath>,
+    pub path_textures: BTreeMap<String, PathTexture>,
     unit_names: BTreeMap<String, i32>,
 }
 
@@ -287,7 +345,7 @@ impl ObjectData {
             melee,
             "Units\\UnitData.slk",
             "unitID",
-            &["orientInterp", "turnRate", "propWin"],
+            &["orientInterp", "turnRate", "propWin", "pathTex"],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.orient_interp = values[0]
@@ -296,6 +354,7 @@ impl ObjectData {
                     .unwrap_or(0);
                 unit.turn_rate = real(values[1].as_ref());
                 unit.prop_window = real(values[2].as_ref());
+                unit.path_texture = path_texture_name(values[3].as_deref());
             }
         }
         // Weapon 1 (SPEC-0016). PROVISIONAL: reals are read like the other
@@ -384,9 +443,17 @@ impl ObjectData {
             melee,
             "Units\\DestructableData.slk",
             "DestructableID",
-            &["HP", "armor"],
+            &["HP", "armor", "pathTex", "pathTexDeath", "fixedRot"],
         )? {
             data.destructables.insert(id, real(values[0].as_ref()));
+            data.destructable_paths.insert(
+                id,
+                DestructablePath {
+                    alive: path_texture_name(values[2].as_deref()),
+                    dead: path_texture_name(values[3].as_deref()),
+                    fixed_rotation: real(values[4].as_ref()),
+                },
+            );
             data.destructable_armor
                 .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
         }
@@ -438,6 +505,9 @@ impl ObjectData {
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
             unit.acquire = def.number(b"uacq").unwrap_or(unit.acquire);
+            if let Some(name) = def.text(b"upat") {
+                unit.path_texture = path_texture_name(Some(name));
+            }
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
             if let Some(orient) = def.number(b"uori") {
@@ -477,6 +547,40 @@ impl ObjectData {
                 .insert(def.id, def.number(b"bhps").unwrap_or(base_hp));
             let armor = data.destructable_armor.get(&def.base).copied().flatten();
             data.destructable_armor.insert(def.id, armor);
+            let mut path = data
+                .destructable_paths
+                .get(&def.base)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(name) = def.text(b"bptx") {
+                path.alive = path_texture_name(Some(name));
+            }
+            if let Some(name) = def.text(b"bptd") {
+                path.dead = path_texture_name(Some(name));
+            }
+            path.fixed_rotation = def.number(b"bfxr").unwrap_or(path.fixed_rotation);
+            data.destructable_paths.insert(def.id, path);
+        }
+        // The pathing textures these types use (SPEC-0022).
+        let names: std::collections::BTreeSet<String> = data
+            .units
+            .values()
+            .filter(|u| u.building)
+            .filter_map(|u| u.path_texture.clone())
+            .chain(
+                data.destructable_paths
+                    .values()
+                    .flat_map(|p| [p.alive.clone(), p.dead.clone()])
+                    .flatten(),
+            )
+            .collect();
+        for name in names {
+            if let Some(tga) = archives
+                .read(&name)
+                .and_then(|d| ow3_formats::tga::Tga::parse(&d).ok())
+            {
+                data.path_textures.insert(name, PathTexture::from_tga(&tga));
+            }
         }
         for def in definitions(archives, ObjectKind::Items)? {
             let base_hp = data.items.get(&def.base).copied().unwrap_or(0);

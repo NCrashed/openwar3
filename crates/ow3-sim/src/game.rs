@@ -50,6 +50,7 @@ mod enumerate;
 mod facing;
 mod follow;
 mod movement;
+mod obstacles;
 pub mod players;
 mod widgets;
 
@@ -124,6 +125,10 @@ pub struct Destructable {
     life: u32,
     max_life: u32,
     alive: bool,
+    /// The facing in radians as stored, and the cells its pathing texture
+    /// covers in the grid now (SPEC-0022).
+    facing: u32,
+    footprint: obstacles::Footprint,
 }
 
 /// PROVISIONAL: a placeholder item lying on the ground.
@@ -167,6 +172,8 @@ pub struct Unit {
     died_at: Option<u64>,
     /// Gold of a mine.
     resources: i32,
+    /// A building's pathing texture in the grid (SPEC-0022).
+    footprint: Option<Box<obstacles::Footprint>>,
 }
 
 /// How a player sees a unit, for the colour of its selection.
@@ -682,16 +689,30 @@ impl<'a> Game<'a> {
                 .copied()
                 .unwrap_or(0);
             let life = div(mul(max_life, i2r(i32::from(d.life_percent))), i2r(100));
+            // The angle of the file in radians, as a facing in degrees
+            // would be stored (SPEC-0022).
+            let facing = facing::from_degrees(facing::to_degrees(d.angle.to_bits()));
+            let (x, y) = obstacles::place_destructable(
+                &state,
+                d.type_id,
+                d.x.to_bits(),
+                d.y.to_bits(),
+                facing,
+                true,
+            );
             let destructable = Destructable {
                 type_id: d.type_id,
-                x: d.x.to_bits(),
-                y: d.y.to_bits(),
+                x,
+                y,
                 life,
                 max_life,
                 alive: true,
+                facing,
+                footprint: obstacles::Footprint::default(),
             };
             let handle = state.create(Object::Destructable(destructable));
             state.destructables.push(handle);
+            obstacles::refresh_destructable(&mut state, handle);
         }
         Game::with_state(program, &map.script_refs(), state)
     }

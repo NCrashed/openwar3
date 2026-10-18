@@ -433,6 +433,17 @@ the spec is silent:
   walked; repeated blocks (open question 3) are left out. Against the
   PF maps the ten units of the spec's tables come to rest within 0.025
   of the game.
+- **Buildings and destructables** (SPEC-0022). The grid of 64 is that
+  of world coordinates (open question 1); a building's footprint goes
+  when it dies or is removed (open question 2), a destructable's
+  texture changes at once when it dies (open question 4). The angle of
+  a destructable from `war3map.doo`, in radians, counts as the facing
+  in degrees it gives (`to_degrees`, then stored as `SetUnitFacing`
+  would), so that 0, 90 and 180 turn the texture. Textures are read
+  for the building types and destructable types of the map when it
+  loads. Against c-BG2 the moved positions of the spec's table come
+  out exactly; the walker tests have no numbers in the spec to compare
+  with.
 - **Units as obstacles** (SPEC-0021). The budget window is 2 ticks
   (open question 1), and a path that had to queue searches at its
   unit's next update; a moving unit that follows no path (an attacker,

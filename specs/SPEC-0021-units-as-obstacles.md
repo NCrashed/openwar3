@@ -158,12 +158,19 @@ queue). Positions are world coordinates.
 | footman, `Player(0)` | 0 | the same; the standing unit does not give way |
 | collision 48 copy | 0 | blocked at tick 298 at (-2110.18, -132.36) (row y = -200), heading turns to the order point at that update, next update turn only, moves again from tick 311 |
 
-**Shared budget.** Twelve footman walkers created in pairs with standing
-units, all ordered at tick 0. Handled from the last created: the
-first search iterations 33, 63, 143, 256, 143, 256, 61, 156 add up to
-1111 after the eighth walker; the remaining four walkers (the first
-four created) queued and started moving one update later (tick 11
-instead of 5).
+**Shared budget (test UO2).** 24 units created in this order, in
+pairs: for `k = 0 .. 11` first a footman walker at (-2500, `y_k`) with
+`move` to (-1500, `y_k`), then a standing unit of `Player(15)` at
+(-2000, `y_k + d_k`), with `y_k = 1800 k - 11000`, `d_k` = 0 for even
+`k` and 37 for odd `k`. The standing units are footman copies that
+differ only in `collision`: 8 (`k` = 0, 1), 16 (2, 3), 32 (4, 5),
+48 (6, 7), 64 (8, 9) and 0 (10, 11). All orders at tick 0, flat open
+map. Handled from the last created, the first local searches of the
+walkers `k = 11, 10, ..., 4` take 33, 63, 143, 256, 143, 256, 61, 156
+iterations, 1111 together after the walker `k = 4`; the walkers
+`k = 3, 2, 1, 0` queue and start moving at tick 11 instead of 5. Their
+trajectories then agree with the single-walker results (largest
+difference 0.14 world units for `k` = 0 to 3 when started at tick 10).
 
 **Walking units (one test, four pairs, rows 3000 apart).**
 
@@ -173,6 +180,26 @@ instead of 5).
 | footman east from (-2500, -3000), footman north from (-2000, -3500) to (-2000, -2500) | the northward one makes the eastward one wait from tick 352 to 472 at (-2038.34, -3000.03) |
 | footman east from (-2500, 0), peasant east from (-2300, 0) to (-1300, 0) | the footman catches up, makes the peasant wait from tick 280 to 400 at (-2043.54, 0), walks round north |
 | footman east from (-2500, 3000), knight west from (-1500, 3000) | the footman waits twice for 5 updates (ticks 316 to 376 at (-2079.42, 2994.36)), the knight walks round |
+
+Ticks during which each unit of this test stood still in the game
+(first tick without motion .. first tick with motion again; the first
+interval is the start, the last one the end of the walk):
+
+| Pair | Unit | Standing intervals |
+|---|---|---|
+| 1 | eastward footman | 1..11, 364..485, from 869 |
+| 1 | westward footman | 1..29 (turning), 364..377, 394..437, 460..467, from 863 |
+| 2 | eastward footman | 1..11, 352..473, from 863 |
+| 2 | northward footman | 1..11, 352..365 |
+| 3 | footman | 1..11, 274..281, from 760 |
+| 3 | peasant | 1..11, 280..401, 406..467 |
+| 4 | footman | 1..5, 316..377, 760..767, from 803 |
+| 4 | knight | 1..29 (turning), 322..341, 352..359, 376..389, from 676 |
+
+The westward footman's stand 394..437 is a block followed by the search
+throttle of SPEC-0020 (its previous search took 79 iterations), and
+460..467 a turn without motion by `propWin` (SPEC-0018); the knight's
+stands after its blocks are such turns as well.
 
 With the movement arithmetic of SPEC-0018 a model following this spec
 reproduced the trajectories of the first and fourth pairs within 1.2

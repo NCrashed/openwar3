@@ -96,27 +96,29 @@ impl<'a> Ground<'a> {
         ]
     }
 
-    /// The normal at a point from the heights of its neighbours, without
-    /// their cliff layers: the steps between layers are drawn by the cliff
-    /// models, and the ground next to them is lit as flat ground.
-    ///
-    /// PROVISIONAL: SPEC-0017 has not measured sloped ground (open
-    /// question 1); with the layers the ground beside every cliff leaned
-    /// by about 27 degrees and was much darker than the cliff tops in the
-    /// evening.
+    /// The normal at a point (SPEC-0017, "Sloped ground").
     fn normal(&self, x: u32, y: u32) -> [f32; 3] {
-        let at = |x: i64, y: i64| {
-            let x = x.clamp(0, i64::from(self.terrain.width) - 1) as u32;
-            let y = y.clamp(0, i64::from(self.terrain.height) - 1) as u32;
-            ground_height(&self.terrain.points[(y * self.terrain.width + x) as usize])
-        };
-        let (x, y) = (i64::from(x), i64::from(y));
-        let dx = (at(x + 1, y) - at(x - 1, y)) / (2.0 * TILE);
-        let dy = (at(x, y + 1) - at(x, y - 1)) / (2.0 * TILE);
-        let n = [-dx, -dy, 1.0];
-        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-        n.map(|c| c / l)
+        ground_normal(self.terrain, x, y)
     }
+}
+
+/// The normal of the ground at point (`x`, `y`) (SPEC-0017, "Sloped
+/// ground"): the central differences of the raw heights of its
+/// neighbours, without their cliff layers, so the ground beside a cliff
+/// is lit as flat ground. Points beyond the edge of the map count as the
+/// edge's (PROVISIONAL: not measured).
+pub fn ground_normal(terrain: &Terrain, x: u32, y: u32) -> [f32; 3] {
+    let at = |x: i64, y: i64| {
+        let x = x.clamp(0, i64::from(terrain.width) - 1) as u32;
+        let y = y.clamp(0, i64::from(terrain.height) - 1) as u32;
+        ground_height(&terrain.points[(y * terrain.width + x) as usize])
+    };
+    let (x, y) = (i64::from(x), i64::from(y));
+    let dx = (at(x + 1, y) - at(x - 1, y)) / (2.0 * TILE);
+    let dy = (at(x, y + 1) - at(x, y - 1)) / (2.0 * TILE);
+    let n = [-dx, -dy, 1.0];
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    n.map(|c| c / l)
 }
 
 fn tint(p: &TerrainPoint) -> [f32; 4] {

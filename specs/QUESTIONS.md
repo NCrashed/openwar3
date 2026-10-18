@@ -540,10 +540,11 @@ spec is silent:
   rule 9).
 - **Sloped ground** is lit at the corner points and interpolated over
   the two triangles of a tile, as the spec says. Cliff models are bent
-  onto the raw heights of the ground under them but keep the normals of
-  the model, so on raw slopes, which are steep beside many cliffs of
-  `(12)IceCrown`, their tops are much lighter than the ground around
-  (not measured).
+  onto the raw heights of the ground under them; their vertices on the
+  border of the model's tiles take the ground's normal there (the corner
+  normals interpolated bilinearly), the inner ones keep the model's. The
+  light is then computed per pixel from the interpolated normal, where
+  the game interpolates the light (the difference was not measured).
 - **Shadows** of `war3map.shd` darken the ground and the cliff models
   by the formula of the spec; units, doodads and water are not darkened
   (open question 5). The renderer interpolates the block samples by

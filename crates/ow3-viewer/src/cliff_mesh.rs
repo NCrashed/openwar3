@@ -145,6 +145,22 @@ fn place(
         vertex.position = [x0 + ox, y0 + oy, mz + lift + ground];
         let [nx, ny, nz] = v.normal;
         vertex.normal = [ny, -nx, nz];
+        // Vertices on the border of the model's tiles are lit like the
+        // ground there, the inner ones by the model's normals (SPEC-0014
+        // rule 9): the normal of the ground interpolated along the border.
+        let border = |o: f32, n: u32| o.abs() < 0.5 || (o - n as f32 * TILE).abs() < 0.5;
+        if border(ox, size.0) || border(oy, size.1) {
+            let normal = |dx, dy| crate::terrain_mesh::ground_normal(terrain, tx + dx, ty + dy);
+            let [bl, br, tl, tr] = [normal(0, 0), normal(1, 0), normal(0, 1), normal(1, 1)];
+            let n: [f32; 3] = std::array::from_fn(|k| {
+                bl[k] * (1.0 - u) * (1.0 - w)
+                    + br[k] * u * (1.0 - w)
+                    + tl[k] * (1.0 - u) * w
+                    + tr[k] * u * w
+            });
+            let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            vertex.normal = n.map(|c| c / l);
+        }
         into.vertices.push(vertex);
     }
     into.indices.extend(part.indices.iter().map(|i| i + first));
@@ -384,6 +400,7 @@ mod tests {
                 vertex([0.0, 0.0, 128.0]),
                 vertex([0.0, 128.0, 0.0]),
                 vertex([-128.0, 128.0, 0.0]),
+                vertex([-64.0, 64.0, 0.0]),
             ],
             indices: vec![0, 1, 2],
             texture: String::new(),
@@ -402,14 +419,20 @@ mod tests {
         place(&mut into, &part, &terrain, (0, 0), (1, 1), 2);
         let at: Vec<[f32; 3]> = into.vertices.iter().map(|v| v.position).collect();
         assert_eq!(
-            at,
+            at[..3],
             [
                 [1000.0, 2000.0, 168.0],
                 [1128.0, 2000.0, 0.0],
                 [1128.0, 2128.0, 0.0]
             ]
         );
-        assert_eq!(into.vertices[0].normal, [0.0, -1.0, 0.0]);
+        // The corner is lit like the ground there, the inner vertex by the
+        // model's normal, turned.
+        assert_eq!(
+            into.vertices[0].normal,
+            crate::terrain_mesh::ground_normal(&terrain, 0, 0)
+        );
+        assert_eq!(into.vertices[3].normal, [0.0, -1.0, 0.0]);
     }
 
     /// The four corners of a cliff tile take its ground; a ground missing

@@ -740,9 +740,9 @@ fn searches_share_a_budget() {
     );
 }
 
-/// SPEC-0019, verification 5 (c-CH1, rows 1 and 4): chases by paths. The
-/// map counts ticks 2 lower than the spec's table (as c-UO2 shows), so
-/// its ticks are compared with the table's less 2. Row 1: swings from the
+/// SPEC-0019, verification 5 (c-CH1, rows 1 and 4): chases by paths, in
+/// the ticks of the spec's table since the update cycle has the game's
+/// phase (SPEC-0018, "Phase from the start of the game"). Row 1: swings from the
 /// updates 322 and 688, chase resumed with first motion at 533 and 893,
 /// one update standing at 598 and 958, damage at 427 (428 here) and 788;
 /// row 4: a swing from 706, damage at 806.
@@ -760,9 +760,9 @@ fn chases_by_paths() {
         for w in tracks[&unit].windows(2) {
             let still = (w[0].1, w[0].2) == (w[1].1, w[1].2);
             match (still, since) {
-                (true, None) => since = Some(w[1].0 + 2),
+                (true, None) => since = Some(w[1].0),
                 (false, Some(s)) => {
-                    out.push((s, w[1].0 + 2));
+                    out.push((s, w[1].0));
                     since = None;
                 }
                 _ => {}
@@ -780,7 +780,7 @@ fn chases_by_paths() {
         .filter_map(|l| {
             let f: Vec<&str> = l.split(' ').collect();
             (f.len() >= 3 && f[0] == "D")
-                .then(|| (f[2].parse().unwrap(), f[1].parse::<u32>().unwrap() + 2))
+                .then(|| (f[2].parse().unwrap(), f[1].parse::<u32>().unwrap()))
         })
         .collect();
     assert!(
@@ -926,5 +926,38 @@ fn walkers_past_buildings() {
                 "{map} unit {unit} rests at {rest:?}, {off} off"
             );
         }
+    }
+}
+
+/// SPEC-0019, verification 6 (c-CH5): 13 footmen attacking peasants that
+/// walk away, ordered from a 0 s timer of `main`, with different reaction
+/// delays: their first motion and the update their first swing starts
+/// from (the first tick standing after walking), in the map's ticks as in
+/// the spec's table. Two of them do not swing before 840.
+#[test]
+fn swings_against_the_goal_point() {
+    let Some(output) = run("c-CH5.w3x", 6.0) else {
+        return;
+    };
+    let tracks = tracks(&output);
+    let first_motion = [5, 5, 47, 17, 29, 17, 5, 5, 23, 17, 29, 29, 47];
+    let swing = [706, 706, 0, 802, 820, 802, 712, 712, 814, 802, 826, 826, 0];
+    for k in 0..13 {
+        let track = &tracks[&(2 * k)];
+        let moved = track
+            .windows(2)
+            .find(|w| (w[0].1, w[0].2) != (w[1].1, w[1].2))
+            .map(|w| w[1].0);
+        assert_eq!(moved, Some(first_motion[k as usize]), "first motion of {k}");
+        // The update of the swing: the last tick of motion before the
+        // first stand, which is the update the attacker stops at.
+        let stood = track
+            .windows(2)
+            .filter(|w| w[0].0 > first_motion[k as usize])
+            .find(|w| (w[0].1, w[0].2) == (w[1].1, w[1].2))
+            .map(|w| w[0].0)
+            .filter(|&t| t <= 840);
+        let expected = (swing[k as usize] != 0).then_some(swing[k as usize]);
+        assert_eq!(stood, expected, "swing of {k}");
     }
 }

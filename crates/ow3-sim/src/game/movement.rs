@@ -52,14 +52,17 @@ pub const ORDER_PATROL: i32 = 851_991;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
 /// The ticks of the update cycle, the same for all units, are those equal
-/// to `PHASE` modulo `UPDATE` (SPEC-0018, "Phase"; the game counts them
-/// one lower, from its own start).
-const PHASE: u64 = 5;
+/// to `PHASE` modulo `UPDATE` from `FIRST_UPDATE` on (SPEC-0018, "Phase
+/// from the start of the game": 7, 13, 19, ...; tick 1 is the first tick
+/// after `main`).
+const PHASE: u64 = 1;
+const FIRST_UPDATE: u64 = 7;
 
 /// The first update after `tick`: updates come before the script's timers
 /// in a tick, so an order given at an update tick waits for the next.
 pub(super) fn next_update_after(tick: u64) -> u64 {
-    tick + UPDATE - (tick + UPDATE - PHASE) % UPDATE
+    let next = tick + UPDATE - (tick + UPDATE - PHASE) % UPDATE;
+    next.max(FIRST_UPDATE)
 }
 
 /// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).

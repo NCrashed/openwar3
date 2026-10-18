@@ -487,25 +487,30 @@ the spec is silent:
   not renew the goal at once. A unit that reaches its goal before its
   weapon is ready stands until `cool1` after the last hit. A start
   block that is not free gives way to the free neighbouring block whose
-  centre is nearest, for every high-level search. Against c-CH1, c-CW1
-  and c-CS214 (verifications 5 and 7, the maps counting ticks 2 lower
-  than the spec here) the swings, resumptions, standing updates and
-  damage come at the spec's ticks, apart from two first hits one tick
-  late. Against c-CH5 (verification 6) ten of the 13 attackers swing at
-  the spec's updates; the three whose reaction delays end 0.1 to 0.6
-  ticks before an update (15.09, 3.43 and 27.74 ticks) start one update
-  late, and so swing one update late. The maps give their orders from a
-  timer of 0 s started in `main`; with the update cycle one tick later
-  all 13 come out right, but then the tests of SPEC-0019, whose orders
-  come from a timer of 0.5 s, do not: when timers of 0 s and of 0.5 s
-  fire relative to the update cycle needs checking (SPEC-0002,
-  SPEC-0018 "Phase").
+  centre is nearest, for every high-level search. The update cycle has
+  the game's phase (SPEC-0018, updates in ticks 7, 13, ...). Against
+  c-CH1, c-CW1 and c-CS214 (verifications 5 and 7, in the maps' own
+  ticks) the swings, resumptions, standing updates and damage come at
+  the spec's ticks, apart from two first hits one tick late; against
+  c-CH5 (verification 6) all 13 attackers start and swing at the spec's
+  ticks. The tests of the SPEC-0019 tables give their orders in an
+  update tick (0.51 s), so that they are taken 6 ticks later as in the
+  game's tests. The knight of SPEC-0016 (ordered in `main`) now hits
+  0.02 s earlier than the game shows: the hit at 0.715 s needs a swing
+  from tick 11, which is no update tick (question for the analyst).
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.
 - **Acquisition** (SPEC-0019): the checks, the choice of target and the
-  reaction delay follow the spec; verification 8 matches for both
-  seeds, and so do the turns at tick 10. The tick 0 of a unit's
+  reaction delay follow the spec; the acquisition ticks of verification
+  8 match for both seeds. Its turns at tick 10 no longer do with the
+  update cycle of SPEC-0018 ("Phase from the start of the game", updates
+  7, 13, ...): the first footman acquires in game tick 4 (3 in the
+  table), its reaction delay of 0.31 ticks ends before the update of
+  tick 7, and it turns there; the table's 10 is no update tick when
+  the acquisitions count as here, and 13 if the table counts 3 lower as
+  the maps do, but then the acquisition ticks would be 3 later too.
+  Which counting the table uses is a question for the analyst. The tick 0 of a unit's
   schedule is one tick after its creation, as for the timers (a 0.5 s
   timer of the map initialisation fires at our tick 101); units created
   later in a running game are assumed to count the same way. The

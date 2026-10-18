@@ -139,8 +139,9 @@ fn first_motion(degrees: f32) -> Option<u64> {
     let mut game = game_to(&target)?;
     let path = track(&mut game, 300);
     let first = path.iter().find(|p| (p.1, p.2) != (-3000.0, -2000.0))?.0;
-    // The order came at tick 101: motion starts the tick after update k.
-    Some((first - 101 - 1) / 6)
+    // The order came at tick 101 and is taken at the update of tick 103
+    // (SPEC-0018, "Phase"): motion starts the tick after update k.
+    Some((first - 104) / 6 + 1)
 }
 
 /// The start table of SPEC-0018 for the footman (turnRate 0.6, propWin
@@ -162,7 +163,7 @@ fn when_the_footman_starts() {
         .find(|p| (p.1, p.2) != (-2000.0, -8000.0))
         .unwrap()
         .0;
-    assert_eq!((first - 101 - 1) / 6, 2, "60 degrees");
+    assert_eq!((first - 104) / 6 + 1, 2, "60 degrees");
     for (angles, update) in [
         (&[30.0, 45.0][..], 1),
         (&[70.0, 80.0, 90.0, -90.0][..], 2),

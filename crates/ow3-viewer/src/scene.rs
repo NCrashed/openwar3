@@ -96,6 +96,9 @@ impl Scene {
             .read_map_file("war3map.w3e")
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
+        // The files of the tileset come before those of the game (SPEC-0014
+        // rule 7).
+        chain.mount_tileset(terrain.tileset);
         let shadows = chain.read_map_file("war3map.shd").and_then(|d| {
             ow3_formats::map::shadows::Shadows::parse(&d, terrain.width - 1, terrain.height - 1)
                 .ok()

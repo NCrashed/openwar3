@@ -327,7 +327,18 @@ impl Particles {
                     continue;
                 }
                 let (a, b) = if e.node.flags & XY_QUAD != 0 {
-                    (particle.axes[0], particle.axes[1])
+                    // Flat, the top of the texture ahead in the direction
+                    // the particle moves (PROVISIONAL: the reading of the
+                    // flag that turns the shore foam along the shore, as
+                    // the game shows it); still ones keep the model's axes.
+                    let [vx, vy, _] = particle.velocity;
+                    let l = (vx * vx + vy * vy).sqrt();
+                    if l > 1e-3 {
+                        let b = [vx / l, vy / l, 0.0];
+                        ([b[1], -b[0], 0.0], b)
+                    } else {
+                        (particle.axes[0], particle.axes[1])
+                    }
                 } else {
                     (right, up)
                 };

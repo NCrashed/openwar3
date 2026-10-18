@@ -53,25 +53,14 @@ fn raw_code(text: &str) -> Option<RawCode> {
     <[u8; 4]>::try_from(text.as_bytes()).ok().map(RawCode)
 }
 
-/// The cliff texture `<dir>\<file>.blp` for tileset `tileset` (SPEC-0014
-/// rule 7): the map's own copy, else the game's copy with the tileset
-/// letter, else the game's plain copy.
-///
-/// PROVISIONAL: a lettered copy imported into the map would be read in
-/// place of the game's when the texture is loaded.
-fn cliff_texture(chain: &mut ArchiveChain, dir: &str, file: &str, tileset: u8) -> String {
-    let plain = format!("{dir}\\{file}.blp");
-    if chain.read_map_file(&plain).is_some() {
-        return plain;
-    }
-    let lettered = format!("{dir}\\{}_{file}.blp", char::from(tileset));
-    if chain.read_game_file(&lettered).is_some() {
-        return lettered;
-    }
-    plain
+/// The cliff texture `<dir>\<file>.blp` (SPEC-0014 rule 7): the plain
+/// name, which the chain looks up in the map, then in the archive of the
+/// map's tileset (mounted by the scene), then in the game archives.
+fn cliff_texture(dir: &str, file: &str) -> String {
+    format!("{dir}\\{file}.blp")
 }
 
-fn cliff_types(chain: &mut ArchiveChain, tileset: u8) -> BTreeMap<RawCode, CliffType> {
+fn cliff_types(chain: &mut ArchiveChain) -> BTreeMap<RawCode, CliffType> {
     let mut types = BTreeMap::new();
     let Some(table) = chain
         .read("TerrainArt\\CliffTypes.slk")
@@ -96,10 +85,8 @@ fn cliff_types(chain: &mut ArchiveChain, tileset: u8) -> BTreeMap<RawCode, Cliff
             continue;
         };
         let texture = cliff_texture(
-            chain,
             &text(tex_dir).unwrap_or_default(),
             &text(tex_file).unwrap_or_default(),
-            tileset,
         );
         types.insert(
             code,
@@ -179,7 +166,7 @@ struct Placed {
 
 /// The ramp and cliff models of `terrain`.
 fn placements(chain: &mut ArchiveChain, terrain: &Terrain) -> Vec<Placed> {
-    let types = cliff_types(chain, terrain.tileset);
+    let types = cliff_types(chain);
     let cliff_type = |index: u8| {
         terrain
             .cliff_tilesets

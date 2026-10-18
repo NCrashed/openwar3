@@ -399,8 +399,9 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 - **Ground next to cliffs** (SPEC-0014 open question 5). Where cliff
   tiles of different types share a point, the later tile (by rows from
   the south) gives the ground; a `groundTile` missing from the map's
-  ground list is not added. A lettered cliff texture imported into the
-  map would be read in place of the game's copy. Tilesets differ in
+  ground list is not added. Cliff textures and water frames come from
+  the tileset archive mounted below the map and above all game archives
+  (its place against `War3Patch.mpq` is open). Tilesets differ in
   lighting, which the viewer does not model.
 - **Cliff placement** (SPEC-0014 open question 2). The shipped models
   span x -128..0, y 0..128 and raise the corner of the name's BL letter
@@ -431,7 +432,9 @@ Heights, water and cliff models follow SPEC-0014 in `ow3-render::cliffs`,
 - **Particles** (`PRE2`) follow the plain reading of the public format
   documentation (`ow3-render::particles`): emission, cone, speed and
   variation, gravity, the three segments, head cells; quads face the
-  camera or lie in the model's xy plane (`XYQuad`). Not done: tails,
+  camera or lie in the model's xy plane (`XYQuad`), turned so that the
+  top of the texture points the way the particle moves (as the shore
+  foam shows in the game). Not done: tails,
   squirts, model space, sorting, light and fog; only placed models
   (doodads, shorelines) emit, units do not. Their random numbers are the
   viewer's own. A placed model starts with 10 s of particles already
@@ -535,6 +538,9 @@ the spec is silent:
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.
+- **Spill and bounce** (SPEC-0016 open question 7) are not done: there
+  are no upgrades, so no spill, and the choice and reach of a bounce are
+  open.
 - **Acquisition** (SPEC-0019): the checks, the choice of target and the
   reaction delay follow the spec; the acquisition ticks of verification
   8 match for both seeds, and so do the turns at 10, 10, 34 and 64

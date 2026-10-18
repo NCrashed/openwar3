@@ -212,19 +212,25 @@ swing):
   as for `GetRandomReal`, and the delay is `mul(x, ReactionDelay)`.
 - **When it starts.** For an order given by a script in tick `o`
   (ticks numbered as in SPEC-0018 "Phase from the start of the game";
-  an order given in `main` has `o` = 0), the delay starts 7 ticks
-  later: the unit acts at its first update at or after `o + 7 + delay`
-  (delay in ticks). A knight next to its target, facing it, started its
-  swing there and hit `dmgpt1` (132 ticks) later. Measured (order tick,
-  delay in ticks -> tick of the swing): (0, 0.31 -> 13), (0, 6.58 -> 19),
-  (50, 0.31 -> 61), (50, 5.41 -> 67), (50, 6.58 -> 67), (50, 11.66 ->
-  73), (53, 5.41 -> 67), (53, 6.58 -> 67), (56, 0.31 -> 67), (56, 6.58 ->
-  73), (103, 0.31 -> 115), (103, 6.58 -> 121), (300, 0.31 -> 313), (301,
-  0.31 -> 313), (500, 0.31 -> 511), (501, 0.31 -> 511). Neither "the
-  first update after the order plus the delay" nor "6 ticks after the
-  order" fits all of them. For an order given in an update tick the
-  swing thus comes 12 ticks later for delays up to 5 ticks, 18 ticks
-  later for 5 to 11 ticks, and so on.
+  an order given in `main` has `o` = 0), the unit acts at its first
+  update at or after `o + 1 + delay` (delay in ticks): it turns towards
+  the target, and walks if the target is out of range. A unit that is
+  already in range and facing the target starts its swing one update
+  later, i.e. at the first update at or after `o + 7 + delay`, and hits
+  `dmgpt1` later.
+  - Out of range (footman 600 from its target, facing it), first facing
+    change and first motion: (order tick, delay in ticks -> update):
+    (50, 5.41 -> 61), (53, 0.31 -> 55), (300, 0.31 -> 307). The last one
+    rules out `o + delay` (which gives 301).
+  - In range (footman next to its target, turning by a few degrees),
+    first facing change: (50, 0.31 -> 55), (50, 5.41 -> 61), (50, 6.58
+    -> 61), (50, 11.66 -> 67), (53, 0.31 -> 55), (53, 5.41 -> 61).
+  - In range and facing (knight next to its target), start of the swing
+    (hit 132 ticks later): (0, 0.31 -> 13), (0, 6.58 -> 19), (50, 0.31
+    -> 61), (50, 5.41 -> 67), (50, 6.58 -> 67), (50, 11.66 -> 73), (53,
+    5.41 -> 67), (53, 6.58 -> 67), (56, 0.31 -> 67), (56, 6.58 -> 73),
+    (103, 0.31 -> 115), (103, 6.58 -> 121), (300, 0.31 -> 313), (301,
+    0.31 -> 313), (500, 0.31 -> 511), (501, 0.31 -> 511).
 - Acquisitions (idle units and attack-move, below) count the delay from
   the time of the check instead.
 

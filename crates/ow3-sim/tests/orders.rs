@@ -87,11 +87,13 @@ fn game(
         return None;
     }
     // The tables of the game, read once for all the games of the tests.
-    static DATA: std::sync::OnceLock<ow3_sim::data::ObjectData> = std::sync::OnceLock::new();
-    let mut data = DATA
+    type Tables = (ow3_sim::data::ObjectData, ow3_sim::combat::Combat);
+    static DATA: std::sync::OnceLock<Tables> = std::sync::OnceLock::new();
+    let (mut data, combat) = DATA
         .get_or_init(|| {
             let mut archives = ow3_sim::map::Archives::game(&game_data).unwrap();
-            ow3_sim::data::ObjectData::load(&mut archives, false).unwrap()
+            let data = ow3_sim::data::ObjectData::load(&mut archives, false).unwrap();
+            (data, ow3_sim::combat::Combat::load(&mut archives, false))
         })
         .clone();
     change(&mut data);
@@ -107,6 +109,7 @@ fn game(
     {
         let mut state = game.state.borrow_mut();
         state.data = data;
+        state.combat = combat;
         state.world_bounds = [-12288.0f32, -12288.0, 12288.0, 12288.0].map(f32::to_bits);
     }
     game.run("main");
@@ -186,22 +189,25 @@ fn approach() {
 }
 
 /// The turning table of SPEC-0019: a knight next to a target at `a`
-/// degrees from its heading, first damage in ticks after the order. The
-/// table was measured with orders at no exact tick; given in an update
-/// tick, the order makes the knight wait 12 ticks before it turns or
-/// swings ("When it starts": order + 7 + 0.31), 6 more than the table.
+/// degrees from its heading, first damage in ticks after the order given
+/// in an update tick. The knight turns from the update after order + 1 +
+/// 0.31 and swings no earlier than the update after order + 7 + 0.31
+/// ("When it starts"): every turning knight hits at the table's tick, the
+/// one facing its target 6 ticks later than printed (the table was
+/// measured with orders at no exact tick; the exact series of the spec
+/// gives 12 ticks to the swing).
 #[test]
 fn knight_turns_before_it_strikes() {
     for (a, ticks) in [
         (0.0f32, 138 + 6),
-        (30.0, 144 + 6),
-        (45.0, 150 + 6),
-        (60.0, 150 + 6),
-        (90.0, 156 + 6),
-        (120.0, 162 + 6),
-        (135.0, 168 + 6),
-        (150.0, 168 + 6),
-        (180.0, 174 + 6),
+        (30.0, 144),
+        (45.0, 150),
+        (60.0, 150),
+        (90.0, 156),
+        (120.0, 162),
+        (135.0, 168),
+        (150.0, 168),
+        (180.0, 174),
     ] {
         let (s, c) = a.to_radians().sin_cos();
         let units = format!(
@@ -922,4 +928,98 @@ fn call_for_help_reach() {
     let thrower = Some(units[0].handle);
     let targets: Vec<Option<u32>> = units[1..].iter().map(|u| u.target).collect();
     assert_eq!(targets, [thrower, thrower, thrower, None, None, None]);
+}
+
+/// The hits of unit 0 on unit `target` in a run: (tick, damage).
+fn hits_on(path: &[(u64, Vec<UnitView>)], target: usize) -> Vec<(u64, f32)> {
+    path.windows(2)
+        .filter(|w| w[0].1.len() > target && w[1].1.len() > target)
+        .filter_map(|w| {
+            let lost = w[0].1[target].life - w[1].1[target].life;
+            (lost > 1.0).then_some((w[1].0, lost))
+        })
+        .collect()
+}
+
+/// SPEC-0016, "Second weapon": the mortar team hits a farm with weapon 2
+/// every 3.5 s without area damage; the gargoyle hits a footman with
+/// weapon 2 every 2.2 s, a gryphon rider with weapon 1 every 1.4 s. The
+/// damage lies within what the dice of that weapon give after armor
+/// (the game's samples, 63.5 to 66.9, 16.1 to 18.8 and 62 to 69, too).
+#[test]
+fn second_weapon() {
+    let cases: [(&str, &str, u64, f32, f32); 3] = [
+        ("hmtm", "hhou", 700, 60.0, 73.9),
+        ("ugar", "hfoo", 440, 16.0, 18.8),
+        ("ugar", "hgry", 280, 61.0, 70.0),
+    ];
+    for (attacker, target, every, low, high) in cases {
+        let units = format!(
+            "set t = CreateUnit(Player(1), '{target}', 0, 0, 0)\n    call PauseUnit(t, true)\n    set a = CreateUnit(Player(0), '{attacker}', -300, 0, 0)\n    call PauseUnit(CreateUnit(Player(1), 'hfoo', 0, 60, 0), true)"
+        );
+        let Some(mut game) = game(&units, "call IssueTargetOrder(a, \"attack\", t)", |d| {
+            for id in [b"hhou", b"hfoo", b"hgry"] {
+                if let Some(t) = d.units.get_mut(&i32::from_be_bytes(*id)) {
+                    t.hp = 100_000f32.to_bits();
+                }
+            }
+        }) else {
+            return;
+        };
+        let path = run(&mut game, ORDER_TICK + 3000);
+        let hits = hits_on(&path, 0);
+        assert!(hits.len() >= 3, "{attacker} on {target}: {hits:?}");
+        assert!(
+            hits.windows(2).all(|w| w[1].0 - w[0].0 == every),
+            "{attacker} on {target}: {hits:?}"
+        );
+        assert!(
+            hits.iter().all(|h| h.1 >= low - 0.05 && h.1 <= high + 0.05),
+            "{attacker} on {target}: {hits:?}"
+        );
+        if attacker == "hmtm" {
+            assert!(hits_on(&path, 2).is_empty(), "area damage on the farm");
+        }
+    }
+}
+
+/// SPEC-0016, "Area damage": a mortar team's hit on a footman damages the
+/// units round it by distance, the full hit up to 25, 0.4 of it up to 150,
+/// 0.1 up to 250, allies of the mortar and neutral units too.
+#[test]
+fn area_damage() {
+    let around = [
+        ("Player(0)", 0.0f32, 20.0f32, 1.0f32),
+        ("Player(0)", 0.0, 30.0, 0.4),
+        ("Player(1)", 0.0, -50.0, 0.4),
+        ("Player(15)", 50.0, 50.0, 0.4),
+        ("Player(0)", 0.0, 160.0, 0.1),
+        ("Player(0)", 0.0, 300.0, 0.0),
+    ];
+    let mut units = String::from(
+        "set t = CreateUnit(Player(0), 'hfoo', 0, 0, 0)\n    call PauseUnit(t, true)\n    set a = CreateUnit(Player(1), 'hmtm', -1000, 0, 0)",
+    );
+    for (player, x, y, _) in around {
+        units += &format!("\n    call PauseUnit(CreateUnit({player}, 'hfoo', {x}, {y}, 0), true)");
+    }
+    let Some(mut game) = game(&units, "call IssueTargetOrder(a, \"attack\", t)", |d| {
+        let footman = d.units.get_mut(&i32::from_be_bytes(*b"hfoo")).unwrap();
+        footman.hp = 5000f32.to_bits();
+        footman.collision = 0;
+    }) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 1500);
+    let first = hits_on(&path, 0)[0];
+    for (i, (_, _, _, share)) in around.iter().enumerate() {
+        let hit = hits_on(&path, 2 + i)
+            .into_iter()
+            .find(|h| h.0 == first.0)
+            .map_or(0.0, |h| h.1);
+        assert!(
+            (hit - share * first.1).abs() < 0.01,
+            "unit {i}: {hit} for {share} of {}",
+            first.1
+        );
+    }
 }

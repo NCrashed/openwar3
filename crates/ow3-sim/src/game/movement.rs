@@ -49,8 +49,9 @@ pub const ORDER_SMART: i32 = 851_971;
 pub const ORDER_ATTACK: i32 = 851_983;
 pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
-/// Ticks from an order given by a script to the start of its reaction delay
-/// (SPEC-0019, "When it starts").
+/// Ticks from an order given by a script to the start of the reaction delay
+/// before its first swing; the delay before turning and walking starts 1
+/// tick after the order (SPEC-0019, "When it starts").
 const ORDER_DELAY_START: u64 = 7;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
@@ -444,7 +445,9 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             let tick = state.ticks;
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
-                react(state, h, tick, delay);
+                // It turns and walks from the delay counted 1 tick after the
+                // order (SPEC-0019, "When it starts").
+                react(state, h, tick + 1, delay);
                 // The swing waits for the delay counted 7 ticks after the
                 // order (SPEC-0019, "When it starts").
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
@@ -720,15 +723,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let turn_rate = data.map_or(PI, |t| t.turn_rate);
         let window = mul(data.map_or(0, |t| t.prop_window), DEGREES);
         let orient = data.map_or(0, |t| t.orient_interp);
-        // Range and collision size in cells.
-        let reach = data.map_or(0, |t| {
-            let range = t.weapon.as_ref().map_or(0, |w| w.range);
-            add(mul(range, CELL), mul(t.collision, CELL))
-        });
-        let range_cells = mul(
-            data.and_then(|t| t.weapon.as_ref()).map_or(0, |w| w.range),
-            CELL,
-        );
+        // Range and collision size in cells, with the weapon for the
+        // target of an attack (SPEC-0016).
+        let attack_target = match state.objects.get(&h) {
+            Some(Object::Unit(u)) => u.movement.and_then(|m| match m.order {
+                Order::Attack { target } => Some(target),
+                _ => None,
+            }),
+            _ => None,
+        };
+        let range = super::attack::weapon_for(state, type_id, attack_target).map_or(0, |w| w.range);
+        let reach = data.map_or(0, |t| add(mul(range, CELL), mul(t.collision, CELL)));
+        let range_cells = mul(range, CELL);
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
@@ -819,21 +825,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
                             real_of(waited) >= real_of(delay)
                         });
-                        if !gate_open {
-                            // In reach before the delay counted from 7
-                            // ticks after the order is over: it stands,
-                            // and turns only then (SPEC-0019, "When it
-                            // starts"; a walking start counts the delay
-                            // from the order itself, c-CH5).
-                            m.walking = false;
-                            m.velocity = [0, 0];
-                        } else if real_of(d).abs() < ATTACK_ANGLE {
+                        if real_of(d).abs() < ATTACK_ANGLE {
                             m.heading = h;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            m.arrived = true;
-                            m.swing_gate = None;
-                            begin_attack = Some(target);
+                            // The swing waits one update more than the
+                            // turn: until the delay counted from 7 ticks
+                            // after the order is over (SPEC-0019, "When
+                            // it starts").
+                            if gate_open {
+                                m.arrived = true;
+                                m.swing_gate = None;
+                                begin_attack = Some(target);
+                            }
                         } else {
                             motion(&mut m, goal, false, speed, turn_rate, window);
                         }
@@ -994,14 +998,14 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
     let (Some(u), Some(at)) = (state.unit(Some(h)), position_of(state, target)) else {
         return false;
     };
-    let Some((data, own)) = collision(u) else {
+    let Some((_, own)) = collision(u) else {
         return false;
     };
     let other = state
         .unit(Some(target))
         .and_then(collision)
         .map_or(0, |c| c.1);
-    let range = data.weapon.as_ref().map_or(0, |w| w.range);
+    let range = super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
     let reach = add(add(mul(range, CELL), mul(own, CELL)), mul(other, CELL));
     in_range(relative([u.x, u.y], min), relative(at, min), reach)
 }
@@ -1018,6 +1022,10 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
         return;
     }
     let (tick, min) = (state.ticks, [state.world_bounds[0], state.world_bounds[1]]);
+    let range = state
+        .unit(Some(h))
+        .and_then(|u| super::attack::weapon_for(state, u.type_id, Some(target)))
+        .map_or(0, |w| w.range);
     let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
         return;
     };
@@ -1029,7 +1037,6 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
     let data = state.data.units.get(&u.type_id);
     let own = data.map_or(0, |t| t.collision);
     let class = crate::path::size_class(own);
-    let range = data.and_then(|t| t.weapon.as_ref()).map_or(0, |w| w.range);
     let other = state
         .unit(Some(target))
         .and_then(|t| state.data.units.get(&t.type_id))

@@ -20,7 +20,7 @@ use ow3_jass::vm::Vm;
 
 use super::{Object, State};
 use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
-use crate::data::is_hero;
+use crate::data::{Area, Weapon, is_hero};
 use crate::random::ATTACK_DICE;
 
 /// A unit's attack on a target.
@@ -40,12 +40,7 @@ pub struct Attacking {
 impl Attacking {
     /// The attack as a viewer sees it, for a unit of type `type_id`.
     pub(super) fn view(&self, state: &State, type_id: i32) -> super::AttackView {
-        let weapon = state
-            .data
-            .units
-            .get(&type_id)
-            .and_then(|t| t.weapon.clone())
-            .unwrap_or_default();
+        let weapon = weapon_for(state, type_id, Some(self.target)).unwrap_or_default();
         super::AttackView {
             target: self.target,
             next_hit: self.next,
@@ -76,12 +71,9 @@ pub(super) fn standing(state: &State, target: u32) -> bool {
 /// weapon's damage point later (SPEC-0019).
 pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id: i32) {
     let damage_point = match state.objects.get(&h) {
-        Some(Object::Unit(u)) => state
-            .data
-            .units
-            .get(&u.type_id)
-            .and_then(|t| t.weapon.as_ref())
-            .map_or(1, |w| ticks(w.damage_point)),
+        Some(Object::Unit(u)) => {
+            weapon_for(state, u.type_id, Some(target)).map_or(1, |w| ticks(w.damage_point))
+        }
         _ => return,
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -113,7 +105,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             match attack {
                 Some(a) if a.next <= tick && standing(s, a.target) => {
                     let data = s.data.units.get(&type_id);
-                    let weapon = data.and_then(|t| t.weapon.clone()).unwrap_or_default();
+                    let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
                     let primary = data.filter(|_| is_hero(type_id)).map_or(0, |t| t.primary);
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
@@ -122,7 +114,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         u.attack = Some(Attacking { next, resume, ..a });
                         u.weapon_ready = next;
                     }
-                    Some((a.target, amount, weapon.attack_type))
+                    Some((a.target, amount, weapon.attack_type, weapon.area))
                 }
                 Some(a) if a.next <= tick => {
                     // The target is gone.
@@ -134,7 +126,12 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 _ => None,
             }
         };
-        if let Some((target, amount, attack_type)) = hit {
+        if let Some((target, amount, attack_type, area)) = hit {
+            // The units round the target, before the target takes its hit.
+            let splashed = area
+                .as_ref()
+                .map(|area| splash(&state.borrow(), h, target, area, amount))
+                .unwrap_or_default();
             super::widgets::damage_widget(
                 vm,
                 state,
@@ -144,6 +141,17 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 attack_type,
                 DAMAGE_TYPE_NORMAL,
             );
+            for (victim, share) in splashed {
+                super::widgets::damage_widget(
+                    vm,
+                    state,
+                    Some(h),
+                    Some(victim),
+                    share,
+                    attack_type,
+                    DAMAGE_TYPE_NORMAL,
+                );
+            }
             // A kill on an attack-move: the unit walks on after its
             // backswing (SPEC-0019).
             let mut s = state.borrow_mut();
@@ -154,12 +162,9 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if !standing(&s, target) {
                 let tick = s.ticks;
                 let backswing = match s.objects.get(&h) {
-                    Some(Object::Unit(u)) => s
-                        .data
-                        .units
-                        .get(&u.type_id)
-                        .and_then(|t| t.weapon.as_ref())
-                        .map_or(1, |w| ticks(w.backswing)),
+                    Some(Object::Unit(u)) => {
+                        weapon_for(&s, u.type_id, Some(target)).map_or(1, |w| ticks(w.backswing))
+                    }
                     _ => 1,
                 };
                 super::movement::killed(&mut s, h, tick, backswing);
@@ -185,4 +190,77 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     s.attacking.retain(
         |h| matches!(s.objects.get(h), Some(Object::Unit(u)) if u.alive && u.attack.is_some()),
     );
+}
+
+/// The weapon a unit of `type_id` uses against `target` (SPEC-0016,
+/// "Second weapon"): by the target's classes. PROVISIONAL: destructables
+/// count as `debris` and items as `item`.
+pub(super) fn weapon_for(state: &State, type_id: i32, target: Option<u32>) -> Option<Weapon> {
+    let data = state.data.units.get(&type_id)?;
+    let classes = match target.and_then(|t| state.objects.get(&t)) {
+        Some(Object::Unit(o)) => state
+            .data
+            .units
+            .get(&o.type_id)
+            .map(|t| t.target_type.clone())
+            .unwrap_or_default(),
+        Some(Object::Destructable(_)) => vec!["debris".to_owned()],
+        Some(Object::Item(_)) => vec!["item".to_owned()],
+        _ => Vec::new(),
+    };
+    data.weapon_against(&classes).cloned()
+}
+
+/// The units that the area of a hit of `h` on `target` damages besides the
+/// target, in the order of their creation, with the amounts before armor
+/// (SPEC-0016, "Area damage"): by the distance from the target's centre
+/// to theirs, `amount` up to `full`, `half_factor` of it up to `half`,
+/// `quarter_factor` up to `quarter`, for units of the classes the area
+/// allows, allies and neutral ones too unless it names `enemy`.
+///
+/// PROVISIONAL: the limits are the fields themselves (the game's were
+/// about one unit farther, centred a little beyond the target, open
+/// question 6); only units are damaged, not destructables or items.
+fn splash(state: &State, h: u32, target: u32, area: &Area, amount: u32) -> Vec<(u32, u32)> {
+    let (Some(attacker), Some(t)) = (state.unit(Some(h)), state.unit(Some(target))) else {
+        return Vec::new();
+    };
+    let (x, y) = (f32::from_bits(t.x), f32::from_bits(t.y));
+    let enemies_only = area.targets.iter().any(|c| c == "enemy");
+    let mut out = Vec::new();
+    for &other in &state.units {
+        if other == target {
+            continue;
+        }
+        let Some(Object::Unit(u)) = state.objects.get(&other) else {
+            continue;
+        };
+        if !u.alive || u.hidden {
+            continue;
+        }
+        let classes = state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(&[][..], |d| &d.target_type[..]);
+        if !classes.iter().any(|c| area.targets.contains(c)) {
+            continue;
+        }
+        if enemies_only && !super::movement::enemies(state, attacker.owner, u.owner) {
+            continue;
+        }
+        let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
+        let d = (dx * dx + dy * dy).sqrt();
+        let share = if d <= area.full {
+            amount
+        } else if d <= area.half {
+            ow3_math::mul(amount, area.half_factor)
+        } else if d <= area.quarter {
+            ow3_math::mul(amount, area.quarter_factor)
+        } else {
+            continue;
+        };
+        out.push((other, share));
+    }
+    out
 }

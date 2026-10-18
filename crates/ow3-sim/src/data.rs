@@ -60,8 +60,14 @@ pub struct UnitType {
     /// A hero's primary attribute (`Primary`: STR, AGI or INT), as a
     /// real; 0 for others.
     pub primary: u32,
-    /// Weapon 1 (SPEC-0016), if the type has one.
+    /// Weapon 1 (SPEC-0016), if the type has one; weapon 2 when only it is
+    /// on.
     pub weapon: Option<Weapon>,
+    /// Weapon 2 of a type with both (`weapsOn` 3).
+    pub weapon2: Option<Weapon>,
+    /// The classes of target the type is (`targType`: `ground`, `air`,
+    /// `structure`, ...), lower case.
+    pub target_type: Vec<String>,
     /// Movement (SPEC-0018): speed (`spd`, units per second), turn rate
     /// (`turnRate`, radians per update of 0.03 s) and propulsion window
     /// (`propWin`, degrees), as reals.
@@ -128,7 +134,7 @@ fn path_texture_name(text: Option<&str>) -> Option<String> {
     Some(name.to_ascii_lowercase())
 }
 
-/// Weapon 1 of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
+/// A weapon of a unit type (`Units\UnitWeapons.slk`, SPEC-0016).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Weapon {
     /// `dmgplus1`, `dice1`, `sides1`.
@@ -145,6 +151,46 @@ pub struct Weapon {
     /// The JASS attack type of `atkType1` (1 for `normal`, 2 `pierce`,
     /// ..., 0 `spells`).
     pub attack_type: i32,
+    /// The classes of target it may hit (`targs1`), lower case.
+    pub targets: Vec<String>,
+    /// Damage round the target, if any.
+    pub area: Option<Area>,
+}
+
+/// The area damage of a weapon (SPEC-0016, "Area damage"): the full hit
+/// up to `full`, `half_factor` of it up to `half`, `quarter_factor` up to
+/// `quarter`, on units of the classes `targets`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Area {
+    pub full: f32,
+    pub half: f32,
+    pub quarter: f32,
+    pub half_factor: u32,
+    pub quarter_factor: u32,
+    pub targets: Vec<String>,
+}
+
+/// The classes of a comma-separated list, lower case.
+fn classes(list: Option<&str>) -> Vec<String> {
+    list.unwrap_or("")
+        .split(',')
+        .map(|c| c.trim().to_ascii_lowercase())
+        .filter(|c| !c.is_empty() && c != "_")
+        .collect()
+}
+
+impl UnitType {
+    /// The weapon the type uses against a target of `classes`: the one
+    /// whose targets allow it, else weapon 1 (SPEC-0016, "Second
+    /// weapon"). PROVISIONAL: weapon 1 when both allow it.
+    pub fn weapon_against(&self, classes: &[String]) -> Option<&Weapon> {
+        let allows = |w: &&Weapon| w.targets.iter().any(|t| classes.contains(t));
+        self.weapon
+            .as_ref()
+            .filter(allows)
+            .or(self.weapon2.as_ref().filter(allows))
+            .or(self.weapon.as_ref())
+    }
 }
 
 /// The JASS attack type of an `atkType1` name, or `None` for no weapon.
@@ -358,7 +404,7 @@ impl ObjectData {
             melee,
             "Units\\UnitData.slk",
             "unitID",
-            &["orientInterp", "turnRate", "propWin", "pathTex"],
+            &["orientInterp", "turnRate", "propWin", "pathTex", "targType"],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.orient_interp = values[0]
@@ -368,38 +414,85 @@ impl ObjectData {
                 unit.turn_rate = real(values[1].as_ref());
                 unit.prop_window = real(values[2].as_ref());
                 unit.path_texture = path_texture_name(values[3].as_deref());
+                unit.target_type = classes(values[4].as_deref());
             }
         }
-        // Weapon 1 (SPEC-0016). PROVISIONAL: reals are read like the other
-        // numbers of the tables; how the game reads them is not specified.
+        // The weapons (SPEC-0016): those `weapsOn` turns on, with their
+        // targets and area damage. PROVISIONAL: reals are read like the
+        // other numbers of the tables; how the game reads them is not
+        // specified.
+        let weapon_fields = |n: u32| {
+            [
+                "dmgplus",
+                "dice",
+                "sides",
+                "cool",
+                "dmgpt",
+                "rangeN",
+                "atkType",
+                "backSw",
+                "targs",
+                "Farea",
+                "Harea",
+                "Qarea",
+                "Hfact",
+                "Qfact",
+                "splashTargs",
+            ]
+            .map(|f| format!("{f}{n}"))
+        };
+        let mut columns: Vec<String> = vec!["acquire".into(), "weapsOn".into()];
+        columns.extend(weapon_fields(1));
+        columns.extend(weapon_fields(2));
+        let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
         for (id, values) in rows(
             archives,
             melee,
             "Units\\UnitWeapons.slk",
             "unitWeapID",
-            &[
-                "dmgplus1", "dice1", "sides1", "cool1", "dmgpt1", "rangeN1", "atkType1", "acquire",
-                "backSw1",
-            ],
+            &columns,
         )? {
             let Some(unit) = data.units.get_mut(&id) else {
                 continue;
             };
-            unit.acquire = real(values[7].as_ref());
-            let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
-            unit.weapon = values[6]
+            unit.acquire = real(values[0].as_ref());
+            let on = values[1]
                 .as_deref()
-                .and_then(attack_type)
-                .map(|attack_type| Weapon {
-                    damage: int(&values[0]).unwrap_or(0),
-                    dice: int(&values[1]).unwrap_or(0),
-                    sides: int(&values[2]).unwrap_or(0),
-                    cooldown: real(values[3].as_ref()),
-                    damage_point: real(values[4].as_ref()),
-                    backswing: real(values[8].as_ref()),
-                    range: real(values[5].as_ref()),
-                    attack_type,
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .unwrap_or(1);
+            let weapon = |at: usize| -> Option<Weapon> {
+                let v = &values[at..at + 15];
+                let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
+                let float = |v: &Option<String>| f32::from_bits(real(v.as_ref()));
+                let attack_type = v[6].as_deref().and_then(attack_type)?;
+                let area = (float(&v[11]) > 0.0).then(|| Area {
+                    full: float(&v[9]),
+                    half: float(&v[10]),
+                    quarter: float(&v[11]),
+                    half_factor: real(v[12].as_ref()),
+                    quarter_factor: real(v[13].as_ref()),
+                    targets: classes(v[14].as_deref()),
                 });
+                Some(Weapon {
+                    damage: int(&v[0]).unwrap_or(0),
+                    dice: int(&v[1]).unwrap_or(0),
+                    sides: int(&v[2]).unwrap_or(0),
+                    cooldown: real(v[3].as_ref()),
+                    damage_point: real(v[4].as_ref()),
+                    range: real(v[5].as_ref()),
+                    backswing: real(v[7].as_ref()),
+                    attack_type,
+                    targets: classes(v[8].as_deref()),
+                    area,
+                })
+            };
+            let (first, second) = (weapon(2), weapon(17));
+            (unit.weapon, unit.weapon2) = match on {
+                3 => (first, second),
+                2 => (second, None),
+                0 => (None, None),
+                _ => (first, None),
+            };
         }
         // The balance numbers of every type (SPEC-0009, SPEC-0013).
         let mut balance = BTreeMap::new();

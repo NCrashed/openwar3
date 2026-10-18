@@ -510,15 +510,28 @@ the spec is silent:
   c-CH5 (verification 6) all 13 attackers start and swing at the spec's
   ticks. The tests of the SPEC-0019 tables give their orders in an
   update tick (0.51 s), so that they are taken 6 ticks later as in the
-  game's tests. The reaction delay of an attack order by a script is
-  split: a unit out of reach starts to walk at its first update at or
-  after the order plus the delay (c-CH5, all 13 attackers), one in reach
-  turns or swings only at its first update at or after the order plus 7
-  ticks plus the delay (the 16 knights of SPEC-0019, the knight of
-  SPEC-0016 hitting in tick 151, the turning table 6 ticks later than
-  printed). The spec gives the second rule for all orders; the first is
-  inferred from c-CH5 (question for the analyst: does a walking start
-  wait for order + 7 + delay?).
+  game's tests. An attack order by a script makes the unit turn and walk
+  from its first update at or after the order plus 1 plus the delay,
+  and swing no earlier than the first update at or after the order plus
+  7 plus the delay ("When it starts"). The knights of SPEC-0019 and
+  SPEC-0016 match; of the turning table every turning knight matches,
+  the facing one is 6 ticks later than printed. In c-CH5 attackers 5, 6
+  and 10 (delays ending 0.1 to 0.6 ticks before an update) start one
+  update late: the table needs the first update 5 ticks after the
+  orders, the simulation has it 4 after them. The orders come from a
+  0 s timer started by the action of `TriggerRegisterTimerEvent` of
+  1.00 s; in which tick the game runs them is a question for the
+  analyst.
+- **Weapons** (SPEC-0016): a type has the weapons `weapsOn` turns on; a
+  target is hit by the first one whose `targs` name one of the target's
+  `targType` classes, else by weapon 1. Destructables count as `debris`
+  and items as `item`; relation words of `targs` (`enemy`, `friend`,
+  ...) are not checked. Map object data changes weapon 1 only.
+- **Area damage**: units within `Farea`, `Harea`, `Qarea` of the target's
+  centre (the fields themselves, open question 6) whose classes are in
+  `splashTargs` take the full hit, `Hfact` or `Qfact` of it before armor,
+  in the order of their creation after the target; with `enemy` in the
+  list only enemies. Destructables and items are not damaged by areas.
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
   `Custom_V1` for maps that are not melee, then the game's.
   Destructables and items have collision 0. No queued orders.

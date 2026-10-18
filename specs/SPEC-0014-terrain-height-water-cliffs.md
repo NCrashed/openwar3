@@ -77,10 +77,38 @@ the ramp code.
   day/night model (`DNCLordaeronUnit` without a call; the `lighting`
   column is 1 for all tilesets) and the normal straight up, not clamped
   at 1: at Lordaeron noon 1.049, 1.049, 1.091.
-- Shoreline doodads (`shore*` columns: foam models along the water's
-  edge) were seen in the screenshots but not examined; `WavesDepth` and
-  the `min*` / `max*` / `rate*` wave columns (all 0 for Northrend) were
-  not examined.
+- **No surface waves.** The water surface is flat; the wave columns of
+  `Water.slk` (`minX` .. `maxZ`) are 0 for every tileset. The moving foam
+  at the shores comes from shoreline models.
+- **Shoreline models.** A corner point counts as **deep** when its depth
+  (surface height minus ground height, as for the colour) is more than
+  `WavesDepth` (`UI\MiscData.txt` `[Water]`, 25). Every tile with at
+  least one deep and at least one other corner can get one model, placed
+  at the tile's centre. The models are
+  `<shoreDir>\<file>\<file><n>.mdx` with `file` from `shoreSFile`,
+  `shoreOCFile` or `shoreICFile` and `n` a variation below `shoreSVar`,
+  `shoreOCVar`, `shoreICVar` (1 for all tilesets but Outland, so `n` = 0:
+  `Doodads\LordaeronSummer\Water\Shoreline\Shoreline0.mdx`, ...). By the
+  deep corners of the tile:
+  - **two deep corners on one side** (a straight shore): `shoreSFile`,
+    turned so that the model's x axis (the facing 0 of a unit model)
+    points from the land into the water: facing 270 (south) on a north
+    shore of the water, 0 (east) on a west shore, 90 on a south shore,
+    180 on an east shore;
+  - **three deep corners** (the water goes round the corner of the land):
+    `shoreOCFile`, facing by the corner that is not deep: north east ->
+    270, north west -> 0, south west -> 90, south east -> 180;
+  - **one deep corner**: `shoreICFile`, but only when that corner is the
+    tile's south east or north west corner; the model faces diagonally
+    towards it (about 315 and 135). A tile whose only deep corner is its
+    north east or south west corner gets no model;
+  - **two deep corners on a diagonal**: no model.
+  These shoreline models contain only particle emitters (foam sprites,
+  `Textures\ShorelineParticleXY.blp`, and for `Shoreline0` also
+  `Textures\White_64_Foam1.blp`); `Shoreline0` has the sequences
+  `Stand 2` and `Stand 3`, the corner models one `Stand 2`. Which
+  sequence plays, its phase, the models' height and whether they are lit
+  were not measured.
 
 ### Cliff models
 
@@ -288,6 +316,10 @@ leaves holes there.
    either.
 7. The origin of the water animation clock, and whether it follows the
    game speed.
+8. Shoreline models: their animation (sequence, phase), height, scale and
+   lighting; the exact angle of the inside corner model; why the north
+   east and south west single deep corners get no model (seen on a
+   rectangle and on a single deep point).
 
 ## Sources
 
@@ -367,4 +399,17 @@ leaves holes there.
 12. **Water texture placement.** An image with four coloured quadrants:
     each quadrant covers one tile, the squares of 2 x 2 tiles start at
     even tile numbers, the image's top half lies north.
+13. **Shoreline models**, found by replacing the three models in the map
+    by a knight, a footman and a peasant (unit models, whose facing is
+    visible): a block of points with ground at -200 under a surface at
+    -153.6 (8 points east-west, 6 north-south): straight models on every
+    edge tile, at the tile centres, facing into the water (checked
+    closely on the north and west shores); inside corner models only at
+    the north west and south east corner tiles. A single deep point:
+    inside corner models on its north west and south east tiles only.
+    Four 6 x 6 blocks each missing one 3 x 3 quarter: outside corner
+    models at the four inner corner tiles with the facings listed.
+    Ground falling by 12.5 per point under the same surface: the
+    straight models stand on the tiles between depths 21.4 and 33.9, not
+    at the visible edge of the water (depth 0).
 

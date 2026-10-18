@@ -93,9 +93,16 @@ impl Sim {
 
     /// A right click with `unit` selected, on unit `on` or else on the
     /// ground at `at`: an enemy is attacked, otherwise the unit moves to
-    /// the point (`smart`). A line about the order given, if any.
-    pub fn command(&mut self, unit: u32, on: Option<u32>, at: Option<[f32; 3]>) -> Option<String> {
-        if let Some(target) = on.filter(|&t| t != unit && self.game.hostile(unit, t)) {
+    /// the point (`smart`); with `force` any unit clicked is attacked. A
+    /// line about the order given, if any.
+    pub fn command(
+        &mut self,
+        unit: u32,
+        on: Option<u32>,
+        at: Option<[f32; 3]>,
+        force: bool,
+    ) -> Option<String> {
+        if let Some(target) = on.filter(|&t| t != unit && (force || self.game.hostile(unit, t))) {
             return self
                 .game
                 .issue_target_order(unit, "attack", target)

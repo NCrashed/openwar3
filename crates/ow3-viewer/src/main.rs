@@ -3,12 +3,12 @@
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, Escape quits. A left click selects a unit;
 //! a right click then sends it to the ground point or attacks the enemy
-//! clicked, and H stops it. The map's script runs in the
-//! simulation, which places the units (`--no-sim`: the units placed in the
-//! editor instead). With `--screenshot` the view `--time` seconds in is
-//! drawn into a PNG file without a window, on a GPU or the software Vulkan
-//! driver. Game archives come from `game-data/1.27b` or the directory in
-//! `OW3_GAME_DATA`.
+//! clicked (with Ctrl held, any unit clicked), and H stops it. The map's
+//! script runs in the simulation, which places the units (`--no-sim`: the
+//! units placed in the editor instead). With `--screenshot` the view
+//! `--time` seconds in is drawn into a PNG file without a window, on a GPU
+//! or the software Vulkan driver. Game archives come from `game-data/1.27b`
+//! or the directory in `OW3_GAME_DATA`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -158,6 +158,8 @@ struct App {
     controls: Controls,
     /// The mouse cursor in pixels.
     cursor: (f32, f32),
+    /// Whether Ctrl is held: a right click then attacks any unit.
+    ctrl: bool,
     /// Frames since `counted`, for the frame rate in the title.
     frames: u32,
     counted: std::time::Instant,
@@ -269,6 +271,9 @@ impl ApplicationHandler for App {
                 };
                 self.controls.wheel(lines);
             }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.ctrl = modifiers.state().control_key();
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
             }
@@ -305,7 +310,7 @@ impl ApplicationHandler for App {
                     let at = self.camera.ground_point(x, y, size, |x, y| {
                         ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
                     });
-                    if let Some(line) = sim.command(unit, on, at) {
+                    if let Some(line) = sim.command(unit, on, at, self.ctrl) {
                         println!("{line}");
                     }
                 }
@@ -433,6 +438,7 @@ fn main() -> ExitCode {
         last_frame: std::time::Instant::now(),
         controls: Controls::new(camera),
         cursor: (0.0, 0.0),
+        ctrl: false,
         frames: 0,
         counted: std::time::Instant::now(),
         fps: 0.0,

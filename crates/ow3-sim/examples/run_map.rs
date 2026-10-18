@@ -4,7 +4,8 @@
 //!
 //! The game archives are read from `game-data/1.27b`, or from the
 //! directory in `OW3_GAME_DATA`. The map runs at full speed for the given
-//! seconds of real time (10 by default).
+//! seconds of real time (10 by default). With `OW3_UNITS` set it also
+//! lists the units at the end.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -59,6 +60,21 @@ fn main() -> ExitCode {
     }
     for error in &game.state.borrow().errors {
         eprintln!("thread ended: {error}");
+    }
+    if std::env::var_os("OW3_UNITS").is_some() {
+        for u in game.units() {
+            let code = String::from_utf8_lossy(&u.type_id.to_be_bytes()).into_owned();
+            println!(
+                "unit #{} {code} player {} at ({:.1}, {:.1}) life {:.1}/{:.0}{}",
+                u.handle,
+                u.owner,
+                u.x,
+                u.y,
+                u.life,
+                u.max_life,
+                if u.alive { "" } else { " dead" }
+            );
+        }
     }
     ExitCode::SUCCESS
 }

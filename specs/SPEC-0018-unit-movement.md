@@ -39,6 +39,26 @@ initialisation, with tick 0 the moment of the first orders.) An order
 0.5 s after that moment (timer tick 100, itself an update tick) is
 taken at tick 106, 6 ticks later, which is the case of the tests below.
 
+**Phase from the start of the game.** Number the simulation ticks of
+the game from 1 (tick 1 is the first tick after `main`; a 0.005 s
+periodic timer started in `main` fires for the `k`-th time in tick `k`,
+and a 0 s timer started in `main` fires in tick 1 before it). Then:
+
+- the unit updates are in ticks 7, 13, 19, ... (`6 m + 1`, `m >= 1`);
+  tick 1 is not an update tick;
+- a 0.5 s timer started in `main` fires in tick 101 and a 1.0 s timer
+  in tick 201 (the sum of 100 tick lengths stays just below 0.5,
+  SPEC-0002), before the periodic timer of that tick;
+- an order given in `main`, from the 0 s timer (tick 1) or in tick 6 is
+  taken at the update of tick 7, and the unit is first seen moved in
+  tick 8; an order given from a timer in tick 7 is taken at tick 13; an
+  order from the 0.5 s timer (tick 101), or from a timer in tick 100, at
+  tick 103;
+- a footman created in `main` with `SetUnitFacing(u, 90)` first changes
+  its facing in tick 7; one created in tick 47 in tick 49.
+
+The timer ticks of the table above are these ticks minus 3.
+
 ### Two angles: heading and facing
 
 A unit has a **heading** `H`, the direction it moves in, and a separate
@@ -287,3 +307,9 @@ questions.
    values listed: first motion at the predicted update in all 40 cases.
 3. Facing of a footman with `turnRate` 0.1 turning to 180 degrees:
    4.0107, 10.6987, 16.3289, 22.0670, 27.7958, 33.5255 at updates 1..6.
+4. **Phase from the start of the game** (two runs, same results): six
+   footmen created in `main`, `move` orders given in `main`, from a 0 s
+   timer of `main`, from a 0.005 s periodic timer of `main` in its 6th,
+   7th and 100th call, and from a 0.5 s timer of `main`: first motion in
+   ticks 8, 8, 8, 14, 104, 104.
+

@@ -138,7 +138,16 @@ flags use other models (open question 1).
    from `(0, 0, 1)` at the low corner opposite the raised one to
    `(-0.18, 0.24, 0.95)` at the raised corner, in model coordinates),
    so a cliff top is lit a little differently from flat ground next to
-   it. The shadow map darkens cliff models in the same way as the ground
+   it.
+   On sloped ground the vertices of a cliff model that lie on the border
+   of its tile are lit like the ground at that point (the ground light
+   of SPEC-0017, "Sloped ground"), while the inner vertices keep the
+   model's normals; the light is interpolated in between. So there is no
+   step at the tile border: on ground sloping away from the sun the
+   middle of a cliff tile is lighter than the ground around it, and the
+   colour rises smoothly from the ground's at the tile border to the
+   cliff's own in the middle. The cliff models follow the ground heights
+   of the corners (no gaps were seen at the tile borders on slopes). The shadow map darkens cliff models in the same way as the ground
    (SPEC-0017, "Shadows").
 
 ### Ramps
@@ -303,3 +312,12 @@ leaves holes there.
    imports the `CIsn` cliffs look icy white and blue; with the `Cliff1`
    of `War3.mpq` imported unchanged into the map they show green grass
    and brown rock (open question 6).
+9. **Cliffs on slopes.** Flat test map, three areas with a straight
+   cliff line (one level, `CNsn`, grey 136 everywhere, Lordaeron noon):
+   flat ground; ground rising towards the west by 0.25 per unit (ground
+   99); ground rising towards the south by 0.25 (ground 110). Profiles
+   across the cliff line, every 12 pixels (about 9 world units), red
+   channel: flat 131, 132 .. 135, 135 .. 132, 131; west rising 99, 102,
+   111, 120, 128, 134, 127, 124, 121, 117, 114, 110, 107, 104, 100, 99;
+   south rising 110, 113, 119, 125, 132, 132, 129, ... 113, 110.
+

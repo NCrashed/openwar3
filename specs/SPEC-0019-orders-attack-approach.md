@@ -97,6 +97,55 @@ patrolling to a point 600 east stood 24 ticks at each end (the turn by
 (the same positions tick by tick) and ends with order 0. `smart` to an
 empty point behaves the same.
 
+### Attack-move with enemies
+
+A unit walking an `attack` order to a point looks for enemies on its
+way:
+
+- **Checks.** Every 100 ticks, counted from the tick after the order
+  (the tick after the `IssuePointOrder` call): the first check 102 ticks
+  later, then every 100 ticks. When the unit has killed a target the
+  count starts again from the tick of the killing hit (first check 102
+  ticks later). The checks do not depend on the unit's creation draw of
+  generator 2 and are not aligned with the update cycle (orders given at
+  6 different ticks, 10 attackers with seed 7: all acquisitions at
+  order + 102 + 100 k).
+- **Range and choice** as for idle units (an enemy footman at most 562
+  away for a footman; nearest unit).
+- **Reaction.** At the check that finds a target the unit stops at once
+  and waits the reaction delay of attack orders (generator 9, counted
+  from the check's tick), then attacks the target by the approach rule
+  below. The point order itself draws no reaction delay. The current
+  order stays `attack` (851983) all the time.
+- **After the kill** the unit stands until the end of its backswing and
+  goes on towards its point at the next update (a footman: about 105
+  ticks after the killing hit, in two tests). When it arrives the order
+  becomes 0.
+
+### Retaliation and call for help
+
+When an enemy damages a unit that has no order (idle):
+
+- the damaged unit acquires the attacker in the tick of the damage,
+  whatever the distance (a glaive thrower 1000 away, beyond the
+  footman's acquisition range of 562);
+- other idle units of the same player near the damaged unit acquire the
+  attacker in the same tick; units of another player do so too when the
+  alliances allow it (player 2 passive toward player 0 with help
+  request and help response set in both directions; with help response
+  alone they did not). Walking units (with a `move` order) and peasants
+  did not respond, nor did units that already had a target;
+- all of them then wait their reaction delay (generator 9, counted from
+  the tick of the damage; the damaged unit draws first) and attack the
+  attacker by the approach rule.
+
+The reach of the call depends on `CallForHelp` of `Units\MiscGame.txt`
+(600 in 1.27b; the map's copy is used, SPEC-0015): footmen up to about
+`CallForHelp + 175` from the damaged footman responded (with 600: 750 in
+all 16 directions, 776 in all directions around a victim at (16, -16),
+783 only on one side of a victim at (0, 0), 800 nowhere; with 300: 480
+yes, 485 no). The exact shape of the area is open (open question 3).
+
 ### Approach to an attack target
 
 `IssueTargetOrder(u, "attack", target)` with the target out of range:
@@ -332,9 +381,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
    once; earlier observations of an attacker following the target's
    current position (not reproduced in the chases of the verification
    below).
-3. Attack-move with enemies, retaliation, `minRange`; acquisition of
-   units that are not idle, of air units and by buildings with weapons;
-   whether the 0.5 s period depends on any data field.
+3. The exact area of the call for help (the reach measured from the
+   damaged unit depended on the direction and on the victim's position
+   by up to about 15 units); which alliance flag is needed; the order of
+   the helpers' draws of generator 9; retaliation by units that are not
+   idle; `minRange`; acquisition of air units and by buildings with
+   weapons; whether the 0.5 s period depends on any data field;
+   `GuardDistance` and returning home.
 4. Queued orders, group orders, formation movement.
 5. Orders on units of other players, `hold position` with enemies in
    range.
@@ -344,6 +397,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 ## Sources
 
+- Test maps of 2026-10-18 for attack-move (paused enemy footmen beside
+  the way) and retaliation (a glaive thrower attacking an idle footman,
+  idle footmen, riflemen, archers and peasants around it).
 - Test map of 2026-10-18 for `OrderId`, `OrderId2String` and the
   `...ById` natives (one footman, results read right after each call).
 - Test maps on 1.27b under Wine, 2026-10-17 and 2026-10-18, same set-up
@@ -417,3 +473,28 @@ An idle unit with a weapon attacks an enemy unit on its own:
    69 70 73 79 81 85 89 91 96. The first change of facing (start of the
    turn towards the target) of the footman acquiring at tick 3 (seed 7)
    came at tick 10, of the one at 8 at tick 10.
+9. **Attack-move.** Seed 7, ten footmen of `Player(0)` created at
+   (-3000, y) with `y = -9000 + 1500 k`, `attack` to (2000, y) given at
+   the same tick; paused enemy footmen (5000 life) at
+   (-1500 + 100 k, y + 250). With the tick of the order as 0, the
+   acquisitions came at 802, 902, 902, 1002, 1102, 1202, 1202, 1302,
+   1402, 1502 (k = 0..9), each at the first check (order + 102 + 100 j)
+   where the distance was at most 562 (largest distance not taken
+   569.3, smallest taken 544.7 at the check before, 448.1 to 544.7 at
+   the checks taken). The units stood from the tick after the
+   acquisition and turned or walked again in ticks 805, 907, 949, 1015,
+   1129, 1219, 1207, 1309, 1423 (k = 0..8): the first update at or after
+   the check plus the reaction delays of the first nine outputs of
+   generator 9 (0.31, 0.77, 42.84, 10.51, 24.76, 15.09, 3.43, 1.37, 17.42
+   ticks), in the order of the acquisitions. Orders given at 0, 17, 33,
+   50, 71 and 99: acquisitions at 802, 919, 1035, 1152, 1273, 1401
+   (always order + 102 + 100 j). A footman that killed a 15-life target
+   with its hit at 916 acquired the next target at 1518, and resumed
+   walking at 1021.
+10. **Retaliation.** Seed 7, a footman at (0, 0), a glaive thrower of
+    `Player(1)` at (0, 1000) ordered to attack it, a second footman at
+    (300, 0), more at (1200, 0) and (-1500, 0): at the first damage both
+    near footmen acquired the thrower, the far ones did nothing; the
+    damaged one started to turn in tick damage + 45, the other at
+    damage + 15, matching the third and fourth outputs of generator 9
+    (the thrower's own order and acquisition used the first two).

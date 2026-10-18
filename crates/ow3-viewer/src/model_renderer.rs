@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 use ow3_formats::mpq::ArchiveChain;
 
-use crate::models::{Animation, Group, Instance, ModelVertex, Part};
+use crate::models::{Animation, Group, Instance, ModelVertex, Part, UnitPose};
 use crate::renderer::{DEPTH_FORMAT, upload_texture};
 use crate::sim_units::UnitDraw;
 
@@ -44,6 +44,7 @@ struct VertexIn {
     @location(9) m3: vec4<f32>,
     @location(10) bone_base: u32,
     @location(11) tint: vec3<f32>,
+    @location(12) alpha_shift: u32,
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -74,7 +75,7 @@ fn vs(v: VertexIn) -> VertexOut {
     out.clip = globals.view_projection * model * skinned * vec4<f32>(v.position, 1.0);
     out.normal = (model * skinned * vec4<f32>(v.normal, 0.0)).xyz;
     out.uv = v.uv;
-    out.alpha = alphas[v.alpha];
+    out.alpha = alphas[v.alpha + v.alpha_shift];
     out.tint = v.tint;
     return out;
 }
@@ -170,6 +171,8 @@ pub struct ModelRenderer {
     /// The matrices of units in a pose of their own (dying, swinging),
     /// after those of the variants.
     unit_bones: Vec<crate::camera::Mat4>,
+    /// The alphas of effects played once, after the shared ones.
+    unit_alphas: Vec<f32>,
     bone_capacity: u32,
     alpha_capacity: u32,
 }
@@ -268,7 +271,7 @@ impl ModelRenderer {
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &wgpu::vertex_attr_array![
                     6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4,
-                    10 => Uint32, 11 => Float32x3
+                    10 => Uint32, 11 => Float32x3, 12 => Uint32
                 ],
             },
         ];
@@ -367,6 +370,7 @@ impl ModelRenderer {
             bind_groups: BTreeMap::new(),
             unit_groups: BTreeMap::new(),
             unit_bones: Vec::new(),
+            unit_alphas: Vec::new(),
             bone_capacity: animation.bone_count(),
             alpha_capacity: animation.alpha_count(),
         };
@@ -491,6 +495,8 @@ impl ModelRenderer {
         // Dying and swinging units get their own matrices after those of
         // the variants.
         self.unit_bones.clear();
+        self.unit_alphas.clear();
+        let first_alpha = self.animation.alpha_count();
         let first = self.animation.bone_count();
         let mut lists: BTreeMap<usize, Vec<Instance>> = self
             .unit_groups
@@ -510,10 +516,24 @@ impl ModelRenderer {
                 }
                 None => self.animation.variant_base(model, unit.handle),
             };
+            // An effect fades on its own clock.
+            let alpha_shift = match unit.pose {
+                UnitPose::Once(ms) => {
+                    self.animation
+                        .once_alphas(model, ms)
+                        .map_or(0, |(values, slot)| {
+                            let shift = first_alpha + self.unit_alphas.len() as u32 - slot;
+                            self.unit_alphas.extend(values);
+                            shift
+                        })
+                }
+                _ => 0,
+            };
             lists.entry(buffer).or_default().push(Instance {
                 matrix: unit.matrix,
                 bone_base,
                 tint: unit.tint,
+                alpha_shift,
             });
             let m = unit.matrix;
             let top = self.animation.model_top(model);
@@ -540,7 +560,8 @@ impl ModelRenderer {
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, elapsed: i32) {
         let mut bones = self.animation.bones(elapsed);
         bones.extend_from_slice(&self.unit_bones);
-        let alphas = self.animation.alphas(elapsed);
+        let mut alphas = self.animation.alphas(elapsed);
+        alphas.extend_from_slice(&self.unit_alphas);
         let (bone_count, alpha_count) = (bones.len() as u32, alphas.len() as u32);
         if bone_count > self.bone_capacity || alpha_count > self.alpha_capacity {
             self.bone_capacity = self.bone_capacity.max(bone_count * 2);

@@ -65,6 +65,9 @@ pub struct Instance {
     pub bone_base: u32,
     /// A colour the model's texels are multiplied with.
     pub tint: [f32; 3],
+    /// Added to the alpha slots of its vertices, for an instance with
+    /// alphas of its own (0 for the shared ones).
+    pub alpha_shift: u32,
 }
 
 /// One material layer of one geoset.
@@ -355,20 +358,45 @@ impl Animation {
         let mut out = Vec::with_capacity(self.alphas.len() + 1);
         out.push(1.0);
         for source in &self.alphas {
-            let model = &self.models[source.model].model;
-            let moment = moments[source.model];
-            let geoset = model
-                .geoset_animations
-                .iter()
-                .find(|a| a.geoset_id as usize == source.geoset)
-                .map_or(1.0, |a| {
-                    track_or(model, &a.tracks, b"KGAO", &[a.alpha], moment)[0]
-                });
-            let layer = &model.materials[source.material].layers[source.layer];
-            let layer = track_or(model, &layer.tracks, b"KMTA", &[layer.alpha], moment)[0];
-            out.push((geoset * layer).clamp(0.0, 1.0));
+            out.push(self.alpha(source, moments[source.model]));
         }
         out
+    }
+
+    /// The alpha of `source` at `moment` of its model.
+    fn alpha(&self, source: &AlphaSource, moment: Moment) -> f32 {
+        let model = &self.models[source.model].model;
+        let geoset = model
+            .geoset_animations
+            .iter()
+            .find(|a| a.geoset_id as usize == source.geoset)
+            .map_or(1.0, |a| {
+                track_or(model, &a.tracks, b"KGAO", &[a.alpha], moment)[0]
+            });
+        let layer = &model.materials[source.material].layers[source.layer];
+        let layer = track_or(model, &layer.tracks, b"KMTA", &[layer.alpha], moment)[0];
+        (geoset * layer).clamp(0.0, 1.0)
+    }
+
+    /// For a model played once (`UnitPose::Once`) `elapsed` milliseconds
+    /// in: the alphas of its slots at that moment and the first of those
+    /// slots, so that each instance fades on its own.
+    pub fn once_alphas(&self, index: usize, elapsed: i32) -> Option<(Vec<f32>, u32)> {
+        let animated = &self.models[index];
+        let first = self.alphas.iter().position(|s| s.model == index)?;
+        let start = Moment::start(&animated.model, animated.sequence);
+        let length = (start.interval[1] - start.interval[0]).max(0);
+        let moment = Moment {
+            frame: start.frame + elapsed.clamp(0, length),
+            ..start
+        };
+        let values = self.alphas[first..]
+            .iter()
+            .take_while(|s| s.model == index)
+            .map(|s| self.alpha(s, moment))
+            .collect();
+        // Slot 0 is the constant 1, so source `i` has slot `i + 1`.
+        Some((values, first as u32 + 1))
     }
 }
 
@@ -613,6 +641,7 @@ pub fn load(
             matrix: placement_matrix(placement),
             bone_base: animated.bone_base + variant * animated.palette.len() as u32,
             tint: [1.0; 3],
+            alpha_shift: 0,
         });
     }
     let groups: Vec<Group> = groups
@@ -641,6 +670,29 @@ pub fn textures(chain: &mut ArchiveChain, groups: &[Group]) -> BTreeMap<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Effects played once fade on their own clocks: the order
+    /// confirmation is opaque at its start and gone after 1.1 s.
+    /// Skipped without game data.
+    #[test]
+    fn effects_fade_on_their_own() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+        let map = root.join("Maps/(2)BootyBay.w3m");
+        let Ok(mut chain) = ArchiveChain::open(&root, &map) else {
+            return;
+        };
+        let mut animation = Animation::default();
+        let path = "UI\\Feedback\\Confirmation\\Confirmation.mdx";
+        let Some(index) = animation.model(&mut chain, path) else {
+            return;
+        };
+        animation.unit_parts(index, 0);
+        let (start, slot) = animation.once_alphas(index, 0).unwrap();
+        let (late, same) = animation.once_alphas(index, 1200).unwrap();
+        assert_eq!(slot, same);
+        assert!(start.iter().all(|&a| a > 0.99), "{start:?}");
+        assert!(late.iter().all(|&a| a < 0.2), "{late:?}");
+    }
 
     /// A unit facing north (a quarter turn) at (100, 200, 10), twice as
     /// big: its forward axis (+x in the model) points north.

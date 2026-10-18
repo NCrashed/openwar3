@@ -329,6 +329,7 @@ pub fn build(chain: &mut ArchiveChain, terrain: &Terrain) -> Cliffs {
                 matrix: IDENTITY,
                 bone_base: 0,
                 tint: [1.0; 3],
+                alpha_shift: 0,
             }],
         })
         .collect();

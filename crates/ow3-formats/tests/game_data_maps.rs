@@ -28,8 +28,12 @@ fn maps() -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 // Analysts' black-box test maps may be malformed on purpose;
-                // specs state what the game does with them.
-                if path.file_name().is_some_and(|n| n == "Test-ow3") {
+                // specs state what the game does with them. `Test` holds the
+                // World Editor's scratch map, rewritten by every test run.
+                if path
+                    .file_name()
+                    .is_some_and(|n| n == "Test-ow3" || n == "Test")
+                {
                     continue;
                 }
                 stack.push(path);

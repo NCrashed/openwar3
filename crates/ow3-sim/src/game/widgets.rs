@@ -92,6 +92,16 @@ fn item(state: &State, h: Option<u32>) -> Option<&Item> {
     }
 }
 
+/// The life regeneration of a unit of `data` with a hero's strength part
+/// `hero_part`.
+fn life_rate(data: &UnitType, hero_part: u32) -> u32 {
+    if data.regen_type == RegenType::Always {
+        add(data.life_regen, hero_part)
+    } else {
+        hero_part
+    }
+}
+
 /// Creates a unit of `type_id` for `owner`, or `None` for a type the game
 /// data does not know.
 fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Option<u32> {
@@ -106,12 +116,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
     // Life regenerates at `regenHP` when the type's condition holds, plus
     // a hero's strength part (SPEC-0013). PROVISIONAL: there is no day,
     // night or blight yet, so a condition other than "always" never holds.
-    let life_rate = if data.regen_type == RegenType::Always {
-        add(data.life_regen, data.hero_life_regen)
-    } else {
-        data.hero_life_regen
-    };
-    let mut life = Regenerating::full(data.hp, life_rate);
+    let mut life = Regenerating::full(data.hp, life_rate(&data, data.hero_life_regen));
     let mut mana = Regenerating::full(data.max_mana, data.mana_regen);
     mana.set(data.start_mana);
     // A hero's regeneration starts 0.0001 s after it is created.
@@ -142,6 +147,7 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         born: state.ticks,
         acquire_phase,
         paused: false,
+        strength: data.strength,
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -669,6 +675,44 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     // A hero starts with 1 skill point when its type has hero data, with
     // 0 when it is made from another type (SPEC-0009). PROVISIONAL: there
     // are no levels and no skills to spend them on yet.
+    // A strength change restarts a hero's life regeneration at the new
+    // rate 0.0001 s later (SPEC-0013). PROVISIONAL: max life does not
+    // change, there are no bonuses, and `permanent` is not used.
+    native!(
+        add,
+        state,
+        "native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let Some(type_id) = state.unit(handle(&args[0])).map(|u| u.type_id) else {
+                return Ok(None);
+            };
+            let strength = integer(&args[1]);
+            let data = state.data.units.get(&type_id).cloned().unwrap_or_default();
+            if let Some(u) = unit_mut(&mut state, handle(&args[0]))
+                && is_hero(type_id)
+                && u.alive
+                && u.strength != strength
+            {
+                u.strength = strength;
+                let rate = life_rate(&data, crate::data::strength_regen(strength));
+                u.life.restart(rate);
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native GetHeroStr takes unit whichHero, boolean includeBonuses returns integer",
+        |vm, state, args| {
+            let strength = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .map_or(0, |u| u.strength);
+            Ok(Some(Value::Integer(strength)))
+        }
+    );
     native!(
         add,
         state,

@@ -265,8 +265,10 @@ where the spec is silent:
   `mul(i2r(17), 0.05)`). `mul(i2r(n), dt)` minus 0.0001 instead misses one
   life value. How the game computes the elapsed time and the hero mana
   rate is open.
-- **`SetHeroStr`** and the other attribute setters are not implemented
-  yet, so a strength change does not restart life regeneration.
+- **`SetHeroStr`** restarts life regeneration at the new rate from the
+  current value, 0.0001 s later; the same value again changes nothing.
+  Max life stays, there are no bonuses (`permanent`, `includeBonuses`),
+  and the other attribute setters are not implemented yet.
 - **Turning** (SPEC-0013 open question 1): `orientInterp` 3, 7 and 8 brake by the
   closed form, the others by their table; 2 has no largest step (at
   least 0.285 in the spec). After `SetUnitFacing` the facing changes at

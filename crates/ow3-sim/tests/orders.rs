@@ -34,6 +34,10 @@ native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unit
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
 native GetTriggerUnit takes nothing returns unit
 native KillUnit takes unit whichUnit returns nothing
+type unitstate extends handle
+native ConvertUnitState takes integer i returns unitstate
+native SetUnitState takes unit whichUnit, unitstate whichUnitState, real newVal returns nothing
+native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing
 native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing
 type location extends agent
 native Location takes real x, real y returns location
@@ -568,4 +572,34 @@ fn set_facing_follows_the_updates() {
         assert_eq!(changes[0], first, "{orders}");
         assert!(changes.windows(2).all(|w| w[1] - w[0] == 6));
     }
+}
+
+/// SPEC-0013: after `SetHeroStr(30)` a paladin's life regenerates at
+/// 0.25 + 30 * 0.05 per second from 0.0001 s later, so its first step at
+/// a life near 100 is 1123 units of the last place instead of 1147.
+#[test]
+fn strength_restarts_regeneration() {
+    let orders = "call SetUnitState(a, ConvertUnitState(0), 100)\n    call SetHeroStr(a, 30, true)";
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)",
+        orders,
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 3);
+    let life = |tick: u64| {
+        path.iter().find(|p| p.0 == tick).unwrap().1[0]
+            .life
+            .to_bits()
+    };
+    let steps = [
+        life(ORDER_TICK + 1) - life(ORDER_TICK),
+        life(ORDER_TICK + 2) - life(ORDER_TICK + 1),
+    ];
+    assert_eq!(life(ORDER_TICK), 100f32.to_bits());
+    assert!(
+        steps[0].abs_diff(1123) <= 1 && steps[1].abs_diff(1147) <= 1,
+        "{steps:?}"
+    );
 }

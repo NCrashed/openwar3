@@ -166,6 +166,8 @@ pub struct Unit {
     acquire_phase: u32,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
+    /// A hero's strength in points (`SetHeroStr`); 0 for others.
+    strength: i32,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -291,6 +293,15 @@ impl Regenerating {
         if self.value() != self.max {
             self.elapsed = add(self.elapsed, step);
         }
+    }
+
+    /// Goes on from the current value at `rate`, 0.0001 s later as after
+    /// a hero's creation (SPEC-0013).
+    fn restart(&mut self, rate: u32) {
+        self.base = self.value();
+        self.elapsed = 0;
+        self.rate = rate;
+        self.delayed = true;
     }
 
     /// Sets the value, limited to `0..=max`.

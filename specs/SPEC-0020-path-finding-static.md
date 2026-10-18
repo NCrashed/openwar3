@@ -405,8 +405,8 @@ collision 8, 16, 24, 32, 40, 48, 64, 0, then footman and knight.
 | collision 16 | end of first local path 508 | `(-1509.09,-6892.18)`, 983 |
 | collision 32 | end of first local path 556 | `(-1507.10,-2893.71)`, 1031 |
 | collision 48 | end of first local path 556 | `(-1507.68,1107.82)`, 1031 |
-| collision 64 | blocked 478; end of local path 580 | `(-1507.75,3108.23)`, 1067 |
-| footman | blocked at 478 at `(-2035.00,7439.00)`, new path north then east, end of local path 526 at `(-2009.08,7469.67)` | `(-1509.22,7108.35)`, 1007 |
+| collision 64 | blocked 478; turn only at 502 (new target at 20.5 degrees, heading 94.3); end of local path 580 | `(-1507.75,3108.23)`, 1067 |
+| footman | blocked at 478 at `(-2035.00,7439.00)`, new path north; target switched east at 502, turn only at 502 (`propWin`, SPEC-0018), end of local path 526 at `(-2009.08,7469.67)` | `(-1509.22,7108.35)`, 1007 |
 | knight | end of first local path 424; blocked 460 at `(-1941.28,9459.56)` | `(-1505.94,9105.19)`, 791 |
 
 Path lists read from the game for the collision 8 unit of PF2 (same

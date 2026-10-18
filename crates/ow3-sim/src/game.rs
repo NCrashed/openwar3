@@ -414,6 +414,8 @@ pub struct State {
     /// The clock of the movement system: 0.005 added every tick in the
     /// engine arithmetic (SPEC-0018).
     move_clock: u32,
+    /// The iterations of local searches in the current window (SPEC-0021).
+    budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
@@ -465,6 +467,7 @@ impl State {
             world_bounds: [0; 4],
             grid: None,
             move_clock: 0,
+            budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),

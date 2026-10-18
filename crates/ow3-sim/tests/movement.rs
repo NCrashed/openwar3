@@ -22,7 +22,7 @@ function Go takes nothing returns nothing
     call IssuePointOrder(footman, "move", TARGET)
 endfunction
 function main takes nothing returns nothing
-    set footman = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)
+    set footman = CreateUnit(Player(0), 'hfoo', START, 0)
     call TimerStart(CreateTimer(), 0.5, false, function Go)
 endfunction
 "#;
@@ -30,11 +30,17 @@ endfunction
 /// A footman at (-3000, -2000) facing east, ordered at tick 100 to move
 /// to `target` ("x, y" in JASS).
 fn game_to(target: &str) -> Option<Game<'static>> {
-    game_with(target, |_| {})
+    game_from("-3000, -2000", target)
+}
+
+/// As `game_to`, with the footman created at `start`.
+fn game_from(start: &str, target: &str) -> Option<Game<'static>> {
+    game_with(start, target, |_| {})
 }
 
 /// The same, with the footman's data changed by `change`.
 fn game_with(
+    start: &str,
     target: &str,
     change: impl FnOnce(&mut ow3_sim::data::UnitType),
 ) -> Option<Game<'static>> {
@@ -52,7 +58,7 @@ fn game_with(
         })
         .clone();
     change(data.units.get_mut(&i32::from_be_bytes(*b"hfoo")).unwrap());
-    let text = SCRIPT.replace("TARGET", target);
+    let text = SCRIPT.replace("TARGET", target).replace("START", start);
     let script = Box::leak(Box::new(ow3_jass::parse(&text).unwrap()));
     let refs: &'static [&'static _] = Box::leak(Box::new([&*script]));
     let program = Box::leak(Box::new(ow3_jass::check::check(refs).unwrap()));
@@ -144,11 +150,21 @@ fn when_the_footman_starts() {
     let Some(_) = game_to("0, 0") else {
         return;
     };
+    // The 60 degree case of the game's test, from (-2000, -8000) to
+    // (-1750, -7566.987): in the engine arithmetic the target lies 72 units
+    // of the last place farther round than propWin 60, so the footman only
+    // turns at update 1 (SPEC-0018). (From (-3000, -2000) the same offsets
+    // come out 3 units below it, and it starts at once.)
+    let mut game = game_from("-2000, -8000", "-1750, -7566.987").unwrap();
+    let path = track(&mut game, 300);
+    let first = path
+        .iter()
+        .find(|p| (p.1, p.2) != (-2000.0, -8000.0))
+        .unwrap()
+        .0;
+    assert_eq!((first - 101 - 1) / 6, 2, "60 degrees");
     for (angles, update) in [
         (&[30.0, 45.0][..], 1),
-        // Exactly 60 degrees is left out: the angle comes out 3 units of the
-        // last place below propWin here, so the unit starts at update 1
-        // (specs/QUESTIONS.md).
         (&[70.0, 80.0, 90.0, -90.0][..], 2),
         (&[100.0, 110.0, 120.0][..], 3),
         (&[135.0, 150.0][..], 4),
@@ -167,7 +183,9 @@ fn when_the_footman_starts() {
 /// linearly here (log-log in the spec), which costs up to 0.002 degrees.
 #[test]
 fn facing_follows_a_slow_heading() {
-    let Some(mut game) = game_with("-4000, -2000", |t| t.turn_rate = 0.1f32.to_bits()) else {
+    let Some(mut game) = game_with("-3000, -2000", "-4000, -2000", |t| {
+        t.turn_rate = 0.1f32.to_bits()
+    }) else {
         return;
     };
     let path = track(&mut game, 200);

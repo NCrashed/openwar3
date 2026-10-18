@@ -432,18 +432,26 @@ the spec is silent:
   order point; a local path that cannot leave its start cell counts as
   walked; repeated blocks (open question 3) are left out. Against the
   PF maps the ten units of the spec's tables come to rest within 0.025
-  of the game. The first update of a unit ordered when it is created
-  came 4 ticks after the order in the PF maps, as the spec says; the
-  phase rule behind it (SPEC-0018) is still open.
+  of the game.
+- **Units as obstacles** (SPEC-0021). The budget window is 2 ticks
+  (open question 1), and a path that had to queue searches at its
+  unit's next update; a moving unit that follows no path (an attacker,
+  a unit on a map without a pathing map) is never made to wait, the
+  unit that meets it waits instead; air units and units of other
+  players are not told apart. On c-OM461 the stands of the first and
+  fourth pairs come within 0.06 of the game; the second and third pairs
+  turn the other way, on one unit of the last place of the squared
+  speeds, as in the spec. There the westward footman of the first pair
+  and the knight of the fourth stand once more after their detours (a
+  held search, a turn by `propWin`), which the spec does not show; the
+  budget itself was not checked against a map.
 - **Movement arithmetic** (SPEC-0018). The movement clock starts at 0
   with the first tick of the game (open question 2); the extra commits
   between updates are left out, so the footman of verification 1 rests
-  within 0.1 of the game while its first 116 ticks are exact. A target
-  at exactly 60 degrees from the heading comes out 3 units of the last
-  place below `propWin` 60 (`mul(60, pi/180)`), so the footman starts
-  at update 1, where the game started at update 2: either the game's
-  test target lay a little farther round, or `propWin` reaches radians
-  another way.
+  within 0.1 of the game while its first 116 ticks are exact. The
+  update cycle is shared by all units at the ticks 5, 11, 17, ... of
+  the simulation, one later than the game's timer ticks 4, 10, 16, ...
+  of SPEC-0018, as the 0.5 s timers of the tests fire at tick 101.
 - **Facing brake.** The tables of `SPEC-0013-facing-brake.tsv`, one per
   `orientInterp`, are interpolated linearly in the engine arithmetic
   (log-log in the spec, which needs logarithms the simulation does not
@@ -474,7 +482,6 @@ the spec is silent:
   collisions is taken, the earlier created one on a tie (not measured).
   The distance check uses plain reals, which can differ from the engine
   arithmetic in the last place.
-- **The first update** comes 6 ticks after the order.
 - **The clock** (SPEC-0017) past midnight starts again from the hour
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.

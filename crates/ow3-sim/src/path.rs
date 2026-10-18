@@ -79,7 +79,7 @@ impl Grid {
             for u in 0..columns {
                 let blocked = [(0, 0), (1, 0), (0, 1), (1, 1)]
                     .iter()
-                    .filter(|(dx, dy)| !grid.free(2 * u + dx, 2 * v + dy))
+                    .filter(|(dx, dy)| !grid.passable(2 * u + dx, 2 * v + dy))
                     .count();
                 states.push(match blocked {
                     0 => State::Free,
@@ -122,8 +122,9 @@ impl Grid {
         grid
     }
 
-    /// Whether cell (`x`, `y`) is passable; cells outside are not.
-    pub fn free(&self, x: i32, y: i32) -> bool {
+    /// Whether cell (`x`, `y`) is passable by the pathing map; cells
+    /// outside are not.
+    pub fn passable(&self, x: i32, y: i32) -> bool {
         (0..self.width).contains(&x)
             && (0..self.height).contains(&y)
             && self.passable[(y * self.width + x) as usize]
@@ -190,37 +191,144 @@ fn covers(f: ((i32, i32), (i32, i32)), x: i32, y: i32) -> bool {
     (f.0.0..=f.0.1).contains(&x) && (f.1.0..=f.1.1).contains(&y)
 }
 
-impl Grid {
-    /// Whether the cells the footprint at `q` covers and the one at `p`
-    /// does not are all passable (all of them when `p` is `None`).
-    fn newly_free(&self, p: Option<(i32, i32)>, q: (i32, i32), class: u8) -> bool {
-        let old = p.map(|p| footprint(p, class));
-        let new = footprint(q, class);
-        for y in new.1.0..=new.1.1 {
-            for x in new.0.0..=new.0.1 {
-                if old.is_some_and(|o| covers(o, x, y)) {
-                    continue;
-                }
-                if !self.free(x, y) {
+/// The cells the footprint at `q` covers and the one at `p` does not (all
+/// of them when `p` is `None`), in rows from the bottom.
+fn newly_covered(p: Option<(i32, i32)>, q: (i32, i32), class: u8) -> Vec<(i32, i32)> {
+    let old = p.map(|p| footprint(p, class));
+    let new = footprint(q, class);
+    let mut cells = Vec::new();
+    for y in new.1.0..=new.1.1 {
+        for x in new.0.0..=new.0.1 {
+            if !old.is_some_and(|o| covers(o, x, y)) {
+                cells.push((x, y));
+            }
+        }
+    }
+    cells
+}
+
+/// The cells a step of a unit of class `class` from cell `p` to the
+/// neighbouring cell `q` checks: the ones it newly covers, and on a
+/// diagonal also the ones of the two corner cells (no cutting corners).
+pub fn step_cells(p: (i32, i32), q: (i32, i32), class: u8) -> Vec<(i32, i32)> {
+    let mut cells = newly_covered(Some(p), q, class);
+    if p.0 != q.0 && p.1 != q.1 {
+        cells.extend(newly_covered(Some(p), (q.0, p.1), class));
+        cells.extend(newly_covered(Some(p), (p.0, q.1), class));
+    }
+    cells
+}
+
+/// The cells of the look-ahead check of a unit at `s` walking to `target`
+/// (cells): those of the step to the cell one cell ahead, or the whole
+/// footprint when that is the unit's own cell.
+pub fn ahead_cells(s: [u32; 2], target: [u32; 2], class: u8) -> Vec<(i32, i32)> {
+    let d = [sub(target[0], s[0]), sub(target[1], s[1])];
+    let len = real(add(mul(d[0], d[0]), mul(d[1], d[1]))).sqrt();
+    let ahead = if len > 1.0 {
+        let step = d.map(|c| div(c, len.to_bits()));
+        [add(s[0], step[0]), add(s[1], step[1])]
+    } else {
+        target
+    };
+    let (c0, c1) = (cell_of(s), cell_of(ahead));
+    if c0 == c1 {
+        newly_covered(None, c1, class)
+    } else {
+        step_cells(c0, c1, class)
+    }
+}
+
+/// Cells a unit may or may not stand on: the pathing map, possibly with
+/// cells that units occupy (SPEC-0021).
+pub trait Cells {
+    /// Whether cell (`x`, `y`) is free; cells outside the map are not.
+    fn free(&self, x: i32, y: i32) -> bool;
+    /// The size of the map in cells.
+    fn size(&self) -> (i32, i32);
+
+    /// Whether a unit of class `class` may step from cell `p` to the
+    /// neighbouring cell `q`, not cutting corners on a diagonal.
+    fn step(&self, p: (i32, i32), q: (i32, i32), class: u8) -> bool {
+        step_cells(p, q, class)
+            .into_iter()
+            .all(|(x, y)| self.free(x, y))
+    }
+
+    /// Whether point `p` can be seen from `s` (cells) by a unit of class
+    /// `class`: the cells sampled along the line one cell apart change only
+    /// by allowed steps, the first one checked as a step by (+1, +1) from
+    /// the cell before it.
+    fn sees(&self, s: [u32; 2], p: [u32; 2], class: u8) -> bool {
+        let d = [sub(p[0], s[0]), sub(p[1], s[1])];
+        let len = real(add(mul(d[0], d[0]), mul(d[1], d[1]))).sqrt();
+        let direction = if len > 1.0 {
+            d.map(|c| div(c, len.to_bits()))
+        } else {
+            d
+        };
+        let mut previous = (0, 0);
+        let mut t = 1;
+        while (t as f32) < len {
+            let at = [
+                add(s[0], mul(i2r(t), direction[0])),
+                add(s[1], mul(i2r(t), direction[1])),
+            ];
+            let cell = cell_of(at);
+            if cell != previous {
+                let step = (
+                    (cell.0 - previous.0).signum(),
+                    (cell.1 - previous.1).signum(),
+                );
+                let from = (cell.0 - step.0, cell.1 - step.1);
+                if !self.step(from, cell, class) {
                     return false;
                 }
+                previous = cell;
             }
+            t += 1;
         }
         true
     }
 
-    /// Whether a unit of class `class` may step from cell `p` to the
-    /// neighbouring cell `q`, not cutting corners on a diagonal.
-    pub fn step(&self, p: (i32, i32), q: (i32, i32), class: u8) -> bool {
-        if !self.newly_free(Some(p), q, class) {
-            return false;
-        }
-        if p.0 != q.0 && p.1 != q.1 {
-            return self.newly_free(Some(p), (q.0, p.1), class)
-                && self.newly_free(Some(p), (p.0, q.1), class);
-        }
-        true
+    /// The look-ahead check: the cells of `ahead_cells` are free.
+    fn ahead_free(&self, s: [u32; 2], target: [u32; 2], class: u8) -> bool {
+        ahead_cells(s, target, class)
+            .into_iter()
+            .all(|(x, y)| self.free(x, y))
     }
+}
+
+impl Cells for Grid {
+    fn free(&self, x: i32, y: i32) -> bool {
+        self.passable(x, y)
+    }
+
+    fn size(&self) -> (i32, i32) {
+        (self.width, self.height)
+    }
+}
+
+/// The pathing map with the cells some units occupy (SPEC-0021).
+pub struct WithUnits<'a> {
+    pub grid: &'a Grid,
+    pub occupied: &'a std::collections::HashSet<(i32, i32)>,
+}
+
+impl Cells for WithUnits<'_> {
+    fn free(&self, x: i32, y: i32) -> bool {
+        self.grid.passable(x, y) && !self.occupied.contains(&(x, y))
+    }
+
+    fn size(&self) -> (i32, i32) {
+        self.grid.size()
+    }
+}
+
+/// The cells a unit of class `class` occupies when it stands at `p`
+/// (cells): its footprint at the cell of `p` (SPEC-0021).
+pub fn occupied_cells(p: [u32; 2], class: u8) -> Vec<(i32, i32)> {
+    newly_covered(None, cell_of(p), class)
 }
 
 /// The open list of both searches: a binary heap in an array from index
@@ -343,7 +451,7 @@ fn centre(c: (i32, i32)) -> [u32; 2] {
 
 /// The local search from `s` to `g` (cells) for a unit of class `class`,
 /// with at most `limit` iterations.
-pub fn local(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Found {
+pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Found {
     let (start, goal) = (cell_of(s), cell_of(g));
     if start == goal {
         return Found {
@@ -384,7 +492,8 @@ pub fn local(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8, limit: u32) -> Fo
             }
             for (dx, dy) in NEIGHBOURS {
                 let n = (c.0 + dx, c.1 + dy);
-                if !(0..grid.width).contains(&n.0) || !(0..grid.height).contains(&n.1) {
+                let (width, height) = grid.size();
+                if !(0..width).contains(&n.0) || !(0..height).contains(&n.1) {
                     continue;
                 }
                 if !grid.step(c, n, class) {
@@ -868,65 +977,6 @@ pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Fo
         iterations,
         clear: false,
     })
-}
-
-impl Grid {
-    /// Whether point `p` can be seen from `s` (cells) by a unit of class
-    /// `class`: the cells sampled along the line one cell apart change only
-    /// by allowed steps, the first one checked as a step by (+1, +1) from
-    /// the cell before it.
-    pub fn sees(&self, s: [u32; 2], p: [u32; 2], class: u8) -> bool {
-        let d = [sub(p[0], s[0]), sub(p[1], s[1])];
-        let len = real(add(mul(d[0], d[0]), mul(d[1], d[1]))).sqrt();
-        let direction = if len > 1.0 {
-            d.map(|c| div(c, len.to_bits()))
-        } else {
-            d
-        };
-        let mut previous = (0, 0);
-        let mut t = 1;
-        while (t as f32) < len {
-            let at = [
-                add(s[0], mul(i2r(t), direction[0])),
-                add(s[1], mul(i2r(t), direction[1])),
-            ];
-            let cell = cell_of(at);
-            if cell != previous {
-                let step = (
-                    (cell.0 - previous.0).signum(),
-                    (cell.1 - previous.1).signum(),
-                );
-                let from = (cell.0 - step.0, cell.1 - step.1);
-                if !self.step(from, cell, class) {
-                    return false;
-                }
-                previous = cell;
-            }
-            t += 1;
-        }
-        true
-    }
-
-    /// The look-ahead check of a unit at `s` walking to `target` (cells):
-    /// the cells newly covered by the footprint one cell ahead are
-    /// passable.
-    pub fn ahead_free(&self, s: [u32; 2], target: [u32; 2], class: u8) -> bool {
-        let d = [sub(target[0], s[0]), sub(target[1], s[1])];
-        let len = real(add(mul(d[0], d[0]), mul(d[1], d[1]))).sqrt();
-        let ahead = if len > 1.0 {
-            let step = d.map(|c| div(c, len.to_bits()));
-            [add(s[0], step[0]), add(s[1], step[1])]
-        } else {
-            target
-        };
-        let (c0, c1) = (cell_of(s), cell_of(ahead));
-        if c0 == c1 {
-            self.newly_free(None, c1, class)
-        } else {
-            // As a search step, corners included.
-            self.step(c0, c1, class)
-        }
-    }
 }
 
 /// The length of the leg from `a` to `b`, in their units.

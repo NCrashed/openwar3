@@ -20,10 +20,24 @@ units per second), `turnRate` (radians, see below), `propWin`
 (propulsion window, degrees), `orientInterp` (SPEC-0013).
 
 The unit is updated every 6 ticks (0.03 s, SPEC-0013). "Update `k`" is
-the `k`-th update after the order. In all tests below the order was
-given from a timer 0.5 s after the units were created, and update 1 came
-6 ticks after it; how the first update depends on the phase of the
-unit's update cycle was not tested.
+the `k`-th update after the order.
+
+**Phase.** There is one update cycle for all units: every unit is
+updated in the same ticks, every 6th tick of the game, whenever it was
+created. Units created 1, 4, 7, ... 19 ticks apart and ordered in the
+same tick all had their update in the same tick. Within a tick the unit
+updates come before script timers, so an order given from a timer is
+taken at the next update tick after the order's tick, also when the
+order's tick is itself an update tick:
+
+| Order given at timer tick | 0 | 1 | 2 | 3 | 4 | 5 .. 9 | 10 |
+|---|---|---|---|---|---|---|---|
+| First update at timer tick | 4 | 4 | 4 | 4 | 10 | 10 | 16 |
+
+(Timer ticks counted by a 0.005 s periodic timer started at map
+initialisation, with tick 0 the moment of the first orders.) An order
+0.5 s after that moment (timer tick 100, itself an update tick) is
+taken at tick 106, 6 ticks later, which is the case of the tests below.
 
 ### Two angles: heading and facing
 
@@ -58,6 +72,14 @@ heading after update `k` (`H_0` is the unit's facing when the order is
 given). If `|D - H_k| < propWin` (in degrees), the unit moves from
 update `k + 1` on. Until then it turns on the spot.
 
+This rule holds at every update of a walk, not only after the order:
+whenever the target changes by more than `propWin` from the heading
+(for instance when string pulling of SPEC-0020 switches to a point at
+a sharp angle), the unit stands for that update and only turns. Example
+(SPEC-0020, test PF2, footman): at tick 502 its heading was 87.1
+degrees and the new target lay at 15.3 degrees; it turned to 52.7
+without moving and walked on from tick 508.
+
 Footman (`turnRate` 0.6, `propWin` 60), heading 0, target at angle `a`:
 
 | `a` (degrees) | Headings after updates 1, 2, ... | First update with motion |
@@ -76,8 +98,11 @@ therefore walks a short curve.
 The rule was checked on 40 cases: footman with `propWin` 10, 30, 60 and
 90 and `turnRate` 0.1, 0.2, 0.3, 0.6, 0.8, 1.0 and 3.0 (custom types
 based on the footman), target angles from 30 to 180 degrees. A
-difference of exactly 60 degrees with `propWin` 60 did not start the
-motion.
+target set at 60 degrees with `propWin` 60 did not start the motion at
+update 1; see "Movement arithmetic" for why: the target point was
+written with three decimals, (x + 250, y + 433.013) for x + 500 cos 60,
+y + 500 sin 60, and its angle in the engine arithmetic is `0x3F860AD9`,
+72 units of the last place above `propWin`.
 
 ### Speed and position
 
@@ -174,9 +199,13 @@ otherwise, with `2 pi = 0x40C90FDB`. Angles are in `[0, 2 pi)`.
    if `d >= 0` and `d > pi` then `d = sub(d, 2 pi)`; if `d < 0` and
    `-d > pi` then `d = add(d, 2 pi)` (`pi = 0x40490FDB`); `d = 0` if
    `|d| < 0.0000002` (`0x3456BF95`).
-3. The unit moves in this update if `|d| < propWin` (radians) and
+3. The unit moves in this update if `|d| < propWin` and
    nothing else stops it (SPEC-0019, SPEC-0020); its speed is then
-   `spd` (no acceleration was observed), otherwise 0.
+   `spd` (no acceleration was observed), otherwise 0. `propWin` is
+   compared in radians, `mul(propWin, DEG)` with `DEG` of SPEC-0011:
+   the game held `0x3F860A91` for `propWin` 60 (read from memory), one
+   unit of the last place below the nearest float to pi / 3. The test
+   is strict: `|d|` equal to `propWin` does not move.
 4. The new heading is `H = add(H, d)` if `|d| <= turnRate`, else
    `add(H, turnRate)` or `add(H, -turnRate)` with the sign of `d`. It is
    also stored. (It may leave `[0, 2 pi)` by a little; `sin` and `cos`

@@ -90,19 +90,20 @@ fn knight_attacks() {
     }
     assert!(game.state.borrow().errors.is_empty());
     // Rounded as R2S shows them; hits 1.5 s apart, the first one dmgpt1
-    // (0.66 s) after the second update: the reaction delay of seed 777 is
-    // 0.0329 s, just past the first update 6 ticks after the order
+    // (0.66 s) after the second update: the order comes with main, so the
+    // first update of the shared cycle is 4 ticks later (SPEC-0018,
+    // "Phase"), before the reaction delay of seed 777, 0.0329 s, is over
     // (SPEC-0019).
     assert_eq!(
         game.output(),
         [
             "attacking",
-            "29.062 at 0.720",
-            "30.000 at 2.220",
-            "29.062 at 3.720",
-            "29.062 at 5.220",
-            "30.000 at 6.720",
-            "27.187 at 8.220",
+            "29.062 at 0.715",
+            "30.000 at 2.215",
+            "29.062 at 3.715",
+            "29.062 at 5.215",
+            "30.000 at 6.715",
+            "27.187 at 8.215",
         ]
     );
 }

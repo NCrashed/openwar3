@@ -652,3 +652,32 @@ fn paths_round_walls() {
         }
     }
 }
+
+/// SPEC-0021, walking units (c-OM461): the eastward footman of the first
+/// pair is made to wait from tick 364 at (-2022.15, -6000.01), and the
+/// footman of the fourth pair waits for the knight from tick 316 at
+/// (-2079.42, 2994.36). The maps print every 6 ticks, so the stands begin
+/// within 6 ticks. The second and third pairs turn on one unit of the
+/// last place of the squared speeds and are left out, as in the spec.
+#[test]
+fn units_wait_for_each_other() {
+    let Some(output) = run("c-OM461.w3x", 9.0) else {
+        return;
+    };
+    let tracks = tracks(&output);
+    for (unit, from, until, x, y) in [
+        (0, 364, 459, -2022.15f32, -6000.01f32),
+        (6, 316, 370, -2079.42, 2994.36),
+    ] {
+        let track = &tracks[&unit];
+        for &(tick, px, py) in track.iter().filter(|p| (from + 6..=until).contains(&p.0)) {
+            let off = (px - x).hypot(py - y);
+            assert!(off < 0.1, "unit {unit} at tick {tick}: ({px}, {py})");
+        }
+        let before = track.iter().rev().find(|p| p.0 < from - 6).unwrap();
+        assert!(
+            (before.1 - x).hypot(before.2 - y) > 0.1,
+            "unit {unit} stands early"
+        );
+    }
+}

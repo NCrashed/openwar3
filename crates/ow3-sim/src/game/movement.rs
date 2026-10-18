@@ -21,12 +21,13 @@
 //! effect at its next update, and its first motion comes a tick late.
 //!
 //! On a map with a pathing map, point orders and patrols go round its
-//! obstacles by the paths of SPEC-0020 (`game::follow`).
+//! obstacles and other units by the paths of SPEC-0020 and SPEC-0021
+//! (`game::follow`). Positions, headings and velocities follow the
+//! movement arithmetic of SPEC-0018, and all units share one update cycle.
 //!
-//! PROVISIONAL: other units are no obstacles, and attackers walk straight
-//! at their goal; no small heading wobble (SPEC-0018 open question 2); the
-//! arrival test compares squared distances in cells (open question 1);
-//! the first update comes 6 ticks after the order.
+//! PROVISIONAL: attackers walk straight at their goal; the extra commits
+//! between updates (SPEC-0018 open question 2) are left out; the arrival
+//! test compares squared distances in cells (open question 1).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -46,6 +47,17 @@ pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
+/// The ticks of the update cycle, the same for all units, are those equal
+/// to `PHASE` modulo `UPDATE` (SPEC-0018, "Phase"; the game counts them
+/// one lower, from its own start).
+const PHASE: u64 = 5;
+
+/// The first update after `tick`: updates come before the script's timers
+/// in a tick, so an order given at an update tick waits for the next.
+fn next_update_after(tick: u64) -> u64 {
+    tick + UPDATE - (tick + UPDATE - PHASE) % UPDATE
+}
+
 /// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).
 const CELL: u32 = 0x3D00_0000;
 /// The arrival radius of a point move in cells (0.49, 15.68 world units).
@@ -103,8 +115,8 @@ pub struct Moving {
     /// The committed position, relative to the world's lower left corner,
     /// the velocity in world units per second and the movement clock at
     /// the commit (SPEC-0018, "Movement arithmetic").
-    origin: [u32; 2],
-    velocity: [u32; 2],
+    pub(super) origin: [u32; 2],
+    pub(super) velocity: [u32; 2],
     since: u32,
     /// The step of the facing (SPEC-0013), which grows to its maximum.
     facing_step: u32,
@@ -141,7 +153,7 @@ impl Moving {
 }
 
 /// The position `p` relative to the world's lower left corner `min`.
-fn relative(p: [u32; 2], min: [u32; 2]) -> [u32; 2] {
+pub(super) fn relative(p: [u32; 2], min: [u32; 2]) -> [u32; 2] {
     [add(p[0], min[0] ^ SIGN), add(p[1], min[1] ^ SIGN)]
 }
 
@@ -299,7 +311,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order_id,
             target,
             heading: u.facing,
-            next_update: tick + UPDATE,
+            next_update: next_update_after(tick),
             walking: false,
             origin: relative([u.x, u.y], min),
             velocity: [0, 0],
@@ -497,7 +509,15 @@ pub(super) fn step(state: &mut State) {
 pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let tick = state.ticks;
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    let moving = std::mem::take(&mut state.moving);
+    // Units updating in the same tick go from the last created (SPEC-0021).
+    let mut moving = std::mem::take(&mut state.moving);
+    let created: std::collections::HashMap<u32, usize> = state
+        .units
+        .iter()
+        .enumerate()
+        .map(|(i, &h)| (h, i))
+        .collect();
+    moving.sort_by_key(|h| std::cmp::Reverse(created.get(h).copied()));
     let mut still = Vec::with_capacity(moving.len());
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
@@ -603,10 +623,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         motion(&mut m, goal, true, speed, turn_rate, window);
                     }
                 } else {
+                    let squared_speed = follow::squared_speed(m.velocity);
+                    let walker = |order| follow::Walker {
+                        handle: h,
+                        here,
+                        order,
+                        class,
+                        squared_speed,
+                    };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
                     let mut steer = if state.grid.is_some() {
-                        follow::steer(state, h, here, goal, class, tick)
+                        follow::steer(state, &walker(goal), tick)
                     } else if distance <= real_of(mul(ARRIVAL, ARRIVAL)) {
                         follow::Steer::Arrived
                     } else {
@@ -622,7 +650,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             state.paths.remove(&h);
                             let goal = relative(home, min);
                             steer = if state.grid.is_some() {
-                                follow::steer(state, h, here, goal, class, tick)
+                                follow::steer(state, &walker(goal), tick)
                             } else {
                                 follow::Steer::Walk(goal)
                             };

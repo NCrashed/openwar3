@@ -29,6 +29,41 @@ the `Issue...Order` native already returns the new order.
 | `IssueImmediateOrder(u, "stop")` | true | 0 |
 | `IssueImmediateOrder(u, "holdposition")` | true | 0 |
 
+**Order ids.** `OrderId(name)` gives the numeric id of an order name,
+ignoring case (`"MOVE"` is `move`); an unknown name and `""` give 0:
+
+| Name | Id |
+|---|---|
+| `smart` | 851971 |
+| `stop` | 851972 |
+| `attack` | 851983 |
+| `attackground` | 851984 |
+| `move` | 851986 |
+| `patrol` | 851990 |
+| `holdposition` | 851993 |
+
+`OrderId2String(id)` gives the name back (`move`, `attack`, `stop`,
+`smart`) and `null` for 0 and for an id without an order (12345).
+(`GetUnitCurrentOrder` after a `patrol` reads 851991, one more than
+`OrderId("patrol")`.)
+
+The `...ById` natives behave like the named ones with that id:
+
+| Call (one footman, in this order; `t` an enemy footman) | Returns | `GetUnitCurrentOrder` after the call |
+|---|---|---|
+| `IssuePointOrderById(u, 851986, x, y)` | true | 851986 |
+| `IssuePointOrderById(u, 12345, x, y)` | false | 851986 (unchanged) |
+| `IssuePointOrderById(u, 0, x, y)` | false | 851986 (unchanged) |
+| `IssueImmediateOrderById(u, 851972)` | true | 0 |
+| `IssueImmediateOrderById(u, 851986)` | true | 0 |
+| `IssueTargetOrderById(u, 851983, t)` | true | 851983 |
+| `IssueTargetOrderById(u, 851986, t)` | true | 851986 |
+| `IssueImmediateOrderById(u, 851993)` | true | 0 |
+| `IssuePointOrderById(u, 851983, x, y)` | true | 851983 |
+| `IssuePointOrder(u, "attackground", x, y)` | true | 851984 |
+| `IssuePointOrderById(u, 851984, x, y)` | true | 851984 |
+| `IssueImmediateOrder(u, "move")` | true | 0 |
+
 ### Stop, hold position and new orders while walking
 
 - **`stop` and `holdposition`** end the motion at once: the position
@@ -309,6 +344,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 ## Sources
 
+- Test map of 2026-10-18 for `OrderId`, `OrderId2String` and the
+  `...ById` natives (one footman, results read right after each call).
 - Test maps on 1.27b under Wine, 2026-10-17 and 2026-10-18, same set-up
   as SPEC-0018; targets were footman copies with 100000 life, move speed
   0 and collision 16, 32 or 64; attackers footman, knight, rifleman and

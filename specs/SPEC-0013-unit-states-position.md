@@ -71,6 +71,44 @@ normal. Non-heroes (footman, sorceress) and heroes whose state is set
 0.5 s after creation show full first steps. That intelligence changes
 restart mana regeneration in the same way is an inference, not tested.
 
+**Night.** For `regenType` `night` it counts as night while the
+clock runs from 18.01 to 6.01 hours (not from 18 to 6). With the clock
+running (`GAME_STATE_TIME_OF_DAY` advancing, at time-of-day scale 0.5, 1
+and 2), an archer (`earc`, `regenHP` 0.5) started to regenerate at the
+first tick whose hour was above 18.01 (18.0101 to 18.0105, the tick
+before at 18.00995 or 18.00999 had no gain) and stopped one tick after
+the hour passed 6.01 (last tick with a gain at 6.0102 to 6.0105).
+When the script jumps the hour with `SetFloatGameState` while the clock
+is suspended (`SuspendTimeOfDay(true)`), the result is not a function
+of the new hour alone: hours up to 6.001 and from 18.001 on always gave
+night after a night hour, and 6.01 to 17.9 day after a day hour, but
+for example 18.0 gave day after 12 and night after 0, 17.999 night after
+18.001 and day after 0, and 18.001 day after 17.999 (open question 4).
+In every such case the unit kept the same state for the whole second
+measured.
+
+**Hero attributes.** `SetHeroStr`, `SetHeroAgi` and `SetHeroInt` take
+effect at once, with or without `permanent` (no difference was seen):
+
+- Max life is `100 + 25 * strength` and max mana `15 * intelligence` for
+  the paladin (base 22 strength: 650; 17 intelligence: 255), with the
+  strength and intelligence including item bonuses. Agility changes
+  neither.
+- Life changes by the same amount as max life: from 325 of 650, strength
+  22 -> 30 gave 525 of 850; a full hero stays full. If that would leave
+  less than 1, the life becomes 1 (300 of 650 and strength 10: life 1 of
+  350; also from 299, 301, 10 and 1 life). Mana changes in the same way
+  but stops at 0 (100 of 255 and intelligence 2: 0 of 30; then
+  intelligence 40: 570 of 600).
+- Strength may go to 0 (max life 100) and below: at -5 the max life and
+  the life become -25 and the hero dies inside the call (its death event
+  runs before `SetHeroStr` returns; later reads give life 0).
+- Setting the same value again changes nothing.
+- Items with attribute bonuses (`rst1` +3 strength, `rin1` +3
+  intelligence, `rag1` +3 agility) count at once when added with
+  `UnitAddItemById`: `GetHeroStr(h, true)` 25 and `GetHeroStr(h, false)`
+  22, max life 725, max mana 300. A dead hero takes no items.
+
 ### Facing
 
 - `CreateUnit` takes the facing in degrees modulo 360 into 0..360:
@@ -93,6 +131,10 @@ restart mana regeneration in the same way is an inference, not tested.
   `turnRate` (custom types with `turnRate` 0.1 to 3.0 turned exactly
   like the footman; `uloc` with `turnRate` 0.2 turns like the footman,
   which has 0.6, because both have `orientInterp` 0).
+- `SetUnitFacing` on a unit walking a `move` order has no effect at all:
+  footmen given `SetUnitFacing` 90, 200 and 0 (and 30 for another one)
+  at ticks 100, 400 and 700 of their walk had bit for bit the same
+  positions and facings at every tick as without the calls.
 
 ### Facing turn rule
 
@@ -190,6 +232,9 @@ brake from about 7.5 degrees before the end, last values 179.954, then
    a 0.005 s periodic timer reads no regeneration at the first expiry
    (all unit types), unlike a thread run from a timer trigger.
 3. Placement of new units on blocked ground.
+4. How jumps of the hour with a suspended clock decide between night
+   and day (above), and the regeneration types `day` and `blight`.
+5. What `permanent` of `SetHeroStr` and its kind changes.
 
 ## Sources
 
@@ -205,3 +250,13 @@ brake from about 7.5 degrees before the end, last values 179.954, then
    (rates as listed).
 3. Positions and facings as listed; `SetUnitY(u, -12319)` works,
    `SetUnitY(u, -12320)` hangs.
+4. **Night.** Archer at 50 life, the hour set every second (clock
+   suspended) to 12, 0, 5.99, 6.0, 6.01, 17.99, 18.0, 18.01, 23.99, 3,
+   9, 21: gain 0 at 12, 6.01, 17.99, 18.0, 9; 0.4975 in the other
+   seconds. Clock running from 17.95 and from 5.95: as above.
+5. **Hero attributes.** Fresh paladins at the life given, then
+   `SetHeroStr` to the value given: 300 / 10 -> 1 of 350; 650 / 10 ->
+   350 of 350; 650 / 0 -> 100 of 100; 650 / -5 and 100 / -5 -> dies;
+   10 / 21 -> 1 of 625; 0.5 / 22 -> unchanged; 650 / 23 -> 675 of 675;
+   325 / 30 -> 525 of 850.
+

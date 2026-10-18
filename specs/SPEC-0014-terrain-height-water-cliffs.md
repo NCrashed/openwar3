@@ -131,8 +131,9 @@ flags use other models (open question 1).
    and the ground half of the atlas is painted to match it (`N_Cliff1`
    and `Nsnw` on Northrend).
    Cliff models are lit with the formula of SPEC-0017 ("Colour of the
-   ground"), using the normals of the model's vertices, turned with
-   the model when it is placed. The normals of the horizontal parts are
+   ground") and the light of the terrain model (not that of the unit
+   model), using the normals of the model's vertices, turned with the
+   model when it is placed. The normals of the horizontal parts are
    not all vertical: they lean towards the cliff face (`CliffsAAAB0`:
    from `(0, 0, 1)` at the low corner opposite the raised one to
    `(-0.18, 0.24, 0.95)` at the raised corner, in model coordinates),
@@ -291,7 +292,14 @@ leaves holes there.
      between `(41, 70, 105)` and `(49, 84, 126)`;
    - the same with a `war3map.shd` of all 255: ground and cliff tops
      `(74, 74, 80)`; with all 0: as without shadows.
-7. **Tileset I** (test map with `CIsn` and `CIrb` cliffs): without
+7. **Terrain light on cliffs.** Flat test map, one point raised by
+   two levels, cliff type `CNsn`, `Cliff1` and the ground solid grey 136,
+   Lordaeron light at noon: the outer corners of the four cliff tiles,
+   where the models have the normal `(0, 0, 1)`, show 131 like the flat
+   ground; the tiles facing away from the sun go down to 121..128. With
+   the light of `DNCLordaeronUnit` (ambient intensity 0.3) every upward
+   normal would saturate at 136.
+8. **Tileset I** (test map with `CIsn` and `CIrb` cliffs): without
    imports the `CIsn` cliffs look icy white and blue; with the `Cliff1`
    of `War3.mpq` imported unchanged into the map they show green grass
    and brown rock (open question 6).

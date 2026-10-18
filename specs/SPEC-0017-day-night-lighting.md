@@ -127,6 +127,27 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
 `light = L * 1.3 * 0.6157 + 0.2 * A = (0.313, 0.533, 0.799)`, which is
 `(80, 136, 204)` on a white texture; the game showed `(79, 135, 203)`.
 
+### Sloped ground
+
+The ground is lit per corner point and the light is interpolated over
+the tile:
+
+1. **Normal of a point.** With `h(i, j)` the height of point `(i, j)`
+   from its raw height alone, `(raw - 8192) / 4` (SPEC-0014, "Ground
+   height", without the cliff level term `(layer - 2) * 128`), the
+   normal is
+   `N = normalize(-(h(i+1, j) - h(i-1, j)) / 256, -(h(i, j+1) - h(i, j-1)) / 256, 1)`:
+   the central difference over the two neighbours, 256 world units
+   apart. Cliff levels do not tilt the normals: ground beside a cliff
+   and on a plateau, with equal raw heights, is lit like flat ground.
+2. **Light of a point.** `light_c` above with that `N`.
+3. **Inside a tile** the light of the four corners is interpolated
+   linearly over two triangles, the tile being split along the diagonal
+   from its top left corner `(i, j+1)` to its bottom right corner
+   `(i+1, j)`.
+
+On a plane the result is the plane's own normal.
+
 ### Shadows (`war3map.shd`)
 
 The map file `war3map.shd` darkens the ground where the World Editor
@@ -192,8 +213,8 @@ rule 9).
 
 ## Open questions
 
-1. Sloped ground (normals other than straight up) and water were
-   not measured; the formula above is expected to use the vertex normal.
+1. Water was not measured. Normals of points on the edge of the map
+   (missing neighbours) were not measured.
 2. The unit model (`...Unit.mdx`) and how units, doodads and destructables
    are lit.
 3. Fog, and whether the light changes with `SetDayNightModels` called
@@ -208,6 +229,11 @@ rule 9).
 
 ## Sources
 
+- Test maps of 2026-10-18: planes of 18 slopes (gradients 0.25, 0.5 and
+  1 towards east, west, north, south, south west, north east), single
+  raised points, a raised block of cliff level; grey ground, Lordaeron
+  noon, camera straight down, screenshots compared pixel by pixel with
+  the model (corrected for the perspective of raised ground).
 - Test maps on 1.27b under Wine, 2026-10-17: flat ground with all ground
   textures replaced by solid white (or grey, red) images, camera straight
   down, time of day set with `SetFloatGameState` to 0, 3, ..., 21, the
@@ -259,4 +285,18 @@ values are 0 or 1 below the model:
    darkness at x = 0, falling to none 34 units to either side; either
    cell alone: 185 at x = 0. With the map corner moved to
    (-12160, -12160) the half-strength strips moved to x = 128 and 640.
+5. **Slopes.** Lordaeron noon, grey 136, planes with height rising by
+   `g` per world unit (red channel; `E` rises towards the east and so
+   faces west): `g` 0.25: `W` 99, `S` 110, `SW` 80, `E`, `N`, `NE` 136
+   (saturated); `g` 0.5: `W` 66, `S` 88, `SW` 34; `g` 1: `W` 23,
+   `S` 49. The plane's normal in the formula gives 99.2, 110.7, 80.2,
+   66.6, 87.9, 33.6, 22.8 and 49.0.
+6. **Single raised points** (raw height +128 and +64 world units at one
+   point of flat ground): the model of "Sloped ground" reproduces the
+   screenshots with a mean error of 0.75 and 0.52 (of 255) in the red
+   channel; with bilinear interpolation instead of the two triangles
+   2.50 and 1.37, with one-sided differences 4 to 12.
+7. **Cliff levels.** A 3 x 3 block of points one level up, raw heights
+   all equal: the ground on the plateau and next to it is 131, like flat
+   ground.
 

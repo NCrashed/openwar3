@@ -122,7 +122,7 @@ So `Atan2(0.0005, -0.0005) = 0`, `Atan2(0, -1) = PI`,
 For `|x| <= 0x3F7E8000` (comparing the patterns with the sign cleared;
 about 0.99414):
 
-1. `n = f2i(x * 2^30)` (the pattern of `x` plus `15 * 2^23`), clamped to
+1. `n = f2i(x * 2^30)` (the pattern of `x` plus `30 * 2^23`), clamped to
    `-(2^30 - 1) .. 2^30 - 1`.
 2. `c = -n` for asin, `c = n` for acos.
 3. `u = (c * 2^12) mod 2^32`, `w = u OR floor(u / 2^20)`,

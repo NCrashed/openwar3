@@ -86,6 +86,14 @@ ALLIANCE_PASSIVE, false)`, `IsPlayerAlly(p, p)` is false and
 `IsPlayerEnemy(p, p)` is true. With the defaults, players 0..11 are
 allies of player 15 and enemies of players 12..14.
 
+**Units.** `IsUnitAlly(u, p)` is `IsPlayerAlly(p, owner of u)` and
+`IsUnitEnemy(u, p)` is `IsPlayerEnemy(p, owner of u)`: they ask how the
+player `p` regards the unit's owner, the direction opposite to the
+argument order of `IsPlayerAlly`. After `SetPlayerAlliance(Player(0),
+Player(1), ALLIANCE_PASSIVE, true)` alone, a unit of player 1 is an ally
+for player 0 (`IsUnitAlly(u1, Player(0))` true), while a unit of player 0
+is still an enemy for player 1.
+
 **At the end of config** the values are exactly what the map's `config`
 set: controllers, race preferences, selectable flags, start locations and
 teams from its `SetPlayer...` calls. Slot states are still empty and
@@ -190,3 +198,10 @@ at the start and end of `main` and after 0.5 s, and writes them with
 6. Alliances between players 0 and 1 changed with `SetPlayerAlliance`
    one flag at a time: `IsPlayerAlly` and `IsPlayerEnemy` follow the
    passive flag as described.
+7. **Units and alliances.** Footmen of players 0, 1, 12 and 15, checked
+   against players 0, 1, 12, 15 with `IsUnitAlly`, `IsUnitEnemy`,
+   `IsPlayerAlly(owner, p)` and `IsPlayerEnemy(owner, p)`, at the
+   defaults and after each of: 0 passive toward 1; 1 shared vision
+   toward 0 (no change); 1 passive toward 0; 0 no longer passive toward
+   1; 0 and 15 no longer passive toward each other. In all 96 cases the
+   unit natives equal the player natives with the players swapped.

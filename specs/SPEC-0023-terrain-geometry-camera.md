@@ -65,11 +65,23 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
   the building rule, which gives -288). Doodads without a pathing
   texture (`LPcr`, `BOth`) were drawn at their stored position (within
   about 1 unit).
-- **Units** (footmen and a peasant, facings 0, 90, 180 and 270, at 12
-  positions on and off the 32 grid) were drawn 16 west and 16 south of
-  `GetUnitX` / `GetUnitY` (measured offsets -14 to -18.5 and -14.5 to
-  -17; `GetUnitX` returned the given position). Destructables were not
-  measured this way.
+- **Units** are drawn at the centre of their pathing footprint
+  (SPEC-0020, "Size classes and footprints"): units of size class 1 and
+  3, whose footprints are 2 x 2 and 4 x 4 cells and reach one cell more
+  to the west and south, are drawn 16 west and 16 south of `GetUnitX` /
+  `GetUnitY`; units of class 0 and 2 (1 x 1 and 3 x 3 cells) at their
+  position. The offset is the same at every position (on and off the 32
+  grid) and facing. Measured (standing units, the model replaced by a
+  flat marker): collision 0, 8, 15 (class 0): no offset; 16 and 31
+  (class 1: peasant, acolyte, footman, ghoul): -16.4 +- 2 in x, -15.5
+  +- 1 in y; 32 (class 2: knight, rifleman, grunt, paladin, archer,
+  huntress, mortar team, Medivh): none; 48 (class 3: abomination and a
+  footman copy): -16.3, -15.7. `GetUnitX` returned the given position in
+  all cases. A walking footman (class 1, `move` east at 270) was drawn
+  -7.4, -16.2 from its position (open question 4). A farm (pathing
+  texture 4 x 4) was drawn at its position as `GetUnitX` / `GetUnitY`
+  gave it (`CreateUnit` at (-256, -192) had put it at (-256, 0), next to
+  a walking footman; not examined further).
 
 ## Edge cases
 
@@ -83,9 +95,10 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 2. The near and far planes (`CAMERA_FIELD_FARZ`) and fog.
 3. Whether the field of view applies the same way in full-screen modes
    and with the `fixedaspect` video setting.
-4. Why unit models are drawn 16 west and south of the unit's position
-   (only standing units of two types tested), and the snapping of
-   doodads with other pathing texture sizes.
+4. Where moving units are drawn (one walking footman was drawn about 9
+   units ahead of the class 1 offset in its direction of motion), flying
+   units and buildings; the snapping of doodads with other pathing
+   texture sizes.
 
 ## Sources
 

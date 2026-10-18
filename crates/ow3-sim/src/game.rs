@@ -896,7 +896,8 @@ impl<'a> Game<'a> {
         }
         self.state.borrow_mut().timers.end_tick(tick);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
-        movement::acquisitions(&mut self.state.borrow_mut());
+        let acquired = movement::acquisitions(&mut self.state.borrow_mut());
+        widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);
         self.park();
     }

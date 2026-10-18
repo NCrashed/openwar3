@@ -244,7 +244,10 @@ fn shadow_texture(
         width as f32 * 32.0,
         height as f32 * 32.0,
     ];
-    (texture.create_view(&wgpu::TextureViewDescriptor::default()), area)
+    (
+        texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        area,
+    )
 }
 
 pub(crate) fn upload_texture(

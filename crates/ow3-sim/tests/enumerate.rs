@@ -229,3 +229,45 @@ endfunction
         ]
     );
 }
+
+/// SPEC-0006: `IsUnitInRangeXY` subtracts the collision size (a footman,
+/// collision 31, 1000 away is in range from 969); SPEC-0019: a unit of
+/// `Player(15)` is no enemy of `Player(0)`, one of `Player(1)` is.
+#[test]
+fn unit_range_and_enemies() {
+    let natives =
+        "native IsUnitInRangeXY takes unit whichUnit, real x, real y, real distance returns boolean
+native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean";
+    let script = format!(
+        "{natives}{PRINT}{}",
+        r#"
+function Show takes boolean b returns nothing
+    if b then
+        call Print("true")
+    else
+        call Print("false")
+    endif
+endfunction
+function main takes nothing returns nothing
+    local unit u = CreateUnit(Player(1), 'hfoo', 1000, 0, 0)
+    call Show(IsUnitInRangeXY(u, 0, 0, 969))
+    call Show(IsUnitInRangeXY(u, 0, 0, 968.9))
+    call Show(IsUnitEnemy(u, Player(0)))
+    call Show(IsUnitEnemy(CreateUnit(Player(15), 'hfoo', 0, 0, 0), Player(0)))
+endfunction
+"#
+    );
+    let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
+    let script = ow3_jass::parse(&script).unwrap();
+    let refs = [&declarations, &script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    let footman = ow3_sim::data::UnitType {
+        collision: 31f32.to_bits(),
+        ..Default::default()
+    };
+    let code = i32::from_be_bytes(*b"hfoo");
+    game.state.borrow_mut().data.units.insert(code, footman);
+    game.run("main");
+    assert_eq!(game.output(), ["true", "false", "true", "false"]);
+}

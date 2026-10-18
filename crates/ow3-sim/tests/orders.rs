@@ -24,6 +24,16 @@ native IssueImmediateOrder takes unit whichUnit, string order returns boolean
 native GetUnitCurrentOrder takes unit whichUnit returns integer
 native SetRandomSeed takes integer seed returns nothing
 native PauseUnit takes unit whichUnit, boolean flag returns nothing
+type event extends agent
+type trigger extends agent
+type triggeraction extends handle
+type unitevent extends handle
+native ConvertUnitEvent takes integer i returns unitevent
+native CreateTrigger takes nothing returns trigger
+native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unitevent whichEvent returns event
+native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
+native GetTriggerUnit takes nothing returns unit
+native KillUnit takes unit whichUnit returns nothing
 globals
     unit a = null
     unit t = null
@@ -330,6 +340,24 @@ fn acquisition_ticks() {
     }
 }
 
+/// SPEC-0019: `EVENT_UNIT_ACQUIRED_TARGET` fires at the check that finds
+/// a target, here killing the unit in the tick of its acquisition.
+#[test]
+fn acquired_target_event() {
+    let units = "call SetRandomSeed(7)\n    set a = CreateUnit(Player(0), 'hfoo', 0, 0, 0)\n    set t = CreateUnit(Player(1), 'hfoo', 300, 0, 0)\n    call PauseUnit(t, true)";
+    let watch = "\n---\nfunction Die takes nothing returns nothing\n    call KillUnit(GetTriggerUnit())\nendfunction\nfunction Watch takes unit u returns nothing\n    local trigger trig = CreateTrigger()\n    call TriggerRegisterUnitEvent(trig, u, ConvertUnitEvent(60))\n    call TriggerAddAction(trig, function Die)\nendfunction";
+    let (Some(mut plain), Some(mut watched)) = (
+        game(units, "", |_| {}),
+        game(&format!("{units}\n    call Watch(a)"), watch, |_| {}),
+    ) else {
+        return;
+    };
+    let path = run(&mut plain, 120);
+    let acquired = path.iter().find(|p| p.1[0].target.is_some()).unwrap().0;
+    run(&mut watched, 120);
+    assert_eq!(watched.units()[0].died_at, Some(acquired));
+}
+
 /// The choice of target of SPEC-0019: a unit before a nearer structure,
 /// and between enemies at the same distance the one with the smaller y,
 /// then the smaller x.
@@ -348,8 +376,14 @@ fn acquisition_choice() {
         .collect();
     let level = enemy("hfoo", 300, -300) + &enemy("hfoo", -300, -300);
     for (enemies, at) in [
-        (enemy("hfoo", 300, 0) + &enemy("hhou", -128, 0), (300.0, 0.0)),
-        (enemy("hhou", -128, 0) + &enemy("hfoo", 300, 0), (300.0, 0.0)),
+        (
+            enemy("hfoo", 300, 0) + &enemy("hhou", -128, 0),
+            (300.0, 0.0),
+        ),
+        (
+            enemy("hhou", -128, 0) + &enemy("hfoo", 300, 0),
+            (300.0, 0.0),
+        ),
         (around, (0.0, -300.0)),
         (level, (-300.0, -300.0)),
     ] {

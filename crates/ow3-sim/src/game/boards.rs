@@ -539,6 +539,19 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         }
     );
 
+    // Natives no shipped script declares, which return without any known
+    // effect (SPEC-0001); a dialog shows as before after `DialogSetAsync`.
+    for declaration in [
+        "native DialogSetAsync takes dialog d returns nothing",
+        "native SetStackedSound takes string soundLabel, real width, real height returns nothing",
+        "native ClearStackedSound takes string soundLabel, real width, real height returns nothing",
+        "native SetStackedSoundRect takes string soundLabel, rect r returns nothing",
+        "native ClearStackedSoundRect takes string soundLabel, rect r returns nothing",
+        "native DebugBreak takes integer i returns nothing",
+    ] {
+        native!(add, state, declaration, |vm, state, args| Ok(None));
+    }
+
     // Dialogs.
     native!(
         add,

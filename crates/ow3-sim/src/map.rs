@@ -7,7 +7,7 @@
 //! whole terrain grid (SPEC-0008), and destructables are the placed
 //! doodads whose type is a destructable type (SPEC-0006).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 
@@ -16,7 +16,7 @@ use ow3_formats::map::doodads::Doodads;
 use ow3_formats::map::info::MapInfo;
 use ow3_formats::map::strings::TriggerStrings;
 use ow3_formats::map::terrain::Terrain;
-use ow3_jass::ast::Script;
+use ow3_jass::ast::{Declaration, Script};
 use ow3_jass::check::Program;
 
 use crate::data::ObjectData;
@@ -86,6 +86,39 @@ pub struct Map {
     pub localized: BTreeMap<String, String>,
 }
 
+/// Natives the game provides that neither `common.j` nor `common.ai`
+/// declares (SPEC-0001).
+const UNDECLARED_NATIVES: [&str; 6] = [
+    "DialogSetAsync",
+    "SetStackedSound",
+    "ClearStackedSound",
+    "SetStackedSoundRect",
+    "ClearStackedSoundRect",
+    "DebugBreak",
+];
+
+fn native_names(script: &Script) -> impl Iterator<Item = &str> {
+    script.declarations.iter().filter_map(|d| match d {
+        Declaration::Native(n) => Some(n.signature.name.as_str()),
+        _ => None,
+    })
+}
+
+/// Fails for the first native `map` declares that neither the `provided`
+/// scripts declare nor is one of [`UNDECLARED_NATIVES`].
+fn check_natives(map: &Script, provided: &[&Script]) -> Result<(), MapError> {
+    let mut names: BTreeSet<&str> = UNDECLARED_NATIVES.into_iter().collect();
+    for script in provided {
+        names.extend(native_names(script));
+    }
+    match native_names(map).find(|n| !names.contains(n)) {
+        Some(name) => Err(MapError(format!(
+            "war3map.j: the game has no native {name}"
+        ))),
+        None => Ok(()),
+    }
+}
+
 fn parse_script(name: &str, data: &[u8]) -> Result<Script, MapError> {
     let text = String::from_utf8_lossy(data);
     ow3_jass::parse(&text).map_err(|e| error(name, e))
@@ -118,6 +151,21 @@ impl Map {
         let common = library("Scripts\\common.j")?;
         let blizzard = library("Scripts\\Blizzard.j")?;
         let script = parse_script("war3map.j", &war3map)?;
+        // A map may declare only natives the game provides (SPEC-0001):
+        // those of the game's own `common.j` and `common.ai`, whatever
+        // file the map uses, and a few undeclared ones.
+        let provided = ["Scripts\\common.j", "Scripts\\common.ai"]
+            .iter()
+            .map(|&name| {
+                archives
+                    .read_game_file(name)
+                    .map(|data| parse_script(name, &data))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if let [Some(common_j), Some(common_ai)] = &provided[..] {
+            check_natives(&script, &[common_j, common_ai])?;
+        }
 
         let info = archives
             .read_map_file("war3map.w3i")
@@ -222,4 +270,26 @@ fn localized_strings(archives: &mut Archives) -> BTreeMap<String, String> {
         }
     }
     strings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn script(text: &str) -> Script {
+        ow3_jass::parse(text).unwrap()
+    }
+
+    /// SPEC-0001: a map may declare natives of `common.j`, of `common.ai`
+    /// and the undeclared ones, and fails to load with any other.
+    #[test]
+    fn maps_declare_provided_natives_only() {
+        let common_j = script("native KillUnit takes unit whichUnit returns nothing\n");
+        let common_ai = script("native UnitAlive takes unit id returns boolean\n");
+        let provided = [&common_j, &common_ai];
+        let map = |natives: &str| check_natives(&script(natives), &provided);
+        assert!(map("native UnitAlive takes unit id returns boolean\nnative DebugBreak takes integer i returns nothing\nnative DialogSetAsync takes dialog d returns nothing\n").is_ok());
+        assert!(map("native KillUnit takes unit u returns nothing\n").is_ok());
+        assert!(map("native NoSuchNative takes nothing returns nothing\n").is_err());
+    }
 }

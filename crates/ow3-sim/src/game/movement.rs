@@ -898,8 +898,9 @@ const HALF: u32 = 0x3F00_0000;
 /// there is no unit, and on equal distances the one with the smaller y,
 /// then x. The target becomes that of an attack of its own, which
 /// `GetUnitCurrentOrder` shows as 0, after the reaction delay counted
-/// from the exact time of the check.
-pub(super) fn acquisitions(state: &mut State) {
+/// from the exact time of the check. Gives the units that acquired a
+/// target, in that order.
+pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let tick = state.ticks;
     // (handle, x, start of the schedule).
     let due: Vec<(u32, u32, u64)> = state
@@ -921,7 +922,7 @@ pub(super) fn acquisitions(state: &mut State) {
         })
         .collect();
     if due.is_empty() {
-        return;
+        return Vec::new();
     }
     // The possible targets, by x: (x, y, collision, owner, structure,
     // handle).
@@ -940,6 +941,7 @@ pub(super) fn acquisitions(state: &mut State) {
         .collect();
     targets.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let widest = targets.iter().map(|t| real_of(t.2)).fold(0.0f32, f32::max);
+    let mut acquired = Vec::new();
     for (h, phase, start) in due {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
@@ -969,9 +971,7 @@ pub(super) fn acquisitions(state: &mut State) {
             let distance = dx * dx + dy * dy;
             let key = (structure, distance, oy, ox, other);
             if distance <= limit * limit
-                && best.is_none_or(|b| {
-                    (key.0, key.1, key.2, key.3) < (b.0, b.1, b.2, b.3)
-                })
+                && best.is_none_or(|b| (key.0, key.1, key.2, key.3) < (b.0, b.1, b.2, b.3))
             {
                 best = Some(key);
             }
@@ -991,6 +991,8 @@ pub(super) fn acquisitions(state: &mut State) {
                 state.combat.reaction_delay,
             );
             react(state, h, start, add(delay, mul(phase, HALF)));
+            acquired.push(h);
         }
     }
+    acquired
 }

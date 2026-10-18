@@ -216,8 +216,10 @@ specified. Choices where the specs are silent:
   then its action, in the order the items were created.
 - **`GroupEnumUnitsOfType`** takes the units whose type has the given
   string id (see "Units, destructables, items and death events").
-- **Not yet:** `GroupEnumUnitsSelected` and `IsUnitInRangeXY` (needs
-  collision sizes).
+- `IsUnitInRangeXY` takes the distance with an IEEE square root, with
+  which the spec's boundary (969 at 1000) holds exactly; the engine's
+  `SquareRoot` arithmetic gives a bit more than 1000.
+- **Not yet:** `GroupEnumUnitsSelected`.
 
 ## Map loading and player slots (`ow3-sim::map`, `game::players`)
 
@@ -504,8 +506,12 @@ the spec is silent:
   check, but its rounding is not measured. Units that are not idle and
   paused units do not acquire, buildings with weapons acquire like
   units (open in the spec); `PauseUnit` only stops the acquisition so
-  far. The distance check uses plain
-  reals, which can differ from the engine arithmetic in the last place.
+  far. The distance check uses plain reals, which can differ from the
+  engine arithmetic in the last place. `EVENT_UNIT_ACQUIRED_TARGET`
+  runs after all the checks of the tick, unit by unit in the order of
+  acquisition; only `GetTriggerUnit` is set (the spec names no response
+  for the target). `IsUnitEnemy(u, p)` is whether `p` takes the owner of
+  `u` for an enemy; only the neutral passive case is in the spec.
 - **The clock** (SPEC-0017) past midnight starts again from the hour
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.

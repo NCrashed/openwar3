@@ -70,7 +70,8 @@ impl Scene {
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
         let shadows = chain.read_map_file("war3map.shd").and_then(|d| {
-            ow3_formats::map::shadows::Shadows::parse(&d, terrain.width - 1, terrain.height - 1).ok()
+            ow3_formats::map::shadows::Shadows::parse(&d, terrain.width - 1, terrain.height - 1)
+                .ok()
         });
         let (terrain_model, unit_model) = day_night.unwrap_or_else(|| {
             (

@@ -33,6 +33,7 @@ use super::{
 
 const EVENT_PLAYER_UNIT_DEATH: i32 = 20;
 const EVENT_UNIT_DAMAGED: i32 = 52;
+const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
 const EVENT_UNIT_DEATH: i32 = 53;
 const EVENT_WIDGET_DEATH: i32 = 89;
 const UNIT_STATE_LIFE: i32 = 0;
@@ -350,6 +351,35 @@ pub(super) fn damage_widget(
         }
     }
     true
+}
+
+/// Runs the `EVENT_UNIT_ACQUIRED_TARGET` triggers of the units that found
+/// a target at their check (SPEC-0019), unit by unit in the order of the
+/// acquisitions, each unit's in the order registered.
+pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
+    if units.is_empty() {
+        return;
+    }
+    let registrations = state.borrow().events.clone();
+    for &h in units {
+        for registration in &registrations {
+            if let Registration::Unit {
+                trigger,
+                unit,
+                event: EVENT_UNIT_ACQUIRED_TARGET,
+            } = *registration
+                && unit == h
+            {
+                let context = Context {
+                    event_id: Some(EVENT_UNIT_ACQUIRED_TARGET),
+                    triggering_unit: Some(h),
+                    triggering_widget: Some(h),
+                    ..Context::default()
+                };
+                fire_trigger(vm, state, trigger, context);
+            }
+        }
+    }
 }
 
 /// `UnitDamageTarget` of a unit (SPEC-0015): the damage after armor and
@@ -888,6 +918,46 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 .unit(handle(&args[0]))
                 .map_or(0, |u| u.user_data);
             Ok(Some(Value::Integer(data)))
+        }
+    );
+    // PROVISIONAL: whether `whichPlayer` takes the unit for an enemy, the
+    // test of acquisition; only a unit of `Player(15)` against
+    // `Player(0)` was observed (false, SPEC-0019).
+    native!(
+        add,
+        state,
+        "constant native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean",
+        |vm, state, args| {
+            let state = state.borrow();
+            let owner = state.unit(handle(&args[0])).map(|u| u.owner);
+            let player = state.player_id(handle(&args[1]));
+            let enemy = owner
+                .zip(player)
+                .is_some_and(|(owner, player)| super::movement::enemies(&state, player, owner));
+            Ok(Some(Value::Boolean(enemy)))
+        }
+    );
+    // The distance minus the unit's collision size is at most the range
+    // (SPEC-0006).
+    native!(
+        add,
+        state,
+        "native IsUnitInRangeXY takes unit whichUnit, real x, real y, real distance returns boolean",
+        |vm, state, args| {
+            let state = state.borrow();
+            let near = state.unit(handle(&args[0])).is_some_and(|u| {
+                let collision = state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
+                let (dx, dy) = (
+                    ow3_math::sub(u.x, real(&args[1])),
+                    ow3_math::sub(u.y, real(&args[2])),
+                );
+                // IEEE sqrt: the spec's boundary (969 at 1000) holds exactly.
+                let distance = f32::from_bits(ow3_math::add(mul(dx, dx), mul(dy, dy)))
+                    .sqrt()
+                    .to_bits();
+                f32::from_bits(ow3_math::sub(distance, collision)) <= f32::from_bits(real(&args[3]))
+            });
+            Ok(Some(Value::Boolean(near)))
         }
     );
     native!(

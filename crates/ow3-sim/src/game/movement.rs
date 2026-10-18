@@ -41,7 +41,7 @@ use ow3_jass::vm::{NativeFn, Vm};
 use ow3_math::natives::{arc_cosine, cos, sin, sqrt};
 use ow3_math::{add, div, floor, i2r, mul, sub};
 
-use super::{Object, State, follow, handle, real, string};
+use super::{Object, State, follow, handle, integer, real, string};
 use crate::random::REACTION;
 
 /// Order ids that `GetUnitCurrentOrder` gives (SPEC-0019).
@@ -371,6 +371,15 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2
 
 /// `IssueTargetOrder(h, name, target)`: only `attack` so far.
 pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    if name == "move" {
+        // PROVISIONAL: the game takes it with the current order `move`
+        // (SPEC-0019); how a unit follows its target is not specified, so
+        // it walks to where the target is now.
+        return match position_of(state, target) {
+            Some(at) if target != h => order(state, h, Order::Point, ORDER_MOVE, at),
+            _ => false,
+        };
+    }
     if name != "attack" {
         return false;
     }
@@ -416,8 +425,35 @@ fn react(state: &mut State, h: u32, from: u64, delay: u32) {
 pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
     match name {
         "stop" | "holdposition" => halt(state, h),
+        // PROVISIONAL: the game takes it and the current order reads 0
+        // after it (SPEC-0019); here it stops the unit like `stop`.
+        "move" => halt(state, h),
         _ => false,
     }
+}
+
+/// The ids of the order names (SPEC-0019, "Order ids").
+const ORDER_IDS: [(&str, i32); 7] = [
+    ("smart", 851_971),
+    ("stop", 851_972),
+    ("attack", 851_983),
+    ("attackground", 851_984),
+    ("move", 851_986),
+    ("patrol", 851_990),
+    ("holdposition", 851_993),
+];
+
+/// `OrderId`: the id of `name` in any case, 0 for an unknown name.
+fn order_id(name: &str) -> i32 {
+    ORDER_IDS
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map_or(0, |&(_, id)| id)
+}
+
+/// `OrderId2String`: the name of `id`, none for 0 and unknown ids.
+fn order_name(id: i32) -> Option<&'static str> {
+    ORDER_IDS.iter().find(|&&(_, i)| i == id).map(|&(n, _)| n)
 }
 
 /// Whether units of `a` and `b` are enemies of each other.
@@ -489,6 +525,66 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Boolean(false)));
             };
             let done = target_order(&mut state.borrow_mut(), h, name, target);
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    // Order ids (SPEC-0019): the `...ById` natives act as the named ones,
+    // and an id without a name is refused, the order staying as it was.
+    native!(
+        add,
+        state,
+        "native OrderId takes string orderIdString returns integer",
+        |vm, state, args| Ok(Some(Value::Integer(string(&args[0]).map_or(0, order_id))))
+    );
+    native!(
+        add,
+        state,
+        "native OrderId2String takes integer orderId returns string",
+        |vm, state, args| {
+            Ok(Some(match order_name(integer(&args[0])) {
+                Some(name) => Value::string(name),
+                None => Value::String(None),
+            }))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IssuePointOrderById takes unit whichUnit, integer order, real x, real y returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some(name)) = (handle(&args[0]), order_name(integer(&args[1]))) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let target = [real(&args[2]), real(&args[3])];
+            let done = point_order(&mut state.borrow_mut(), h, name, target);
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IssueTargetOrderById takes unit whichUnit, integer order, widget targetWidget returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some(name), Some(target)) = (
+                handle(&args[0]),
+                order_name(integer(&args[1])),
+                handle(&args[2]),
+            ) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let done = target_order(&mut state.borrow_mut(), h, name, target);
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native IssueImmediateOrderById takes unit whichUnit, integer order returns boolean",
+        |vm, state, args| {
+            let done = match (handle(&args[0]), order_name(integer(&args[1]))) {
+                (Some(h), Some(name)) => immediate_order(&mut state.borrow_mut(), h, name),
+                _ => false,
+            };
             Ok(Some(Value::Boolean(done)))
         }
     );

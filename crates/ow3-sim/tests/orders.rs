@@ -39,6 +39,20 @@ native ConvertUnitState takes integer i returns unitstate
 native SetUnitState takes unit whichUnit, unitstate whichUnitState, real newVal returns nothing
 native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing
 native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing
+native DisplayTextToPlayer takes player toPlayer, real x, real y, string message returns nothing
+native I2S takes integer i returns string
+native R2S takes real r returns string
+type fgamestate extends handle
+native ConvertFGameState takes integer i returns fgamestate
+native SetFloatGameState takes fgamestate whichFloatGameState, real value returns nothing
+native GetUnitState takes unit whichUnit, unitstate whichUnitState returns real
+native SetHeroInt takes unit whichHero, integer newInt, boolean permanent returns nothing
+native GetHeroStr takes unit whichHero, boolean includeBonuses returns integer
+native OrderId takes string orderIdString returns integer
+native OrderId2String takes integer orderId returns string
+native IssuePointOrderById takes unit whichUnit, integer order, real x, real y returns boolean
+native IssueTargetOrderById takes unit whichUnit, integer order, widget targetWidget returns boolean
+native IssueImmediateOrderById takes unit whichUnit, integer order returns boolean
 type location extends agent
 native Location takes real x, real y returns location
 native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean
@@ -579,7 +593,8 @@ fn set_facing_follows_the_updates() {
 /// a life near 100 is 1123 units of the last place instead of 1147.
 #[test]
 fn strength_restarts_regeneration() {
-    let orders = "call SetUnitState(a, ConvertUnitState(0), 100)\n    call SetHeroStr(a, 30, true)";
+    // The life is set after the call, which moves it by 25 a point.
+    let orders = "call SetHeroStr(a, 30, true)\n    call SetUnitState(a, ConvertUnitState(0), 100)";
     let Some(mut game) = game(
         "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)",
         orders,
@@ -602,4 +617,173 @@ fn strength_restarts_regeneration() {
         steps[0].abs_diff(1123) <= 1 && steps[1].abs_diff(1147) <= 1,
         "{steps:?}"
     );
+}
+
+/// SPEC-0013: `SetUnitFacing` on a unit walking a move order changes
+/// nothing, its path is the same tick by tick.
+#[test]
+fn set_facing_does_not_touch_a_walk() {
+    let units = "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)";
+    let walk = "call IssuePointOrder(a, \"move\", -1000, -2000)";
+    let turned = format!(
+        "{walk}\n    call TimerStart(CreateTimer(), 0.5, false, function Turn)\n---\nfunction Turn takes nothing returns nothing\n    call SetUnitFacing(a, 90)\nendfunction"
+    );
+    let (Some(mut plain), Some(mut other)) =
+        (game(units, walk, |_| {}), game(units, &turned, |_| {}))
+    else {
+        return;
+    };
+    assert_eq!(run(&mut plain, 400), run(&mut other, 400));
+}
+
+/// The order ids of SPEC-0019: `OrderId`, `OrderId2String` and the
+/// `...ById` natives, each followed by the current order.
+#[test]
+fn orders_by_id() {
+    let orders = r#"call Show(OrderId("MOVE"))
+    call Show(OrderId("patrol"))
+    call Show(OrderId("nonsense"))
+    if OrderId2String(851983) == "attack" and OrderId2String(12345) == null and OrderId2String(0) == null then
+        call Print("names")
+    endif
+    call Issued(IssuePointOrderById(a, 851986, -1000, -2000))
+    call Issued(IssuePointOrderById(a, 12345, -1000, -2000))
+    call Issued(IssuePointOrderById(a, 0, -1000, -2000))
+    call Issued(IssueImmediateOrderById(a, 851972))
+    call Issued(IssueImmediateOrderById(a, 851986))
+    call Issued(IssueTargetOrderById(a, 851983, t))
+    call Issued(IssueTargetOrderById(a, 851986, t))
+    call Issued(IssueImmediateOrderById(a, 851993))
+    call Issued(IssuePointOrderById(a, 851983, -1000, -2000))
+---
+function Print takes string s returns nothing
+    call DisplayTextToPlayer(Player(0), 0, 0, s)
+endfunction
+function Show takes integer i returns nothing
+    call Print(I2S(i))
+endfunction
+function Issued takes boolean b returns nothing
+    if b then
+        call Print("true " + I2S(GetUnitCurrentOrder(a)))
+    else
+        call Print("false " + I2S(GetUnitCurrentOrder(a)))
+    endif
+endfunction"#;
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2000, -1000, 0)\n    call PauseUnit(t, true)",
+        orders,
+        |_| {},
+    ) else {
+        return;
+    };
+    run(&mut game, ORDER_TICK + 1);
+    assert_eq!(
+        game.output(),
+        [
+            "851986",
+            "851990",
+            "0",
+            "names",
+            "true 851986",
+            "false 851986",
+            "false 851986",
+            "true 0",
+            "true 0",
+            "true 851983",
+            "true 851986",
+            "true 0",
+            "true 851983",
+        ]
+    );
+}
+
+/// Verification 5 of SPEC-0013, "Hero attributes": fresh paladins at the
+/// life given, then `SetHeroStr`; and the mana example of intelligence.
+#[test]
+fn hero_attributes() {
+    let orders = r#"call Str(300, 10)
+    call Str(650, 10)
+    call Str(650, 0)
+    call Str(650, -5)
+    call Str(100, -5)
+    call Str(10, 21)
+    call Str(0.5, 22)
+    call Str(650, 23)
+    call Str(325, 30)
+    set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)
+    call SetUnitState(a, ConvertUnitState(2), 100)
+    call SetHeroInt(a, 2, true)
+    call Print(R2S(GetUnitState(a, ConvertUnitState(2))) + " of " + R2S(GetUnitState(a, ConvertUnitState(3))))
+    call SetHeroInt(a, 40, false)
+    call Print(R2S(GetUnitState(a, ConvertUnitState(2))) + " of " + R2S(GetUnitState(a, ConvertUnitState(3))))
+---
+function Print takes string s returns nothing
+    call DisplayTextToPlayer(Player(0), 0, 0, s)
+endfunction
+function Str takes real life, integer s returns nothing
+    set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)
+    call SetUnitState(a, ConvertUnitState(0), life)
+    call SetHeroStr(a, s, true)
+    call Print(R2S(GetUnitState(a, ConvertUnitState(0))) + " of " + R2S(GetUnitState(a, ConvertUnitState(1))) + " str " + I2S(GetHeroStr(a, true)))
+endfunction"#;
+    let Some(mut game) = game("", orders, |_| {}) else {
+        return;
+    };
+    run(&mut game, ORDER_TICK + 1);
+    assert_eq!(
+        game.output(),
+        [
+            "1.000 of 350.000 str 10",
+            "350.000 of 350.000 str 10",
+            "100.000 of 100.000 str 0",
+            "0.000 of -25.000 str -5",
+            "0.000 of -25.000 str -5",
+            "1.000 of 625.000 str 21",
+            "0.500 of 650.000 str 22",
+            "675.000 of 675.000 str 23",
+            "525.000 of 850.000 str 30",
+            "0.000 of 30.000",
+            "570.000 of 600.000",
+        ]
+    );
+}
+
+/// SPEC-0013, "Night": an archer (`regenType` night) gains life from the
+/// first tick whose hour is above 18.01, and still in the first tick
+/// after the hour passes 6.01, not in the next.
+#[test]
+fn night_regeneration() {
+    for (start, begins) in [(17.95f32, true), (5.95, false)] {
+        let orders = format!(
+            "call SetFloatGameState(ConvertFGameState(2), {start})\n    call SetUnitState(a, ConvertUnitState(0), 50)"
+        );
+        let Some(mut game) = game(
+            "set a = CreateUnit(Player(0), 'earc', 0, 0, 0)",
+            &orders,
+            |_| {},
+        ) else {
+            return;
+        };
+        let path = run(&mut game, ORDER_TICK + 400);
+        let life = |tick: u64| path.iter().find(|p| p.0 == tick).unwrap().1[0].life;
+        let hour = |tick: u64| start + 0.05 * 0.005 * (tick - ORDER_TICK) as f32;
+        let gains: Vec<u64> = (ORDER_TICK + 1..ORDER_TICK + 400)
+            .filter(|&t| life(t) > life(t - 1))
+            .collect();
+        if begins {
+            let first = gains[0];
+            assert!(
+                hour(first) > 18.01 && hour(first - 1) <= 18.01,
+                "{}",
+                hour(first)
+            );
+        } else {
+            let last = *gains.last().unwrap();
+            assert!(
+                hour(last) > 6.01 && hour(last - 1) <= 6.01,
+                "{}",
+                hour(last)
+            );
+        }
+    }
 }

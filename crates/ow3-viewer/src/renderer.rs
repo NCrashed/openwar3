@@ -71,7 +71,9 @@ struct VertexIn {
 };
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) normal: vec3<f32>,
+    // The light of the ground is computed at the corner points and
+    // interpolated over the triangles (SPEC-0017, "Sloped ground").
+    @location(0) light: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
     @location(3) @interpolate(flat) cell: u32,
@@ -82,7 +84,12 @@ struct VertexOut {
 fn vs(v: VertexIn) -> VertexOut {
     var out: VertexOut;
     out.clip = globals.view_projection * vec4<f32>(v.position, 1.0);
-    out.normal = v.normal;
+    let facing = max(dot(normalize(v.normal), globals.terrain_sun.xyz), 0.0);
+    out.light = min(
+        globals.terrain_sun.w * globals.terrain_color.rgb * facing
+            + globals.terrain_color.w * globals.terrain_ambient.rgb,
+        vec3<f32>(1.0),
+    );
     out.uv = v.uv;
     out.tint = v.tint;
     out.cell = v.cell;
@@ -93,14 +100,7 @@ fn vs(v: VertexIn) -> VertexOut {
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = shaded(textureSample(atlas, atlas_sampler, v.uv, v.cell), v.world);
-    let n = normalize(v.normal);
-    let facing = max(dot(n, globals.terrain_sun.xyz), 0.0);
-    let light = min(
-        globals.terrain_sun.w * globals.terrain_color.rgb * facing
-            + globals.terrain_color.w * globals.terrain_ambient.rgb,
-        vec3<f32>(1.0),
-    );
-    return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
+    return vec4<f32>(texel.rgb * v.light * v.tint.rgb, texel.a);
 }
 
 @fragment

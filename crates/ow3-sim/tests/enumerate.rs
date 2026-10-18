@@ -237,7 +237,11 @@ endfunction
 fn unit_range_and_enemies() {
     let natives =
         "native IsUnitInRangeXY takes unit whichUnit, real x, real y, real distance returns boolean
-native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean";
+native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean
+native IsUnitAlly takes unit whichUnit, player whichPlayer returns boolean
+type alliancetype extends handle
+native ConvertAllianceType takes integer i returns alliancetype
+native SetPlayerAlliance takes player sourcePlayer, player otherPlayer, alliancetype whichAllianceSetting, boolean value returns nothing";
     let script = format!(
         "{natives}{PRINT}{}",
         r#"
@@ -254,6 +258,11 @@ function main takes nothing returns nothing
     call Show(IsUnitInRangeXY(u, 0, 0, 968.9))
     call Show(IsUnitEnemy(u, Player(0)))
     call Show(IsUnitEnemy(CreateUnit(Player(15), 'hfoo', 0, 0, 0), Player(0)))
+    // SPEC-0008: player 0 passive toward 1 makes units of 1 allies for 0 only.
+    call SetPlayerAlliance(Player(0), Player(1), ConvertAllianceType(0), true)
+    call Show(IsUnitAlly(u, Player(0)))
+    call Show(IsUnitAlly(CreateUnit(Player(0), 'hfoo', 0, 0, 0), Player(1)))
+    call Show(IsUnitEnemy(u, Player(0)))
 endfunction
 "#
     );
@@ -269,7 +278,10 @@ endfunction
     let code = i32::from_be_bytes(*b"hfoo");
     game.state.borrow_mut().data.units.insert(code, footman);
     game.run("main");
-    assert_eq!(game.output(), ["true", "false", "true", "false"]);
+    assert_eq!(
+        game.output(),
+        ["true", "false", "true", "false", "true", "false", "false"]
+    );
 }
 
 /// SPEC-0009: a hero type with hero data starts with 1 skill point, a

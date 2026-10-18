@@ -204,9 +204,10 @@ pub fn build(
                         cell,
                     });
                 }
+                // Split from the top left to the bottom right corner (SPEC-0017).
                 layer
                     .indices
-                    .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                    .extend([base, base + 1, base + 3, base + 1, base + 2, base + 3]);
             }
         }
     }

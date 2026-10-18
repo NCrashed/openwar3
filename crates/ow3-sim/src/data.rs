@@ -43,6 +43,8 @@ pub struct UnitType {
     pub hero_life_regen: u32,
     /// A hero's starting strength in points; 0 for others.
     pub strength: i32,
+    /// A hero's starting intelligence in points; 0 for others.
+    pub intelligence: i32,
     /// Mana regeneration per second.
     pub mana_regen: u32,
     /// How the unit turns (`orientInterp` of `UnitData.slk`, SPEC-0013).
@@ -647,9 +649,10 @@ fn life(id: i32, hp: u32, strength: u32) -> u32 {
 /// point of intelligence, of a hero.
 const PER_POINT_REGEN: u32 = 0x3D4C_CCCD;
 
-/// A hero's life regeneration per second from `strength` points.
-pub fn strength_regen(strength: i32) -> u32 {
-    ow3_math::mul(ow3_math::i2r(strength), PER_POINT_REGEN)
+/// A hero's life (from strength) or mana (from intelligence)
+/// regeneration per second for `points` of the attribute.
+pub fn attribute_regen(points: i32) -> u32 {
+    ow3_math::mul(ow3_math::i2r(points), PER_POINT_REGEN)
 }
 
 /// The starting state of a unit of type `id` from its balance numbers
@@ -667,7 +670,8 @@ fn apply(unit: &mut UnitType, id: i32, b: &Balance) {
         unit.max_mana = (f32::from_bits(b.mana) + 15.0 * f32::from_bits(b.intelligence)).to_bits();
         unit.start_mana = unit.max_mana;
         unit.strength = points(b.strength);
-        unit.hero_life_regen = strength_regen(unit.strength);
+        unit.intelligence = points(b.intelligence);
+        unit.hero_life_regen = attribute_regen(unit.strength);
         unit.mana_regen = ow3_math::mul(ow3_math::i2r(points(b.intelligence)), PER_POINT_REGEN);
     } else {
         unit.max_mana = b.mana;
@@ -678,6 +682,7 @@ fn apply(unit: &mut UnitType, id: i32, b: &Balance) {
         };
         unit.hero_life_regen = 0;
         unit.strength = 0;
+        unit.intelligence = 0;
         unit.mana_regen = b.mana_regen;
     }
 }

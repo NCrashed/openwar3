@@ -166,8 +166,11 @@ pub struct Unit {
     acquire_phase: u32,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
-    /// A hero's strength in points (`SetHeroStr`); 0 for others.
+    /// A hero's attributes in points (`SetHeroStr` and the others); 0
+    /// for others.
     strength: i32,
+    agility: i32,
+    intelligence: i32,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -293,6 +296,14 @@ impl Regenerating {
         if self.value() != self.max {
             self.elapsed = add(self.elapsed, step);
         }
+    }
+
+    /// Goes on from the current value at `rate` (PROVISIONAL: the
+    /// arithmetic of a change between day and night is not measured).
+    fn retarget(&mut self, rate: u32) {
+        self.base = self.value();
+        self.elapsed = 0;
+        self.rate = rate;
     }
 
     /// Goes on from the current value at `rate`, 0.0001 s later as after
@@ -431,6 +442,10 @@ pub struct State {
     pub ticks: u64,
     /// Units turning, in the order of the calls.
     turning: Vec<u32>,
+    /// Whether it is night for the `night` regeneration type, and the
+    /// hour of the tick before (SPEC-0013, "Night").
+    night: bool,
+    last_hour: f32,
     /// Units attacking, in the order their attacks began.
     attacking: Vec<u32>,
     /// Units with a move order, in the order given.
@@ -492,6 +507,8 @@ impl State {
             data: ObjectData::default(),
             ticks: 0,
             turning: Vec::new(),
+            night: false,
+            last_hour: f32::NAN,
             attacking: Vec::new(),
             moving: Vec::new(),
             localized: BTreeMap::new(),
@@ -871,6 +888,17 @@ impl<'a> Game<'a> {
             setup
                 .float_game_states
                 .insert(GAME_STATE_TIME_OF_DAY, hours);
+            // Night for the `night` regeneration type (SPEC-0013): from the
+            // first hour above 18.01 to one tick after the hour passes
+            // 6.01. PROVISIONAL: jumps of a suspended clock are decided by
+            // the same rule (open question 4).
+            let hour = f32::from_bits(hours);
+            let night = hour > 18.01 || hour <= 6.01 || state.last_hour <= 6.01;
+            state.last_hour = hour;
+            if night != state.night {
+                state.night = night;
+                widgets::night_changed(state);
+            }
             // Life and mana regenerate every tick (SPEC-0013).
             for h in &state.units {
                 if let Some(Object::Unit(unit)) = state.objects.get_mut(h)

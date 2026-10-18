@@ -253,10 +253,13 @@ where the spec is silent:
 - **Hit points and death.** Setting those of a destructable to 0 or less
   kills it (SPEC-0009 for 0; units follow SPEC-0013). `IsUnitType` knows
   only `UNIT_TYPE_HERO` and `UNIT_TYPE_DEAD`.
-- **Conditional life regeneration.** There is no time of day or blight
-  yet, so `regenHP` of a type whose `regenType` is `night`, `day` or
-  `blight` never applies; only a hero's strength part does. A map's
-  own regeneration type (`uhrt`) replaces that of the base type.
+- **Conditional life regeneration.** `night` follows the spec's hours,
+  judged by the hour of the tick and of the tick before, also after a
+  jump of a suspended clock (open question 4). At a change between day
+  and night the regeneration goes on from the current value at the new
+  rate, an arithmetic not measured. `day` and `blight` never hold yet;
+  only a hero's strength part applies then. A map's own regeneration
+  type (`uhrt`) replaces that of the base type.
 - **Regeneration arithmetic.** The elapsed time is a sum of `dt` per
   tick, and a hero's first step after creation is `sub(dt, 0.0001)`. This
   matches the footman and paladin life columns of
@@ -265,18 +268,19 @@ where the spec is silent:
   `mul(i2r(17), 0.05)`). `mul(i2r(n), dt)` minus 0.0001 instead misses one
   life value. How the game computes the elapsed time and the hero mana
   rate is open.
-- **`SetHeroStr`** restarts life regeneration at the new rate from the
-  current value, 0.0001 s later; the same value again changes nothing.
-  Max life stays, there are no bonuses (`permanent`, `includeBonuses`),
-  and the other attribute setters are not implemented yet.
+- **Hero attributes** follow the spec for max life, max mana, life and
+  mana. `SetHeroStr` restarts life regeneration 0.0001 s later at the
+  new rate, `SetHeroInt` mana regeneration the same way (inferred).
+  Agility is only kept for `GetHeroAgi`: armor and the primary
+  attribute's damage still come from the type. There are no items, so
+  no bonuses.
 - **Turning** (SPEC-0013 open question 1): `orientInterp` 3, 7 and 8 brake by the
   closed form, the others by their table; 2 has no largest step (at
   least 0.285 in the spec). After `SetUnitFacing` the facing changes at
   the updates of the shared cycle, the first one after the call's tick
-  (1 to 6 ticks later; the spec saw 3 to 6). A unit with an order in
-  progress takes the angle as its heading, and its movement turns the
-  facing; whether the game keeps such a heading when the unit walks on
-  is not measured.
+  (1 to 6 ticks later; the spec saw 3 to 6). A unit walking an order is
+  not affected; one that has arrived and still turns takes the angle as
+  its heading (not measured).
 - **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
   2) sees regeneration like any other thread.
 - **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the
@@ -514,8 +518,12 @@ the spec is silent:
   engine arithmetic in the last place. `EVENT_UNIT_ACQUIRED_TARGET`
   runs after all the checks of the tick, unit by unit in the order of
   acquisition; only `GetTriggerUnit` is set (the spec names no response
-  for the target). `IsUnitEnemy(u, p)` is whether `p` takes the owner of
-  `u` for an enemy; only the neutral passive case is in the spec.
+  for the target).
+- **Order ids** (SPEC-0019): `attackground` is known to `OrderId` but
+  not taken as an order (no spec of its behaviour). A target `move`
+  walks to where the target is when ordered, and an immediate `move`
+  stops the unit like `stop`; the game only showed that both are taken
+  and the current orders that follow.
 - **The clock** (SPEC-0017) past midnight starts again from the hour
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.
@@ -530,11 +538,12 @@ spec is silent:
   model of the call (`DNCLordaeronUnit` without one). Water is not lit.
 - **Cliffs** take the ground light with their own normals (SPEC-0014
   rule 9).
-- **Ground normals** come from the heights of the neighbouring points
-  without their cliff layers, so the ground beside a cliff is lit as
-  flat (open question 1); with the layers it leaned by about 27 degrees
-  there. Cliff models placed on uneven ground keep the normals of the
-  model.
+- **Sloped ground** is lit at the corner points and interpolated over
+  the two triangles of a tile, as the spec says. Cliff models are bent
+  onto the raw heights of the ground under them but keep the normals of
+  the model, so on raw slopes, which are steep beside many cliffs of
+  `(12)IceCrown`, their tops are much lighter than the ground around
+  (not measured).
 - **Shadows** of `war3map.shd` darken the ground and the cliff models
   by the formula of the spec; units, doodads and water are not darkened
   (open question 5). The renderer interpolates the block samples by

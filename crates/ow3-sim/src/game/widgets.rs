@@ -92,13 +92,104 @@ fn item(state: &State, h: Option<u32>) -> Option<&Item> {
     }
 }
 
-/// The life regeneration of a unit of `data` with a hero's strength part
-/// `hero_part`.
-fn life_rate(data: &UnitType, hero_part: u32) -> u32 {
-    if data.regen_type == RegenType::Always {
-        add(data.life_regen, hero_part)
+#[derive(Clone, Copy)]
+enum Attribute {
+    Strength,
+    Agility,
+    Intelligence,
+}
+
+/// Sets an attribute of hero `h` (SPEC-0013, "Hero attributes"). Gives the
+/// life to set through [`set_unit_life`] when the hero dies of it.
+fn set_attribute(
+    state: &mut State,
+    h: Option<u32>,
+    attribute: Attribute,
+    value: i32,
+) -> Option<u32> {
+    let type_id = state
+        .unit(h)
+        .filter(|u| u.alive && is_hero(u.type_id))?
+        .type_id;
+    let data = state.data.units.get(&type_id).cloned().unwrap_or_default();
+    let night = state.night;
+    let u = unit_mut(state, h)?;
+    let old = match attribute {
+        Attribute::Strength => std::mem::replace(&mut u.strength, value),
+        Attribute::Agility => std::mem::replace(&mut u.agility, value),
+        Attribute::Intelligence => std::mem::replace(&mut u.intelligence, value),
+    };
+    if old == value {
+        return None;
+    }
+    let shift = |state: &mut Regenerating, per_point: i32, least: f32, rate: u32| {
+        let change = ow3_math::i2r(per_point * (value - old));
+        let moved = add(state.value(), change);
+        state.max = add(state.max, change);
+        let moved = if f32::from_bits(moved) < least {
+            least.to_bits()
+        } else {
+            moved
+        };
+        state.set(moved);
+        state.restart(rate);
+    };
+    match attribute {
+        Attribute::Strength => {
+            let rate = life_rate(&data, crate::data::attribute_regen(value), night);
+            if f32::from_bits(add(u.life.max, ow3_math::i2r(25 * (value - old)))) <= 0.0 {
+                // The life becomes the new max life, and the hero dies.
+                u.life.max = add(u.life.max, ow3_math::i2r(25 * (value - old)));
+                return Some(u.life.max);
+            }
+            shift(&mut u.life, 25, 1.0, rate);
+        }
+        Attribute::Intelligence => {
+            shift(&mut u.mana, 15, 0.0, crate::data::attribute_regen(value));
+        }
+        Attribute::Agility => {}
+    }
+    None
+}
+
+/// Day turned into night or back: units whose `regenHP` applies only at
+/// night go on at their new rate.
+pub(super) fn night_changed(state: &mut State) {
+    let night = state.night;
+    for i in 0..state.units.len() {
+        let h = state.units[i];
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
+        let Some(data) = state.data.units.get(&u.type_id) else {
+            continue;
+        };
+        if !u.alive || data.regen_type != RegenType::Night {
+            continue;
+        }
+        let rate = life_rate(data, hero_part(u.type_id, u.strength), night);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.life.retarget(rate);
+        }
+    }
+}
+
+/// The part of a hero's life regeneration from `strength`; 0 for others.
+fn hero_part(type_id: i32, strength: i32) -> u32 {
+    if is_hero(type_id) {
+        crate::data::attribute_regen(strength)
     } else {
-        hero_part
+        0
+    }
+}
+
+/// The life regeneration of a unit of `data` with a hero's strength part
+/// `hero_part`, by day or at `night`.
+fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
+    match data.regen_type {
+        RegenType::Always => add(data.life_regen, hero_part),
+        RegenType::Night if night => add(data.life_regen, hero_part),
+        _ => hero_part,
     }
 }
 
@@ -114,9 +205,9 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         state.data.units.get(&type_id)?.clone()
     };
     // Life regenerates at `regenHP` when the type's condition holds, plus
-    // a hero's strength part (SPEC-0013). PROVISIONAL: there is no day,
-    // night or blight yet, so a condition other than "always" never holds.
-    let mut life = Regenerating::full(data.hp, life_rate(&data, data.hero_life_regen));
+    // a hero's strength part (SPEC-0013). PROVISIONAL: the conditions `day`
+    // and `blight` never hold yet.
+    let mut life = Regenerating::full(data.hp, life_rate(&data, data.hero_life_regen, state.night));
     let mut mana = Regenerating::full(data.max_mana, data.mana_regen);
     mana.set(data.start_mana);
     // A hero's regeneration starts 0.0001 s after it is created.
@@ -148,6 +239,8 @@ fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Opt
         acquire_phase,
         paused: false,
         strength: data.strength,
+        agility: f32::from_bits(data.agility) as i32,
+        intelligence: data.intelligence,
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -672,47 +765,67 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Integer(level)))
         }
     );
+    // Hero attributes (SPEC-0013, "Hero attributes"): a change takes
+    // effect at once, `permanent` or not. Strength moves max life by 25 a
+    // point and the life by as much, to no less than 1, and restarts the
+    // life regeneration 0.0001 s later at the new rate; a max life of 0
+    // or less kills the hero inside the call. Intelligence moves max mana
+    // by 15 a point and the mana by as much, to no less than 0, and
+    // restarts mana regeneration the same way (PROVISIONAL: inferred).
+    // Agility is kept for `GetHeroAgi` (PROVISIONAL: armor and damage
+    // still come from the type). There are no items, so no bonuses.
+    for (declaration, attribute) in [
+        (
+            "native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing",
+            Attribute::Strength,
+        ),
+        (
+            "native SetHeroAgi takes unit whichHero, integer newAgi, boolean permanent returns nothing",
+            Attribute::Agility,
+        ),
+        (
+            "native SetHeroInt takes unit whichHero, integer newInt, boolean permanent returns nothing",
+            Attribute::Intelligence,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let h = handle(&args[0]);
+            let dies = set_attribute(&mut state.borrow_mut(), h, attribute, integer(&args[1]));
+            if let Some(life) = dies {
+                set_unit_life(vm, state, h, life, None);
+            }
+            Ok(None)
+        });
+    }
+    for (declaration, attribute) in [
+        (
+            "native GetHeroStr takes unit whichHero, boolean includeBonuses returns integer",
+            Attribute::Strength,
+        ),
+        (
+            "native GetHeroAgi takes unit whichHero, boolean includeBonuses returns integer",
+            Attribute::Agility,
+        ),
+        (
+            "native GetHeroInt takes unit whichHero, boolean includeBonuses returns integer",
+            Attribute::Intelligence,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let value = state
+                .borrow()
+                .unit(handle(&args[0]))
+                .map_or(0, |u| match attribute {
+                    Attribute::Strength => u.strength,
+                    Attribute::Agility => u.agility,
+                    Attribute::Intelligence => u.intelligence,
+                });
+            Ok(Some(Value::Integer(value)))
+        });
+    }
     // A hero starts with 1 skill point when its type has hero data, with
     // 0 when it is made from another type (SPEC-0009). PROVISIONAL: there
     // are no levels and no skills to spend them on yet.
-    // A strength change restarts a hero's life regeneration at the new
-    // rate 0.0001 s later (SPEC-0013). PROVISIONAL: max life does not
-    // change, there are no bonuses, and `permanent` is not used.
-    native!(
-        add,
-        state,
-        "native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing",
-        |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let Some(type_id) = state.unit(handle(&args[0])).map(|u| u.type_id) else {
-                return Ok(None);
-            };
-            let strength = integer(&args[1]);
-            let data = state.data.units.get(&type_id).cloned().unwrap_or_default();
-            if let Some(u) = unit_mut(&mut state, handle(&args[0]))
-                && is_hero(type_id)
-                && u.alive
-                && u.strength != strength
-            {
-                u.strength = strength;
-                let rate = life_rate(&data, crate::data::strength_regen(strength));
-                u.life.restart(rate);
-            }
-            Ok(None)
-        }
-    );
-    native!(
-        add,
-        state,
-        "native GetHeroStr takes unit whichHero, boolean includeBonuses returns integer",
-        |vm, state, args| {
-            let strength = state
-                .borrow()
-                .unit(handle(&args[0]))
-                .map_or(0, |u| u.strength);
-            Ok(Some(Value::Integer(strength)))
-        }
-    );
     native!(
         add,
         state,
@@ -943,14 +1056,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let Some(h) = handle(&args[0]) else {
                 return Ok(None);
             };
-            // The call sets the heading; the facing follows it at the
-            // updates of the shared cycle (SPEC-0013, SPEC-0018). A unit
-            // under an order turns by its movement, another by a turn.
+            // The facing turns at the updates of the shared cycle
+            // (SPEC-0013, SPEC-0018). A unit walking an order is not
+            // affected at all; one that has arrived and still turns takes
+            // the angle as its heading (PROVISIONAL: not measured).
             let first = super::movement::next_update_after(state.ticks);
             let heading = facing::from_degrees(real(&args[1]));
             if let Some(u) = unit_mut(&mut state, Some(h)) {
                 if let Some(m) = u.movement.as_mut() {
-                    m.heading = heading;
+                    if !m.ordered() {
+                        m.heading = heading;
+                    }
                     return Ok(None);
                 }
                 let was_turning = u.turn.is_some();
@@ -988,23 +1104,28 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Integer(data)))
         }
     );
-    // PROVISIONAL: whether `whichPlayer` takes the unit for an enemy, the
-    // test of acquisition; only a unit of `Player(15)` against
-    // `Player(0)` was observed (false, SPEC-0019).
-    native!(
-        add,
-        state,
-        "constant native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean",
-        |vm, state, args| {
+    // How `whichPlayer` regards the unit's owner (SPEC-0008, "Units"):
+    // `IsPlayerAlly` and `IsPlayerEnemy` with the players swapped.
+    for (declaration, ally) in [
+        (
+            "constant native IsUnitAlly takes unit whichUnit, player whichPlayer returns boolean",
+            true,
+        ),
+        (
+            "constant native IsUnitEnemy takes unit whichUnit, player whichPlayer returns boolean",
+            false,
+        ),
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
             let state = state.borrow();
             let owner = state.unit(handle(&args[0])).map(|u| u.owner);
             let player = state.player_id(handle(&args[1]));
-            let enemy = owner
+            let result = owner
                 .zip(player)
-                .is_some_and(|(owner, player)| super::movement::enemies(&state, player, owner));
-            Ok(Some(Value::Boolean(enemy)))
-        }
-    );
+                .is_some_and(|(owner, player)| state.setup.is_ally(player, owner) == ally);
+            Ok(Some(Value::Boolean(result)))
+        });
+    }
     // The distance minus the unit's collision size is at most the range
     // (SPEC-0006).
     native!(

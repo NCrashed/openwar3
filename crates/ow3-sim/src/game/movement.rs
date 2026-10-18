@@ -25,9 +25,11 @@
 //! (`game::follow`). Positions, headings and velocities follow the
 //! movement arithmetic of SPEC-0018, and all units share one update cycle.
 //!
-//! PROVISIONAL: attackers walk straight at their goal; the extra commits
-//! between updates (SPEC-0018 open question 2) are left out; the arrival
-//! test compares squared distances in cells (open question 1).
+//! PROVISIONAL: attackers walk to their goal points by the same paths, a
+//! new one at every new goal (SPEC-0019 has not compared chases with path
+//! finding); the extra commits between updates (SPEC-0018 open question
+//! 2) are left out; the arrival test compares squared distances in cells
+//! (open question 1).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -582,6 +584,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             _ => {
                                 m.target = at;
                                 m.chase = Some(countdown(here, relative(at, min)));
+                                // A new goal is walked to by a new path.
+                                state.paths.remove(&h);
                             }
                         }
                         let other = match state.objects.get(&target) {
@@ -618,6 +622,29 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             begin_attack = Some(target);
                         } else {
                             motion(&mut m, goal, false, speed, turn_rate, window);
+                        }
+                    } else if state.grid.is_some() {
+                        // To the goal point by the paths of SPEC-0020 and
+                        // SPEC-0021, as a point order.
+                        let walker = follow::Walker {
+                            handle: h,
+                            here,
+                            order: goal,
+                            class,
+                            squared_speed: follow::squared_speed(m.velocity),
+                        };
+                        match follow::steer(state, &walker, tick) {
+                            follow::Steer::Walk(to) => {
+                                motion(&mut m, to, true, speed, turn_rate, window);
+                            }
+                            follow::Steer::Stand(to) => {
+                                motion(&mut m, to, false, speed, turn_rate, window);
+                            }
+                            // At the goal but not in range of the target:
+                            // it waits for the next goal.
+                            follow::Steer::Arrived => {
+                                motion(&mut m, goal, false, speed, turn_rate, window);
+                            }
                         }
                     } else {
                         motion(&mut m, goal, true, speed, turn_rate, window);

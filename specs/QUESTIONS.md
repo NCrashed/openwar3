@@ -425,9 +425,9 @@ The move order follows SPEC-0018, part 1: heading and facing, the
 propulsion window, speed, per-tick positions and arrival. Choices where
 the spec is silent:
 
-- **Paths** (SPEC-0020). Point orders and patrols follow the paths of
-  the pathing map; attacks, chases and maps without a `war3map.wpm` go
-  straight. The high-level search stops after 400 iterations (open
+- **Paths** (SPEC-0020). Point orders, patrols and attackers on their
+  way to their goal points follow the paths of the pathing map; units
+  on maps without a `war3map.wpm` go straight. The high-level search stops after 400 iterations (open
   question 1); a unit whose block is not free walks straight to the
   order point; a local path that cannot leave its start cell counts as
   walked; repeated blocks (open question 3) are left out. Against the
@@ -470,11 +470,13 @@ the spec is silent:
   the attacker chases a target out of reach at once (the backswing is
   not modelled) and without the pause 66 ticks later. A unit that
   reaches its goal before its weapon is ready stands until `cool1` after
-  the last hit.
+  the last hit. The attacker walks to its goal point as a point order
+  of SPEC-0020 and SPEC-0021 would, with a new path at every new goal,
+  and stops in range of the goal point by SPEC-0019; how the game's
+  chase uses its paths has not been compared with the game.
   `MiscData.txt` is looked up like `MiscGame.txt`: the map's copy, then
-  `Custom_V1` for maps that are not melee, then the game's. Attackers
-  do not follow targets that move; destructables and items have
-  collision 0. No paths, collisions between units or queued orders.
+  `Custom_V1` for maps that are not melee, then the game's.
+  Destructables and items have collision 0. No queued orders.
 - **Acquisition** (SPEC-0019): an idle unit with a weapon looks for an
   enemy at every update from the first one after its creation; the
   game's first look comes at a random update from the 1st to the 24th

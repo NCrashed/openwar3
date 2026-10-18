@@ -352,3 +352,35 @@ fn chase_a_target_walking_away() {
     let first = distance(hits[0] - 100);
     assert!((160.0..235.0).contains(&first), "{first}");
 }
+
+/// An attacker walks round a wall to its target by the paths of SPEC-0020
+/// (provisional for chases, SPEC-0019): a knight west of a wall attacks a
+/// target east of it.
+#[test]
+fn attacker_walks_round_a_wall() {
+    let units = "set a = CreateUnit(Player(0), 'hkni', -2300, -2000, 0)\n    set t = CreateUnit(Player(15), 'hpea', -1700, -2000, 180)";
+    let Some(mut game) = game(units, "call IssueTargetOrder(a, \"attack\", t)", |d| {
+        target_type(d, 16.0)
+    }) else {
+        return;
+    };
+    // A 768 x 768 map whose corner is -12288, with a wall over
+    // -2000 <= x < -1968 and -2400 <= y < -1600.
+    let mut cells = vec![true; 768 * 768];
+    for y in 309..334 {
+        for x in 321..=322 {
+            cells[y * 768 + x] = false;
+        }
+    }
+    game.set_pathing(ow3_sim::path::Grid::from_cells(768, 768, cells));
+    let path = run(&mut game, 2000);
+    for (tick, u) in &path {
+        let (x, y) = (u[0].x, u[0].y);
+        let inside = (-2000.0..-1968.0).contains(&x) && (-2400.0..-1600.0).contains(&y);
+        assert!(!inside, "tick {tick}: ({x}, {y}) in the wall");
+    }
+    assert!(
+        path.iter().any(|(_, u)| u[1].life < u[1].max_life),
+        "no hit"
+    );
+}

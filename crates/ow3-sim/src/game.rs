@@ -985,6 +985,12 @@ impl<'a> Game<'a> {
         self.state.borrow().day_night_models.clone()
     }
 
+    /// Sets where ground units may walk (SPEC-0020), as a map's
+    /// `war3map.wpm` would.
+    pub fn set_pathing(&mut self, grid: crate::path::Grid) {
+        self.state.borrow_mut().grid = Some(grid);
+    }
+
     /// The ground height at (`x`, `y`) as `GetLocationZ` gives it.
     pub fn ground_z(&self, x: f32, y: f32) -> f32 {
         f32::from_bits(self.state.borrow().heights.at(x.to_bits(), y.to_bits()))

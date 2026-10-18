@@ -528,12 +528,22 @@ impl Renderer {
                 Some(Bar {
                     at: a.head,
                     fill: a.life?,
+                    width: a.selection * crate::overlay::WIDTH_PER_SCALE,
                 })
             })
             .collect();
         let aspect = size.0 as f32 / size.1.max(1) as f32;
-        self.overlay
-            .set(device, queue, &bars, &camera.view_projection(aspect), size);
+        // Across the screen: the camera's right on the ground.
+        let yaw = camera.yaw.to_radians();
+        let right = [yaw.sin(), -yaw.cos(), 0.0];
+        self.overlay.set(
+            device,
+            queue,
+            &bars,
+            &camera.view_projection(aspect),
+            size,
+            right,
+        );
     }
 
     /// Lays out the selection circle of the selected unit on the ground of

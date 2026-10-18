@@ -46,11 +46,17 @@ pub struct Bar {
     pub at: [f32; 3],
     /// The share of life, 0 to 1.
     pub fill: f32,
+    /// Its width in world units.
+    pub width: f32,
 }
 
-/// Bar size in pixels.
-const BAR_WIDTH: f32 = 36.0;
+/// World units of bar width per unit of selection scale, measured on a
+/// screenshot of the game against peasants 64 apart: about 58 for a
+/// peasant, of scale 1, and about 346 for a town hall, of scale 6.3.
+pub const WIDTH_PER_SCALE: f32 = 56.0;
+/// Bar height and the narrowest bar, in pixels.
 const BAR_HEIGHT: f32 = 5.0;
+const MIN_WIDTH: f32 = 8.0;
 /// Pixels between the top of a unit and its bar.
 const LIFT: f32 = 8.0;
 
@@ -66,7 +72,13 @@ pub fn project(view_projection: &Mat4, point: [f32; 3]) -> Option<[f32; 2]> {
 }
 
 /// The triangles of `bars` for a view `size` pixels large.
-fn triangles(bars: &[Bar], view_projection: &Mat4, size: (u32, u32)) -> Vec<Vertex> {
+/// `right` is the direction across the screen in the world.
+fn triangles(
+    bars: &[Bar],
+    view_projection: &Mat4,
+    size: (u32, u32),
+    right: [f32; 3],
+) -> Vec<Vertex> {
     let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
     let mut out = Vec::new();
     let mut rect = |x0: f32, y0: f32, x1: f32, y1: f32, colour: [f32; 4]| {
@@ -84,10 +96,23 @@ fn triangles(bars: &[Bar], view_projection: &Mat4, size: (u32, u32)) -> Vec<Vert
         if cx.abs() > 1.2 || cy.abs() > 1.2 {
             continue;
         }
-        // A few pixels above the head, whatever the zoom.
+        // A few pixels above the head, whatever the zoom, as wide as its
+        // width in the world there.
         let (px, py) = (cx * w / 2.0, cy * h / 2.0 + LIFT);
-        let (hw, hh) = (BAR_WIDTH / 2.0, BAR_HEIGHT / 2.0);
-        rect(px - hw, py - hh, px + hw, py + hh, [0.0, 0.0, 0.0, 0.8]);
+        let half = bar.width / 2.0;
+        let side = |s: f32| {
+            project(
+                view_projection,
+                std::array::from_fn(|i| bar.at[i] + right[i] * s),
+            )
+        };
+        let width = match (side(-half), side(half)) {
+            (Some(a), Some(b)) => ((b[0] - a[0]) * w / 2.0).hypot((b[1] - a[1]) * h / 2.0),
+            _ => MIN_WIDTH,
+        }
+        .max(MIN_WIDTH);
+        let (hw, hh) = (width / 2.0, BAR_HEIGHT / 2.0);
+        rect(px - hw, py - hh, px + hw, py + hh, [0.0, 0.0, 0.0, 1.0]);
         let fill = bar.fill.clamp(0.0, 1.0);
         // Green when full, through yellow, to red when nearly dead.
         let colour = [
@@ -99,7 +124,7 @@ fn triangles(bars: &[Bar], view_projection: &Mat4, size: (u32, u32)) -> Vec<Vert
         rect(
             px - hw + 1.0,
             py - hh + 1.0,
-            px - hw + 1.0 + (BAR_WIDTH - 2.0) * fill,
+            px - hw + 1.0 + (width - 2.0) * fill,
             py + hh - 1.0,
             colour,
         );
@@ -178,8 +203,9 @@ impl Overlay {
         bars: &[Bar],
         view_projection: &Mat4,
         size: (u32, u32),
+        right: [f32; 3],
     ) {
-        let vertices = triangles(bars, view_projection, size);
+        let vertices = triangles(bars, view_projection, size, right);
         if vertices.len() > self.capacity {
             self.capacity = vertices.len() * 2;
             self.vertices = vertex_buffer(device, self.capacity);
@@ -215,18 +241,25 @@ mod tests {
     /// as wide as the share of life.
     #[test]
     fn bars_at_their_units() {
-        let camera = crate::camera::Camera::new([0.0, 0.0, 0.0]);
+        let mut camera = crate::camera::Camera::new([0.0, 0.0, 0.0]);
+        camera.distance = 600.0;
         let m = camera.view_projection(1.0);
-        let bar = Bar {
+        let right = [1.0, 0.0, 0.0];
+        let bar = |width| Bar {
             at: [0.0, 0.0, 0.0],
             fill: 0.5,
+            width,
         };
-        let v = triangles(&[bar], &m, (400, 400));
+        let width = |q: &[Vertex]| (q[1].position[0] - q[0].position[0]) * 200.0;
+        let v = triangles(&[bar(48.0)], &m, (400, 400), right);
         assert_eq!(v.len(), 12);
-        let width = |q: &[Vertex]| q[1].position[0] - q[0].position[0];
-        let full = width(&v[0..6]) * 200.0;
-        let filled = width(&v[6..12]) * 200.0;
-        assert!((full - BAR_WIDTH).abs() < 1e-3, "{full}");
-        assert!((filled - (BAR_WIDTH - 2.0) / 2.0).abs() < 1e-3, "{filled}");
+        let (full, filled) = (width(&v[0..6]), width(&v[6..12]));
+        assert!((filled - (full - 2.0) / 2.0).abs() < 1e-3, "{filled}");
+        // Six times as wide in the world, six times as wide on the screen.
+        let wide = width(&triangles(&[bar(6.0 * 48.0)], &m, (400, 400), right)[0..6]);
+        assert!((wide / full - 6.0).abs() < 0.01, "{wide} {full}");
+        // Never narrower than MIN_WIDTH.
+        let tiny = width(&triangles(&[bar(0.1)], &m, (400, 400), right)[0..6]);
+        assert!((tiny - MIN_WIDTH).abs() < 1e-3, "{tiny}");
     }
 }

@@ -254,11 +254,17 @@ impl Sim {
             let Some(look) = self.models.get(&u.type_id) else {
                 continue;
             };
+            // The model is drawn 16 west and 16 south of the unit
+            // (SPEC-0023, "Where models are drawn"; why is open).
+            let (x, y) = (
+                u.x - crate::objects::UNIT_MODEL_SHIFT,
+                u.y - crate::objects::UNIT_MODEL_SHIFT,
+            );
             let placement = Placement {
                 model: look.model.clone(),
                 replaceable: None,
                 team: u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0),
-                position: [u.x, u.y, self.game.ground_z(u.x, u.y)],
+                position: [x, y, self.game.ground_z(x, y)],
                 angle: u.facing,
                 scale: [look.scale; 3],
             };

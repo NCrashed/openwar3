@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 use ow3_formats::mpq::ArchiveChain;
 
-use crate::models::{Animation, Group, Instance, ModelVertex, Part, UnitPose};
+use crate::models::{Animation, Group, Instance, ModelVertex, Part};
 use crate::renderer::{DEPTH_FORMAT, upload_texture};
 use crate::sim_units::UnitDraw;
 
@@ -555,19 +555,15 @@ impl ModelRenderer {
                 }
                 None => self.animation.variant_base(model, unit.handle),
             };
-            // An effect fades on its own clock.
-            let alpha_shift = match unit.pose {
-                UnitPose::Once(ms) => {
-                    self.animation
-                        .once_alphas(model, ms)
-                        .map_or(0, |(values, slot)| {
-                            let shift = first_alpha + self.unit_alphas.len() as u32 - slot;
-                            self.unit_alphas.extend(values);
-                            shift
-                        })
-                }
-                _ => 0,
-            };
+            // An effect and a dying unit fade on their own clocks.
+            let alpha_shift =
+                self.animation
+                    .pose_alphas(model, unit.pose)
+                    .map_or(0, |(values, slot)| {
+                        let shift = first_alpha + self.unit_alphas.len() as u32 - slot;
+                        self.unit_alphas.extend(values);
+                        shift
+                    });
             lists.entry(buffer).or_default().push(Instance {
                 matrix: unit.matrix,
                 bone_base,

@@ -389,9 +389,33 @@ impl Animation {
     /// in: the alphas of its slots at that moment and the first of those
     /// slots, so that each instance fades on its own.
     pub fn once_alphas(&self, index: usize, elapsed: i32) -> Option<(Vec<f32>, u32)> {
+        self.sequence_alphas(index, self.models[index].sequence, elapsed)
+    }
+
+    /// The alphas of a unit in `pose` when they are its own: a dying unit
+    /// fades by its Death sequence (and stays as its last frame shows it),
+    /// an effect by its sequence; other poses share those of Stand.
+    pub fn pose_alphas(&self, index: usize, pose: UnitPose) -> Option<(Vec<f32>, u32)> {
+        match pose {
+            UnitPose::Once(elapsed) => self.once_alphas(index, elapsed),
+            UnitPose::Death(elapsed) => {
+                self.sequence_alphas(index, self.models[index].death, elapsed)
+            }
+            _ => None,
+        }
+    }
+
+    /// The alphas of model `index` `elapsed` milliseconds into `sequence`,
+    /// held at its end, and the first of its slots.
+    fn sequence_alphas(
+        &self,
+        index: usize,
+        sequence: usize,
+        elapsed: i32,
+    ) -> Option<(Vec<f32>, u32)> {
         let animated = &self.models[index];
         let first = self.alphas.iter().position(|s| s.model == index)?;
-        let start = Moment::start(&animated.model, animated.sequence);
+        let start = Moment::start(&animated.model, sequence);
         let length = (start.interval[1] - start.interval[0]).max(0);
         let moment = Moment {
             frame: start.frame + elapsed.clamp(0, length),
@@ -703,6 +727,31 @@ mod tests {
         assert_eq!(slot, same);
         assert!(start.iter().all(|&a| a > 0.99), "{start:?}");
         assert!(late.iter().all(|&a| a < 0.2), "{late:?}");
+    }
+
+    /// A dying unit fades by its Death sequence and stays as its end shows
+    /// it: the banshee is gone long after her death, and visible at its
+    /// start. Skipped without game data.
+    #[test]
+    fn the_dead_keep_the_alphas_of_their_death() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+        let map = root.join("Maps/(2)BootyBay.w3m");
+        let Ok(mut chain) = ArchiveChain::open(&root, &map) else {
+            return;
+        };
+        let mut animation = Animation::default();
+        let path = "Units\\Undead\\Banshee\\Banshee.mdx";
+        let Some(index) = animation.model(&mut chain, path) else {
+            return;
+        };
+        animation.unit_parts(index, 0);
+        let (start, _) = animation.pose_alphas(index, UnitPose::Death(0)).unwrap();
+        let (late, _) = animation
+            .pose_alphas(index, UnitPose::Death(60_000))
+            .unwrap();
+        assert!(start.iter().any(|&a| a > 0.99), "{start:?}");
+        assert!(late.iter().all(|&a| a < 0.01), "{late:?}");
+        assert!(animation.pose_alphas(index, UnitPose::Stand).is_none());
     }
 
     /// A unit facing north (a quarter turn) at (100, 200, 10), twice as

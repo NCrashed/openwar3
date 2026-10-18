@@ -269,10 +269,12 @@ where the spec is silent:
   yet, so a strength change does not restart life regeneration.
 - **Turning** (SPEC-0013 open question 1): `orientInterp` 3, 7 and 8 brake by the
   closed form, the others by their table; 2 has no largest step (at
-  least 0.285 in the spec). The first change after `SetUnitFacing` comes
-  3 ticks after the call; the spec saw 3 to 6 by the phase of the
-  unit's update cycle, which `SetUnitFacing` does not follow here, and
-  the call does not change the heading of a walking unit.
+  least 0.285 in the spec). After `SetUnitFacing` the facing changes at
+  the updates of the shared cycle, the first one after the call's tick
+  (1 to 6 ticks later; the spec saw 3 to 6). A unit with an order in
+  progress takes the angle as its heading, and its movement turns the
+  facing; whether the game keeps such a heading when the unit walks on
+  is not measured.
 - **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
   2) sees regeneration like any other thread.
 - **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the

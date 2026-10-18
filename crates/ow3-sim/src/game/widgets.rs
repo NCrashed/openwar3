@@ -899,10 +899,18 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let Some(h) = handle(&args[0]) else {
                 return Ok(None);
             };
-            let tick = state.ticks;
+            // The call sets the heading; the facing follows it at the
+            // updates of the shared cycle (SPEC-0013, SPEC-0018). A unit
+            // under an order turns by its movement, another by a turn.
+            let first = super::movement::next_update_after(state.ticks);
+            let heading = facing::from_degrees(real(&args[1]));
             if let Some(u) = unit_mut(&mut state, Some(h)) {
+                if let Some(m) = u.movement.as_mut() {
+                    m.heading = heading;
+                    return Ok(None);
+                }
                 let was_turning = u.turn.is_some();
-                u.turn = Some(facing::Turn::new(real(&args[1]), tick, u.orient_interp));
+                u.turn = Some(facing::Turn::new(heading, first, u.orient_interp));
                 if !was_turning {
                     state.turning.push(h);
                 }

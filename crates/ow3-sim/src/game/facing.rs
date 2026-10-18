@@ -26,8 +26,8 @@ const TWO_PI: u32 = 0x40C9_0FDB;
 const PI: u32 = 0x4049_0FDB;
 const SIGN: u32 = 0x8000_0000;
 
-/// Ticks from `SetUnitFacing` to the first change, and between changes.
-const FIRST_CHANGE: u64 = 3;
+/// Ticks between the changes of a turn: the shared update cycle of the
+/// units (SPEC-0013, SPEC-0018 "Phase").
 const CHANGE_EVERY: u64 = 6;
 
 fn real(bits: u32) -> f32 {
@@ -74,17 +74,19 @@ pub(super) fn steps(orient_interp: u8) -> (u32, u32) {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Turn {
     target: u32,
-    /// The tick of the call.
-    started: u64,
+    /// The tick of the next change.
+    next: u64,
     step: u32,
     orient_interp: u8,
 }
 
 impl Turn {
-    pub fn new(target_degrees: u32, tick: u64, orient_interp: u8) -> Turn {
+    /// A turn to `target` (radians) that changes the facing from the
+    /// update `first` on.
+    pub fn new(target: u32, first: u64, orient_interp: u8) -> Turn {
         Turn {
-            target: from_degrees(target_degrees),
-            started: tick,
+            target,
+            next: first,
             step: 0,
             orient_interp,
         }
@@ -92,10 +94,10 @@ impl Turn {
 
     /// The facing after tick `tick`, and whether the turn goes on.
     pub fn advance(&mut self, facing: u32, tick: u64) -> (u32, bool) {
-        let since = tick.saturating_sub(self.started);
-        if since < FIRST_CHANGE || (since - FIRST_CHANGE) % CHANGE_EVERY != 0 {
+        if tick != self.next {
             return (facing, true);
         }
+        self.next += CHANGE_EVERY;
         let (next, step) = follow(facing, self.target, self.step, self.orient_interp);
         self.step = step;
         (next, next != self.target)
@@ -257,10 +259,11 @@ mod tests {
     }
 
     /// A footman (`orientInterp` 0) turning from 0 to 90 degrees: changes
-    /// at ticks 3, 9, 15... after the call, by 0.07, 0.14, then 0.2.
+    /// every 6 ticks from the first update (here 3 ticks after the call),
+    /// by 0.07, 0.14, then 0.2.
     #[test]
     fn turning() {
-        let mut turn = Turn::new(90.0f32.to_bits(), 100, 0);
+        let mut turn = Turn::new(from_degrees(90.0f32.to_bits()), 103, 0);
         let mut facing = 0;
         let mut changes = Vec::new();
         for tick in 101..=200 {
@@ -280,7 +283,7 @@ mod tests {
         assert!((changes[2].1 - 0.41).abs() < 1e-6);
         assert_eq!(facing, from_degrees(90.0f32.to_bits()));
         // The shorter way: from 10 to 350 degrees turns down through 0.
-        let mut turn = Turn::new(350.0f32.to_bits(), 0, 0);
+        let mut turn = Turn::new(from_degrees(350.0f32.to_bits()), 3, 0);
         let (next, _) = turn.advance(from_degrees(10.0f32.to_bits()), 3);
         assert!(f32::from_bits(next) < f32::from_bits(from_degrees(10.0f32.to_bits())));
     }

@@ -58,7 +58,7 @@ const PHASE: u64 = 5;
 
 /// The first update after `tick`: updates come before the script's timers
 /// in a tick, so an order given at an update tick waits for the next.
-fn next_update_after(tick: u64) -> u64 {
+pub(super) fn next_update_after(tick: u64) -> u64 {
     tick + UPDATE - (tick + UPDATE - PHASE) % UPDATE
 }
 
@@ -111,7 +111,7 @@ pub struct Moving {
     /// last update).
     target: [u32; 2],
     /// The direction of motion, in radians.
-    heading: u32,
+    pub(super) heading: u32,
     /// The tick of the next update.
     next_update: u64,
     /// Moving since the heading came within the propulsion window.

@@ -34,6 +34,7 @@ native TriggerRegisterUnitEvent takes trigger whichTrigger, unit whichUnit, unit
 native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction
 native GetTriggerUnit takes nothing returns unit
 native KillUnit takes unit whichUnit returns nothing
+native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing
 type location extends agent
 native Location takes real x, real y returns location
 native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean
@@ -536,4 +537,35 @@ fn attacker_walks_round_a_wall() {
         path.iter().any(|(_, u)| u[1].life < u[1].max_life),
         "no hit"
     );
+}
+
+/// SPEC-0013 with the phase of SPEC-0018: the facing set from a timer
+/// changes at the updates of the shared cycle, the first one 6 ticks
+/// after a call in an update tick (the 0.5 s timer) and 3 ticks after a
+/// call 0.015 s later.
+#[test]
+fn set_facing_follows_the_updates() {
+    for (orders, first) in [
+        ("call SetUnitFacing(a, 90)", ORDER_TICK + 6),
+        (
+            "call TimerStart(CreateTimer(), 0.015, false, function Turn)\n---\nfunction Turn takes nothing returns nothing\n    call SetUnitFacing(a, 90)\nendfunction",
+            ORDER_TICK + 6,
+        ),
+    ] {
+        let Some(mut game) = game(
+            "set a = CreateUnit(Player(0), 'hfoo', 0, 0, 0)",
+            orders,
+            |_| {},
+        ) else {
+            return;
+        };
+        let path = run(&mut game, 300);
+        let changes: Vec<u64> = path
+            .windows(2)
+            .filter(|w| w[0].1[0].facing != w[1].1[0].facing)
+            .map(|w| w[1].0)
+            .collect();
+        assert_eq!(changes[0], first, "{orders}");
+        assert!(changes.windows(2).all(|w| w[1] - w[0] == 6));
+    }
 }

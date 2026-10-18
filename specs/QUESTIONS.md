@@ -607,8 +607,12 @@ The ground is lit as SPEC-0017 says, from the terrain model that
 `SetDayNightModels` names (Lordaeron without a call). Choices where the
 spec is silent:
 
-- **Models** (open question 2) are lit by the same formula from the unit
-  model of the call (`DNCLordaeronUnit` without one), and so is water.
+- **Models** are lit as the spec says, by the same formula from the unit
+  model of the call (`DNCLordaeronUnit` without one) with their turned
+  normals and the clamp at 1, without the shadow map; water by the same
+  light without the clamp. Doodads are placed at the scale and position
+  of `war3map.doo` (the game drew a doodad 1.22 times larger and 26 units
+  further east than the same model as a unit, open question 2).
 - **Cliffs** take the ground light with their own normals (SPEC-0014
   rule 9).
 - **Sloped ground** is lit at the corner points and interpolated over

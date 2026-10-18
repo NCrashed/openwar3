@@ -32,6 +32,8 @@ pub struct Scene {
     /// The day/night models of the ground and of units (SPEC-0017).
     pub terrain_light: Option<DayLight>,
     pub unit_light: Option<DayLight>,
+    /// The shadows the editor baked (`war3map.shd`), if any.
+    pub shadows: Option<ow3_formats::map::shadows::Shadows>,
 }
 
 /// The first frame of the water texture `path` (without the frame
@@ -67,6 +69,9 @@ impl Scene {
             .read_map_file("war3map.w3e")
             .ok_or("the map has no war3map.w3e")?;
         let terrain = Terrain::parse(&data).map_err(|e| format!("war3map.w3e: {e}"))?;
+        let shadows = chain.read_map_file("war3map.shd").and_then(|d| {
+            ow3_formats::map::shadows::Shadows::parse(&d, terrain.width - 1, terrain.height - 1).ok()
+        });
         let (terrain_model, unit_model) = day_night.unwrap_or_else(|| {
             (
                 ow3_render::daylight::DEFAULT_TERRAIN.to_owned(),
@@ -101,6 +106,7 @@ impl Scene {
             animation,
             terrain_light,
             unit_light,
+            shadows,
         })
     }
 }

@@ -6,6 +6,7 @@ pub mod info;
 pub mod objects;
 pub mod pathing;
 pub mod regions;
+pub mod shadows;
 pub mod sounds;
 pub mod strings;
 pub mod terrain;

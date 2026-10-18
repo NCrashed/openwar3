@@ -146,6 +146,11 @@ fn every_terrain_parses_and_matches_map_info() {
                 "{name}: texture index"
             );
         }
+        // The shadow map covers the same tiles.
+        if let Ok(data) = archive.read("war3map.shd") {
+            ow3_formats::map::shadows::Shadows::parse(&data, terrain.width - 1, terrain.height - 1)
+                .unwrap_or_else(|e| panic!("{name}: war3map.shd: {e}"));
+        }
         checked += 1;
     }
     assert!(checked > 100);

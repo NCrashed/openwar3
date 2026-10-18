@@ -24,8 +24,11 @@ struct Globals {
     unit_sun: vec4<f32>,
     unit_color: vec4<f32>,
     unit_ambient: vec4<f32>,
+    shadow_area: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var shadow_map: texture_2d<f32>;
+@group(0) @binding(2) var shadow_sampler: sampler;
 @group(1) @binding(0) var skin: texture_2d<f32>;
 @group(1) @binding(1) var skin_sampler: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
@@ -54,6 +57,7 @@ struct VertexOut {
     @location(2) alpha: f32,
     @location(3) tint: vec3<f32>,
     @location(4) @interpolate(flat) terrain_light: u32,
+    @location(5) world: vec2<f32>,
 };
 
 @vertex
@@ -80,6 +84,7 @@ fn vs(v: VertexIn) -> VertexOut {
     out.alpha = alphas[v.alpha + v.alpha_shift];
     out.tint = v.tint;
     out.terrain_light = v.terrain_light;
+    out.world = (model * skinned * vec4<f32>(v.position, 1.0)).xy;
     return out;
 }
 
@@ -100,10 +105,15 @@ fn lit(v: VertexOut) -> vec4<f32> {
         color = globals.terrain_color;
         ambient = globals.terrain_ambient;
     }
+    // Cliffs lie in the baked shadows of the ground too (PROVISIONAL: as
+    // dark as there, matched to a screenshot of the game).
+    let uv = (v.world - globals.shadow_area.xy) / globals.shadow_area.zw;
+    let shaded = textureSampleLevel(shadow_map, shadow_sampler, uv, 0.0).r;
+    let shadow = select(1.0, mix(1.0, 0.55, shaded), v.terrain_light == 1u);
     let n = normalize(v.normal);
     let facing = max(dot(n, sun.xyz), 0.0);
     let light = min(sun.w * color.rgb * facing + color.w * ambient.rgb, vec3<f32>(1.0));
-    return vec4<f32>(texel.rgb * v.tint * light, texel.a * v.alpha);
+    return vec4<f32>(texel.rgb * v.tint * light * shadow, texel.a * v.alpha);
 }
 
 @fragment

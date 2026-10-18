@@ -32,8 +32,12 @@ struct Globals {
     unit_sun: vec4<f32>,
     unit_color: vec4<f32>,
     unit_ambient: vec4<f32>,
+    // The world rectangle of the shadow map: lower left corner and size.
+    shadow_area: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var shadow_map: texture_2d<f32>;
+@group(0) @binding(2) var shadow_sampler: sampler;
 @group(1) @binding(0) var atlas: texture_2d_array<f32>;
 @group(1) @binding(1) var atlas_sampler: sampler;
 
@@ -50,6 +54,7 @@ struct VertexOut {
     @location(1) uv: vec2<f32>,
     @location(2) tint: vec4<f32>,
     @location(3) @interpolate(flat) cell: u32,
+    @location(4) world: vec2<f32>,
 };
 
 @vertex
@@ -60,7 +65,19 @@ fn vs(v: VertexIn) -> VertexOut {
     out.uv = v.uv;
     out.tint = v.tint;
     out.cell = v.cell;
+    out.world = v.position.xy;
     return out;
+}
+
+// How much light reaches a point of the ground in the baked shadows
+// (war3map.shd). PROVISIONAL: the darkness is matched to a screenshot of
+// the game, no spec gives it.
+const SHADOW_LIGHT: f32 = 0.55;
+
+fn shadow(world: vec2<f32>) -> f32 {
+    let uv = (world - globals.shadow_area.xy) / globals.shadow_area.zw;
+    let s = textureSample(shadow_map, shadow_sampler, uv).r;
+    return mix(1.0, SHADOW_LIGHT, s);
 }
 
 @fragment
@@ -73,7 +90,7 @@ fn fs(v: VertexOut) -> @location(0) vec4<f32> {
             + globals.terrain_color.w * globals.terrain_ambient.rgb,
         vec3<f32>(1.0),
     );
-    return vec4<f32>(texel.rgb * light * v.tint.rgb, texel.a);
+    return vec4<f32>(texel.rgb * light * shadow(v.world) * v.tint.rgb, texel.a);
 }
 
 @fragment
@@ -92,6 +109,7 @@ struct Globals {
     unit_sun: [f32; 4],
     unit_color: [f32; 4],
     unit_ambient: [f32; 4],
+    shadow_area: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -138,6 +156,8 @@ pub struct Renderer {
     /// The light of the ground and of models (SPEC-0017).
     pub terrain_light: Lighting,
     pub unit_light: Lighting,
+    /// The world rectangle of the shadow map of `war3map.shd`.
+    shadow_area: [f32; 4],
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -167,6 +187,64 @@ fn mip_chain(image: &Image) -> Vec<Image> {
         levels.push(next);
     }
     levels
+}
+
+/// The shadow map of `scene` as a one-channel texture (1 in shadow), and
+/// the world rectangle it covers: lower left corner and size.
+fn shadow_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+) -> (wgpu::TextureView, [f32; 4]) {
+    let (width, height, texels) = match &scene.shadows {
+        Some(s) => (
+            s.width,
+            s.height,
+            s.cells.iter().map(|&c| if c { 255 } else { 0 }).collect(),
+        ),
+        None => (1, 1, vec![0u8]),
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("shadows"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let t = &scene.terrain;
+    let area = [
+        t.origin_x,
+        t.origin_y,
+        width as f32 * 32.0,
+        height as f32 * 32.0,
+    ];
+    (texture.create_view(&wgpu::TextureViewDescriptor::default()), area)
 }
 
 pub(crate) fn upload_texture(
@@ -302,16 +380,35 @@ impl Renderer {
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // The baked shadows of the ground.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("atlas"),
@@ -393,13 +490,32 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // The shadow map, one texel per cell of 32, rows from the bottom as
+        // in the file; without one, a single texel without shadow.
+        let (shadow_view, shadow_area) = shadow_texture(device, queue, scene);
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadows"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..wgpu::SamplerDescriptor::default()
+        });
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("atlas"),
@@ -497,6 +613,7 @@ impl Renderer {
             all_bars: false,
             terrain_light: PLAIN_LIGHT,
             unit_light: PLAIN_LIGHT,
+            shadow_area,
         }
     }
 
@@ -660,6 +777,7 @@ impl Renderer {
             unit_sun,
             unit_color,
             unit_ambient,
+            shadow_area: self.shadow_area,
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

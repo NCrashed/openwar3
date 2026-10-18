@@ -92,8 +92,11 @@ flags use other models (open question 1).
       them for A, B, C, D, F, G, N, Q, V, W, X, Y);
    3. `<texDir>\<texFile>.blp` in the game archives.
    A `<t>_<texFile>.blp` imported into the map is not used. So the
-   tilesets I, J, K, O, Z, which have no such files, use the plain
-   `Cliff0` (Lordaeron dirt) and `Cliff1` (Lordaeron grass).
+   tilesets I, J, K, O, Z, which have no such files, would use the
+   plain `Cliff0` (Lordaeron dirt) and `Cliff1` (Lordaeron grass). This
+   does not hold for `CIsn` on tileset I, whose cliffs look icy unless
+   the map imports `Cliff1` (open question 6); J, K, O and Z were not
+   tested.
    Evidence: tileset N and I maps importing plain `Cliff0`/`Cliff1` in
    red and green showed red and green cliffs on both; importing only
    `N_`/`I_` versions changed nothing; without imports, `CNdi` cliffs
@@ -119,6 +122,23 @@ flags use other models (open question 1).
    `Ndrt`), and with `CNsn` on all points the band appears on all sides.
    When a point is a corner of cliff tiles of different types, the
    tests did not tell which type wins (open question 5).
+9. **Light and shadow.** The horizontal parts of a cliff model (its top
+   and its foot) are part of the model, textured from the atlas like
+   its faces. Nothing of the ground textures is drawn on a cliff tile
+   or blended into it: the border between a cliff tile and the ground
+   tile next to it is a hard tile edge. In shipped maps it does not
+   show because that ground has the cliff type's `groundTile` (rule 8)
+   and the ground half of the atlas is painted to match it (`N_Cliff1`
+   and `Nsnw` on Northrend).
+   Cliff models are lit with the formula of SPEC-0017 ("Colour of the
+   ground"), using the normals of the model's vertices, turned with
+   the model when it is placed. The normals of the horizontal parts are
+   not all vertical: they lean towards the cliff face (`CliffsAAAB0`:
+   from `(0, 0, 1)` at the low corner opposite the raised one to
+   `(-0.18, 0.24, 0.95)` at the raised corner, in model coordinates),
+   so a cliff top is lit a little differently from flat ground next to
+   it. The shadow map darkens cliff models in the same way as the ground
+   (SPEC-0017, "Shadows").
 
 ### Ramps
 
@@ -220,9 +240,16 @@ leaves holes there.
    by cliff tiles of different types, whether a `groundTile` missing from
    the map's ground list is added, and what `upperTile` (only `COrd` sets
    one) does.
-6. Whether the white look of `CIsn` cliff faces on tileset I comes only
-   from lighting applied to the grass of `Cliff1`, or from another
-   mechanism.
+6. Where the white and blue look of `CIsn` cliffs on tileset I comes
+   from. It is not lighting: importing into the map the very
+   `ReplaceableTextures\Cliff\Cliff1.blp` of `War3.mpq` (grass) made
+   the same cliffs green, so without the import the game draws them with
+   a texture other than that file. No other file of that name, and no
+   `I_Cliff1.blp`, exists in any archive of the installation, and only
+   the plain names `ReplaceableTextures\Cliff\Cliff0.blp` and
+   `...\Cliff1.blp` were found in the memory of the running game. The
+   cliff tops do not take the map's imported `Ice_Snow` ground texture
+   either.
 
 ## Sources
 
@@ -249,3 +276,22 @@ leaves holes there.
    the north-east of the point, the knight south-west, the peasant
    south-east, the rifleman north-west. A point raised by three levels
    uses models with `C`.
+6. **Cliff tiles of `(12)IceCrown`** (tileset N, cliff types `CNdi` and
+   `CNsn`), around the gold mine at (6528, -256), camera straight down,
+   noon, Lordaeron light, doodads removed (rule 9):
+   - `Cliff1` imported as solid magenta: every cliff tile is a magenta
+     square with straight edges, its top included;
+   - `North_Snow` imported as solid green: the ground turns green, the
+     cliff tiles keep the snow of the atlas, again with straight square
+     edges;
+   - both imported as solid grey 136 (drawn 136): flat ground
+     `(131, 131, 135)`, the tops of the cliff tiles mostly
+     `(136, 136, 136)` (their normals lean towards the sun, so the light
+     saturates); at 0:00 flat ground `(42, 72, 108)` and cliff tops
+     between `(41, 70, 105)` and `(49, 84, 126)`;
+   - the same with a `war3map.shd` of all 255: ground and cliff tops
+     `(74, 74, 80)`; with all 0: as without shadows.
+7. **Tileset I** (test map with `CIsn` and `CIrb` cliffs): without
+   imports the `CIsn` cliffs look icy white and blue; with the `Cliff1`
+   of `War3.mpq` imported unchanged into the map they show green grass
+   and brown rock (open question 6).

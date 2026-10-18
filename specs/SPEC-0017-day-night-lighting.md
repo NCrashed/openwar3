@@ -127,6 +127,60 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
 `light = L * 1.3 * 0.6157 + 0.2 * A = (0.313, 0.533, 0.799)`, which is
 `(80, 136, 204)` on a white texture; the game showed `(79, 135, 203)`.
 
+### Shadows (`war3map.shd`)
+
+The map file `war3map.shd` darkens the ground where the World Editor
+baked the shadows of doodads and cliffs.
+
+**Format.** One byte per cell of 32 x 32 world units, four cells per
+tile in each direction: `4 (W - 1)` columns and `4 (H - 1)` rows for a
+`war3map.w3e` of `W x H` corner points (`(12)IceCrown`: 193 x 193
+points, 768 x 768 bytes). The first row is the southern one (smallest
+y), each row runs from west to east, and cell `(i, j)` covers
+x `X0 + 32 i .. X0 + 32 (i + 1)`, y `Y0 + 32 j .. Y0 + 32 (j + 1)` with
+`(X0, Y0)` the map's lower left corner from `war3map.w3e`. A byte 0 is
+no shadow; every other value is full shadow (1, 16, 32, 63, 127, 128,
+200, 254 and 255 gave the same darkness). Shipped maps contain only 0
+and 255.
+
+**Smoothing.** The shadow amount `s` (0 to 1) at a point is not taken
+from its cell directly:
+
+1. The map is divided into blocks of 16 x 16 cells (4 x 4 tiles,
+   512 x 512 world units), counted from the lower left corner `(X0, Y0)`.
+2. Each block has 16 x 16 samples, placed at
+   `X0 + 512 bx + m * 512 / 15`, `Y0 + 512 by + n * 512 / 15`
+   (`m, n` = 0..15) for block `(bx, by)`: the first and the last sample
+   of a row lie on the block's borders, so the samples are 34.13 units
+   apart.
+3. Sample `(m, n)` with `1 <= m, n <= 14` has the value of cell
+   `(16 bx + m, 16 by + n)` (1 for shadow, 0 for none). A sample on a
+   block border is the mean of the two cells that meet at that border:
+   the block's own cell and the next cell of the neighbouring block (for
+   `m = 0` the cells `16 bx - 1` and `16 bx`, for `m = 15` the cells
+   `16 bx + 15` and `16 bx + 16`). Both blocks so have the same values
+   along their common border. A sample on a block corner is taken as the
+   mean of the four cells there (not measured separately).
+4. `s` is the bilinear interpolation of the four samples around the
+   point, within its block.
+
+A single shadow cell inside a block thus shows as a soft spot of 34
+units radius, whose centre lies up to 16 units away from the cell's
+centre; a single shadow cell at a block border shows at half strength on
+both sides of the border.
+
+**Darkening.** With `t` the texture colour of the ground (per channel,
+0 to 1), the shadowed colour before lighting is
+
+    t' = t + s * a * (c - t),   a = 0.502,   c = (0.048, 0.048, 0.095)
+
+(red, green, blue), and the pixel is `t'` times the light of "Colour of
+the ground". Full shadow keeps about half of the texture colour and
+adds a little dark blue; because the light multiplies the result, the
+ratio of shadowed to lit colour does not depend on the time of day or
+the light model. Cliff models are darkened in the same way (SPEC-0014,
+rule 9).
+
 ## Edge cases
 
 - The clamp at 1 is per channel and applied to the light before the
@@ -138,7 +192,7 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
 
 ## Open questions
 
-1. Sloped ground (normals other than straight up), cliffs and water were
+1. Sloped ground (normals other than straight up) and water were
    not measured; the formula above is expected to use the vertex normal.
 2. The unit model (`...Unit.mdx`) and how units, doodads and destructables
    are lit.
@@ -146,6 +200,11 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
    during the game (only calls in `main` were tested).
 4. The time between the samples of 3 hours was not measured; the samples
    at 3:00 and 21:00 fall inside Hermite segments and match.
+5. Shadows: whether units, doodads and water are darkened by
+   `war3map.shd`; maps whose size in tiles is not a multiple of 4 (the
+   last, partial block); sample positions were measured to within about
+   5 world units (all measured positions lay 3 to 5 units west of the
+   formula, not explained).
 
 ## Sources
 
@@ -154,6 +213,12 @@ store `(0.799, 0.533, 0.313)`, so `L = A = (0.313, 0.533, 0.799)` and
   down, time of day set with `SetFloatGameState` to 0, 3, ..., 21, the
   colour of the centre of the screen read from screenshots.
 - The day/night models in the game archives, `UI\WorldEditData.txt`.
+- Test maps on 1.27b under Wine, 2026-10-18: flat ground with solid grey
+  and white textures and hand-made `war3map.shd` files (single cells,
+  strips 1 to 8 cells wide, blocks, all values 1..255), camera straight
+  down, profiles across the screenshots calibrated with a grid texture;
+  a copy with the map corner moved by one tile to check where the blocks
+  start.
 
 ## Verification
 
@@ -175,3 +240,23 @@ values are 0 or 1 below the model:
    Lordaeron, without any call, and with tileset letters `N`, `A`, `I`.
 2. The Ashenvale rows hold with `SetDayNightModels` naming the Ashenvale
    terrain model.
+3. **Shadows, strength.** Full shadow (`war3map.shd` cells 255, also any
+   other nonzero value), flat ground, Ashenvale light at noon (light 1):
+   grey textures 68, 136, 204, 255 give `(40, 40, 46)`, `(74, 74, 80)`,
+   `(108, 108, 114)`, `(133, 133, 139)`. Lordaeron light, white texture:
+   noon `(245, 245, 252)` lit, `(128, 128, 138)` shadowed; 0:00
+   `(79, 135, 203)` and `(41, 70, 111)`. Ashenvale, white, 0:00:
+   `(66, 121, 161)` and `(35, 63, 88)`; grey 136 at 0:00 `(35, 64, 86)`
+   and `(19, 35, 51)`, at 21:00 `(61, 98, 124)` and `(33, 54, 73)`.
+4. **Shadows, smoothing** (map corner at (-12288, -12288), white
+   texture, Lordaeron noon, lit 245, full shadow 128 in the red
+   channel). Vertical strips one cell wide, 12 cells long, at every fifth
+   cell column: each shows as a profile 2 x 34 units wide, fully dark at
+   its sample position `512 * floor(k / 16) - 12288 + (k mod 16) * 512 / 15`
+   (`k` the column); strips at columns `k` with `k mod 16` = 0 or 15
+   show at half strength (185) centred on the block border. One shadow
+   cell on each side of the border at x = 0 (columns 383 and 384): full
+   darkness at x = 0, falling to none 34 units to either side; either
+   cell alone: 185 at x = 0. With the map corner moved to
+   (-12160, -12160) the half-strength strips moved to x = 128 and 640.
+

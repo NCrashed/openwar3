@@ -216,7 +216,7 @@ pub struct ParticleEmitter2 {
     pub tail_length: f32,
     /// The share of the life at which the middle segment is reached.
     pub time: f32,
-    /// As stored: blue, green, red, for the start, middle and end.
+    /// Red, green, blue, for the start, middle and end.
     pub segment_colors: [[f32; 3]; 3],
     pub segment_alphas: [u8; 3],
     pub segment_scaling: [f32; 3],

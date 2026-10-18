@@ -713,22 +713,16 @@ fn buildings_move_to_the_grid() {
     }
 }
 
-/// SPEC-0021, shared budget (c-UO2): the first searches of the walkers
+/// SPEC-0021, shared budget (c-UO2a): the first searches of the walkers
 /// created last use up the budget of 1100 iterations, so the four walkers
 /// created first queue and start moving one update after the other eight.
 /// The walkers are the units of even index.
 #[test]
 fn searches_share_a_budget() {
-    let Some(output) = run("c-UO2.w3x", 4.0) else {
+    let Some(output) = run("c-UO2a.w3x", 4.0) else {
         return;
     };
     let tracks = tracks(&output);
-    // The name was given to another test map of the analyst on 2026-10-19;
-    // without the walkers' tracks there is nothing to check.
-    if tracks.is_empty() {
-        eprintln!("skipping: c-UO2.w3x prints no tracks");
-        return;
-    }
     let first_motion = |unit: u32| {
         let track = &tracks[&unit];
         track

@@ -189,8 +189,9 @@ pub fn look(e: &ParticleEmitter2, age: f32) -> Look {
         (1, 2, (life - middle) / (1.0 - middle))
     };
     let mix = |a: f32, b: f32| a + (b - a) * f;
-    // The colours are stored blue, green, red.
-    let [b, g, r] =
+    // The colours are stored red, green, blue: the ghost's purple glow
+    // (0.61, 0.44, 0.87) shows purple in the game.
+    let [r, g, b] =
         std::array::from_fn(|i| mix(e.segment_colors[from][i], e.segment_colors[to][i]));
     let alpha = mix(
         f32::from(e.segment_alphas[from]),

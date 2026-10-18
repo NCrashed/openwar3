@@ -29,8 +29,10 @@ For weapon 1 of the attacker:
    `r` of that generator, the die showing `1 + floor(r * sides1 / 2^32)`
    (the `GetRandomInt(1, sides1)` mapping). The dice of one hit are
    consecutive outputs, and hits use the outputs in order (two outputs
-   per hit of a two-dice weapon, nothing else drew from generator 2 in
-   the tests).
+   per hit of a two-dice weapon). Creating a unit with a weapon also
+   takes one output of this generator (SPEC-0019, acquisition): between
+   `SetRandomSeed` and the hits of the tests below no such unit was
+   created.
 3. `amount = i2r(base + sum of dice)`.
 4. The damage is then that of SPEC-0015 for `amount`, the weapon's
    attack type (`atkType1`: `normal` is the list `DamageBonusNormal`,

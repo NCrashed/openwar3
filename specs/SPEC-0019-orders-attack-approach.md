@@ -239,7 +239,7 @@ time to time:
   | 270 | never caught | 213.9 |
   | 300 | never caught | 234.2 |
 
-### Acquisition by idle units (first results)
+### Acquisition by idle units
 
 An idle unit with a weapon attacks an enemy unit on its own:
 
@@ -248,14 +248,37 @@ An idle unit with a weapon attacks an enemy unit on its own:
   collisions as above): a footman (`acquire` 500, collision 31) took an
   enemy footman copy (collision 31, `Player(1)`) at 562 and not at 563.
   `Player(15)` (neutral passive) is not an enemy of `Player(0)`
-  (`IsUnitEnemy` false); its units were not tested for acquisition.
+  (`IsUnitEnemy` false).
+- **Checks.** Each unit with a weapon checks for targets on its own
+  schedule: when it is created it draws one output `r` of game generator
+  2 (SPEC-0007, the generator of the damage dice), with
+  `x = add((r AND 0x7FFFFF) OR 0x3F800000, -1.0)` as for the reaction
+  delay. Its first check is `100 * x` ticks (`0.5 * x` seconds) after
+  its creation, and then every 100 ticks (0.5 s). Units without a weapon
+  (a farm) draw nothing. The draws are made in the order of creation.
+  `EVENT_UNIT_ACQUIRED_TARGET` fires at the check that finds a target:
+  in the tick `floor(100 * x)` counted from the creation (60 of 60
+  footmen with seeds 7, 8 and 9); an enemy put into range at tick 300
+  or 333 was found at the next check of each unit (`floor(100 * x)` +
+  300 or + 400).
+- **Choice of target.** Of the enemies in range it takes the nearest
+  unit, and a unit before a structure even when the structure is
+  nearer (a farm 150 away lost against a footman 300 away, in both
+  orders of creation; a structure alone in range was not tested). The field `prio` of
+  `Units\UnitData.slk` does not matter (a footman copy with `prio` 10 at
+  305 lost against a footman, `prio` 6, at 300; one with `prio` 0 at
+  295 won). Between enemies at exactly the same distance it takes the
+  one with the smaller y, and with equal y the one with the smaller x
+  (tested with targets 300 away in the eight directions, independent of
+  the order of creation).
+- **Reaction delay.** After acquiring, the unit waits the reaction delay
+  of attack orders (generator 9, `ReactionDelay`, see above), counted
+  from the exact time of the check (`100 * x` ticks after creation, not
+  the whole tick), with the draws of generator 9 in the order of the
+  acquisitions. It starts to act (turn, walk) at its first update at or
+  after the end of the delay: 60 of 60 footmen.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
-- **When.** The first acquisition of a newly created unit came at a
-  random update: the first motion was `6 k + 5` ticks after creation,
-  with `k` from 1 to 24 (30 footmen each with seeds 7 and 8). The values depend only on the
-  random seed set before the units were created (the same seed gave the
-  same 30 values in the same order); the draw is not yet identified.
 
 ## Edge cases
 
@@ -265,8 +288,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
 
 ## Open questions
 
-1. Whether other orders and the acquisition of targets use the reaction
-   delay as well.
+1. Whether other orders use the reaction delay as well (acquisition
+   does).
 2. One chase in which the attacker did not start its swing at a goal
    point 136.68 away (limit 137);
    what makes the attacker take a new goal 66 ticks after a chase
@@ -274,8 +297,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
    once; earlier observations of an attacker following the target's
    current position (not reproduced in the chases of the verification
    below).
-3. Attack-move with enemies, the timing of acquisition scans after the
-   first one, retaliation, `minRange`.
+3. Attack-move with enemies, retaliation, `minRange`; acquisition of
+   units that are not idle, of air units and by buildings with weapons;
+   whether the 0.5 s period depends on any data field.
 4. Queued orders, group orders, formation movement.
 5. Orders on units of other players, `hold position` with enemies in
    range.
@@ -347,3 +371,12 @@ An idle unit with a weapon attacks an enemy unit on its own:
    waypoint (-2000, -6416) of the chase path. A model following this spec
    reproduced all three attackers within 0.015 world units at every
    tick.
+8. **Acquisition.** A footman of `Player(1)` paused with `PauseUnit` at
+   (0, 0), created first, and 20 footmen of `Player(0)` on a circle of
+   radius 300 round it, created after it, all at map initialisation
+   after `SetRandomSeed(7)`. Acquisition ticks of the circle footmen
+   (counted from their creation), sorted: 3 8 18 22 26 31 36 44 45 46 48
+   68 70 72 81 84 88 88 90 94; with seed 8: 1 5 13 16 19 32 33 33 40 46 67
+   69 70 73 79 81 85 89 91 96. The first change of facing (start of the
+   turn towards the target) of the footman acquiring at tick 3 (seed 7)
+   came at tick 10, of the one at 8 at tick 10.

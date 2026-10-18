@@ -688,18 +688,11 @@ impl Renderer {
                 })
             })
             .collect();
-        let aspect = size.0 as f32 / size.1.max(1) as f32;
         // Across the screen: the camera's right on the ground.
         let yaw = camera.yaw.to_radians();
         let right = [yaw.sin(), -yaw.cos(), 0.0];
-        self.overlay.set(
-            device,
-            queue,
-            &bars,
-            &camera.view_projection(aspect),
-            size,
-            right,
-        );
+        self.overlay
+            .set(device, queue, &bars, &camera.view_projection(), size, right);
     }
 
     /// Lays out the selection circles of the selected unit and the one under
@@ -711,7 +704,6 @@ impl Renderer {
         queue: &wgpu::Queue,
         chain: &mut ow3_formats::mpq::ArchiveChain,
         camera: &Camera,
-        aspect: f32,
         ground: impl Fn(f32, f32) -> f32,
     ) {
         use crate::circles::{Circle, Circles, Settings};
@@ -743,7 +735,7 @@ impl Renderer {
             queue,
             chain,
             &list,
-            &camera.view_projection(aspect),
+            &camera.view_projection(),
             ground,
         );
     }
@@ -753,7 +745,7 @@ impl Renderer {
     /// pixels.
     pub fn pick(&self, x: f32, y: f32, camera: &Camera, size: (u32, u32)) -> Option<u32> {
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
-        let m = camera.view_projection(w / h);
+        let m = camera.view_projection();
         let screen = |p| {
             crate::overlay::project(&m, p).map(|[x, y]| [(x + 1.0) * w / 2.0, (1.0 - y) * h / 2.0])
         };
@@ -788,7 +780,6 @@ impl Renderer {
         target: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         camera: &Camera,
-        aspect: f32,
     ) {
         let parts = |l: &Lighting| {
             [
@@ -800,7 +791,7 @@ impl Renderer {
         let [terrain_sun, terrain_color, terrain_ambient] = parts(&self.terrain_light);
         let [unit_sun, unit_color, unit_ambient] = parts(&self.unit_light);
         let globals = Globals {
-            view_projection: camera.view_projection(aspect),
+            view_projection: camera.view_projection(),
             terrain_sun,
             terrain_color,
             terrain_ambient,
@@ -919,14 +910,7 @@ pub fn render_to_image(
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let depth = depth_view(device, width, height);
-    renderer.draw(
-        device,
-        queue,
-        &view,
-        &depth,
-        camera,
-        width as f32 / height as f32,
-    );
+    renderer.draw(device, queue, &view, &depth, camera);
 
     // Rows of a copy are padded to 256 bytes.
     let row = 4 * width;

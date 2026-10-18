@@ -162,14 +162,9 @@ fn screenshot(
             (options.time * 1000.0) as i32,
         );
         let terrain = &scene.terrain;
-        renderer.prepare_circles(
-            &device,
-            &queue,
-            &mut sim.chain,
-            &camera,
-            w as f32 / h as f32,
-            |x, y| ow3_viewer::terrain_mesh::ground_z(terrain, x, y),
-        );
+        renderer.prepare_circles(&device, &queue, &mut sim.chain, &camera, |x, y| {
+            ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
+        });
     }
     renderer.animate(&device, &queue, (options.time * 1000.0) as i32);
     light(&mut renderer, scene, sim_hour);
@@ -407,13 +402,11 @@ impl App {
             gpu.renderer.hovered =
                 gpu.renderer
                     .pick(self.cursor.0, self.cursor.1, &self.camera, size);
-            let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
             gpu.renderer.prepare_circles(
                 &gpu.device,
                 &gpu.queue,
                 &mut sim.chain,
                 &self.camera,
-                aspect,
                 |x, y| ow3_viewer::terrain_mesh::ground_z(terrain, x, y),
             );
         }
@@ -434,15 +427,8 @@ impl App {
                 let view = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                let aspect = size.0 as f32 / size.1 as f32;
-                gpu.renderer.draw(
-                    &gpu.device,
-                    &gpu.queue,
-                    &view,
-                    &gpu.depth,
-                    &self.camera,
-                    aspect,
-                );
+                gpu.renderer
+                    .draw(&gpu.device, &gpu.queue, &view, &gpu.depth, &self.camera);
                 frame.present();
             }
             Err(_) => gpu.surface.configure(&gpu.device, &gpu.config),

@@ -243,7 +243,7 @@ mod tests {
     fn bars_at_their_units() {
         let mut camera = crate::camera::Camera::new([0.0, 0.0, 0.0]);
         camera.distance = 600.0;
-        let m = camera.view_projection(1.0);
+        let m = camera.view_projection();
         let right = [1.0, 0.0, 0.0];
         let bar = |width| Bar {
             at: [0.0, 0.0, 0.0],

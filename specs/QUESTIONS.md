@@ -558,6 +558,19 @@ the spec is silent:
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.
 
+## Camera (the viewer, SPEC-0023)
+
+The projection has the field of view (70 degrees) across the diagonal
+of a 4:3 frame, stretched over the window. Choices where the spec is
+silent:
+
+- **Target height** is `GetLocationZ`-like ground height at the target
+  point, not the game's smoothed value (open question 1).
+- **Near and far planes** are 16 and four times the distance plus
+  20000 (open question 2); no fog.
+- **Camera fields** are the viewer's own (`--camera` distance, yaw,
+  pitch); `SetCameraField` from scripts is not applied.
+
 ## Day/night lighting (`ow3-render::daylight`, the viewer)
 
 The ground is lit as SPEC-0017 says, from the terrain model that

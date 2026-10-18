@@ -48,12 +48,12 @@ fn look_at(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> Mat4 {
     ]
 }
 
-/// A perspective projection to the 0..1 depth range of wgpu.
-fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
-    let f = 1.0 / (fov_y / 2.0).tan();
+/// A perspective projection to the 0..1 depth range of wgpu with the
+/// tangents of half the horizontal and vertical fields of view.
+fn perspective(tan_x: f32, tan_y: f32, near: f32, far: f32) -> Mat4 {
     [
-        [f / aspect, 0.0, 0.0, 0.0],
-        [0.0, f, 0.0, 0.0],
+        [1.0 / tan_x, 0.0, 0.0, 0.0],
+        [0.0, 1.0 / tan_y, 0.0, 0.0],
         [0.0, 0.0, far / (near - far), -1.0],
         [0.0, 0.0, near * far / (near - far), 0.0],
     ]
@@ -68,7 +68,9 @@ pub struct Camera {
     pub yaw: f32,
     /// Degrees below the horizon.
     pub pitch: f32,
-    /// Vertical field of view in degrees.
+    /// Field of view in degrees across the diagonal of a 4:3 frame, which
+    /// is stretched over the window whatever its shape (SPEC-0023,
+    /// `CAMERA_FIELD_FIELD_OF_VIEW`).
     pub fov: f32,
 }
 
@@ -98,10 +100,17 @@ impl Camera {
         ]
     }
 
-    pub fn view_projection(&self, aspect: f32) -> Mat4 {
+    /// The tangents of half the horizontal and vertical fields of view.
+    fn tangents(&self) -> (f32, f32) {
+        let t = (self.fov.to_radians() / 2.0).tan();
+        (0.8 * t, 0.6 * t)
+    }
+
+    pub fn view_projection(&self) -> Mat4 {
         let view = look_at(self.eye(), self.target, [0.0, 0.0, 1.0]);
         let far = self.distance * 4.0 + 20_000.0;
-        let projection = perspective(self.fov.to_radians(), aspect, 16.0, far);
+        let (tan_x, tan_y) = self.tangents();
+        let projection = perspective(tan_x, tan_y, 16.0, far);
         multiply(&projection, &view)
     }
 
@@ -131,8 +140,8 @@ impl Camera {
         let f = normalize(sub(self.target, eye));
         let s = normalize(cross(f, [0.0, 0.0, 1.0]));
         let u = cross(s, f);
-        let tan = (self.fov.to_radians() / 2.0).tan();
-        let (nx, ny) = ((2.0 * x / w - 1.0) * tan * w / h, (1.0 - 2.0 * y / h) * tan);
+        let (tan_x, tan_y) = self.tangents();
+        let (nx, ny) = ((2.0 * x / w - 1.0) * tan_x, (1.0 - 2.0 * y / h) * tan_y);
         let direction = normalize([
             f[0] + s[0] * nx + u[0] * ny,
             f[1] + s[1] * nx + u[1] * ny,
@@ -196,7 +205,7 @@ mod tests {
     #[test]
     fn looks_north_at_the_target() {
         let camera = Camera::new([1000.0, 2000.0, 0.0]);
-        let m = camera.view_projection(1.0);
+        let m = camera.view_projection();
         let centre = project(&m, camera.target);
         assert!(
             centre[0].abs() < 1e-4 && centre[1].abs() < 1e-4,
@@ -216,7 +225,7 @@ mod tests {
         let mut camera = Camera::new([1000.0, 2000.0, 50.0]);
         camera.yaw = 70.0;
         let size = (1600, 900);
-        let m = camera.view_projection(1600.0 / 900.0);
+        let m = camera.view_projection();
         for (x, y) in [(800.0, 450.0), (100.0, 800.0), (1500.0, 100.0)] {
             let p = camera.ground_point(x, y, size, |_, _| 50.0).unwrap();
             assert!((p[2] - 50.0).abs() < 0.5, "{p:?}");
@@ -227,6 +236,27 @@ mod tests {
                 "{pixel:?} for {x} {y}"
             );
         }
+    }
+
+    /// Verification 1 of SPEC-0023: straight down from 1000 in a window of
+    /// 1016 x 734, a tile is 116.1 pixels across (116.75 measured) and
+    /// 112.5 up the screen, the 4:3 frame being stretched.
+    #[test]
+    fn a_tile_seen_from_above() {
+        let mut camera = Camera::new([0.0, 0.0, 0.0]);
+        camera.distance = 1000.0;
+        camera.pitch = 89.999;
+        let m = camera.view_projection();
+        let (w, h) = (1016.0, 734.0);
+        let east = project(&m, [128.0, 0.0, 0.0]);
+        let north = project(&m, [0.0, 128.0, 0.0]);
+        let across = east[0] * w / 2.0;
+        let up = north[1] * h / 2.0;
+        assert!((across - 116.1).abs() < 0.2, "{across}");
+        assert!(
+            (up / across - (734.0 / 1016.0) / 0.75).abs() < 0.001,
+            "{up}"
+        );
     }
 
     #[test]

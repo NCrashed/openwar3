@@ -53,8 +53,34 @@ the ramp code.
      (MaxDepth - MinDepth))`.
 - A `TerrainArt\Water.slk` imported into a map is not used (the game's
   copy is read before the map is loaded).
-- The water texture (`texFile`, `numTex` frames), shoreline doodads
-  (`shore*` columns) and `WavesDepth` were not examined.
+- **Texture and animation.** The surface shows one frame of the
+  texture `<texFile>NN.blp` (`NN` = 00 .. `numTex` - 1, two digits; for
+  Northrend `ReplaceableTextures\Water\Water00.blp` .. `Water44.blp`,
+  128 x 128, no alpha). The frame is `floor(texRate * t) mod numTex`
+  with `t` the game time in seconds (`texRate` 15 frames per second for
+  Northrend, so the 45 frames take 3 s); frames are not blended. The
+  animation stops while the game is paused. The origin of `t` is not
+  game time 0: in the tests frame 0 was shown at a game time of about
+  5.0 s (open question 7).
+- **Texture placement.** One texture covers `cells` x `cells` tiles
+  (Northrend: 2 x 2), in squares that start at the map's lower left
+  corner (tiles `2 m .. 2 m + 1`); the top row of the image is at the
+  north edge of the square and its left column at the west edge.
+- **Colour and blending.** Per channel, with `C` and `A` the colour and
+  alpha of the depth table above (0..255, interpolated between the
+  vertices), `T` the texture colour and `G` the colour of the ground
+  under the water as it is drawn (lit):
+
+      pixel = (A / 255) * (C / 255) * T * light + (1 - A / 255) * G
+
+  where `light` is the light of SPEC-0017 computed with the **unit**
+  day/night model (`DNCLordaeronUnit` without a call; the `lighting`
+  column is 1 for all tilesets) and the normal straight up, not clamped
+  at 1: at Lordaeron noon 1.049, 1.049, 1.091.
+- Shoreline doodads (`shore*` columns: foam models along the water's
+  edge) were seen in the screenshots but not examined; `WavesDepth` and
+  the `min*` / `max*` / `rate*` wave columns (all 0 for Northrend) were
+  not examined.
 
 ### Cliff models
 
@@ -260,6 +286,8 @@ leaves holes there.
    `...\Cliff1.blp` were found in the memory of the running game. The
    cliff tops do not take the map's imported `Ice_Snow` ground texture
    either.
+7. The origin of the water animation clock, and whether it follows the
+   game speed.
 
 ## Sources
 
@@ -320,4 +348,23 @@ leaves holes there.
    channel: flat 131, 132 .. 135, 135 .. 132, 131; west rising 99, 102,
    111, 120, 128, 134, 127, 124, 121, 117, 114, 110, 107, 104, 100, 99;
    south rising 110, 113, 119, 125, 132, 132, 129, ... 113, 110.
+10. **Water.** Flat test map, a pool whose floor falls by 8 per 128
+    towards the east (depth -10 to 118 under a surface at -89.6), all 45
+    water frames replaced by one image. Frames solid white, ground
+    black, Lordaeron noon: where the depth is 72 or more the pixel is
+    `(111, 133, 169)` = `0.706 * (150, 180, 220) * (1.049, 1.049, 1.091)`;
+    ground white instead (drawn 231 on the pool floor): `(179, 201,
+    239)`. At 0:00 with black ground: `(36, 74, 136)` (unit light
+    `(0.345, 0.586, 0.879)`; with the terrain light it would be
+    `(33, 68, 124)`). Shallow water at depth 10 or less: 10 on black
+    (alpha 10 / 255).
+11. **Water animation.** Frames replaced by 45 solid colours encoding the
+    frame number; the game paused (`PauseGame`) from a timer started at
+    game time 1.005 s with timeouts 4.0, 4.05, 4.1, 4.2, 4.5, 5.0, 6.0
+    and 7.3 s showed frames 0, 1, 1, 3, 7, 15, 30, 4, and did not change
+    while paused. Without the pause, screenshots about 0.53 s apart
+    showed frames 13, 20, 28, 36, 44, 7, 15, 24.
+12. **Water texture placement.** An image with four coloured quadrants:
+    each quadrant covers one tile, the squares of 2 x 2 tiles start at
+    even tile numbers, the image's top half lies north.
 

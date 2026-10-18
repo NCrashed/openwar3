@@ -210,19 +210,30 @@ swing):
 - One output `r` of game generator 9 (SPEC-0007) gives
   `x = add((r AND 0x7FFFFF) OR 0x3F800000, -1.0)`, a value in [0, 1),
   as for `GetRandomReal`, and the delay is `mul(x, ReactionDelay)`.
-- The unit acts at its first update at or after the end of the delay:
-  a knight next to its target hit at `138 + 6 j` ticks after the order
-  (6 ticks to its first update, 132 for `dmgpt1`), where `j` is the
-  number of whole updates (0.03 s) the delay spans: delays below 6
-  ticks gave `j` = 0, 6.8 to 9.2 ticks `j` = 1, 12.4 to 16.1 ticks
-  `j` = 2, ... 43.2 to 46.3 ticks `j` = 7.
+- **When it starts.** For an order given by a script in tick `o`
+  (ticks numbered as in SPEC-0018 "Phase from the start of the game";
+  an order given in `main` has `o` = 0), the delay starts 7 ticks
+  later: the unit acts at its first update at or after `o + 7 + delay`
+  (delay in ticks). A knight next to its target, facing it, started its
+  swing there and hit `dmgpt1` (132 ticks) later. Measured (order tick,
+  delay in ticks -> tick of the swing): (0, 0.31 -> 13), (0, 6.58 -> 19),
+  (50, 0.31 -> 61), (50, 5.41 -> 67), (50, 6.58 -> 67), (50, 11.66 ->
+  73), (53, 5.41 -> 67), (53, 6.58 -> 67), (56, 0.31 -> 67), (56, 6.58 ->
+  73), (103, 0.31 -> 115), (103, 6.58 -> 121), (300, 0.31 -> 313), (301,
+  0.31 -> 313), (500, 0.31 -> 511), (501, 0.31 -> 511). Neither "the
+  first update after the order plus the delay" nor "6 ticks after the
+  order" fits all of them. For an order given in an update tick the
+  swing thus comes 12 ticks later for delays up to 5 ticks, 18 ticks
+  later for 5 to 11 ticks, and so on.
+- Acquisitions (idle units and attack-move, below) count the delay from
+  the time of the check instead.
 
-Verified on 40 seeds (`SetRandomSeed(s)` right before the order, one
-knight per order): the delay computed from the first output of
-generator 9 after the seed predicts `j` in all 40 cases (two samples
-were one tick off because of the test's own counting timer). With seed
-7 the delay is 0.0015 s, so `j` = 0; the turning tests above used that
-seed. A unit that walks to its target for longer than its delay shows no
+An earlier series on 40 seeds (`SetRandomSeed(s)` right before the
+order, one knight per order) showed the same steps of one update per
+6 ticks of delay; its order times were not counted in ticks of the game
+(the test map used `TriggerSleepAction`) and do not fix the start of the
+delay. With seed 7 the delay is 0.0015 s (0.31 ticks); the turning tests
+above used that seed. A unit that walks to its target for longer than its delay shows no
 extra wait at the swing.
 
 During the delay the unit does nothing: a footman walking east that got
@@ -466,13 +477,20 @@ An idle unit with a weapon attacks an enemy unit on its own:
    tick.
 8. **Acquisition.** A footman of `Player(1)` paused with `PauseUnit` at
    (0, 0), created first, and 20 footmen of `Player(0)` on a circle of
-   radius 300 round it, created after it, all at map initialisation
-   after `SetRandomSeed(7)`. Acquisition ticks of the circle footmen
-   (counted from their creation), sorted: 3 8 18 22 26 31 36 44 45 46 48
+   radius 300 round it, created after it, all in the same tick (tick 201
+   of the game, from a 1 s timer) after `SetRandomSeed(7)`. Ticks below
+   are counted from the tick of the creation (= 0). Acquisition ticks of
+   the circle footmen, sorted: 3 8 18 22 26 31 36 44 45 46 48
    68 70 72 81 84 88 88 90 94; with seed 8: 1 5 13 16 19 32 33 33 40 46 67
-   69 70 73 79 81 85 89 91 96. The first change of facing (start of the
-   turn towards the target) of the footman acquiring at tick 3 (seed 7)
-   came at tick 10, of the one at 8 at tick 10.
+   69 70 73 79 81 85 89 91 96. Their update ticks are 4, 10, 16, ...
+   (ticks 205, 211, ... of the game). The first change of facing (start
+   of the turn towards the target) of the footman acquiring at tick 3
+   (seed 7) came at tick 10, of the one at 8 also at tick 10: the first
+   checks at `100 x` = 3.766 and 8.056, plus the delays 0.305 and 0.766,
+   end at 4.071 and 8.822, so the first update at or after them is 10
+   for both (tick 4 is too early for the first one by 0.071). Further
+   ones: 22.559 + 10.514 -> 34 (first facing change at 34), 18.155 +
+   42.838 -> 64.
 9. **Attack-move.** Seed 7, ten footmen of `Player(0)` created at
    (-3000, y) with `y = -9000 + 1500 k`, `attack` to (2000, y) given at
    the same tick; paused enemy footmen (5000 life) at
@@ -497,4 +515,7 @@ An idle unit with a weapon attacks an enemy unit on its own:
     near footmen acquired the thrower, the far ones did nothing; the
     damaged one started to turn in tick damage + 45, the other at
     damage + 15, matching the third and fourth outputs of generator 9
-    (the thrower's own order and acquisition used the first two).
+    (the first two were used by the thrower: created together with the
+    footmen 0.5 s before its order, with an acquisition range of 1150 it
+    acquired the footman at (0, 0) at its own first check, one draw, and
+    the attack order drew the second).

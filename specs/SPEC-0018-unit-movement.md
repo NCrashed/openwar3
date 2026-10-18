@@ -155,8 +155,9 @@ amounts.
    distance is not the plain Euclidean one in world units (it is taken
    in cells, from positions that change continuously between updates).
 2. The rule of the small heading changes on straight walks.
-3. Path finding: detours around units, buildings, doodads and cliffs;
-   the long-distance case where a unit walking 5000 first headed 1.7
+3. Path finding: SPEC-0020 covers static obstacles of the pathing map;
+   detours around units, buildings, doodads and cliffs are open, and so
+   is the long-distance case where a unit walking 5000 first headed 1.7
    degrees off and joined a line 32 off the start line (another unit
    crossed its way in that test).
 4. Collision between moving units, formation of groups, `patrol`,

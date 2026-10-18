@@ -121,7 +121,7 @@ delay** before it acts on it (walks towards the target or starts the
 swing):
 
 - `ReactionDelay` from `Units\MiscData.txt`, section `[Misc]` (0.25 s
-  in 1.27b; the file describes it as the largest random reaction delay
+  in 1.27b; the file describes it as the upper limit of a random delay
   in seconds).
 - One output `r` of game generator 9 (SPEC-0007) gives
   `x = add((r AND 0x7FFFFF) OR 0x3F800000, -1.0)`, a value in [0, 1),
@@ -175,8 +175,9 @@ taken, and the goal is taken again only from time to time:
   about 60 ticks in the tests, and at some changes (at distances from
   255 to 586) the attacker instead aims at the target's current
   position at every tick until the next change. Both depend on when
-  the path to the new goal is ready; this belongs to path finding, which
-  is not specified yet.
+  the path to the new goal is ready; this belongs to path finding
+  (SPEC-0020 covers static obstacles; chasing has not been compared with
+  it yet).
 - The attacker **arrives** when it is within the range test above of
   the goal point (not of the target). It then stops and swings at once,
   so a swing at a target that walks away starts from farther than the

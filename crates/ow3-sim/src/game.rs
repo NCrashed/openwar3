@@ -46,6 +46,7 @@ macro_rules! native {
 mod boards;
 pub use boards::Button;
 mod attack;
+mod creeps;
 mod enumerate;
 mod facing;
 mod follow;
@@ -191,6 +192,9 @@ pub struct Unit {
     resources: i32,
     /// A worker's gathering and its load (SPEC-0029).
     harvest: Option<harvest::Harvest>,
+    /// Where it was created, and what a creep keeps (SPEC-0030).
+    home: [u32; 2],
+    creep: creeps::Creep,
     /// A building's pathing texture in the grid (SPEC-0022).
     footprint: Option<Box<obstacles::Footprint>>,
     /// A building under construction (SPEC-0026).
@@ -1246,6 +1250,8 @@ impl<'a> Game<'a> {
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);
+        // Creeps waking, giving up their chases and home again (SPEC-0030).
+        creeps::tick(&mut self.state.borrow_mut());
         self.park();
         self.state.borrow_mut().in_tick = false;
     }

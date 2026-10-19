@@ -50,6 +50,12 @@ pub struct Combat {
     /// How far idle units hear a call for help, about this plus 180
     /// (`CallForHelp` of `[Misc]` in `Units\MiscGame.txt`, SPEC-0019).
     pub call_for_help: u32,
+    /// Creeps (SPEC-0030): the reach of their call for help, the distance
+    /// from home after which a chase can end and the seconds until then
+    /// (`CreepCallForHelp`, `GuardDistance`, `GuardReturnTime`).
+    pub creep_call_for_help: u32,
+    pub guard_distance: u32,
+    pub guard_return_time: u32,
 }
 
 impl Default for Combat {
@@ -61,6 +67,9 @@ impl Default for Combat {
             agi_defense_bonus: 0,
             reaction_delay: s2r("0.25"),
             call_for_help: s2r("600"),
+            creep_call_for_help: s2r("600"),
+            guard_distance: s2r("600"),
+            guard_return_time: s2r("5"),
         }
     }
 }
@@ -87,6 +96,9 @@ impl Combat {
                 "AgiDefenseBonus" => combat.agi_defense_bonus = s2r(value),
                 "ReactionDelay" => combat.reaction_delay = s2r(value),
                 "CallForHelp" => combat.call_for_help = s2r(value),
+                "CreepCallForHelp" => combat.creep_call_for_help = s2r(value),
+                "GuardDistance" => combat.guard_distance = s2r(value),
+                "GuardReturnTime" => combat.guard_return_time = s2r(value),
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {
                         for (slot, v) in combat.bonus[attack].iter_mut().zip(value.split(',')) {

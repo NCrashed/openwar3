@@ -160,6 +160,7 @@ fn set_attribute(
 /// Day turned into night or back: units whose `regenHP` applies only at
 /// night go on at their new rate.
 pub(super) fn night_changed(state: &mut State) {
+    super::creeps::night_changed(state);
     let night = state.night;
     for i in 0..state.units.len() {
         let h = state.units[i];
@@ -270,6 +271,8 @@ pub(super) fn create_unit(
         user_data: 0,
         resources: 0,
         harvest: None,
+        home: [x, y],
+        creep: super::creeps::born(state, owner, type_id),
         footprint: footprint.map(Box::new),
         construction: None,
         queue: None,
@@ -1292,6 +1295,16 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 .unit(handle(&args[0]))
                 .is_some_and(|u| u.hidden);
             Ok(Some(Value::Boolean(hidden)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native UnitIsSleeping takes unit whichUnit returns boolean",
+        |vm, state, args| {
+            let state = state.borrow();
+            let asleep = handle(&args[0]).is_some_and(|h| super::creeps::sleeping(&state, h));
+            Ok(Some(Value::Boolean(asleep)))
         }
     );
     native!(

@@ -26,7 +26,7 @@ use crate::random::ATTACK_DICE;
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attacking {
-    target: u32,
+    pub(super) target: u32,
     /// The tick of the next hit.
     next: u64,
     /// The order id `GetUnitCurrentOrder` gives: 0 for an attack the unit
@@ -93,6 +93,35 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
 pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     let attackers = state.borrow().attacking.clone();
     for h in attackers {
+        // A swing after the first starts only with the target in reach;
+        // else the attacker chases it (SPEC-0019, "Start of the attack":
+        // a started swing always hits, but a new one needs the range).
+        {
+            let mut s = state.borrow_mut();
+            let s = &mut *s;
+            let tick = s.ticks;
+            let next_swing = match s.objects.get(&h) {
+                Some(Object::Unit(u)) if u.alive => {
+                    u.attack.filter(|a| a.resume.is_some()).map(|a| {
+                        let point = weapon_for(s, u.type_id, Some(a.target))
+                            .map_or(1, |w| ticks(w.damage_point));
+                        (a, a.next.saturating_sub(point))
+                    })
+                }
+                _ => None,
+            };
+            if let Some((a, start)) = next_swing
+                && start == tick
+                && standing(s, a.target)
+                && !super::movement::reaches(s, h, a.target)
+            {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                    u.attack = None;
+                }
+                super::movement::chase(s, h, a.target, a.order_id);
+                continue;
+            }
+        }
         // The hit, if one is due: target, amount and attack type.
         let hit = {
             let mut s = state.borrow_mut();

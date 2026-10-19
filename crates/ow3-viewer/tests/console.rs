@@ -287,3 +287,76 @@ fn a_peasant_gathers_lumber() {
     assert_eq!(sim.resources().lumber, lumber + 10);
     assert_eq!(view(&sim, peasant).order, 852_018);
 }
+
+#[test]
+fn a_creep_chases_and_goes_home() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let nfrp = i32::from_be_bytes(*b"nfrp");
+    let p = view(&sim, peasant);
+    let creep = sim
+        .units()
+        .into_iter()
+        .filter(|u| u.type_id == nfrp && u.alive)
+        .min_by(|a, b| {
+            let d = |u: &ow3_sim::game::UnitView| (u.x - p.x).powi(2) + (u.y - p.y).powi(2);
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let home = (creep.x, creep.y);
+    // The peasant walks up to the creep, then runs back.
+    sim.run(peasant, Command::Move, Some([home.0, home.1 + 300.0]));
+    let mut farthest = 0.0f32;
+    let mut went_home = false;
+    let mut ran = false;
+    for _ in 0..900 {
+        sim.advance(100_000);
+        let c = view(&sim, creep.handle);
+        let away = ((c.x - home.0).powi(2) + (c.y - home.1).powi(2)).sqrt();
+        farthest = farthest.max(away);
+        went_home |= c.order == 851_986;
+        if !ran && (view(&sim, peasant).y - home.1) < 380.0 {
+            ran = true;
+            sim.run(peasant, Command::Move, Some([p.x, p.y]));
+        }
+    }
+    let c = view(&sim, creep.handle);
+    let away = ((c.x - home.0).powi(2) + (c.y - home.1).powi(2)).sqrt();
+    assert!(farthest > 600.0, "{farthest}");
+    assert!(went_home);
+    assert!(away < 20.0, "{away}");
+}
+
+/// A peasant walking with gold shows a geoset (the sack) that its plain
+/// walk hides, and so with lumber.
+#[test]
+fn a_load_shows_on_the_peasant() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    if !dir.join("War3.mpq").exists() {
+        return;
+    }
+    use ow3_viewer::models::{Animation, UnitPose};
+    let mut chain = ow3_formats::mpq::ArchiveChain::game(&dir).unwrap();
+    let mut animation = Animation::default();
+    let peasant = animation
+        .model(&mut chain, "Units\\Human\\Peasant\\Peasant.mdx")
+        .unwrap();
+    animation.unit_parts(peasant, 0);
+    let walk = animation
+        .pose_alphas(peasant, UnitPose::Walk(300))
+        .unwrap()
+        .0;
+    for load in [1, 2] {
+        let carry = animation
+            .pose_alphas(peasant, UnitPose::Carry(300, load))
+            .unwrap()
+            .0;
+        assert!(
+            walk.iter().zip(&carry).any(|(w, c)| *w < 0.5 && *c > 0.5),
+            "load {load}: {walk:?} {carry:?}"
+        );
+    }
+}

@@ -1119,6 +1119,32 @@ pub(super) fn harvest_order(
     done
 }
 
+/// Unit `h` joins a fight on `target` as an idle unit answering a call
+/// for help (SPEC-0019): an attack with order id 0 after its reaction
+/// delay from this tick.
+pub(super) fn join_fight(state: &mut State, h: u32, target: u32) {
+    let tick = state.ticks;
+    let Some(at) = position_of(state, target) else {
+        return;
+    };
+    if order(state, h, Order::Attack { target }, 0, at) {
+        let delay = mul(
+            state.game_random[REACTION].fraction(),
+            state.combat.reaction_delay,
+        );
+        react(state, h, tick, delay, tick);
+    }
+}
+
+/// Creep `h` walks home to `home` with a `move` order (SPEC-0030).
+pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
+    let done = order(state, h, Order::Point, ORDER_MOVE, home);
+    if done {
+        set_attack_move(state, h, None);
+    }
+    done
+}
+
 /// Unit `h` stops where it is, its order over.
 pub(super) fn stop(state: &mut State, h: u32) {
     halt(state, h);
@@ -2167,6 +2193,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         if u.attack.is_some() || u.movement.is_some_and(|m| m.ordered()) {
             continue;
         }
+        // A sleeping creep does not acquire (SPEC-0030).
+        if u.creep.sleeping {
+            continue;
+        }
         let Some(phase) = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE) else {
             continue;
         };
@@ -2203,6 +2233,8 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             );
             react(state, h, from, add(delay, extra), from);
             acquired.push(h);
+            // A creep calls its camp (SPEC-0030).
+            super::creeps::call_for_help(state, h, target);
         }
     }
     acquired
@@ -2298,10 +2330,17 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     if !enemies(state, owner, a.owner) {
         return;
     }
+    // A sleeping creep wakes with its camp a little later; one going home
+    // does not answer (SPEC-0030).
+    if super::creeps::hit_while_asleep(state, victim, attacker) {
+        return;
+    }
     let answers = |h: u32| match state.objects.get(&h) {
         Some(Object::Unit(u)) => {
             u.alive
                 && !u.paused
+                && !u.creep.sleeping
+                && !u.creep.returning
                 && u.attack.is_none()
                 && u.attack_move.is_none()
                 && u.movement.is_none_or(|m| !m.ordered())

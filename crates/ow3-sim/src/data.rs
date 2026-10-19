@@ -84,6 +84,9 @@ pub struct UnitType {
     pub target_type: Vec<String>,
     /// Its abilities (`abilList` of `UnitAbilities.slk`), SPEC-0029.
     pub abilities: Vec<i32>,
+    /// Creeps of the type sleep at night (`canSleep` of `UnitData.slk`,
+    /// SPEC-0030).
+    pub can_sleep: bool,
     /// Movement (SPEC-0018): speed (`spd`, units per second), turn rate
     /// (`turnRate`, radians per update of 0.03 s) and propulsion window
     /// (`propWin`, degrees), as reals.
@@ -443,6 +446,7 @@ impl ObjectData {
                 "pathTex",
                 "targType",
                 "formation",
+                "canSleep",
             ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
@@ -458,6 +462,7 @@ impl ObjectData {
                     .as_deref()
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
+                unit.can_sleep = values[6].as_deref().is_some_and(|v| v.trim() == "1");
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their
@@ -747,6 +752,9 @@ impl ObjectData {
             }
             if let Some(rank) = def.number(b"ufor") {
                 unit.formation = f32::from_bits(rank) as u8;
+            }
+            if let Some(sleep) = def.number(b"usle") {
+                unit.can_sleep = f32::from_bits(sleep) != 0.0;
             }
             if let Some(orient) = def.number(b"uori") {
                 unit.orient_interp = f32::from_bits(orient) as u8;

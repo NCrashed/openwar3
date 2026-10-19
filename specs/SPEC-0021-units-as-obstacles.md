@@ -110,7 +110,15 @@ The throttle of SPEC-0020 compares the iterations of the whole window
 Members of a group that are neither held nor already walking are
 marked while the group moves, and marked units are ignored by local
 searches and seeing a point (SPEC-0025, "Members in each other's
-searches"). Held members are standing obstacles.
+searches"). Held members are standing obstacles. The look-ahead check
+treats members of the walker's own cluster like any other unit; the
+cells it tests are only those of SPEC-0020, step 3. Example
+(`c-RSM-2.w3g`, update at movement clock 5.309854): member 1 is at
+(383.052, 381.806) cells, its cell is (383, 381), the cell one cell
+length ahead towards its target is (383, 380), so the step is to the
+south only and the tested cells are (382, 379) and (383, 379). Member
+2, at (384.865, 381.832), occupies x 383..384, y 380..381, which is not
+tested: the check is free and nobody waits.
 
 ## Edge cases
 

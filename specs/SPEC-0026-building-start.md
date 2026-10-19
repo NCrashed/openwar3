@@ -62,13 +62,19 @@ the building, so only the distance matters.
 
 At that update:
 
-- the building is created at the target point, in the same tick: script
-  timers that expire in that tick already see it (in `c-RSR-1` the
-  player's unit count read by a periodic timer is 2 in the creation
-  tick). The actions of a trigger on `EVENT_PLAYER_UNIT_CONSTRUCT_START`
-  run later in that tick, after the timers of the tick (a timer of that
-  tick still saw the variable set by the trigger unset; the trigger
-  then logged the same tick number);
+- the building is created at the target point, in the tick of that
+  update. The actions of a trigger on
+  `EVENT_PLAYER_UNIT_CONSTRUCT_START` run right after the creation. The
+  order between this and the script timers of the same tick was not
+  always the same: in `c-RSR-1` and for the last two farms of test RTI
+  the creation came after the periodic timer of the tick (the timer
+  still read the worker before the start and the unit count without
+  the building, and saw them from the next tick), for the first two
+  farms of RTI before it (the timer of the creation tick already read
+  the building's life, and the trigger saw the timer's counter of the
+  previous tick). A possible cause is that the start is ordered with
+  the timers of the tick by time, against the expiry of the periodic
+  timer (SPEC-0002); this was not checked (open question 6);
 - the worker's current order becomes 852024 (`repair`, by
   `OrderId2String`) while it builds;
 - if the worker's footprint (SPEC-0020, size classes; a peasant is
@@ -86,38 +92,61 @@ At that update:
 
 ### Construction progress
 
-Times below are game time in seconds as given by the game clock of
-SPEC-0018 (the clock of tick `k` is the sum of `k - 1` additions of
-0.005, so it drifts slightly from `0.005 (k - 1)`). Arithmetic is that
-of SPEC-0004.
+Ticks are numbered and clocks taken as in SPEC-0018 ("Phase from the
+start of the game", "Game clock"): `clock(k)` is the movement clock in
+tick `k`, the result of `k - 1` additions of 0.005 with the addition of
+SPEC-0004 (so it falls slowly behind `0.005 (k - 1)`: `clock(1891)` is
+`9.4494152`). All arithmetic is that of SPEC-0004.
 
-With `max` the building's `HP` and `bldtm` its build time (farm 500 and
-35, barracks 1500 and 60), the life of a building under construction is
+**Start of work.** The worker starts working on the building at one of
+its updates:
+
+- if the worker was not moved (it stayed outside the footprint), at
+  the update at which the building is created, in the same tick;
+- if it was moved out of the footprint, usually 2 updates later (12
+  ticks); in 2 of 12 such tests 3 updates later (18 ticks), and in one
+  test (worker moved to (-80, 48) from the building) at once. What
+  decides was not found (open question 1). It is not the worker's
+  facing: workers that still faced 41 degrees away from the building
+  started after 12 ticks.
+
+Call `ks` the tick of that update and `Ts = clock(ks)`.
+
+**Life.** With `max` the building's `HP` and `bldtm` its build time
+(farm 500 and 35, barracks 1500 and 60):
 
     base = mul(max, 0.1)
     rate = div(mul(max, 0.9), bldtm)
-    life(T) = clamp(add(base, mul(rate, sub(T, Tb))), 0, max)
+    Tb   = add(Ts, 0.0001)
+    life = clamp(add(base, mul(rate, sub(T, Tb))), base, max)
 
-where `T` is the game time at which the life is read and `Tb` the time
-growth began. For a farm `base` = 50 and `rate` = 12.857142
-(`0x414DB6DB`), for barracks 150 and 22.5. The life is not stepped tick
-by tick: every read (`GetUnitState(u, UNIT_STATE_LIFE)`, the checksum,
-the display) evaluates the formula at the current time.
+where `T` is the clock of the tick in which the life is read. For a
+farm `base` = 50 and `rate` = 12.857142 (`0x414DB6DB`), for barracks
+150 and 22.5. The life is not stepped tick by tick: every read
+(`GetUnitState(u, UNIT_STATE_LIFE)`, the checksum, the display)
+evaluates the formula. So the life is `base` until the work starts and
+in the tick `ks` itself, and grows from tick `ks + 1` on: the first
+increase is `mul(rate, 0.0049)` (50.0629997 for a farm started at 1.53
+s), each further tick adds `rate` times one clock step. The 0.0001 is
+the threshold of SPEC-0018 (`0x38D1B717`); it fits all 4 x 30 values
+read in test RTI to the last place of the life (the time `T - Tb`
+derived from the life is `clock(k) - Ts - 0.0001` to within 5e-6 s
+everywhere, also after 35 s).
 
-Growth begins (`Tb`) at the clock of the second tick after the tick in
-which the building is created, when the worker was not moved (it stayed
-outside the footprint, see above). Until then the life is `base`. When
-the worker was moved out of the footprint, growth began later: 14 ticks
-after the creation for a farm and 20 ticks for barracks in every such
-test. The rule behind these numbers was not found (open question 1).
-
-Construction is finished in the first tick whose clock, taken at the
-next tick, is at least `Tb + bldtm`. Measured from the tick of `Tb`:
-7000 ticks for a farm, 12003 ticks for barracks (the drift of the
-clock). In that tick:
+**Completion.** Construction is finished in the tick `kf` that is the
+last one in which the life is still below `max`, that is the first
+tick for which `sub(clock(kf + 1), Tb) >= bldtm`. It happens after the
+script timers of that tick: a periodic timer firing in tick `kf` still
+reads a life below `max` (499.97 for a farm); from tick `kf + 1` on the
+life is `max`. Because of the clock drift `kf - ks` depends on when the
+work started: for a farm 7001 ticks when started at 1.53 or 4.71 s,
+7002 when started at 9.45 or 14.13 s; for barracks started at 2.79 s,
+12004 ticks. In tick `kf`:
 
 - the life is set to `max`; from then on it is an ordinary unit life
   (SPEC-0013);
+- the actions of a trigger on `EVENT_PLAYER_UNIT_CONSTRUCT_FINISH` run
+  (after the timers of the tick);
 - the player's food cap grows by the type's `fmade` (6 for a farm);
   `GetPlayerState(p, PLAYER_STATE_RESOURCE_FOOD_CAP)` shows the new
   value from the next tick;
@@ -172,8 +201,8 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
 
 ## Open questions
 
-1. The delay before growth when the worker was moved (14 or 20 ticks
-   instead of 2), the growth of the model, the player's type record
+1. What decides whether a moved worker starts working at once, after
+   12 or after 18 ticks, the growth of the model, the player's type record
    after completion (expected `q2` down by one and `q1`, `q4` up by
    one; not checked), and cancelling.
 2. The placement search for the worker, and the exact footprint test.
@@ -185,6 +214,8 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
    (cells or world units).
 5. Other races (Orc and Night Elf workers, Undead summoning) and
    several workers on one building.
+6. The order within a tick of the creation (and of other unit updates)
+   and the script timers firing in that tick.
 
 ## Sources
 
@@ -196,8 +227,13 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
   with script build orders, logged every tick.
 - Test maps RSU and RSW (farm, life logged every tick with
   `R2SW(x, 1, 7)`), RSX (farm and barracks), RSY (barracks), RSZ and
-  RTA (growth delay), RTB (worker positions and facings at the start),
-  RTC .. RTF (heading of the worker at the start).
+  RTA, RTG, RTH (growth delay), RTB (worker positions and facings at
+  the start), RTC .. RTF (heading of the worker at the start), RTI (four
+  farms started at different times, life read every tick near the
+  start and the end).
+- Debugger on the running game and on playback of `c-RSR-1.w3g`: the
+  movement clock at the creation of the buildings, at the start of
+  work and at each read of the script's periodic timer.
 - Debugger on the running game: the random generator calls (generator
   and caller), the type records in memory.
 
@@ -206,27 +242,37 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
 1. **c-RSR-1.w3g**: the build order is in slot 81; in the log
    (`c-RSR-1.log.tsv`) gold and lumber drop from 500/500 to 420/480 and
    the order becomes 1751674741 in the tick the order takes effect;
-   the peasant walks at 190 towards (192, -384), its distance at its
-   last update before construction is 103.51 and the farm appears at
-   the next update, where the peasant is placed at (176, -272) with
-   order 852024.
+   the peasant walks at 190 towards (192, -384). Its updates fall on
+   log ticks 1702 (distance 104.46) and 1708 (98.76; game tick 1909,
+   movement clock 9.5394001, a tick `6 m + 1` of SPEC-0018). The farm
+   is created at the update of log tick 1708, after the timer of that
+   tick, so the log shows it (unit count 2) and the peasant placed at
+   (176, -272) with order 852024 from log tick 1709. (The log tick is
+   the game tick minus 201 here.)
 2. **RST** (east approach): distances at the update of the start
    98.13 .. 99.89 (worker stays), 94.44 .. 95.69 (worker moved to 112
    east of the building); a worker at 100.14 at an update did not start.
 3. **Random numbers**: placing the farm calls game generator 21 once
    and no other generator.
-4. **Life during construction** (RSW): the life of the farm read every
-   tick follows `life(T)` with `base` 50 and `rate` `0x414DB6DB` to
-   within 1e-7 at 80 points spread over the whole construction; it is
-   50 in the creation tick and the next one and grows from the second
-   tick after the creation.
-5. **Completion**: a farm is finished 7000 ticks after the tick of
-   `Tb`, barracks 12003 ticks; the life becomes 500 (1500), the food
-   cap reads 6 from the next tick (farm), and the worker's order is 0
-   two ticks after completion.
-6. **Moved worker** (RSZ, RTA): growth starts 14 ticks after the
-   creation for a farm and 20 for barracks; 2 ticks when the worker was
-   not moved.
+4. **Life during construction** (RTI, four farms of workers created 98
+   east of their sites facing them, build orders at 0.5, 3.7, 8.43 and
+   13.1 s after the start of the test): the farms are created in ticks
+   307, 943, 1891 and 2827 (`clock` 1.5299985, 4.7098970, 9.4494152,
+   14.1286297), the work starts in the same tick, the life read by a
+   periodic timer is 50 in that tick, 50.0629997, 50.0629959,
+   50.0629959, 50.0629959 one tick later, and follows the formula
+   above with `Ts = clock(ks)` at every tick read.
+5. **Completion** (RTI): the last tick with a life below 500 and the
+   tick of `EVENT_PLAYER_UNIT_CONSTRUCT_FINISH` are 7308, 7944, 8893
+   and 9829 (life 499.9747619, 499.9536132, 499.9906005, 499.9676513
+   there); the life is 500 from the next tick. Test RSY (barracks,
+   worker moved, work started 18 ticks after the creation) finished
+   12004 ticks after the start of work, test RSX (farm, worker moved,
+   12 ticks) 7001.
+6. **Moved worker**: in RTG three of four workers moved out of the
+   footprint start working 12 ticks after the creation and one 18
+   ticks; in c-RSR-1 the farm is created in tick 1909 and the work
+   starts in tick 1921.
 7. **Heading** (RTC .. RTF): a worker created 98 units east of the site,
    facing 11 degrees away from it, starts at its first update; facing 12
    degrees away it turns first and starts later.

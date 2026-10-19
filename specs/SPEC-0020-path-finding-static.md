@@ -295,9 +295,12 @@ the high-level search from its position to the order point. Then:
      ended at the closest node), the unit stands still for this update
      and searches again from its position to the same segment goal at
      the next update.
-   - **Look-ahead check**: take the cell of the unit, `c0`, and the cell
-     of the point one cell length ahead towards the target (the target
-     itself when it is closer than one cell), `c1`. The cells of the
+   - **Look-ahead check**: take the cell of the unit, `c0` (of its
+     position at this update, that is the position stored at its
+     previous update plus its velocity times the elapsed time,
+     SPEC-0018), and the cell of the point one cell length ahead
+     towards the target (the target itself when it is closer than one
+     cell), `c1`. The cells of the
      footprint at `c1` that a step from `c0` to `c1` newly covers (as for
      a search step; if `c1 = c0`, the whole footprint) must be passable.
      If not, the unit is **blocked**: it stands still for this update,

@@ -223,8 +223,8 @@ rule 9).
 Fog is set by the script with `SetTerrainFogEx(style, zstart, zend,
 density, red, green, blue)`; the World Editor writes such a call into
 `main` when the map has fog (23 of the shipped maps in the test
-installation do, all with style 0). `(12)IceCrown`, whose script makes no call, showed
-no fog. Whether the game applies the fog fields of `war3map.w3i`
+installation do, all with style 0). `(12)IceCrown`, whose script makes
+no call, showed no fog. Whether the game applies the fog fields of `war3map.w3i`
 (version 25) by itself was not tested. The colour components are 0 to
 1.
 
@@ -247,7 +247,7 @@ flat ground, `f` was the same over the whole screen):
 So the densities used by the shipped maps for style 0 (0 to 84.5) have
 no effect, and a style 1 or 2 density of 0.5 hides everything.
 
-
+## Edge cases
 
 - The clamp at 1 is per channel and applied to the light before the
   texture: at Ashenvale noon all three channels saturate and a white

@@ -134,7 +134,10 @@ fn state_changes_at_the_recorded_turns() {
         let actions = replay.events.iter().any(|e| {
             matches!(e, ow3_formats::replay::Event::TimeSlot { actions, .. } if !actions.is_empty())
         });
-        if actions {
+        // Buildings and their workers change state the simulation does not
+        // have (objects of the work, freed after it).
+        let builds = path.file_name().is_some_and(|n| n == "c-RTI-1.w3g");
+        if actions || builds {
             let missing: Vec<usize> = ours
                 .iter()
                 .copied()

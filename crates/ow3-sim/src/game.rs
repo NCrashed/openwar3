@@ -209,15 +209,16 @@ pub struct Construction {
 /// `PLAYER_STATE_RESOURCE_FOOD_CAP`.
 const PLAYER_STATE_RESOURCE_FOOD_CAP: i32 = 4;
 
-/// One tick of the buildings under construction (SPEC-0026,
-/// "Construction progress"), with the movement clock of the tick: growth
-/// begins at its tick, the life follows the clock, and a building is
-/// finished when the next tick's clock reaches the end of its build time.
-/// A finished building has its full life, and its food comes at the next
-/// tick.
+/// 0.0001: the start of growth comes this much after the clock of the
+/// tick work begins (SPEC-0026).
+const GROWTH_OFFSET: u32 = 0x38D1_B717;
+
+/// The life of the buildings under construction in this tick (SPEC-0026,
+/// "Construction progress"): from the tick `ks` work begins, `Tb` is its
+/// clock plus 0.0001 and the life `base + rate (T - Tb)` with `T` the
+/// clock of the tick, at least `base`.
 fn construction(state: &mut State, tick: u64) {
     let clock = state.move_clock;
-    let mut finished = Vec::new();
     for &h in &state.units {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
@@ -229,14 +230,35 @@ fn construction(state: &mut State, tick: u64) {
             continue;
         }
         if tick == c.begin {
-            c.tb = Some(clock);
+            c.tb = Some(add(clock, GROWTH_OFFSET));
         }
         let Some(tb) = c.tb else {
             continue;
         };
-        u.life.set(add(c.base, mul(c.rate, sub(clock, tb))));
-        let next = add(clock, crate::timers::TICK);
-        if f32::from_bits(next) >= f32::from_bits(add(tb, c.build_time)) {
+        let life = add(c.base, mul(c.rate, sub(clock, tb)));
+        u.life
+            .set(if f32::from_bits(life) < f32::from_bits(c.base) {
+                c.base
+            } else {
+                life
+            });
+    }
+}
+
+/// The buildings finished in this tick, after the script's timers
+/// (SPEC-0026): those with `clock(k + 1) - Tb` at least their build time.
+/// They have their full life, their food comes at the next tick, and
+/// their finish events are queued.
+fn finish_constructions(state: &mut State) {
+    let next = add(state.move_clock, crate::timers::TICK);
+    let mut finished = Vec::new();
+    for &h in &state.units {
+        if let Some(Object::Unit(u)) = state.objects.get(&h)
+            && u.alive
+            && let Some(c) = u.construction.as_deref()
+            && let Some(tb) = c.tb
+            && f32::from_bits(sub(next, tb)) >= f32::from_bits(c.build_time)
+        {
             finished.push(h);
         }
     }
@@ -252,6 +274,7 @@ fn construction(state: &mut State, tick: u64) {
         if food != 0 {
             state.food_made.push((u.owner, food));
         }
+        state.constructions.push((true, h));
     }
 }
 
@@ -306,6 +329,8 @@ pub struct UnitView {
     pub target: Option<u32>,
     /// The id of the order it follows, 0 without one.
     pub order: i32,
+    /// A building under construction (SPEC-0026).
+    pub constructing: bool,
 }
 
 /// An attack in progress, in ticks.
@@ -555,6 +580,9 @@ pub struct State {
     marked: std::collections::BTreeSet<u32>,
     /// Food of buildings finished at this tick, given at the next one.
     food_made: Vec<(i32, i32)>,
+    /// Buildings started (false) and finished (true) in this tick, whose
+    /// events run after the timers (SPEC-0026).
+    constructions: Vec<(bool, u32)>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -615,6 +643,7 @@ impl State {
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             food_made: Vec::new(),
+            constructions: Vec::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -1070,6 +1099,11 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
+        // Buildings start and are finished after the timers (SPEC-0026).
+        movement::start_buildings(&mut self.state.borrow_mut());
+        finish_constructions(&mut self.state.borrow_mut());
+        widgets::constructions(&mut self.vm, &self.state);
+        self.park();
         movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
@@ -1168,6 +1202,7 @@ impl<'a> Game<'a> {
                     walking: u.movement.is_some_and(|m| m.walking()),
                     target: u.movement.and_then(|m| m.target()),
                     order: u.movement.map_or(0, |m| m.order_id()),
+                    constructing: u.construction.is_some(),
                 }),
                 _ => None,
             })

@@ -396,6 +396,7 @@ mod tests {
             walking: false,
             target: None,
             order: 0,
+            constructing: false,
         }
     }
 

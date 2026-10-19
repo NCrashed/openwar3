@@ -264,6 +264,62 @@ pub(super) fn create_unit(
     Some(h)
 }
 
+const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
+const EVENT_PLAYER_UNIT_CONSTRUCT_FINISH: i32 = 28;
+
+/// Runs the triggers of the player unit events of buildings started and
+/// finished in this tick (SPEC-0026), queued as `(finished, building)`.
+/// The filter sees the building as `GetFilterUnit`.
+///
+/// PROVISIONAL: the unit events of a building (`EVENT_UNIT_CONSTRUCT_*`)
+/// are not run.
+pub(super) fn constructions(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let queued = std::mem::take(&mut state.borrow_mut().constructions);
+    for (finished, building) in queued {
+        let event = if finished {
+            EVENT_PLAYER_UNIT_CONSTRUCT_FINISH
+        } else {
+            EVENT_PLAYER_UNIT_CONSTRUCT_START
+        };
+        let (registrations, owner) = {
+            let mut state = state.borrow_mut();
+            let Some(owner) = state.unit(Some(building)).map(|u| u.owner) else {
+                continue;
+            };
+            let owner_handle = state.player_handle(owner);
+            (state.events.clone(), (owner, owner_handle))
+        };
+        for registration in &registrations {
+            if let Registration::PlayerUnit {
+                trigger,
+                player,
+                event: e,
+                filter,
+            } = *registration
+                && e == event
+                && player == owner.0
+            {
+                let filter_context = Context {
+                    filter_unit: Some(building),
+                    triggering_player: Some(owner.1),
+                    event_id: Some(event),
+                    ..Context::default()
+                };
+                if test_boolexpr(vm, state, filter, filter_context) {
+                    let context = Context {
+                        event_id: Some(event),
+                        triggering_player: Some(owner.1),
+                        triggering_unit: Some(building),
+                        triggering_widget: Some(building),
+                        ..Context::default()
+                    };
+                    fire_trigger(vm, state, trigger, context);
+                }
+            }
+        }
+    }
+}
+
 /// Runs the triggers registered for the death of `widget` (SPEC-0009):
 /// first the widget death registrations, then the player unit events of
 /// its owner, then its unit events, each kind in the order registered.
@@ -1493,6 +1549,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     for declaration in [
         "constant native GetTriggerUnit takes nothing returns unit",
         "constant native GetDyingUnit takes nothing returns unit",
+        "constant native GetConstructingStructure takes nothing returns unit",
+        "constant native GetConstructedStructure takes nothing returns unit",
     ] {
         native!(add, state, declaration, |vm, state, args| {
             Ok(Some(Value::Handle(state.borrow().context.triggering_unit)))

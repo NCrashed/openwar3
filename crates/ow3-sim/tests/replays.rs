@@ -134,10 +134,9 @@ fn replays_follow_the_game_logs() {
 ///
 /// PROVISIONAL: where the peasant is moved off the farm's footprint is
 /// not specified (SPEC-0026, open question 2), so its position is not
-/// compared once the farm stands. The simulation starts the farm at the
-/// update of tick 1708 of the log; the game, by the distances it reached
-/// at its updates (103.51 at the last one before), updates the peasant one
-/// tick later and starts it at 1709. So tick 1708 is left out.
+/// compared once the farm stands. The farm starts at the update of the
+/// tick of log line 1708, after the script's timer, so the log shows it
+/// from 1709.
 #[test]
 fn build_order_follows_the_game_log() {
     let path = game_data().join("replays/c-RSR-1.w3g");
@@ -157,11 +156,6 @@ fn build_order_follows_the_game_log() {
     for (line, ours) in log.lines().filter(|l| !l.starts_with('#')).zip(&ours) {
         let game: Vec<&str> = line.split('\t').collect();
         started |= game[3] == "852024";
-        // The tick before the game's start: the simulation starts the farm
-        // one tick earlier (see above).
-        if game[0] == "1708" {
-            continue;
-        }
         let columns = if started { 3..7 } else { 0..7 };
         for i in columns {
             assert_eq!(ours[i], game[i], "tick {}: column {i}", game[0]);
@@ -177,7 +171,8 @@ fn build_order_follows_the_game_log() {
 /// the movement clock after growth began, with 500 life; the player's food cap
 /// grows by 6 at the next tick, and the peasant's order ends. The ticks
 /// are counted from the first tick in which the life is above 50, the
-/// second (or with the peasant moved the 14th) after the start.
+/// one after work began: the tick of the start, or with the peasant
+/// moved two updates later.
 #[test]
 fn a_farm_is_built() {
     let path = game_data().join("replays/c-RSN-1.w3g");
@@ -214,7 +209,7 @@ fn a_farm_is_built() {
     let finished = playback.game.ticks();
     let began = began.unwrap();
     assert!(
-        began - created == 2 || began - created == 14,
+        began - created == 1 || began - created == 13,
         "{created} {began}"
     );
     // 7000 ticks at the start of a game; growth here begins at a clock of
@@ -234,4 +229,51 @@ fn a_farm_is_built() {
         .find(|u| u.type_id == hpea)
         .unwrap();
     assert_eq!(peasant.order, 0);
+}
+
+/// SPEC-0026, construction progress, against the log of `c-RTI-1.w3g`:
+/// four farms whose life a timer reads at every tick near the start and
+/// the end of construction and every 1000 ticks (`T b n life`), and
+/// their finish events (`F n`). Every line the simulation logs too has
+/// the same life, and the farms are finished in the same ticks.
+///
+/// PROVISIONAL: the first two farms were started before the timer of
+/// their tick in the game, after it in the simulation (SPEC-0026, open
+/// question 6), so their logs start one tick later.
+#[test]
+fn construction_follows_c_rti_1() {
+    let path = game_data().join("replays/c-RTI-1.w3g");
+    let Ok(log) = std::fs::read_to_string(path.with_extension("log.tsv")) else {
+        return;
+    };
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let run = play(&game_data(), &path, &replay);
+    let mut ours = std::collections::BTreeMap::new();
+    let mut finished = Vec::new();
+    for line in run.preload.iter().filter_map(|l| l.strip_prefix("@@")) {
+        let w: Vec<&str> = line.split(' ').collect();
+        match w[0] {
+            "T" => {
+                ours.insert((w[1].to_owned(), w[2].to_owned()), w[3].to_owned());
+            }
+            "F" => finished.push(w[1].to_owned()),
+            _ => {}
+        }
+    }
+    let (mut compared, mut game_finished) = (0, Vec::new());
+    for line in log.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = line.split('\t').collect();
+        match w[0] {
+            "T" => {
+                if let Some(life) = ours.get(&(w[1].to_owned(), w[2].to_owned())) {
+                    assert_eq!(life, w[3], "farm {} at {}", w[1], w[2]);
+                    compared += 1;
+                }
+            }
+            "F" => game_finished.push(w[2].to_owned()),
+            _ => {}
+        }
+    }
+    assert!(compared > 90, "{compared}");
+    assert_eq!(finished, game_finished);
 }

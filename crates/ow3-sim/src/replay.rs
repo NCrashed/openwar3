@@ -58,7 +58,8 @@ pub struct Playback<'a> {
 
 /// What of the game's state a turn checksum (SPEC-0024) sees, as far as
 /// the simulation has it: the generators, the handles made, and folds of
-/// the units, of those walking and of the players' selections. Positions
+/// the units, of those walking, of the buildings under construction and of
+/// the players' selections. Positions
 /// and life are not part of the checksum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
@@ -67,6 +68,7 @@ pub struct Marks {
     pub handles: u32,
     pub units: u32,
     pub walking: u32,
+    pub constructing: u32,
     pub selections: u32,
 }
 
@@ -79,6 +81,7 @@ impl Marks {
             ("handles", self.handles != other.handles),
             ("units", self.units != other.units),
             ("walking", self.walking != other.walking),
+            ("constructing", self.constructing != other.constructing),
             ("selections", self.selections != other.selections),
         ]
         .into_iter()
@@ -162,6 +165,9 @@ impl<'a> Playback<'a> {
         };
         for u in self.game.units() {
             marks.units = fold(marks.units, u.handle);
+            if u.constructing {
+                marks.constructing = fold(marks.constructing, u.handle);
+            }
             // A group member starts and stops walking without objects of
             // its own (the cluster keeps the path).
             if u.walking && !self.game.grouped(u.handle) {

@@ -1,7 +1,7 @@
-//! A group order played from the replay `c-RSP-1.w3g` against the state
-//! of its members read from the game at every cluster update
-//! (`c-RSP-1.members.tsv`, SPEC-0025). Passes without checking anything
-//! when the replay is not there.
+//! Group orders played from replays against the state of their members
+//! read from the game at every cluster update (`<name>.members.tsv`,
+//! SPEC-0025). Passes without checking anything when the replays are not
+//! there.
 
 use std::path::PathBuf;
 
@@ -9,93 +9,123 @@ use ow3_formats::replay::Replay;
 use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
 
-/// The first cluster update of the replay (its README).
-const FIRST_UPDATE: u64 = 1051;
+/// A member at a cluster update: its tick, its index among the units of
+/// the order, its target (world), committed position (relative to the
+/// world corner) and velocity, as bits.
+struct Row {
+    tick: u64,
+    member: usize,
+    target: [u32; 2],
+    position: [u32; 2],
+    velocity: [u32; 2],
+}
 
-/// A member at a cluster update: its target (world), committed position
-/// (relative to the world corner) and velocity, as bits.
-type Row = ([u32; 2], [u32; 2], [u32; 2]);
-
-/// The rows of the members file by update, each with the member's index
-/// among the units of the order.
-fn updates(text: &str) -> Vec<Vec<(usize, Row)>> {
+fn rows(text: &str) -> Vec<Row> {
     let hex = |s: &str| u32::from_str_radix(s, 16).unwrap();
-    let rows: Vec<Vec<&str>> = text
+    let fields: Vec<Vec<&str>> = text
         .lines()
         .filter(|l| !l.starts_with('#'))
         .map(|l| l.split('\t').collect())
         .collect();
-    let agents: Vec<&str> = rows[..4].iter().map(|r| r[8]).collect();
+    let agents: Vec<&str> = fields[..4].iter().map(|r| r[8]).collect();
     let world = |x: u32| (f32::from_bits(x) * 32.0).to_bits();
-    let mut updates: Vec<Vec<(usize, Row)>> = Vec::new();
-    let mut clock = "";
-    for r in &rows {
-        if r[0] != clock {
-            clock = r[0];
-            updates.push(Vec::new());
-        }
-        let member = agents.iter().position(|a| *a == r[8]).unwrap();
-        let target = [hex(r[13]), hex(r[14])];
-        let row = (
-            target.map(|x| {
+    fields
+        .iter()
+        .map(|r| {
+            let clock = f32::from_bits(hex(r[0]));
+            let target = [hex(r[13]), hex(r[14])].map(|x| {
                 if x == 0 {
                     0
                 } else {
                     (f32::from_bits(x) * 32.0 - 12288.0).to_bits()
                 }
-            }),
-            [hex(r[15]), hex(r[16])].map(world),
-            [hex(r[17]), hex(r[18])].map(world),
-        );
-        updates.last_mut().unwrap().push((member, row));
-    }
-    updates
+            });
+            Row {
+                // The clock of tick k is the sum of k - 1 ticks.
+                tick: (clock / 0.005).round() as u64 + 1,
+                member: agents.iter().position(|a| *a == r[8]).unwrap(),
+                target,
+                position: [hex(r[15]), hex(r[16])].map(world),
+                velocity: [hex(r[17]), hex(r[18])].map(world),
+            }
+        })
+        .collect()
 }
 
-/// The members walk to the places of the game at every update, start at
-/// the same updates (the knight and the footman at the first, the
-/// rifleman held to the 19th, the peasant to the 35th), and all four
-/// move bit for bit as in the game throughout: committed positions and
-/// velocities at every update.
-#[test]
-fn group_members_follow_the_game() {
+/// Plays replay `name` and returns the first rows of its members file
+/// that differ from the simulation, at most `limit`.
+fn mismatches(name: &str, limit: usize) -> Option<Vec<String>> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
-    let path = dir.join("replays/c-RSP-1.w3g");
-    let Ok(text) = std::fs::read_to_string(path.with_extension("members.tsv")) else {
-        return;
-    };
+    let path = dir.join(format!("replays/{name}.w3g"));
+    let text = std::fs::read_to_string(path.with_extension("members.tsv")).ok()?;
     let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
     let map_path = dir.join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(&dir, &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.load_object_ids(&path);
-    while playback.game.ticks() < FIRST_UPDATE - 1 {
+    let rows = rows(&text);
+    while playback.game.ticks() < rows[0].tick - 1 {
         playback.step_tick();
     }
     let units: Vec<u32> = playback.game.units().iter().map(|u| u.handle).collect();
-    let mut started = [None; 4];
-    let mut game_started = [None; 4];
-    for (k, update) in updates(&text).iter().enumerate() {
-        while playback.game.ticks() < FIRST_UPDATE + 6 * k as u64 - 1 {
+    let mut found = Vec::new();
+    for row in rows {
+        while playback.game.ticks() < row.tick - 1 {
             playback.step_tick();
         }
-        for &(member, (target, position, velocity)) in update {
-            let (o, v, t) = playback.game.motion_of(units[member]).unwrap_or_default();
-            if k > 0 {
-                assert_eq!(t, target, "update {k} member {member}: target");
-            }
-            if v != [0, 0] && started[member].is_none() {
-                started[member] = Some(k);
-            }
-            if velocity != [0, 0] && game_started[member].is_none() {
-                game_started[member] = Some(k);
-            }
-            {
-                assert_eq!((o, v), (position, velocity), "update {k} member {member}");
+        let (o, v, t) = playback
+            .game
+            .motion_of(units[row.member])
+            .unwrap_or_default();
+        let target_differs = row.target != [0, 0] && t != row.target;
+        if (o, v) != (row.position, row.velocity) || target_differs {
+            found.push(format!(
+                "tick {} member {}: position {:?} for {:?}, velocity {:?} for {:?}, target {:?} for {:?}",
+                row.tick,
+                row.member,
+                o.map(f32::from_bits),
+                row.position.map(f32::from_bits),
+                v.map(f32::from_bits),
+                row.velocity.map(f32::from_bits),
+                t.map(f32::from_bits),
+                row.target.map(f32::from_bits)
+            ));
+            if found.len() == limit {
+                break;
             }
         }
     }
-    assert_eq!(started, game_started);
-    assert_eq!(game_started, [Some(35), Some(19), Some(1), Some(1)]);
+    Some(found)
+}
+
+/// `c-RSP-1`: a peasant, a rifleman, a knight and a footman. All four
+/// walk to the game's places, start at the same updates (the knight and
+/// the footman at the first, the rifleman held to the 19th, the peasant to
+/// the 35th) and move bit for bit as in the game throughout: committed
+/// positions and velocities at every update.
+#[test]
+fn mixed_group_follows_the_game() {
+    if let Some(found) = mismatches("c-RSP-1", 5) {
+        assert!(found.is_empty(), "{found:#?}");
+    }
+}
+
+/// `c-RSM-2`: four footmen. They move bit for bit as in the game up to
+/// the update of tick 1129.
+///
+/// PROVISIONAL: there member 1, blocked by member 2 (which waits for
+/// another unit) and given a patience of 7 at the update before, walks on
+/// in the game along a new path with its patience cleared, while
+/// SPEC-0025 has it stand until its patience runs out.
+#[test]
+fn group_of_four_follows_the_game_to_tick_1129() {
+    if let Some(found) = mismatches("c-RSM-2", 1) {
+        assert!(
+            found
+                .first()
+                .is_none_or(|f| f.starts_with("tick 1135 member 1:")),
+            "{found:#?}"
+        );
+    }
 }

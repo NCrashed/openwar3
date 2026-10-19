@@ -807,10 +807,13 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
 }
 
 /// The workers that came near their sites at the updates of this tick
-/// start their buildings at the end of the updates: script timers of the
-/// tick already see the building (SPEC-0026). The worker then stands with
-/// order `repair` until the building is finished.
-fn start_buildings(state: &mut State) {
+/// start their buildings after the script's timers of the tick, as in
+/// c-RSR-1 (SPEC-0026). The worker then stands with order `repair` until
+/// the building is finished.
+///
+/// PROVISIONAL: in c-RTI-1 two buildings were started before the timers
+/// of their tick; what decides is SPEC-0026 open question 6.
+pub(super) fn start_buildings(state: &mut State) {
     for (h, type_id, site) in std::mem::take(&mut state.starting) {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
@@ -833,18 +836,11 @@ fn start_buildings(state: &mut State) {
     }
 }
 
-/// Ticks from the start of a building to the tick whose clock is `Tb`,
-/// with the worker standing outside its footprint and moved off it
-/// (SPEC-0026). The life first grows in the tick after: the second tick
-/// after the start, or the 14th.
-///
-/// PROVISIONAL: SPEC-0026 gives `Tb` as the clock of the second tick and
-/// the end 7000 ticks (farm) and 12003 ticks (barracks) after it; with the
-/// clock of the first tick and the end rule of the spec both counts come
-/// out from the first tick of growth, and so does "50 in the creation
-/// tick and the next one".
-const GROWTH_DELAY: u64 = 1;
-const GROWTH_DELAY_MOVED: u64 = 13;
+/// Ticks from the start of a building to the tick work begins, with the
+/// worker moved off its footprint (SPEC-0026: usually two updates; 18
+/// ticks were also seen and the rule is not known). Without the move work
+/// begins in the tick of the start.
+const WORK_DELAY_MOVED: u64 = 12;
 
 /// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
 /// building appears there with a tenth of its life, its alarm draws game
@@ -852,9 +848,7 @@ const GROWTH_DELAY_MOVED: u64 = 13;
 /// a free place next to it. The building.
 ///
 /// PROVISIONAL: the worker's free place is the nearest cell centre whose
-/// cells are all passable (open question 2); growth starts 14 ticks after
-/// the start when the worker was moved, as measured for farms (barracks
-/// took 20, open question 1).
+/// cells are all passable (open question 2).
 fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -> Option<u32> {
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
@@ -865,12 +859,11 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let (max, build_time) = data.map_or((0, 0), |t| (t.hp, t.build_time));
     let base = mul(max, TENTH);
     let rate = div(mul(max, NINE_TENTHS), build_time);
-    let delay = if moved {
-        GROWTH_DELAY_MOVED
-    } else {
-        GROWTH_DELAY
-    };
+    // Work begins at once, or later with the worker moved; `Tb` is the
+    // clock of that tick plus 0.0001 (`game::construction`).
+    let delay = if moved { WORK_DELAY_MOVED } else { 0 };
     let begin = state.ticks + delay;
+    let tb = (delay == 0).then(|| add(state.move_clock, GROWTH_OFFSET));
     if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
         b.life = super::Regenerating::full(max, 0);
         b.life.set(base);
@@ -879,15 +872,18 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
             rate,
             build_time,
             begin,
-            tb: None,
+            tb,
         }));
     }
+    state.constructions.push((false, building));
     Some(building)
 }
 
 /// 0.1 and 0.9.
 const TENTH: u32 = 0x3DCC_CCCD;
 const NINE_TENTHS: u32 = 0x3F66_6666;
+/// 0.0001 (SPEC-0026, `Tb`).
+const GROWTH_OFFSET: u32 = 0x38D1_B717;
 
 /// Moves worker `h` off a footprint it stands on; whether it was moved.
 fn move_off_footprint(state: &mut State, h: u32) -> bool {
@@ -1310,6 +1306,26 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         .map(|(i, &h)| (h, i))
         .collect();
     moving.sort_by_key(|h| std::cmp::Reverse(created.get(h).copied()));
+    // The members of a cluster update in the cluster's order, in the
+    // places of the order above.
+    //
+    // PROVISIONAL: not in the specs; found with c-RSM-2.members.tsv, whose
+    // members walk as in the game only so (a member updating after another
+    // sees the cells of that one's previous update, SPEC-0021).
+    for cluster in &state.clusters {
+        let slots: Vec<usize> = (0..moving.len())
+            .filter(|&i| cluster.members.contains(&moving[i]))
+            .collect();
+        let members: Vec<u32> = cluster
+            .members
+            .iter()
+            .copied()
+            .filter(|h| moving.contains(h))
+            .collect();
+        for (&slot, &h) in slots.iter().zip(&members) {
+            moving[slot] = h;
+        }
+    }
     let mut still = Vec::with_capacity(moving.len());
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
@@ -1615,7 +1631,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             super::attack::begin(state, h, target, tick, m.order_id);
         }
     }
-    start_buildings(state);
+
     state.marked.clear();
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;

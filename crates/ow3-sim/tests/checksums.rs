@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use ow3_formats::replay::Replay;
-use ow3_sim::checksum::{Turn, turns};
+use ow3_sim::checksum::{Turn, time_part, turns};
 use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
 
@@ -127,4 +127,43 @@ fn state_changes_at_the_recorded_turns() {
             assert_eq!(ours, recorded, "{}", path.display());
         }
     }
+}
+
+/// The parts of every turn checksum of `c-RSL-2.w3g` read from the game
+/// (`c-RSL-2.parts.tsv`: turn, `t`, checksum, `B`, `N`, `C`, `D`, `E`,
+/// `R`, `G`): the time, the network sum and the recorded checksum follow
+/// from the replay, and the generator sums `E` and `R` of the playback
+/// are the game's at every turn.
+#[test]
+fn parts_of_the_turns_of_c_rsl_2() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b/replays/c-RSL-2.w3g");
+    let Ok(parts) = std::fs::read_to_string(path.with_extension("parts.tsv")) else {
+        return;
+    };
+    let game_data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let map_path = game_data.join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data, &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.load_object_ids(&path);
+    playback.run();
+    let turns = turns(&replay);
+    let hex = |s: &str| u32::from_str_radix(s, 16).unwrap();
+    let mut rows = 0;
+    for line in parts.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = line.split('\t').collect();
+        let k: usize = w[0].parse().unwrap();
+        let (turn, marks) = (&turns[k - 1], &playback.marks[k - 1]);
+        let expected = (hex(w[2]), w[3].parse().unwrap(), hex(w[4]));
+        assert_eq!(
+            (turn.recorded, time_part(turn.before), turn.n),
+            expected,
+            "turn {k}"
+        );
+        assert_eq!((marks.e, marks.r), (hex(w[7]), hex(w[8])), "turn {k}");
+        rows += 1;
+    }
+    assert!(rows > 100);
 }

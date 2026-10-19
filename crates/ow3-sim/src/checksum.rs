@@ -107,8 +107,16 @@ impl Turn {
 }
 
 /// The turns of `replay`: every time slot followed by a checksum.
+///
+/// The checksum after a slot of 0 ms (the slots that carry the player's
+/// actions in single player) repeats the one before, so such a turn takes
+/// the time and network sum of the turn before; its block still adds to
+/// the network sum of the turns after it (seen in `c-RSL-2.w3g`).
+///
+/// PROVISIONAL: whether the repeat goes with the slot's length of 0 or
+/// with its actions is not known; in the replays they always go together.
 pub fn turns(replay: &Replay) -> Vec<Turn> {
-    let mut turns = Vec::new();
+    let mut turns: Vec<Turn> = Vec::new();
     let mut n = 0u32;
     let mut ms = 0;
     let mut slot = None;
@@ -118,17 +126,25 @@ pub fn turns(replay: &Replay) -> Vec<Turn> {
                 ms: step, network, ..
             } => {
                 n = n.wrapping_add(*network);
-                slot = Some((ms, ms + u64::from(*step)));
+                slot = Some((ms, ms + u64::from(*step), *step == 0));
                 ms += u64::from(*step);
             }
             Event::Checksum(recorded) => {
-                if let Some((before, after)) = slot.take() {
-                    turns.push(Turn {
-                        before,
-                        after,
-                        n,
-                        recorded: *recorded,
-                    });
+                if let Some((before, after, repeat)) = slot.take() {
+                    let turn = match turns.last() {
+                        Some(last) if repeat => Turn {
+                            after,
+                            recorded: *recorded,
+                            ..*last
+                        },
+                        _ => Turn {
+                            before,
+                            after,
+                            n,
+                            recorded: *recorded,
+                        },
+                    };
+                    turns.push(turn);
                 }
             }
             _ => {}

@@ -12,9 +12,9 @@
 //! - `smart` on a unit is an attack, and a move when the attack is not
 //!   taken;
 //! - the game runs in steps of 25 ms, and the actions of a slot are
-//!   applied after the whole steps of the slots before (the checksums of
-//!   SPEC-0024 change at the turn of a selection, with `B` the time of
-//!   those steps).
+//!   applied after the whole steps of the slots before (SPEC-0024 gives
+//!   the checksum's time `B` and that the actions come after it; when
+//!   the game applies them is inferred from that).
 
 use std::collections::BTreeMap;
 
@@ -178,20 +178,26 @@ impl<'a> Playback<'a> {
     /// Plays the events up to and including the next time slot; false at
     /// the end of the replay.
     ///
-    /// The game runs in steps of 25 ms (SPEC-0024, `B`): the actions of a
-    /// slot are applied when the game has run the whole steps of the
-    /// slots before, the turn's checksum is taken, and then the game runs
-    /// on to the last whole step within the slot's end.
+    /// The game runs in steps of 25 ms (SPEC-0024, `B`): when it has run
+    /// the whole steps of the slots before, the turn's checksum is taken,
+    /// the slot's actions are applied, and the game runs on to the last
+    /// whole step within the slot's end.
     pub fn step_slot(&mut self) -> bool {
         while let Some(event) = self.events.get(self.next).cloned() {
             self.next += 1;
             if let Event::TimeSlot { ms, actions, .. } = event {
+                // The turn's checksum comes before its actions (SPEC-0024,
+                // "When actions take effect"); after a slot of 0 ms it
+                // repeats the one before.
+                match self.marks.last() {
+                    Some(&last) if ms == 0 => self.marks.push(last),
+                    _ => self.mark(),
+                }
                 for (player, list) in actions {
                     for action in list {
                         self.apply(player, &action);
                     }
                 }
-                self.mark();
                 self.ms += u64::from(ms);
                 let end = u64::from(time_part(self.ms)) / TICK_MS;
                 while self.game.ticks() < end {
@@ -362,15 +368,39 @@ impl<'a> Playback<'a> {
     }
 }
 
-/// The units of a replay's object ids from a list read from the game:
-/// lines of address, entry, creation number and type code, such as
-/// `7dc0014 827 830 hfoo`. The creation numbers and types.
+/// The units of a replay's object ids from a list read from the game: a
+/// line per unit with its creation number followed by its type code,
+/// such as `827 830 hfoo player 0` (entry, creation number, type, owner)
+/// or `7dc0014 827 830 hfoo` (with the address first); lines starting
+/// with `#` are comments. The creation numbers and types.
 pub fn read_object_ids(text: &str) -> Vec<(u32, i32)> {
     text.lines()
+        .filter(|line| !line.starts_with('#'))
         .filter_map(|line| {
             let w: Vec<&str> = line.split_whitespace().collect();
-            let code: [u8; 4] = w.get(3)?.as_bytes().try_into().ok()?;
-            Some((w.get(2)?.parse().ok()?, i32::from_be_bytes(code)))
+            let at = w
+                .iter()
+                .position(|word| word.len() == 4 && word.as_bytes()[0].is_ascii_alphabetic())?;
+            let code: [u8; 4] = w[at].as_bytes().try_into().ok()?;
+            Some((
+                w.get(at.checked_sub(1)?)?.parse().ok()?,
+                i32::from_be_bytes(code),
+            ))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_ids() {
+        let hfoo = i32::from_be_bytes(*b"hfoo");
+        assert_eq!(read_object_ids("7dc0014 827 830 hfoo\n"), [(830, hfoo)]);
+        assert_eq!(
+            read_object_ids("# entry creation type owner\n845 848 hfoo neutral hostile\n"),
+            [(848, hfoo)]
+        );
+    }
 }

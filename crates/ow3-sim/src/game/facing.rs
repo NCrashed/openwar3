@@ -6,18 +6,17 @@
 //! `mul(r, 180/pi)`.
 //!
 //! `SetUnitFacing` turns the unit: the facing changes every 6 ticks, the
-//! first time 3 ticks after the call, by a step that starts at `s`, grows
-//! by `s` per change and stays at `m`, both set by the type's
-//! `orientInterp`.
+//! first time 3 ticks after the call. A walking unit's facing turns
+//! towards its stored heading at its updates (SPEC-0018).
 //!
-//! Each step is `min(w + s, m, B(r))` with the braking `B` of the
-//! remaining angle (SPEC-0018); with less than 0.001 radians left the
-//! facing takes its target.
-//!
-//! Values 3, 7 and 8 brake by the closed form of SPEC-0013, the others by
-//! their table.
+//! Each change adds `s` to the signed step `w` towards the target, limits
+//! `w` to `min(m, r) * (r / R)^P` (the last factor only below `R`) with
+//! `r` the angle left, and turns by `w`; with less than 0.001 radians left
+//! the facing takes its target. `s`, `m`, `R` and `P` come from the
+//! type's `orientInterp`.
 
-use ow3_math::{add, frac, mul, recip, sub};
+use ow3_math::natives::pow;
+use ow3_math::{add, div, frac, mul, recip, sub};
 
 /// pi / 180, 180 / pi, 2 pi and pi.
 const DEGREES_TO_RADIANS: u32 = 0x3C8E_FA35;
@@ -25,6 +24,7 @@ const RADIANS_TO_DEGREES: u32 = 0x4265_2EE1;
 const TWO_PI: u32 = 0x40C9_0FDB;
 const PI: u32 = 0x4049_0FDB;
 const SIGN: u32 = 0x8000_0000;
+const ONE: u32 = 0x3F80_0000;
 
 /// Ticks between the changes of a turn: the shared update cycle of the
 /// units (SPEC-0013, SPEC-0018 "Phase").
@@ -51,23 +51,26 @@ pub fn to_degrees(radians: u32) -> u32 {
     mul(radians, RADIANS_TO_DEGREES)
 }
 
-/// The first step and the largest step of `orientInterp`, in radians.
-///
-/// PROVISIONAL: the largest step of 2 was not reached within 180 degrees
-/// (at least 0.285), so it has none here.
-pub(super) fn steps(orient_interp: u8) -> (u32, u32) {
-    let (s, m) = match orient_interp {
-        1 => (0.03f32, 0.1f32),
-        2 => return (0.015f32.to_bits(), PI),
-        3 => (0.005, 0.1),
-        4 => (0.04, 0.15),
-        5 => (0.05, 0.18),
-        6 => (0.1, 0.3),
-        7 => (0.003, 0.08),
-        8 => (0.001, 0.05),
-        _ => (0.07, 0.2),
-    };
-    (s.to_bits(), m.to_bits())
+/// The constants of a turn by `orientInterp` (SPEC-0013): the step
+/// added per change `s`, the largest step `m`, the angle `R` below which
+/// the step is braked and the power `P` of the brake, as bits. Values 9
+/// to 15 behave as 0.
+pub(super) fn constants(orient_interp: u8) -> [u32; 4] {
+    const P25: u32 = 0x3E80_0000;
+    const P50: u32 = 0x3F00_0000;
+    const P60: u32 = 0x3F19_999A;
+    const P40: u32 = 0x3ECC_CCCE;
+    match orient_interp {
+        1 => [0x3CF5_C290, 0x3DCC_CCCE, 0x3E4C_CCCE, P25],
+        2 => [0x3C75_C290, 0x3ECC_CCCE, 0x3F4C_CCCE, P25],
+        3 => [0x3BA3_D70A, 0x3DCC_CCCE, 0x3F99_999A, P50],
+        4 => [0x3D23_D70B, 0x3E19_999A, 0x3F99_999A, P60],
+        5 => [0x3D4C_CCCD, 0x3E38_51EC, 0x3F99_999A, P60],
+        6 => [0x3DCC_CCCE, 0x3E99_999A, 0x3F4C_CCCE, P40],
+        7 => [0x3B44_9BA6, 0x3DA3_D70B, 0x3F99_999A, P50],
+        8 => [0x3A83_126F, 0x3D4C_CCCD, 0x3FB3_3334, P50],
+        _ => [0x3D8F_5C29, 0x3E4C_CCCE, 0x3E4C_CCCE, P25],
+    }
 }
 
 /// A turn in progress.
@@ -104,122 +107,57 @@ impl Turn {
     }
 }
 
-/// The braking tables of SPEC-0013, by `orientInterp`: the largest step
-/// with a remaining angle, both in degrees, as reals.
-fn brake_table(orient_interp: u8) -> &'static [(u32, u32)] {
-    static TABLES: std::sync::OnceLock<Vec<Vec<(u32, u32)>>> = std::sync::OnceLock::new();
-    let tables = TABLES.get_or_init(|| {
-        let mut tables = vec![Vec::new(); 9];
-        for line in include_str!("../../../../specs/SPEC-0013-facing-brake.tsv")
-            .lines()
-            .skip(1)
-        {
-            let mut fields = line.split('\t').map(str::trim);
-            let (Some(kind), Some(r), Some(s)) = (fields.next(), fields.next(), fields.next())
-            else {
-                continue;
-            };
-            let (Ok(kind), Ok(r), Ok(s)) =
-                (kind.parse::<usize>(), r.parse::<f32>(), s.parse::<f32>())
-            else {
-                continue;
-            };
-            if let Some(table) = tables.get_mut(kind) {
-                table.push((r.to_bits(), s.to_bits()));
-            }
-        }
-        tables
-    });
-    tables
-        .get(usize::from(orient_interp))
-        .filter(|t| !t.is_empty())
-        .unwrap_or(&tables[0])
-}
-
-/// The braking step `B(r)` for `remaining` degrees, interpolated linearly
-/// between the points of the table, in the engine arithmetic. `None`
-/// above the table, where no braking was seen.
-///
-/// PROVISIONAL: SPEC-0013 interpolates on a log-log scale, which needs
-/// logarithms the simulation does not have; the points are close enough
-/// for the difference to stay small. Below the first point the first
-/// segment goes on.
-fn brake(remaining: u32, orient_interp: u8) -> Option<u32> {
-    let table = brake_table(orient_interp);
-    let r = real(remaining);
-    let last = table.last()?;
-    if r > real(last.0) {
-        return None;
-    }
-    let i = table
-        .iter()
-        .position(|&(x, _)| real(x) >= r)
-        .unwrap_or(table.len() - 1)
-        .max(1);
-    let ((x0, y0), (x1, y1)) = (table[i - 1], table[i]);
-    let t = ow3_math::div(sub(remaining, x0), sub(x1, x0));
-    Some(add(y0, mul(sub(y1, y0), t)))
-}
-
-/// The brake of `orientInterp` 3, 7 and 8 for `r` radians left, with `m`
-/// the largest step (SPEC-0013): `sqrt(C r)`, times `r / m` below `m`,
-/// with `C = m^2 / 1.2` (3 and 7) or `m^2 / 1.4` (8). The square root is
-/// the correctly rounded one of IEEE 754.
-fn closed_brake(r: u32, m: u32, orient_interp: u8) -> u32 {
-    let divisor = if orient_interp == 8 { 1.4f32 } else { 1.2f32 };
-    let c = ow3_math::div(mul(m, m), divisor.to_bits());
-    let b = real(mul(c, r)).sqrt().to_bits();
-    if real(r) < real(m) {
-        mul(b, ow3_math::div(r, m))
+/// The signed difference from the angle `current` to the angle `target`,
+/// the shorter way (SPEC-0018, "Angle difference"): `t = sub(current,
+/// target)`, then `sub(-2 pi, t)` or `sub(2 pi, t)` when `|t| > pi`, else
+/// `-t`.
+pub(super) fn angle_difference(target: u32, current: u32) -> u32 {
+    let t = sub(current, target);
+    if real(t) < 0.0 && -real(t) > real(PI) {
+        sub(TWO_PI ^ SIGN, t)
+    } else if real(t) >= 0.0 && real(t) > real(PI) {
+        sub(TWO_PI, t)
     } else {
-        b
+        t ^ SIGN
     }
 }
 
 /// Below this many radians left the facing takes the heading (0.001).
 const SNAP: u32 = 0x3A83_126F;
 
-/// One step of a facing towards `heading` (SPEC-0018): with `w` the step of
-/// the change before (0 at rest) and `r` the angle left, the step is
-/// `min(w + s, m, B(r))`; with less than 0.001 radians left the facing
-/// takes the heading and the step becomes 0. The new facing and step.
+/// One change of a facing towards `heading` (SPEC-0013, "Facing turn
+/// rule"), with `w` the signed step of the change before (0 at rest). The
+/// new facing and step.
 pub(super) fn follow(facing: u32, heading: u32, w: u32, orient_interp: u8) -> (u32, u32) {
-    // The difference, moved into -pi..pi.
-    let mut diff = sub(heading, facing);
-    if real(diff) > real(PI) {
-        diff = sub(diff, TWO_PI);
-    } else if real(diff) < -real(PI) {
-        diff = add(diff, TWO_PI);
-    }
-    let r = diff & !SIGN;
+    let d = angle_difference(heading, facing);
+    let r = d & !SIGN;
     if real(r) < real(SNAP) {
         return (heading, 0);
     }
-    let (first, largest) = steps(orient_interp);
-    let mut step = add(w, first);
-    if real(step) > real(largest) {
-        step = largest;
-    }
-    let b = match orient_interp {
-        3 | 7 | 8 => Some(closed_brake(r, largest, orient_interp)),
-        _ => brake(mul(r, RADIANS_TO_DEGREES), orient_interp).map(|b| mul(b, DEGREES_TO_RADIANS)),
+    let [s, m, big_r, p] = constants(orient_interp);
+    let w = if real(d) >= 0.0 {
+        add(w, s)
+    } else {
+        add(w, s ^ SIGN)
     };
-    if let Some(b) = b {
-        if real(b) < real(step) {
-            step = b;
-        }
+    let mut c = if real(m) < real(r) { m } else { r };
+    if real(r) < real(big_r) {
+        c = mul(c, pow(div(r, big_r), p));
     }
-    if real(step) >= real(r) {
-        return (heading, 0);
+    let w = if real(w).abs() > real(c) {
+        c | (w & SIGN)
+    } else {
+        w
+    };
+    let mut f = add(facing, w);
+    if real(f).abs() >= real(TWO_PI) {
+        let size = mul(frac(mul(f & !SIGN, div(ONE, TWO_PI))), TWO_PI);
+        f = size | (f & SIGN);
     }
-    let signed = if real(diff) < 0.0 { step ^ SIGN } else { step };
-    let mut next = add(facing, signed);
-    if real(next) >= real(TWO_PI) {
-        next = sub(next, TWO_PI);
-    } else if real(next) < 0.0 {
-        next = add(next, TWO_PI);
+    if real(f) < 0.0 {
+        f = add(f, TWO_PI);
     }
-    (next, step)
+    (f, w)
 }
 
 #[cfg(test)]
@@ -244,18 +182,47 @@ mod tests {
         }
     }
 
-    /// The closed form of `orientInterp` 3, 7 and 8 against their tables.
+    /// The brake against the measured table `SPEC-0013-facing-brake.tsv`
+    /// (remaining angle and step in degrees, by `orientInterp`).
     #[test]
-    fn closed_brake_matches_table() {
-        for kind in [3u8, 7, 8] {
-            let (_, m) = steps(kind);
-            let mut worst = 0.0f32;
-            for &(r, step) in brake_table(kind) {
-                let b = closed_brake(mul(r, DEGREES_TO_RADIANS), m, kind);
-                worst = worst.max((real(mul(b, RADIANS_TO_DEGREES)) - real(step)).abs());
+    fn brake_matches_table() {
+        let mut worst = [0.0f32; 9];
+        for line in include_str!("../../../../specs/SPEC-0013-facing-brake.tsv")
+            .lines()
+            .skip(1)
+        {
+            let w: Vec<&str> = line.split('\t').map(str::trim).collect();
+            let (Ok(kind), Ok(r), Ok(step)) =
+                (w[0].parse::<u8>(), w[1].parse::<f32>(), w[2].parse::<f32>())
+            else {
+                continue;
+            };
+            let [_, m, big_r, p] = constants(kind);
+            let r = mul(r.to_bits(), DEGREES_TO_RADIANS);
+            let mut c = if real(m) < real(r) { m } else { r };
+            if real(r) < real(big_r) {
+                c = mul(c, pow(div(r, big_r), p));
             }
-            assert!(worst < 0.002, "{kind}: {worst} degrees");
+            let k = usize::from(kind);
+            worst[k] = worst[k].max((real(mul(c, RADIANS_TO_DEGREES)) - step).abs());
         }
+        for (kind, w) in worst.iter().enumerate() {
+            assert!(*w < 0.01, "{kind}: {w} degrees");
+        }
+    }
+
+    /// SPEC-0018, verification 5: a footman's first facings towards the
+    /// stored heading `0x3EB7B64C`; the third depends on the heading of
+    /// that update, which moves a little.
+    #[test]
+    fn first_facings_of_a_walk() {
+        let (mut f, mut w) = (0, 0);
+        let mut got = Vec::new();
+        for _ in 0..2 {
+            (f, w) = follow(f, 0x3EB7_B64C, w, 0);
+            got.push(f);
+        }
+        assert_eq!(got, [0x3D8F_5C29, 0x3E57_0A3D]);
     }
 
     /// A footman (`orientInterp` 0) turning from 0 to 90 degrees: changes

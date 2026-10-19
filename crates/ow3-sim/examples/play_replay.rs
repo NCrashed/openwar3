@@ -60,6 +60,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    playback.load_object_ids(std::path::Path::new(path));
     playback.run();
     for note in &playback.notes {
         println!("{note}");

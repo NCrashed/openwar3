@@ -64,16 +64,21 @@ fn remainders_of_the_reference_replay() {
 
 /// Turns from 3 on whose state changed, as the recorded checksums show
 /// them and as the simulation's marks do. Turn 2 is left out: the game
-/// changes something there that the simulation does not have.
-fn changed_turns(path: &std::path::Path) -> (Vec<usize>, Vec<usize>) {
+/// changes something there that the simulation does not have. Also
+/// whether the replay has actions of a player.
+fn changed_turns(path: &std::path::Path) -> (Vec<usize>, Vec<usize>, bool) {
     let game_data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
     let replay = Replay::parse(&std::fs::read(path).unwrap()).unwrap();
     let map_path = game_data.join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(&game_data, &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.load_object_ids(path);
     playback.run();
     let turns = turns(&replay);
+    let actions = replay.events.iter().any(|e| {
+        matches!(e, ow3_formats::replay::Event::TimeSlot { actions, .. } if !actions.is_empty())
+    });
     let recorded = (2..turns.len())
         .filter(|&k| turns[k].remainder() != turns[k - 1].remainder())
         .map(|k| k + 1)
@@ -83,12 +88,13 @@ fn changed_turns(path: &std::path::Path) -> (Vec<usize>, Vec<usize>) {
         .filter(|&k| marks[k] != marks[k - 1])
         .map(|k| k + 1)
         .collect();
-    (recorded, ours)
+    (recorded, ours, actions)
 }
 
-/// In the replays of the test maps (`c-*.w3g`) the state changes at the
-/// same turns in the game and in the simulation: when the script makes
-/// objects or draws random numbers and when a move ends.
+/// In the replays of the test maps (`c-*.w3g`) without player actions the
+/// state changes at the same turns in the game and in the simulation:
+/// when the script makes objects or draws random numbers and when a move
+/// ends.
 #[test]
 fn state_changes_at_the_recorded_turns() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b/replays");
@@ -105,7 +111,20 @@ fn state_changes_at_the_recorded_turns() {
         .collect();
     paths.sort();
     for path in paths {
-        let (recorded, ours) = changed_turns(&path);
-        assert_eq!(ours, recorded, "{}", path.display());
+        let (recorded, ours, actions) = changed_turns(&path);
+        if actions {
+            // Each action changes the recorded checksums at two turns in
+            // a row, and the game keeps state the simulation does not
+            // have (orders, subgroups): every change of the simulation's
+            // state must be among the recorded ones.
+            let missing: Vec<usize> = ours
+                .iter()
+                .copied()
+                .filter(|k| !recorded.contains(k))
+                .collect();
+            assert!(missing.is_empty(), "{}: {missing:?}", path.display());
+        } else {
+            assert_eq!(ours, recorded, "{}", path.display());
+        }
     }
 }

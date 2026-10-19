@@ -512,8 +512,8 @@ impl State {
             objects: HashMap::new(),
             players: BTreeMap::new(),
             setup: players::Setup::single_player(),
-            random: Random::seeded(0),
-            game_random: Random::reseed(0).1,
+            random: Random::game_start().0,
+            game_random: Random::game_start().1,
             units: Vec::new(),
             destructables: Vec::new(),
             items: Vec::new(),
@@ -797,17 +797,13 @@ impl<'a> Game<'a> {
     }
 
     /// Starts the map as a lobby set it up, for a replay: `config`, then
-    /// the slots of `lobby` with `local` the local player, the generators
-    /// seeded with `seed`, then `main`.
-    ///
-    /// PROVISIONAL: how the game seeds its generators from a replay's seed
-    /// is not specified; both the script's and the game's are reseeded
-    /// with it, as `SetRandomSeed` does (SPEC-0007).
+    /// the slots of `lobby` with `local` the local player, then `main`. The
+    /// generators start as in every game (SPEC-0007, "State at game
+    /// start"): the random seed of a replay's header is not used.
     pub fn start_lobby(
         &mut self,
         lobby: &[players::LobbySlot],
         local: i32,
-        seed: u32,
     ) -> Result<(), StartError> {
         self.state.borrow_mut().in_config = true;
         self.run("config");
@@ -820,9 +816,6 @@ impl<'a> Game<'a> {
                 ));
             }
             state.setup.fill_lobby(lobby, local);
-            let (script, game) = Random::reseed(seed);
-            state.random = script;
-            state.game_random = game;
         }
         self.run("main");
         Ok(())
@@ -974,6 +967,9 @@ impl<'a> Game<'a> {
                 going
             });
         }
+        // The unit updates come before the script's timers (SPEC-0018,
+        // "Phase").
+        movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         let mut tick = self.state.borrow_mut().timers.begin_tick();
         loop {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
@@ -983,7 +979,6 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
-        movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);

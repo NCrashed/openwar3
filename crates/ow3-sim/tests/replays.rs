@@ -21,11 +21,12 @@ struct Run {
     preload: Vec<String>,
 }
 
-fn play(game_data: &Path, replay: &Replay) -> Run {
+fn play(game_data: &Path, replay_path: &Path, replay: &Replay) -> Run {
     let path = game_data.join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(game_data, &path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, replay).unwrap();
+    playback.load_object_ids(replay_path);
     playback.run();
     let units = playback
         .game
@@ -76,8 +77,9 @@ fn game_data() -> PathBuf {
 #[test]
 fn replays_play_the_same_twice() {
     for (path, replay) in replays() {
-        let first = play(&game_data(), &replay);
-        // The slots of about 100 ms add up to the replay's game time.
+        let first = play(&game_data(), &path, &replay);
+        // The game runs the whole 25 ms steps of the slots, which are
+        // about 100 ms each.
         let slots: u64 = replay
             .events
             .iter()
@@ -86,54 +88,40 @@ fn replays_play_the_same_twice() {
                 _ => 0,
             })
             .sum();
-        assert_eq!(first.ticks, slots / 5, "{}", path.display());
-        let second = play(&game_data(), &replay);
+        assert_eq!(first.ticks, slots / 25 * 5, "{}", path.display());
+        let second = play(&game_data(), &path, &replay);
         assert_eq!(second.units, first.units, "{}", path.display());
         assert_eq!(second.preload, first.preload, "{}", path.display());
     }
 }
 
-/// The `@@P n x y facing random` lines of a log, up to its `@@OW3 END`.
-fn positions<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<[f64; 4]> {
+/// The `@@` lines of a log up to its `@@OW3 END`, without the `@@`.
+fn logged<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
     lines
-        .take_while(|l| !l.contains("@@OW3 END"))
         .filter_map(|l| {
-            let rest = &l[l.find("@@P ")? + 4..];
-            let words: Vec<f64> = rest
-                .trim_end_matches(['"', ')', ' '])
-                .split(' ')
-                .map(|w| w.parse().unwrap())
-                .collect();
-            Some([words[1], words[2], words[3], words[4]])
+            let rest = &l[l.find("@@")? + 2..];
+            Some(rest.trim_end_matches(['"', ')', ' ']).to_owned())
         })
+        .take_while(|l| l != "OW3 END")
         .collect()
 }
 
-/// The positions logged by the script while the replay plays
-/// are those of the game's log within 0.02, and the facings within 0.05
-/// degrees (the turn at the start differs by 0.04). The random values are not
-/// compared: the generators' state at the start of a game is not specified
-/// (SPEC-0007, open question 1).
+/// The lines the script logs while the replay plays (positions, facings
+/// and random values every 0.1 s) are those of the game's log.
 #[test]
 fn replays_follow_the_game_logs() {
     for (path, replay) in replays() {
         let Ok(log) = std::fs::read_to_string(path.with_extension("log.txt")) else {
             continue;
         };
-        let expected = positions(log.lines());
-        let run = play(&game_data(), &replay);
-        let got = positions(run.preload.iter().map(String::as_str));
+        let expected = logged(log.lines());
+        let run = play(&game_data(), &path, &replay);
         assert!(!expected.is_empty(), "{}", path.display());
-        assert_eq!(got.len(), expected.len(), "{}", path.display());
-        for (i, (g, e)) in got.iter().zip(&expected).enumerate() {
-            for k in 0..3 {
-                assert!(
-                    (g[k] - e[k]).abs() <= if k == 2 { 0.05 } else { 0.02 },
-                    "{} line {}: {g:?} against {e:?}",
-                    path.display(),
-                    i + 1
-                );
-            }
-        }
+        assert_eq!(
+            logged(run.preload.iter().map(String::as_str)),
+            expected,
+            "{}",
+            path.display()
+        );
     }
 }

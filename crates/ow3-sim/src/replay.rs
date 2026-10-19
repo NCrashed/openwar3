@@ -1,21 +1,20 @@
 //! Playing a replay (`ow3_formats::replay`) in the simulation: the map
-//! starts with the replay's slots and seed, and its time slots are played
+//! starts with the replay's slots, and its time slots are played
 //! one after the other, the actions of each player applied at the start of
 //! the slot and the game then advanced by the slot's time.
 //!
 //! PROVISIONAL, until the specs say how the game does it:
-//! - the objects of the actions are matched with units by the first of
-//!   their two ids taken as the unit's handle (the ids are the object's
-//!   entry in the engine's object table and its creation number,
-//!   SPEC-0024, which the simulation does not keep);
+//! - the objects of the actions are known only from a list of their
+//!   creation numbers and types read from the game (the second id of an
+//!   object is its creation number, SPEC-0024, which the simulation
+//!   cannot compute yet);
 //! - an order goes to every unit the player has selected;
 //! - `smart` on a unit is an attack, and a move when the attack is not
 //!   taken;
-//! - the seed reseeds the generators as `SetRandomSeed` does (wrong: the
-//!   replays c-RSB-1 and c-RSC-1 have different seeds and the same random
-//!   values);
-//! - the actions of a slot come before its ticks, and a slot of `ms`
-//!   milliseconds runs the ticks whose 5 ms end within it.
+//! - the game runs in steps of 25 ms, and the actions of a slot are
+//!   applied after the whole steps of the slots before (the checksums of
+//!   SPEC-0024 change at the turn of a selection, with `B` the time of
+//!   those steps).
 
 use std::collections::BTreeMap;
 
@@ -44,6 +43,8 @@ pub struct Playback<'a> {
     /// What each replay player has selected, and its control groups.
     selections: BTreeMap<u8, Vec<u32>>,
     groups: BTreeMap<(u8, u8), Vec<u32>>,
+    /// The creation numbers and types of the units, in creation order.
+    ids: Vec<(u32, i32)>,
     /// What could not be played, in the order met.
     pub notes: Vec<String>,
     /// The state of the game when each turn's checksum is taken, the
@@ -130,9 +131,8 @@ impl<'a> Playback<'a> {
             .and_then(|p| players.get(&p.id))
             .copied()
             .unwrap_or(0);
-        game.start_lobby(&lobby, local, replay.seed)
-            .map_err(|e| e.to_string())?;
-        let mut playback = Playback {
+        game.start_lobby(&lobby, local).map_err(|e| e.to_string())?;
+        Ok(Playback {
             game,
             events: replay.events.clone(),
             next: 0,
@@ -140,14 +140,13 @@ impl<'a> Playback<'a> {
             players,
             selections: BTreeMap::new(),
             groups: BTreeMap::new(),
+            ids: Vec::new(),
             notes: Vec::new(),
             marks: Vec::new(),
-        };
-        playback.mark();
-        Ok(playback)
+        })
     }
 
-    /// Keeps the marks of the next turn's checksum.
+    /// Keeps the marks of the checksum of the turn being played.
     fn mark(&mut self) {
         let (e, r) = self.game.generator_sums();
         let mut marks = Marks {
@@ -178,6 +177,11 @@ impl<'a> Playback<'a> {
 
     /// Plays the events up to and including the next time slot; false at
     /// the end of the replay.
+    ///
+    /// The game runs in steps of 25 ms (SPEC-0024, `B`): the actions of a
+    /// slot are applied when the game has run the whole steps of the
+    /// slots before, the turn's checksum is taken, and then the game runs
+    /// on to the last whole step within the slot's end.
     pub fn step_slot(&mut self) -> bool {
         while let Some(event) = self.events.get(self.next).cloned() {
             self.next += 1;
@@ -187,19 +191,11 @@ impl<'a> Playback<'a> {
                         self.apply(player, &action);
                     }
                 }
-                // The next turn's checksum sees the game at the end of
-                // this slot rounded down to 25 ms (SPEC-0024).
-                let before = self.ms / TICK_MS;
+                self.mark();
                 self.ms += u64::from(ms);
-                let marked = (u64::from(time_part(self.ms)) / TICK_MS).max(before);
-                for tick in before..self.ms / TICK_MS {
-                    if tick == marked {
-                        self.mark();
-                    }
+                let end = u64::from(time_part(self.ms)) / TICK_MS;
+                while self.game.ticks() < end {
                     self.game.step();
-                }
-                if marked == self.ms / TICK_MS {
-                    self.mark();
                 }
                 return true;
             }
@@ -212,12 +208,41 @@ impl<'a> Playback<'a> {
         while self.step_slot() {}
     }
 
-    /// The unit an action means by `ids`, if there is one.
+    /// Tells the playback the units of the replay's object ids: their
+    /// creation numbers and types, as read from the game (`<replay>.units.txt`,
+    /// see [`read_object_ids`]).
+    pub fn set_object_ids(&mut self, ids: Vec<(u32, i32)>) {
+        self.ids = ids;
+        self.ids.sort_unstable();
+    }
+
+    /// Reads the list of object ids next to the replay at `path`
+    /// (`name.units.txt` for `name.w3g`), if there is one.
+    pub fn load_object_ids(&mut self, path: &std::path::Path) {
+        if let Ok(text) = std::fs::read_to_string(path.with_extension("units.txt")) {
+            self.set_object_ids(read_object_ids(&text));
+        }
+    }
+
+    /// The unit an action means by `ids`, if there is one: the object with
+    /// that creation number (the second id, SPEC-0024) is the unit of the
+    /// same type that has as many units of its type created before it.
+    ///
+    /// PROVISIONAL: the creation numbers cannot be computed (SPEC-0024,
+    /// open question 6), so only the units given by `set_object_ids` are
+    /// known.
     fn unit(&self, ids: [u32; 2]) -> Option<u32> {
+        let &(_, type_id) = self.ids.iter().find(|&&(n, _)| n == ids[1])?;
+        let before = self
+            .ids
+            .iter()
+            .filter(|&&(n, t)| t == type_id && n < ids[1])
+            .count();
         self.game
             .units()
             .iter()
-            .find(|u| u.handle == ids[0])
+            .filter(|u| u.type_id == type_id)
+            .nth(before)
             .map(|u| u.handle)
     }
 
@@ -335,4 +360,17 @@ impl<'a> Playback<'a> {
         }
         name
     }
+}
+
+/// The units of a replay's object ids from a list read from the game:
+/// lines of address, entry, creation number and type code, such as
+/// `7dc0014 827 830 hfoo`. The creation numbers and types.
+pub fn read_object_ids(text: &str) -> Vec<(u32, i32)> {
+    text.lines()
+        .filter_map(|line| {
+            let w: Vec<&str> = line.split_whitespace().collect();
+            let code: [u8; 4] = w.get(3)?.as_bytes().try_into().ok()?;
+            Some((w.get(2)?.parse().ok()?, i32::from_be_bytes(code)))
+        })
+        .collect()
 }

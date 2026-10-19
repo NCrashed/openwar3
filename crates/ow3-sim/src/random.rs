@@ -79,6 +79,19 @@ impl Random {
         (script, game)
     }
 
+    /// The script generator and the game generators at the start of every
+    /// game (SPEC-0007, "State at game start"): the script generator and a
+    /// helper seeded with `0x77617233` without the discarded step, and the
+    /// game generators seeded with the helper's first 45 outputs.
+    pub fn game_start() -> (Random, Vec<Random>) {
+        const START: u32 = 0x7761_7233;
+        let mut helper = Random::unstepped(START);
+        let game = (0..GAME_GENERATORS)
+            .map(|_| Random::unstepped(helper.step()))
+            .collect();
+        (Random::unstepped(START), game)
+    }
+
     /// One step of the generator; returns its output.
     pub fn step(&mut self) -> u32 {
         let table = table();
@@ -134,6 +147,17 @@ impl Random {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SPEC-0007, "State at game start".
+    #[test]
+    fn game_start() {
+        let (mut script, game) = Random::game_start();
+        assert_eq!((script.a, script.b), (0x7761_7233, 0x2C08_AC40));
+        assert_eq!((game[0].a, game[0].b), (0x2C46_961D, 0x3CB4_04A0));
+        assert_eq!((game[1].a, game[1].b), (0xB961_4EFC, 0x2C1C_141C));
+        let first: Vec<i32> = (0..3).map(|_| script.integer(0, 2_147_483_647)).collect();
+        assert_eq!(first, [371_411_726, 1_555_081_086, 1_646_406_250]);
+    }
 
     /// SPEC-0019: with seed 7 the reaction delay of the first attack order
     /// is 0.0015 s.

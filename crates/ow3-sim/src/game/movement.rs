@@ -29,9 +29,8 @@
 //! every new goal, searched to the target up to the attack range
 //! (SPEC-0019).
 //!
-//! PROVISIONAL: the extra commits between updates (SPEC-0018 open
-//! question 2) are left out; the arrival test compares squared distances
-//! in cells (open question 1).
+//! PROVISIONAL: the arrival test compares squared distances in cells
+//! (SPEC-0018, open question 1).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -76,6 +75,7 @@ const ARRIVAL: u32 = 0x3EFA_E148;
 const ATTACK_ANGLE: f32 = 0.2;
 const PI: u32 = 0x4049_0FDB;
 const TWO_PI: u32 = 0x40C9_0FDB;
+const ONE: u32 = 0x3F80_0000;
 /// pi / 180.
 const DEGREES: u32 = 0x3C8E_FA35;
 const SIGN: u32 = 0x8000_0000;
@@ -253,12 +253,7 @@ fn heading_and_turn(m: &Moving, target: [u32; 2]) -> (u32, u32) {
         angle(vx, vy)
     };
     let a = angle(sub(target[0], m.origin[0]), sub(target[1], m.origin[1]));
-    let mut d = sub(a, h);
-    if real_of(d) >= 0.0 && real_of(d) > real_of(PI) {
-        d = sub(d, TWO_PI);
-    } else if real_of(d) < 0.0 && -real_of(d) > real_of(PI) {
-        d = add(d, TWO_PI);
-    }
+    let mut d = super::facing::angle_difference(a, h);
     if real_of(d).abs() < real_of(NO_TURN) {
         d = 0;
     }
@@ -279,22 +274,46 @@ fn motion(
 ) -> bool {
     let (h, d) = heading_and_turn(m, target);
     let moves = may_move && real_of(d).abs() < real_of(window) && real_of(speed) > 0.0;
-    m.heading = if real_of(d).abs() <= real_of(turn_rate) {
+    let h = if real_of(d).abs() <= real_of(turn_rate) {
         add(h, d)
     } else if real_of(d) > 0.0 {
         add(h, turn_rate)
     } else {
         add(h, turn_rate ^ SIGN)
     };
-    let [vx, vy] = m.velocity;
-    m.velocity = if moves {
-        let w = [mul(speed, cos(m.heading)), mul(speed, sin(m.heading))];
-        [add(vx, sub(w[0], vx)), add(vy, sub(w[1], vy))]
-    } else {
-        [0, 0]
-    };
+    let wanted = m.velocity_before(h, speed);
+    m.velocity = [0, 0];
+    m.heading = normal(h);
+    if moves {
+        let [vx, vy] = wanted;
+        let q = add(mul(vx, vx), mul(vy, vy));
+        if real_of(q).abs() >= real_of(NO_TURN) {
+            // Limited to the speed (SPEC-0018, step 5): the approximate
+            // cosine and sine make it a little longer.
+            let len = sqrt(q);
+            m.velocity = if real_of(len) > real_of(speed) {
+                let k = mul(speed, div(ONE, len));
+                [mul(vx, k), mul(vy, k)]
+            } else {
+                [vx, vy]
+            };
+            // The stored heading is the angle of the limited velocity,
+            // with its own length (SPEC-0018, verification 5).
+            m.heading = angle(m.velocity[0], m.velocity[1]);
+        }
+    }
     m.walking = moves;
     moves
+}
+
+impl Moving {
+    /// The velocity wanted along heading `h` at `speed`, from the current
+    /// one, before the limit.
+    fn velocity_before(&self, h: u32, speed: u32) -> [u32; 2] {
+        let [vx, vy] = self.velocity;
+        let w = [mul(speed, cos(h)), mul(speed, sin(h))];
+        [add(vx, sub(w[0], vx)), add(vy, sub(w[1], vy))]
+    }
 }
 
 /// Where a widget stands.
@@ -685,7 +704,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
 /// movement clock advances and each unit stands at its committed position
 /// moved on by its velocity (SPEC-0018).
 pub(super) fn step(state: &mut State) {
-    state.move_clock = add(state.move_clock, crate::timers::TICK);
+    // In tick k the clock is the sum of k - 1 ticks (SPEC-0018).
+    if state.ticks > 1 {
+        state.move_clock = add(state.move_clock, crate::timers::TICK);
+    }
     let (min, clock) = (
         [state.world_bounds[0], state.world_bounds[1]],
         state.move_clock,

@@ -45,6 +45,17 @@ every turn checksum from memory:
 | select a unit | `G` | - | - |
 | `move` (right click on the ground) | `C`, `D` | `C` | - |
 | attack (right click on an enemy) | `C`, `D`, `R` | `C` | `C`, `D` |
+| box selection of four units | `G` | - | - |
+| group `move` of four units | `C`, `D` | `C` | - |
+| open the build menu (action 0x67) | - | - | - |
+| build order (action 0x11 with a type and a point) | `C`, `D` | `C` | - |
+
+A group walking in formation also draws the script generator: `E`
+changed in four turns while four footmen walked (replay `c-RSM-1.w3g`),
+although the script drew no random numbers. When the peasant of a build
+order reaches the place and starts the building, `C`, `D`, `R` and `G`
+change in one turn (`G` through the player's type record of the new
+building, `c-RSN-1.w3g`).
 
 (`C` and `D` change because the order creates internal objects, some of
 which are freed one turn later; the walk's path objects are freed when

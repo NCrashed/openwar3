@@ -515,7 +515,7 @@ fn order_id(name: &str) -> i32 {
 }
 
 /// `OrderId2String`: the name of `id`, none for 0 and unknown ids.
-fn order_name(id: i32) -> Option<&'static str> {
+pub(super) fn order_name(id: i32) -> Option<&'static str> {
     ORDER_IDS.iter().find(|&&(_, i)| i == id).map(|&(n, _)| n)
 }
 

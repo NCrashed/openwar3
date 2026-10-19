@@ -105,6 +105,21 @@ pub struct Setup {
     pub clock_start: u32,
 }
 
+/// A slot as a lobby set it (for a replay).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LobbySlot {
+    /// Played by a person or by the computer; neither for an empty slot.
+    pub user: bool,
+    pub computer: bool,
+    /// As `GetPlayerRacePreference` gives it: 1 human, 2 orc, 4 night elf,
+    /// 8 undead, 32 random.
+    pub race_preference: i32,
+    pub team: i32,
+    pub color: i32,
+    pub handicap: f32,
+    pub name: String,
+}
+
 fn default_name(id: i32) -> String {
     format!("Player {}", id + 1)
 }
@@ -255,6 +270,43 @@ impl Setup {
                 self.slots[1].name = COMPUTER_NAME.to_owned();
             }
         }
+        self.finish_fill();
+    }
+
+    /// Fills the slots as a lobby set them, for a replay: `lobby[i]` is
+    /// player `i`, and `local` the player who saved it. PROVISIONAL: a
+    /// random race becomes the race `race_of` gives it, as when the game
+    /// fills the slots itself.
+    pub fn fill_lobby(&mut self, lobby: &[LobbySlot], local: i32) {
+        self.local_player = local;
+        for id in 0..PLAYABLE {
+            let slot = &mut self.slots[id as usize];
+            match lobby.get(id as usize).filter(|l| l.user || l.computer) {
+                Some(l) => {
+                    slot.present = true;
+                    slot.controller = if l.computer {
+                        CONTROL_COMPUTER
+                    } else {
+                        CONTROL_USER
+                    };
+                    slot.race_preference = l.race_preference;
+                    slot.race = race_of(l.race_preference);
+                    slot.team = l.team;
+                    slot.color = l.color;
+                    slot.handicap = l.handicap.to_bits();
+                    slot.name = l.name.clone();
+                }
+                None => {
+                    slot.present = false;
+                    slot.name = default_name(id);
+                }
+            }
+        }
+        self.finish_fill();
+    }
+
+    /// What filling the slots ends with, either way.
+    fn finish_fill(&mut self) {
         for id in 0..PLAYABLE {
             let slot = &mut self.slots[id as usize];
             if !slot.present {

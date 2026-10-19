@@ -796,6 +796,38 @@ impl<'a> Game<'a> {
         Ok(())
     }
 
+    /// Starts the map as a lobby set it up, for a replay: `config`, then
+    /// the slots of `lobby` with `local` the local player, the generators
+    /// seeded with `seed`, then `main`.
+    ///
+    /// PROVISIONAL: how the game seeds its generators from a replay's seed
+    /// is not specified; both the script's and the game's are reseeded
+    /// with it, as `SetRandomSeed` does (SPEC-0007).
+    pub fn start_lobby(
+        &mut self,
+        lobby: &[players::LobbySlot],
+        local: i32,
+        seed: u32,
+    ) -> Result<(), StartError> {
+        self.state.borrow_mut().in_config = true;
+        self.run("config");
+        {
+            let mut state = self.state.borrow_mut();
+            state.in_config = false;
+            if state.config_called_string_native {
+                return Err(StartError(
+                    "config called a native that returns a string".to_owned(),
+                ));
+            }
+            state.setup.fill_lobby(lobby, local);
+            let (script, game) = Random::reseed(seed);
+            state.random = script;
+            state.game_random = game;
+        }
+        self.run("main");
+        Ok(())
+    }
+
     fn with_state(
         program: &'a Program,
         scripts: &[&'a Script],
@@ -2213,6 +2245,11 @@ impl std::fmt::Display for StartError {
 }
 
 impl std::error::Error for StartError {}
+
+/// The name of an order id, as `OrderId2String` gives it (SPEC-0019).
+pub fn order_name(id: i32) -> Option<&'static str> {
+    movement::order_name(id)
+}
 
 #[cfg(test)]
 mod tests {

@@ -376,6 +376,10 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             swing_waits: false,
         },
     };
+    // A new order takes the unit out of a group waiting to be laid out.
+    for cluster in &mut state.clusters {
+        cluster.members.retain(|&m| m != h);
+    }
     // A new path is searched at the next update (SPEC-0020).
     state.paths.remove(&h);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -389,8 +393,159 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     true
 }
 
+/// Units ordered to a point together (SPEC-0025, "Clusters"), waiting for
+/// their first update, where their places in the formation are laid out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cluster {
+    /// In the order of the units in the order.
+    members: Vec<u32>,
+    /// The order point.
+    goal: [u32; 2],
+    /// The tick of the first update.
+    first: u64,
+}
+
+/// Units whose distance in cells, taken to its integer part, is at most
+/// this many are in one cluster.
+const CLUSTER_DISTANCE: f32 = 40.0;
+
+/// A point order to `units` together (SPEC-0025): each takes it as a point
+/// order, and those that did are split into clusters that walk in
+/// formation. Whether any took it.
+///
+/// PROVISIONAL: the distance of the clusters is the straight one (units
+/// with hierarchical paths use a path distance, open question 4), each
+/// member keeps its own speed (part 2 of the spec) and finds its own
+/// path, and the members walk to the order point plus their offsets (the
+/// cluster's waypoints are not followed).
+pub(super) fn group_point_order(
+    state: &mut State,
+    units: &[u32],
+    name: &str,
+    target: [u32; 2],
+) -> bool {
+    let taken: Vec<u32> = units
+        .iter()
+        .copied()
+        .filter(|&h| point_order_taken(state, h, name, target).0)
+        .collect();
+    let positions: Vec<[u32; 2]> = taken
+        .iter()
+        .map(|&h| position_of(state, h).unwrap_or([0, 0]))
+        .collect();
+    // Connected by chains of near units.
+    let mut cluster_of: Vec<usize> = (0..taken.len()).collect();
+    for i in 0..taken.len() {
+        for j in 0..i {
+            let (dx, dy) = (
+                mul(sub(positions[i][0], positions[j][0]), CELL),
+                mul(sub(positions[i][1], positions[j][1]), CELL),
+            );
+            let d = real_of(floor(sqrt(add(mul(dx, dx), mul(dy, dy)))));
+            if d <= CLUSTER_DISTANCE && cluster_of[i] != cluster_of[j] {
+                let (from, to) = (cluster_of[i], cluster_of[j]);
+                for c in cluster_of.iter_mut() {
+                    if *c == from {
+                        *c = to;
+                    }
+                }
+            }
+        }
+    }
+    let first = next_update_after(state.ticks);
+    let mut seen = Vec::new();
+    for &c in &cluster_of {
+        if seen.contains(&c) {
+            continue;
+        }
+        seen.push(c);
+        let members: Vec<u32> = (0..taken.len())
+            .filter(|&i| cluster_of[i] == c)
+            .map(|i| taken[i])
+            .collect();
+        if members.len() > 1 {
+            state.clusters.push(Cluster {
+                members,
+                goal: target,
+                first,
+            });
+        }
+    }
+    !taken.is_empty()
+}
+
+/// Lays out the clusters whose first update is now (SPEC-0025, "Formation
+/// angle and leader" and "Layout"): the leader is the member nearest to
+/// the goal, the angle that from the leader to the goal, and each member
+/// walks to the goal plus its offset.
+fn lay_out_clusters(state: &mut State, tick: u64) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let (due, rest): (Vec<Cluster>, Vec<Cluster>) = std::mem::take(&mut state.clusters)
+        .into_iter()
+        .partition(|c| c.first == tick);
+    state.clusters = rest;
+    for cluster in due {
+        let goal = mul_both(relative(cluster.goal, min), CELL);
+        let mut members = Vec::new();
+        let mut handles = Vec::new();
+        for &h in &cluster.members {
+            let Some(u) = state.unit(Some(h)) else {
+                continue;
+            };
+            if !u.alive || !u.movement.is_some_and(|m| m.ordered()) {
+                continue;
+            }
+            let data = state.data.units.get(&u.type_id);
+            members.push(super::formation::Member {
+                position: mul_both(relative([u.x, u.y], min), CELL),
+                radius: mul(data.map_or(0, |t| t.collision), CELL),
+                rank: data.map_or(0, |t| t.formation),
+            });
+            handles.push(h);
+        }
+        if members.len() < 2 {
+            continue;
+        }
+        let squared = |p: [u32; 2]| {
+            let (dx, dy) = (sub(goal[0], p[0]), sub(goal[1], p[1]));
+            add(mul(dx, dx), mul(dy, dy))
+        };
+        let mut leader = 0;
+        for i in 1..members.len() {
+            if real_of(squared(members[i].position)) < real_of(squared(members[leader].position)) {
+                leader = i;
+            }
+        }
+        let lead = members[leader].position;
+        let angle = angle(sub(goal[0], lead[0]), sub(goal[1], lead[1]));
+        let offsets = super::formation::offsets(&members, angle);
+        for (&h, o) in handles.iter().zip(offsets) {
+            let to = [add(goal[0], o[0]), add(goal[1], o[1])];
+            let to = absolute(mul_both(to, CELLS_TO_WORLD), min);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+            {
+                m.target = to;
+            }
+            state.paths.remove(&h);
+        }
+    }
+}
+
+/// 32: cells to world units.
+const CELLS_TO_WORLD: u32 = 0x4200_0000;
+
+fn mul_both(p: [u32; 2], k: u32) -> [u32; 2] {
+    [mul(p[0], k), mul(p[1], k)]
+}
+
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
+    point_order_taken(state, h, name, target).1
+}
+
+/// A point order: whether the unit took it, and what the native returns.
+fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> (bool, bool) {
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
     let (taken, done) = match (name, here) {
         ("move", _) => {
@@ -419,7 +574,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2
         });
         set_attack_move(state, h, attack_move);
     }
-    done
+    (taken, done)
 }
 
 /// `IssueTargetOrder(h, name, target)`: `attack` and `move`. A new order
@@ -731,6 +886,7 @@ pub(super) fn step(state: &mut State) {
 /// The updates due at this tick, after the timers.
 pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let tick = state.ticks;
+    lay_out_clusters(state, tick);
     let min = [state.world_bounds[0], state.world_bounds[1]];
     // Units updating in the same tick go from the last created (SPEC-0021).
     let mut moving = std::mem::take(&mut state.moving);

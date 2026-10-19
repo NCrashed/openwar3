@@ -67,8 +67,8 @@ fn remainders_of_the_reference_replay() {
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-RSM-1.w3g",
-        "a group order walks in formation (SPEC-0018 and SPEC-0019, open \
-         question 4)",
+        "the speeds of a formation and the waits that draw the script \
+         generator are not specified (SPEC-0025, open questions 1 and 2)",
     ),
     (
         "c-RSN-1.w3g",

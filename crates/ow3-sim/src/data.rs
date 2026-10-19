@@ -51,6 +51,10 @@ pub struct UnitType {
     pub mana_regen: u32,
     /// How the unit turns (`orientInterp` of `UnitData.slk`, SPEC-0013).
     pub orient_interp: u8,
+    /// Its rank in a group's formation, front first (`formation` of
+    /// `UnitData.slk`, SPEC-0025): 0 for most melee units, 2 for most
+    /// ranged ones, 4 for workers.
+    pub formation: u8,
     /// Armor value (`def`), armor type (`defType`, an index into
     /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
     /// SPEC-0015.
@@ -404,7 +408,14 @@ impl ObjectData {
             melee,
             "Units\\UnitData.slk",
             "unitID",
-            &["orientInterp", "turnRate", "propWin", "pathTex", "targType"],
+            &[
+                "orientInterp",
+                "turnRate",
+                "propWin",
+                "pathTex",
+                "targType",
+                "formation",
+            ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.orient_interp = values[0]
@@ -415,6 +426,10 @@ impl ObjectData {
                 unit.prop_window = real(values[2].as_ref());
                 unit.path_texture = path_texture_name(values[3].as_deref());
                 unit.target_type = classes(values[4].as_deref());
+                unit.formation = values[5]
+                    .as_deref()
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their
@@ -624,6 +639,9 @@ impl ObjectData {
             }
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
+            if let Some(rank) = def.number(b"ufor") {
+                unit.formation = f32::from_bits(rank) as u8;
+            }
             if let Some(orient) = def.number(b"uori") {
                 unit.orient_interp = f32::from_bits(orient) as u8;
             }

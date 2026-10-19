@@ -30,6 +30,8 @@ use crate::map::Map;
 const TICK_MS: u64 = 5;
 /// The object id of no object.
 const NONE: [u32; 2] = [u32::MAX; 2];
+/// The flag of an order given to a group of units (SPEC-0024, SPEC-0025).
+const GROUP_ORDER: u16 = 0x0008;
 
 /// A replay being played.
 pub struct Playback<'a> {
@@ -306,15 +308,16 @@ impl<'a> Playback<'a> {
                     self.game.issue_immediate_order(unit, name);
                 }
             }
-            Action::PointOrder { order, x, y, .. } => {
+            Action::PointOrder {
+                flags, order, x, y, ..
+            } => {
                 let Some(name) = self.order(*order) else {
                     return;
                 };
-                for unit in selected {
-                    self.game.issue_point_order(unit, name, *x, *y);
-                }
+                self.point_order(&selected, *flags, name, *x, *y);
             }
             Action::TargetOrder {
+                flags,
                 order,
                 x,
                 y,
@@ -324,20 +327,17 @@ impl<'a> Playback<'a> {
                 let Some(name) = self.order(*order) else {
                     return;
                 };
-                let target = (*target != NONE).then(|| self.unit(*target)).flatten();
+                let Some(target) = (*target != NONE).then(|| self.unit(*target)).flatten() else {
+                    self.point_order(&selected, *flags, name, *x, *y);
+                    return;
+                };
                 for unit in selected {
-                    match target {
-                        Some(t) if name == "smart" => {
-                            if !self.game.issue_target_order(unit, "attack", t) {
-                                self.game.issue_target_order(unit, "move", t);
-                            }
+                    if name == "smart" {
+                        if !self.game.issue_target_order(unit, "attack", target) {
+                            self.game.issue_target_order(unit, "move", target);
                         }
-                        Some(t) => {
-                            self.game.issue_target_order(unit, name, t);
-                        }
-                        None => {
-                            self.game.issue_point_order(unit, name, *x, *y);
-                        }
+                    } else {
+                        self.game.issue_target_order(unit, name, target);
                     }
                 }
             }
@@ -355,6 +355,18 @@ impl<'a> Playback<'a> {
             | Action::EscapePressed
             | Action::MinimapSignal { .. } => {}
             other => self.note(format!("not played: {other:?}")),
+        }
+    }
+
+    /// A point order to the units `selected`: with the group flag of the
+    /// action they walk in formation (SPEC-0025).
+    fn point_order(&mut self, selected: &[u32], flags: u16, name: &str, x: f32, y: f32) {
+        if flags & GROUP_ORDER != 0 {
+            self.game.issue_group_point_order(selected, name, x, y);
+        } else {
+            for &unit in selected {
+                self.game.issue_point_order(unit, name, x, y);
+            }
         }
     }
 

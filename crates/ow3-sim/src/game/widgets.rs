@@ -269,6 +269,7 @@ pub(super) fn create_unit(
         hidden: false,
         user_data: 0,
         resources: 0,
+        harvest: None,
         footprint: footprint.map(Box::new),
         construction: None,
         queue: None,
@@ -456,7 +457,12 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
 
 /// Kills a living unit: it reads life 0 and stops regenerating, and the
 /// triggers of its death run before this returns.
-fn kill_unit(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, killer: Option<u32>) {
+pub(super) fn kill_unit(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: Option<u32>,
+    killer: Option<u32>,
+) {
     let killed = {
         let mut state = state.borrow_mut();
         let tick = state.ticks;
@@ -688,7 +694,12 @@ fn inside(v: u32, min: u32, max: u32) -> u32 {
 /// Sets the hit points of a living destructable; 0 or less kills it and
 /// runs its death events (SPEC-0009). PROVISIONAL: also for values below 0
 /// and for `SetWidgetLife`.
-fn set_destructable_life(vm: &mut Vm, state: &Rc<RefCell<State>>, h: Option<u32>, life: u32) {
+pub(super) fn set_destructable_life(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: Option<u32>,
+    life: u32,
+) {
     let killed = {
         let mut state = state.borrow_mut();
         match destructable_mut(&mut state, h) {

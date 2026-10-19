@@ -25,6 +25,18 @@ pub struct Footprint {
     pub(super) rect: (i32, i32, i32, i32),
 }
 
+impl Footprint {
+    /// Whether one of `cells` is a red cell or a neighbour of one, also
+    /// diagonally (SPEC-0029, "Reaching a building").
+    pub(super) fn touches(&self, cells: &[(i32, i32)]) -> bool {
+        self.red.iter().any(|r| {
+            cells
+                .iter()
+                .any(|c| (r.0 - c.0).abs() <= 1 && (r.1 - c.1).abs() <= 1)
+        })
+    }
+}
+
 /// How a texture turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Turn {

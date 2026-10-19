@@ -200,3 +200,74 @@ fn a_peasant_builds_a_farm_and_the_town_hall_trains_one() {
     let after = sim.units().iter().filter(|u| u.type_id == hpea).count();
     assert_eq!(after, before + 1);
 }
+
+#[test]
+fn a_peasant_gathers_gold() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let ngol = i32::from_be_bytes(*b"ngol");
+    // The mine of the start location, nearest the town hall.
+    let p = view(&sim, first(&sim, b"htow"));
+    let mine = sim
+        .units()
+        .into_iter()
+        .filter(|u| u.type_id == ngol && u.alive)
+        .min_by(|a, b| {
+            let d = |u: &ow3_sim::game::UnitView| (u.x - p.x).powi(2) + (u.y - p.y).powi(2);
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let before = mine.resources;
+    assert!(before > 0);
+    sim.command(peasant, Some(mine.handle), None, false)
+        .unwrap();
+    assert_eq!(view(&sim, peasant).order, 852_018);
+    // In, out with 10 gold (the mine 10 down), and back to the town hall.
+    // (On this map creeps stand near the mine, so one trip is watched.)
+    let mut hidden = false;
+    let mut out = false;
+    for _ in 0..400 {
+        sim.advance(100_000);
+        let v = view(&sim, peasant);
+        hidden |= v.hidden;
+        if !out && v.carrying == Some((1, 10)) {
+            out = true;
+            assert_eq!(v.order, 852_017);
+            assert_eq!(view(&sim, mine.handle).resources, before - 10);
+        }
+        if sim.resources().gold > 500 {
+            break;
+        }
+    }
+    assert!(hidden && out);
+    assert_eq!(sim.resources().gold, 510);
+    assert_eq!(view(&sim, peasant).carrying, None);
+}
+
+#[test]
+fn a_peasant_gathers_lumber() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let hall = view(&sim, first(&sim, b"htow"));
+    let (tree, ..) = sim.tree_near(hall.x, hall.y, 3000.0).unwrap();
+    assert!(sim.harvest(peasant, tree));
+    let lumber = sim.resources().lumber;
+    let mut full = false;
+    for _ in 0..900 {
+        sim.advance(100_000);
+        let v = view(&sim, peasant);
+        full |= v.carrying == Some((2, 10)) && v.order == 852_017;
+        if sim.resources().lumber > lumber {
+            break;
+        }
+    }
+    assert!(full);
+    assert_eq!(sim.resources().lumber, lumber + 10);
+    assert_eq!(view(&sim, peasant).order, 852_018);
+}

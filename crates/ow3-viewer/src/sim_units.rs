@@ -367,6 +367,17 @@ impl Sim {
         ))
     }
 
+    /// The living tree nearest to (`x`, `y`) within `radius`.
+    pub fn tree_near(&self, x: f32, y: f32, radius: f32) -> Option<(u32, f32, f32)> {
+        self.game.tree_near(x, y, radius)
+    }
+
+    /// Orders worker `unit` to gather from mine or tree `target`
+    /// (SPEC-0029); whether it took the order.
+    pub fn harvest(&mut self, unit: u32, target: u32) -> bool {
+        self.game.issue_target_order(unit, "harvest", target)
+    }
+
     /// The local player's gold, lumber and food for the resource bar.
     pub fn resources(&self) -> crate::hud::Resources {
         let state = |s| self.game.player_state(LOCAL_PLAYER, s);
@@ -589,6 +600,8 @@ mod tests {
             target: None,
             order: 0,
             constructing: false,
+            carrying: None,
+            resources: 0,
         }
     }
 

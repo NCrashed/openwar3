@@ -50,6 +50,7 @@ mod enumerate;
 mod facing;
 mod follow;
 mod formation;
+mod harvest;
 mod movement;
 mod obstacles;
 pub mod players;
@@ -188,6 +189,8 @@ pub struct Unit {
     died_at: Option<u64>,
     /// Gold of a mine.
     resources: i32,
+    /// A worker's gathering and its load (SPEC-0029).
+    harvest: Option<harvest::Harvest>,
     /// A building's pathing texture in the grid (SPEC-0022).
     footprint: Option<Box<obstacles::Footprint>>,
     /// A building under construction (SPEC-0026).
@@ -417,6 +420,10 @@ pub struct UnitView {
     pub order: i32,
     /// A building under construction (SPEC-0026).
     pub constructing: bool,
+    /// What a worker carries: 1 gold, 2 lumber, with the amount; and the
+    /// gold left in a mine (SPEC-0029).
+    pub carrying: Option<(u8, i32)>,
+    pub resources: i32,
 }
 
 /// An attack in progress, in ticks.
@@ -685,6 +692,11 @@ pub struct State {
     /// Buildings started (false) and finished (true) in this tick, whose
     /// events run after the timers (SPEC-0026).
     constructions: Vec<(bool, u32)>,
+    /// The gold mines being worked, and the workers that reached their
+    /// mine, tree (false) or drop-off (true) at the updates of this tick
+    /// (SPEC-0029).
+    mines: BTreeMap<u32, harvest::Mine>,
+    harvest_reached: Vec<(u32, u32, bool)>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -751,6 +763,8 @@ impl State {
             engine_started: 0,
             in_tick: false,
             constructions: Vec::new(),
+            mines: BTreeMap::new(),
+            harvest_reached: Vec::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -1216,6 +1230,9 @@ impl<'a> Game<'a> {
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::start_buildings(&mut self.state.borrow_mut());
         widgets::constructions(&mut self.vm, &self.state);
+        // Workers gathering (SPEC-0029): what those that reached their
+        // mines, trees and drop-offs at the updates do, mines and trees.
+        harvest::tick(&mut self.vm, &self.state);
         self.park();
         loop {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
@@ -1325,6 +1342,11 @@ impl<'a> Game<'a> {
                     target: u.movement.and_then(|m| m.target()),
                     order: u.movement.map_or(0, |m| m.order_id()),
                     constructing: u.construction.is_some(),
+                    carrying: harvest::carried(&state, handle).map(|(r, n)| match r {
+                        harvest::Resource::Gold => (1, n),
+                        harvest::Resource::Lumber => (2, n),
+                    }),
+                    resources: u.resources,
                 }),
                 _ => None,
             })
@@ -1426,6 +1448,27 @@ impl<'a> Game<'a> {
         let facing = facing::from_degrees(270f32.to_bits());
         let (x, y) = obstacles::site(&state, type_id, x.to_bits(), y.to_bits(), facing);
         (f32::from_bits(x), f32::from_bits(y))
+    }
+
+    /// The living tree nearest to (`x`, `y`) within `radius`: its handle
+    /// and position.
+    pub fn tree_near(&self, x: f32, y: f32, radius: f32) -> Option<(u32, f32, f32)> {
+        let state = self.state.borrow();
+        let mut best: Option<(u32, f32, f32, f32)> = None;
+        for (&h, o) in &state.objects {
+            let Object::Destructable(d) = o else {
+                continue;
+            };
+            if !d.alive || !state.data.trees.contains(&d.type_id) {
+                continue;
+            }
+            let (tx, ty) = (f32::from_bits(d.x), f32::from_bits(d.y));
+            let e = (tx - x).powi(2) + (ty - y).powi(2);
+            if e <= radius * radius && best.is_none_or(|b| e < b.3 || (e == b.3 && h < b.0)) {
+                best = Some((h, tx, ty, e));
+            }
+        }
+        best.map(|(h, x, y, _)| (h, x, y))
     }
 
     /// Whether `player` may place a building of `type_id` at (`x`, `y`)

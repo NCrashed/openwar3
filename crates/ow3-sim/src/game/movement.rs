@@ -89,7 +89,7 @@ pub(super) fn next_update_after(tick: u64) -> u64 {
 }
 
 /// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).
-const CELL: u32 = 0x3D00_0000;
+pub(super) const CELL: u32 = 0x3D00_0000;
 /// The arrival radius of a point move in cells (0.49, 15.68 world units).
 const ARRIVAL: u32 = 0x3EFA_E148;
 /// A unit attacks once its heading is this close to its target (radians).
@@ -132,6 +132,12 @@ pub enum Order {
     Repair { building: u32 },
     /// Walk to a building under construction and go on building it.
     Resume { building: u32 },
+    /// Walk to a gold mine or tree to gather from it (SPEC-0029).
+    Gather { target: u32 },
+    /// Carry a load to a building that takes it.
+    Return { building: u32 },
+    /// Stand at a mine or tree and gather (or wait at the mine).
+    Work { target: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -196,6 +202,16 @@ impl Moving {
     /// Whether the order is still on.
     pub fn ordered(&self) -> bool {
         !self.arrived
+    }
+
+    /// Whether the unit gathers (SPEC-0029): walks to its mine or tree,
+    /// works there or carries a load back.
+    pub(super) fn gathering(&self) -> bool {
+        !self.arrived
+            && matches!(
+                self.order,
+                Order::Gather { .. } | Order::Return { .. } | Order::Work { .. }
+            )
     }
 
     /// Whether the unit moves now, for its animation.
@@ -1087,6 +1103,27 @@ fn move_off_footprint(state: &mut State, h: u32) -> bool {
     true
 }
 
+/// A gathering order of `game::harvest` for worker `h`: walking to its
+/// mine, tree or drop-off at `target`.
+pub(super) fn harvest_order(
+    state: &mut State,
+    h: u32,
+    gather: Order,
+    order_id: i32,
+    target: [u32; 2],
+) -> bool {
+    let done = order(state, h, gather, order_id, target);
+    if done {
+        set_attack_move(state, h, None);
+    }
+    done
+}
+
+/// Unit `h` stops where it is, its order over.
+pub(super) fn stop(state: &mut State, h: u32) {
+    halt(state, h);
+}
+
 /// A unit just trained walks to the rally point of its building, by the
 /// rules of `move` with the order id 851970 (SPEC-0027).
 pub(super) fn rally_order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
@@ -1191,6 +1228,14 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             None => false,
         };
     }
+    // A worker on a gold mine or tree gathers from it; with a load on a
+    // building that takes it, it delivers there (SPEC-0029).
+    if matches!(name, "smart" | "harvest") && super::harvest::can_harvest(state, h, target) {
+        return super::harvest::order_harvest(state, h, target);
+    }
+    if name == "smart" && super::harvest::can_deliver(state, h, target) {
+        return super::harvest::order_deliver(state, h, target);
+    }
     if name == "smart" {
         // On an enemy an attack, on anything else a move to it.
         let then = if hostile(state, h, target) {
@@ -1258,12 +1303,14 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
         // PROVISIONAL: the game takes it and the current order reads 0
         // after it (SPEC-0019); here it stops the unit like `stop`.
         "move" => halt(state, h),
+        // A worker takes its load back (SPEC-0029, not studied).
+        "returnresources" => super::harvest::order_back(state, h),
         _ => false,
     }
 }
 
 /// The ids of the order names (SPEC-0019, "Order ids").
-const ORDER_IDS: [(&str, i32); 9] = [
+const ORDER_IDS: [(&str, i32); 12] = [
     ("smart", 851_971),
     ("stop", 851_972),
     ("cancel", 851_976),
@@ -1273,6 +1320,9 @@ const ORDER_IDS: [(&str, i32); 9] = [
     ("move", 851_986),
     ("patrol", 851_990),
     ("holdposition", 851_993),
+    ("resumeharvesting", 852_017),
+    ("harvest", 852_018),
+    ("returnresources", 852_020),
 ];
 
 /// `OrderId`: the id of `name` in any case, 0 for an unknown name.
@@ -1614,6 +1664,21 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 turning_to_site = true;
             }
         }
+        // A worker reaching its mine, tree or drop-off stands there; what it
+        // does is up to `harvest::tick` after the updates.
+        if let Order::Gather { target } | Order::Return { building: target } = m.order
+            && !waiting
+            && super::harvest::reached(state, h, here, target)
+        {
+            let delivering = matches!(m.order, Order::Return { .. });
+            state.harvest_reached.push((h, target, delivering));
+            m.order = Order::Work { target };
+            m.arrived = false;
+        }
+        if let Order::Work { .. } = m.order {
+            m.walking = false;
+            m.velocity = [0, 0];
+        }
         // A worker sent back to a building under construction takes up the
         // work once near it.
         if let Order::Resume { building } = m.order
@@ -1644,7 +1709,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.arrived = true;
             }
         }
-        let repairing = matches!(m.order, Order::Repair { .. });
+        let repairing = matches!(m.order, Order::Repair { .. } | Order::Work { .. });
         if !m.arrived && !waiting && !repairing && !turning_to_site {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
@@ -1824,6 +1889,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         if m.skip && m.walking {
             m.skip = false;
             m.since = add(state.move_clock, crate::timers::TICK);
+        }
+        // A worker whose walk to its mine, tree or drop-off ended without
+        // touching it takes it as reached (PROVISIONAL: SPEC-0029 measured
+        // only walks that touch).
+        if m.arrived
+            && let Order::Gather { target } | Order::Return { building: target } = m.order
+        {
+            let delivering = matches!(m.order, Order::Return { .. });
+            state.harvest_reached.push((h, target, delivering));
+            m.order = Order::Work { target };
+            m.arrived = false;
         }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {

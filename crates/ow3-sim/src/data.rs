@@ -13,7 +13,7 @@
 //! PROVISIONAL, listed in specs/QUESTIONS.md: when several types share a
 //! string id, the lowest raw code is the one `UnitId` finds.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ow3_formats::binary::RawCode;
 use ow3_formats::map::objects::{ObjectKind, ObjectModifications, Value};
@@ -82,6 +82,8 @@ pub struct UnitType {
     /// The classes of target the type is (`targType`: `ground`, `air`,
     /// `structure`, ...), lower case.
     pub target_type: Vec<String>,
+    /// Its abilities (`abilList` of `UnitAbilities.slk`), SPEC-0029.
+    pub abilities: Vec<i32>,
     /// Movement (SPEC-0018): speed (`spd`, units per second), turn rate
     /// (`turnRate`, radians per update of 0.03 s) and propulsion window
     /// (`propWin`, degrees), as reals.
@@ -95,6 +97,18 @@ pub struct UnitType {
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
     /// SPEC-0022), as a key of [`ObjectData::path_textures`].
     pub path_texture: Option<String>,
+}
+
+/// The level 1 numbers of an ability (`AbilityData.slk`): the base
+/// ability it is made from (`code`), `DataA1` to `DataC1`, `Dur1`, `Rng1`
+/// and `Area1`, reals as bit patterns (SPEC-0029).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Ability {
+    pub code: i32,
+    pub data: [u32; 3],
+    pub duration: u32,
+    pub range: u32,
+    pub area: u32,
 }
 
 /// The pathing of a destructable type (`DestructableData.slk`,
@@ -278,6 +292,10 @@ pub struct ObjectData {
     /// and destructables use, by lower-case archive path (SPEC-0022).
     pub destructable_paths: BTreeMap<i32, DestructablePath>,
     pub path_textures: BTreeMap<String, PathTexture>,
+    /// Destructable types that are trees (`targType` has `tree`).
+    pub trees: BTreeSet<i32>,
+    /// Abilities by id (SPEC-0029).
+    pub abilities: BTreeMap<i32, Ability>,
     unit_names: BTreeMap<String, i32>,
 }
 
@@ -591,9 +609,19 @@ impl ObjectData {
             melee,
             "Units\\DestructableData.slk",
             "DestructableID",
-            &["HP", "armor", "pathTex", "pathTexDeath", "fixedRot"],
+            &[
+                "HP",
+                "armor",
+                "pathTex",
+                "pathTexDeath",
+                "fixedRot",
+                "targType",
+            ],
         )? {
             data.destructables.insert(id, real(values[0].as_ref()));
+            if classes(values[5].as_deref()).iter().any(|c| c == "tree") {
+                data.trees.insert(id);
+            }
             data.destructable_paths.insert(
                 id,
                 DestructablePath {
@@ -604,6 +632,50 @@ impl ObjectData {
             );
             data.destructable_armor
                 .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
+        }
+        // Abilities (SPEC-0029). PROVISIONAL: a map's changes to them
+        // (`war3map.w3a`) are not read.
+        let code = |text: Option<&String>| {
+            text.map(|t| t.trim().trim_matches('"').as_bytes())
+                .filter(|b| b.len() == 4)
+                .map_or(0, |b| i32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        for (id, values) in rows(
+            archives,
+            melee,
+            "Units\\AbilityData.slk",
+            "alias",
+            &[
+                "code", "DataA1", "DataB1", "DataC1", "Dur1", "Rng1", "Area1",
+            ],
+        )? {
+            data.abilities.insert(
+                id,
+                Ability {
+                    code: code(values[0].as_ref()),
+                    data: [1, 2, 3].map(|i| real(values[i].as_ref())),
+                    duration: real(values[4].as_ref()),
+                    range: real(values[5].as_ref()),
+                    area: real(values[6].as_ref()),
+                },
+            );
+        }
+        for (id, values) in rows(
+            archives,
+            melee,
+            "Units\\UnitAbilities.slk",
+            "unitAbilID",
+            &["abilList"],
+        )? {
+            if let Some(unit) = data.units.get_mut(&id) {
+                unit.abilities = values[0]
+                    .as_deref()
+                    .unwrap_or("")
+                    .split(',')
+                    .map(|a| code(Some(&a.to_owned())))
+                    .filter(|&a| a != 0)
+                    .collect();
+            }
         }
         for (id, values) in rows(
             archives,

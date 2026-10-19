@@ -481,6 +481,9 @@ pub struct State {
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
+    /// Workers that reached their building sites at this tick's updates,
+    /// with the type and the site (SPEC-0026).
+    starting: Vec<(u32, i32, [u32; 2])>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -538,6 +541,7 @@ impl State {
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             clusters: Vec::new(),
+            starting: Vec::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -984,6 +988,7 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
+        movement::start_buildings(&mut self.state.borrow_mut());
         movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
@@ -1140,6 +1145,13 @@ impl<'a> Game<'a> {
     pub fn issue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) -> bool {
         let target = [x.to_bits(), y.to_bits()];
         movement::group_point_order(&mut self.state.borrow_mut(), units, order, target)
+    }
+
+    /// Orders worker `unit` to build a building of `type_id` at (`x`,
+    /// `y`) (SPEC-0026).
+    pub fn issue_build_order(&mut self, unit: u32, type_id: i32, x: f32, y: f32) -> bool {
+        let target = [x.to_bits(), y.to_bits()];
+        movement::build_order(&mut self.state.borrow_mut(), unit, type_id, target)
     }
 
     pub fn issue_target_order(&mut self, unit: u32, order: &str, target: u32) -> bool {

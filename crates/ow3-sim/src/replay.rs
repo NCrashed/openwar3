@@ -334,6 +334,18 @@ impl<'a> Playback<'a> {
             Action::PointOrder {
                 flags, order, x, y, ..
             } => {
+                // A build order carries the building's type as its order
+                // (SPEC-0026). PROVISIONAL: with several workers selected
+                // the first that takes it builds.
+                if order_name(*order as i32).is_none() {
+                    if !selected
+                        .iter()
+                        .any(|&u| self.game.issue_build_order(u, *order as i32, *x, *y))
+                    {
+                        self.note(format!("build order {order:#x} not taken"));
+                    }
+                    return;
+                }
                 let Some(name) = self.order(*order) else {
                     return;
                 };

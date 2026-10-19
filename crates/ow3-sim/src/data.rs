@@ -55,6 +55,10 @@ pub struct UnitType {
     /// `UnitData.slk`, SPEC-0025): 0 for most melee units, 2 for most
     /// ranged ones, 4 for workers.
     pub formation: u8,
+    /// What it costs to build or train (`goldcost`, `lumbercost` of
+    /// `UnitBalance.slk`; `ugol`, `ulum` of a map), SPEC-0026.
+    pub gold_cost: i32,
+    pub lumber_cost: i32,
     /// Armor value (`def`), armor type (`defType`, an index into
     /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
     /// SPEC-0015.
@@ -533,6 +537,8 @@ impl ObjectData {
                 "spd",
                 "collision",
                 "type",
+                "goldcost",
+                "lumbercost",
             ],
         )? {
             let b = Balance {
@@ -556,6 +562,9 @@ impl ObjectData {
                 unit.worker = values[15]
                     .as_deref()
                     .is_some_and(|t| t.split(',').any(|c| c.trim().eq_ignore_ascii_case("peon")));
+                let cost = |v: Option<&String>| v.and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                unit.gold_cost = cost(values[16].as_ref());
+                unit.lumber_cost = cost(values[17].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -639,6 +648,12 @@ impl ObjectData {
             }
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
+            if let Some(gold) = def.number(b"ugol") {
+                unit.gold_cost = f32::from_bits(gold) as i32;
+            }
+            if let Some(lumber) = def.number(b"ulum") {
+                unit.lumber_cost = f32::from_bits(lumber) as i32;
+            }
             if let Some(rank) = def.number(b"ufor") {
                 unit.formation = f32::from_bits(rank) as u8;
             }

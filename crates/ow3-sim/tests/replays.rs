@@ -125,3 +125,40 @@ fn replays_follow_the_game_logs() {
         );
     }
 }
+
+/// SPEC-0026, verification 1: the build order of `c-RSR-1.w3g` against
+/// the script's log of every tick (`c-RSR-1.log.tsv`: tick, the peasant's
+/// x and y, its order, gold, lumber, units of player 0). The costs are
+/// paid, the order changes, the peasant walks and the farm is started in
+/// the same ticks as in the game.
+///
+/// PROVISIONAL: where the peasant is moved off the farm's footprint is
+/// not specified (SPEC-0026, open question 2), so its position is not
+/// compared once the farm stands.
+#[test]
+fn build_order_follows_the_game_log() {
+    let path = game_data().join("replays/c-RSR-1.w3g");
+    let Ok(log) = std::fs::read_to_string(path.with_extension("log.tsv")) else {
+        return;
+    };
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let run = play(&game_data(), &path, &replay);
+    let ours: Vec<Vec<String>> = run
+        .preload
+        .iter()
+        .filter_map(|l| l.strip_prefix("@@T "))
+        .map(|l| l.split(' ').map(str::to_owned).collect())
+        .collect();
+    let mut started = false;
+    let mut rows = 0;
+    for (line, ours) in log.lines().filter(|l| !l.starts_with('#')).zip(&ours) {
+        let game: Vec<&str> = line.split('\t').collect();
+        started |= game[3] == "852024";
+        let columns = if started { 3..7 } else { 0..7 };
+        for i in columns {
+            assert_eq!(ours[i], game[i], "tick {}: column {i}", game[0]);
+        }
+        rows += 1;
+    }
+    assert!(started && rows > 5000);
+}

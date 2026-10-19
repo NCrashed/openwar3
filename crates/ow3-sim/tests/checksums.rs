@@ -76,11 +76,6 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "the first local paths of two members see the members standing next \
          to them, which the game's do not (SPEC-0021)",
     ),
-    (
-        "c-RSN-1.w3g",
-        "a peasant builds a farm: build orders and construction are not \
-         specified (SPEC-0022, open questions)",
-    ),
 ];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.

@@ -195,7 +195,12 @@ fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
 
 /// Creates a unit of `type_id` for `owner`, or `None` for a type the game
 /// data does not know.
-fn create_unit(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Option<u32> {
+pub(super) fn create_unit(
+    state: &mut State,
+    owner: i32,
+    type_id: i32,
+    at: [u32; 3],
+) -> Option<u32> {
     let data = if state.data.units.is_empty() {
         UnitType {
             hp: UNKNOWN_LIFE,

@@ -106,7 +106,20 @@ pub enum Order {
     Patrol { home: [u32; 2] },
     /// `attack` on a unit, destructable or item.
     Attack { target: u32 },
+    /// Build a building of `type_id` at the target point (SPEC-0026).
+    Build { type_id: i32 },
+    /// Build the building just started: the worker stays.
+    Repair,
 }
+
+/// The order id of a worker building (`repair`, SPEC-0026).
+pub const ORDER_REPAIR: i32 = 852_024;
+/// A worker starts its building within this squared distance of the
+/// building's position, in world units (100, SPEC-0026).
+const BUILD_REACH_SQUARED: f32 = 10_000.0;
+/// The game generator that the alarm ability of a new building draws
+/// (SPEC-0026).
+const ALARM: usize = 21;
 
 /// A unit following an order.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -730,6 +743,136 @@ fn mul_both(p: [u32; 2], k: u32) -> [u32; 2] {
     [mul(p[0], k), mul(p[1], k)]
 }
 
+/// The player states of gold and lumber (`PLAYER_STATE_RESOURCE_GOLD`,
+/// `PLAYER_STATE_RESOURCE_LUMBER`).
+const GOLD: i32 = 1;
+const LUMBER: i32 = 2;
+
+/// An order to worker `h` to build a building of `type_id` at `target`
+/// (SPEC-0026): the costs are paid at once and the worker walks to the
+/// site. Whether it took the order.
+///
+/// PROVISIONAL: the checks that reject a build order are not specified
+/// (open question 3); an order the player cannot pay for, to a type that
+/// is not a building or to a unit that is not a worker is not taken.
+pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32; 2]) -> bool {
+    let Some(owner) = state.unit(Some(h)).filter(|u| u.alive).map(|u| u.owner) else {
+        return false;
+    };
+    let worker = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| t.worker);
+    let Some(building) = state.data.units.get(&type_id).filter(|t| t.building) else {
+        return false;
+    };
+    let (gold, lumber) = (building.gold_cost, building.lumber_cost);
+    let states = &state.setup.player_states;
+    let has = |s: i32| states.get(&(owner, s)).copied().unwrap_or(0);
+    if !worker || has(GOLD) < gold || has(LUMBER) < lumber {
+        return false;
+    }
+    if !order(state, h, Order::Build { type_id }, type_id, target) {
+        return false;
+    }
+    set_attack_move(state, h, None);
+    let states = &mut state.setup.player_states;
+    *states.entry((owner, GOLD)).or_default() -= gold;
+    *states.entry((owner, LUMBER)).or_default() -= lumber;
+    true
+}
+
+/// The workers that came near their sites at the updates of this tick
+/// start their buildings, after the script's timers: a script timer of
+/// that tick still sees the worker walking with its build order
+/// (`c-RSR-1.log.tsv`, SPEC-0026). The worker then stands with order
+/// `repair`.
+///
+/// PROVISIONAL: whether the start comes after the timers of the update's
+/// tick or in the next tick is not specified; the log of c-RSR-1 fits
+/// both.
+pub(super) fn start_buildings(state: &mut State) {
+    for (h, type_id, site) in std::mem::take(&mut state.starting) {
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        let Some(m) = u.movement.as_mut() else {
+            continue;
+        };
+        if m.order != (Order::Build { type_id }) || m.target != site {
+            continue;
+        }
+        m.order = Order::Repair;
+        m.order_id = ORDER_REPAIR;
+        m.walking = false;
+        m.velocity = [0, 0];
+        state.paths.remove(&h);
+        start_construction(state, h, type_id, site);
+    }
+}
+
+/// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
+/// building appears there, its alarm draws game generator 21 once, and a
+/// worker that stands on its footprint moves to a free place next to it.
+///
+/// PROVISIONAL: the building is made whole (construction is open
+/// question 1), and the worker's free place is the nearest cell centre
+/// whose cells are all passable (open question 2).
+fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) {
+    let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
+        return;
+    };
+    let facing = 270f32.to_bits();
+    if super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing]).is_none() {
+        return;
+    }
+    state.game_random[ALARM].fraction();
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let class =
+        crate::path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
+    let here = mul_both(relative([u.x, u.y], min), CELL);
+    let Some(grid) = state.grid.as_ref() else {
+        return;
+    };
+    let free = |p: [u32; 2]| {
+        crate::path::occupied_cells(p, class)
+            .iter()
+            .all(|&(x, y)| grid.passable(x, y))
+    };
+    if free(here) {
+        return;
+    }
+    let (cx, cy) = crate::path::cell_of(here);
+    let mut best: Option<([u32; 2], u32)> = None;
+    for dy in -8..=8 {
+        for dx in -8..=8 {
+            let p = [cx + dx, cy + dy].map(|c| add(i2r(c), 0x3F00_0000));
+            if !free(p) {
+                continue;
+            }
+            let (ex, ey) = (sub(p[0], here[0]), sub(p[1], here[1]));
+            let d = add(mul(ex, ex), mul(ey, ey));
+            if best.is_none_or(|(_, b)| real_of(d) < real_of(b)) {
+                best = Some((p, d));
+            }
+        }
+    }
+    let Some((p, _)) = best else {
+        return;
+    };
+    let [x, y] = absolute(mul_both(p, CELLS_TO_WORLD), min);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.x = x;
+        u.y = y;
+        if let Some(m) = u.movement.as_mut() {
+            m.origin = relative([x, y], min);
+        }
+    }
+}
+
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     point_order_taken(state, h, name, target).1
@@ -923,6 +1066,20 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let target = [real(&args[2]), real(&args[3])];
             let done = point_order(&mut state.borrow_mut(), h, name, target);
+            Ok(Some(Value::Boolean(done)))
+        }
+    );
+    // A worker builds (SPEC-0026).
+    native!(
+        add,
+        state,
+        "native IssueBuildOrderById takes unit whichPeon, integer unitId, real x, real y returns boolean",
+        |vm, state, args| {
+            let Some(h) = handle(&args[0]) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let target = [real(&args[2]), real(&args[3])];
+            let done = build_order(&mut state.borrow_mut(), h, integer(&args[1]), target);
             Ok(Some(Value::Boolean(done)))
         }
     );
@@ -1155,7 +1312,23 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.swing_gate = Some(tick + UPDATE);
             }
         }
-        if !m.arrived && !waiting {
+        // A worker near the site of its building starts it after the
+        // script's timers of this tick (SPEC-0026; `start_buildings`).
+        if let Order::Build { type_id } = m.order
+            && !m.arrived
+            && !waiting
+        {
+            let site = relative(m.target, min);
+            let (dx, dy) = (sub(site[0], here[0]), sub(site[1], here[1]));
+            if real_of(add(mul(dx, dx), mul(dy, dy))) <= BUILD_REACH_SQUARED {
+                state.starting.push((h, type_id, m.target));
+            }
+        }
+        if m.order == Order::Repair {
+            m.walking = false;
+            m.velocity = [0, 0];
+        }
+        if !m.arrived && !waiting && m.order != Order::Repair {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
                 m.velocity = [0, 0];

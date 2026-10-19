@@ -20,6 +20,9 @@ use crate::data::PathTexture;
 pub struct Footprint {
     red: Vec<(i32, i32)>,
     green: Vec<(i32, i32)>,
+    /// The cells the whole texture covers, also its unblocked border:
+    /// `X0`, `X1`, `Y0`, `Y1` (SPEC-0027).
+    pub(super) rect: (i32, i32, i32, i32),
 }
 
 /// How a texture turns.
@@ -87,13 +90,11 @@ fn cells(texture: &PathTexture, turn: Turn, x: u32, y: u32, min: [u32; 2]) -> Fo
         .collect::<Vec<_>>();
     let (w, h) = (texture.width, texture.height);
     let mut footprint = Footprint::default();
+    let mut rect = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
     for py in 0..h {
         for px in 0..w {
             let k = (py * w + px) as usize;
             let (red, green) = (texture.red[k], texture.green[k]);
-            if !red && !green {
-                continue;
-            }
             let (i, j) = (px - w / 2, py - h / 2);
             let (i, j) = match turn {
                 Turn::None => (i, j),
@@ -102,6 +103,12 @@ fn cells(texture: &PathTexture, turn: Turn, x: u32, y: u32, min: [u32; 2]) -> Fo
                 Turn::Right => (j, -i - 1),
             };
             let cell = (centre[0] + i, centre[1] + j);
+            rect = (
+                rect.0.min(cell.0),
+                rect.1.max(cell.0),
+                rect.2.min(cell.1),
+                rect.3.max(cell.1),
+            );
             if red {
                 footprint.red.push(cell);
             }
@@ -110,6 +117,7 @@ fn cells(texture: &PathTexture, turn: Turn, x: u32, y: u32, min: [u32; 2]) -> Fo
             }
         }
     }
+    footprint.rect = rect;
     footprint
 }
 

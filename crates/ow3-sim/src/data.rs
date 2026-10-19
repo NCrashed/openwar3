@@ -63,6 +63,8 @@ pub struct UnitType {
     /// finished unit gives (`fmade`, `ufma`), SPEC-0026.
     pub build_time: u32,
     pub food_made: i32,
+    /// The food a unit uses (`fused`, `ufoo`), SPEC-0027.
+    pub food_used: i32,
     /// Armor value (`def`), armor type (`defType`, an index into
     /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
     /// SPEC-0015.
@@ -545,6 +547,7 @@ impl ObjectData {
                 "lumbercost",
                 "bldtm",
                 "fmade",
+                "fused",
             ],
         )? {
             let b = Balance {
@@ -573,6 +576,7 @@ impl ObjectData {
                 unit.lumber_cost = cost(values[17].as_ref());
                 unit.build_time = real(values[18].as_ref());
                 unit.food_made = cost(values[19].as_ref());
+                unit.food_used = cost(values[20].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -657,6 +661,9 @@ impl ObjectData {
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
             unit.build_time = def.number(b"ubld").unwrap_or(unit.build_time);
+            if let Some(food) = def.number(b"ufoo") {
+                unit.food_used = f32::from_bits(food) as i32;
+            }
             if let Some(food) = def.number(b"ufma") {
                 unit.food_made = f32::from_bits(food) as i32;
             }

@@ -61,9 +61,10 @@ const UPDATE: u64 = 6;
 const PHASE: u64 = 1;
 const FIRST_UPDATE: u64 = 7;
 
-/// 0.03: the time of the first update of the cycle and its step
+/// 0.0300000012 (one unit in the last place above the nearest float to
+/// 0.03): the time of the first update of the cycle and its period
 /// (SPEC-0018, "Order within an update tick").
-const UPDATE_STEP: u32 = 0x3CF5_C28F;
+const UPDATE_STEP: u32 = 0x3CF5_C290;
 
 /// At an update tick, the time `U` of the update cycle for it (0.03 at
 /// tick 7, then 0.03 more at every update tick), else `None`.
@@ -136,9 +137,6 @@ pub const ORDER_REPAIR: i32 = 852_024;
 /// A worker starts its building within this squared distance of the
 /// building's position, in world units (100, SPEC-0026).
 const BUILD_REACH_SQUARED: f32 = 10_000.0;
-/// The game generator that the alarm ability of a new building draws
-/// (SPEC-0026).
-const ALARM: usize = 21;
 /// A worker starts its building facing it within this angle (0.2).
 const FACING_SITE: u32 = 0x3E4C_CCCD;
 
@@ -888,7 +886,9 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
     let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
-    state.game_random[ALARM].fraction();
+    // Its food comes when it is finished.
+    let food = state.data.units.get(&type_id).map_or(0, |t| t.food_made);
+    *state.setup.player_states.entry((owner, 4)).or_default() -= food;
     let moved = move_off_footprint(state, h);
     let data = state.data.units.get(&type_id);
     let (max, build_time) = data.map_or((0, 0), |t| (t.hp, t.build_time));
@@ -909,6 +909,14 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
             begin,
             tb,
         }));
+    }
+    if let Some(tb) = tb {
+        let end = add(tb, build_time);
+        super::training::start_timer(
+            state,
+            end,
+            super::training::EngineTimer::Construction(building),
+        );
     }
     state.constructions.push((false, building));
     Some(building)
@@ -969,6 +977,20 @@ fn move_off_footprint(state: &mut State, h: u32) -> bool {
     true
 }
 
+/// A unit just trained walks to the rally point of its building, by the
+/// rules of `move` with the order id 851970 (SPEC-0027).
+pub(super) fn rally_order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
+    order(state, h, Order::Point, super::training::ORDER_RALLY, target)
+}
+
+/// Whether unit `h` is a building.
+fn is_building(state: &State, h: u32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| t.building)
+}
+
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     point_order_taken(state, h, name, target).1
@@ -976,6 +998,14 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2
 
 /// A point order: whether the unit took it, and what the native returns.
 fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> (bool, bool) {
+    // A building takes `setrally` and `smart` on the ground as its rally
+    // point (SPEC-0027).
+    if (name == "setrally" || name == "smart") && is_building(state, h) {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.rally = Some(target);
+        }
+        return (true, true);
+    }
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
     let (taken, done) = match (name, here) {
         ("move", _) => {
@@ -1100,9 +1130,11 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
 }
 
 /// The ids of the order names (SPEC-0019, "Order ids").
-const ORDER_IDS: [(&str, i32); 7] = [
+const ORDER_IDS: [(&str, i32); 9] = [
     ("smart", 851_971),
     ("stop", 851_972),
+    ("cancel", 851_976),
+    ("setrally", 851_980),
     ("attack", 851_983),
     ("attackground", 851_984),
     ("move", 851_986),
@@ -1262,9 +1294,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native IssueImmediateOrderById takes unit whichUnit, integer order returns boolean",
         |vm, state, args| {
-            let done = match (handle(&args[0]), order_name(integer(&args[1]))) {
-                (Some(h), Some(name)) => immediate_order(&mut state.borrow_mut(), h, name),
-                _ => false,
+            let Some(h) = handle(&args[0]) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let id = integer(&args[1]);
+            // Unit types train, `cancel` takes back the last (SPEC-0027).
+            let done = match order_name(id) {
+                Some("cancel") => super::training::cancel(vm, state, h),
+                Some(name) => immediate_order(&mut state.borrow_mut(), h, name),
+                None => super::training::train(vm, state, h, id),
             };
             Ok(Some(Value::Boolean(done)))
         }
@@ -1275,6 +1313,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "native IssueImmediateOrder takes unit whichUnit, string order returns boolean",
         |vm, state, args| {
             let done = match (handle(&args[0]), string(&args[1])) {
+                (Some(h), Some("cancel")) => super::training::cancel(vm, state, h),
                 (Some(h), Some(name)) => immediate_order(&mut state.borrow_mut(), h, name),
                 _ => false,
             };
@@ -1289,6 +1328,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let state = state.borrow();
             let order = match state.unit(handle(&args[0])) {
                 // An attack-move reads `attack` all along (SPEC-0019).
+                Some(u) if u.shown_order.is_some_and(|(_, until)| until >= state.ticks) => {
+                    u.shown_order.map_or(0, |(id, _)| id)
+                }
                 Some(u) if u.attack_move.is_some() => ORDER_ATTACK,
                 Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
@@ -2094,19 +2136,12 @@ mod tests {
                 } else {
                     add(u, UPDATE_STEP)
                 };
-                if [307, 943, 1045, 1891, 1909, 2827].contains(&k) {
+                if [307, 943, 1891, 2827].contains(&k) {
                     found.push(f32::from_bits(u) - f32::from_bits(clock));
                 }
             }
         }
-        let expected = [
-            0.000_000_1f32,
-            0.000_093_0,
-            0.000_125_4,
-            0.000_532_2,
-            0.000_546_5,
-            0.001_276_0,
-        ];
+        let expected = [0.000_000_5f32, 0.000_093_5, 0.000_533_1, 0.001_277_0];
         assert_eq!(found.len(), expected.len());
         for (f, e) in found.iter().zip(expected) {
             assert!((f - e).abs() < 2e-7, "{found:?}");

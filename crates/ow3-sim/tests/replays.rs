@@ -116,7 +116,10 @@ fn replays_follow_the_game_logs() {
         };
         let expected = logged(log.lines());
         let run = play(&game_data(), &path, &replay);
-        assert!(!expected.is_empty(), "{}", path.display());
+        // Logs in other forms have tests of their own.
+        if expected.is_empty() {
+            continue;
+        }
         assert_eq!(
             logged(run.preload.iter().map(String::as_str)),
             expected,
@@ -169,7 +172,7 @@ fn build_order_follows_the_game_log() {
 /// past the end of the replay. Its life is a tenth of 500 until growth
 /// begins, then follows `50 + 12.857142 (T - Tb)`; it is finished 35 s of
 /// the movement clock after growth began, with 500 life; the player's food cap
-/// grows by 6 at the next tick, and the peasant's order ends. The ticks
+/// grows by 6 at the same time, and the peasant's order ends. The ticks
 /// are counted from the first tick in which the life is above 50, the
 /// one after work began: the tick of the start, or with the peasant
 /// moved two updates later.
@@ -212,11 +215,12 @@ fn a_farm_is_built() {
         began - created == 1 || began - created == 13,
         "{created} {began}"
     );
-    // 7000 ticks at the start of a game; growth here begins at a clock of
-    // 9.46 s, where the drift of the clock (SPEC-0018) adds one.
-    assert_eq!(finished - began, 7001);
-    assert_eq!(playback.game.player_state(0, 4), food);
-    playback.game.step();
+    // The end is a timer of the engine (SPEC-0026): 7002 ticks after the
+    // start of work early in a game, 7003 here, where work begins at a
+    // clock of 9.46 s and the drift of the clock (SPEC-0018) adds one;
+    // counted from the first growth, one less.
+    assert_eq!(finished - began, 7002);
+    // The food comes with the end, read by a timer of that tick.
     assert_eq!(playback.game.player_state(0, 4), food + 6);
     for _ in 0..6 {
         playback.game.step();
@@ -284,10 +288,6 @@ fn construction_follows_c_rti_1() {
 /// their start events with the time of the reference timer (`S b n
 /// time`): the first farm starts before the timer of its tick, the
 /// others after it. The log is the game's line for line.
-///
-/// PROVISIONAL: the times of two start events differ from the game's by
-/// one unit in the last place of the reference timer's remaining time
-/// (1.9e-6 s); they are compared to within 4e-6 s.
 #[test]
 fn update_time_follows_c_rtm_1() {
     let path = game_data().join("replays/c-RTM-1.w3g");
@@ -307,14 +307,29 @@ fn update_time_follows_c_rtm_1() {
     });
     let game = log_table(&log);
     assert!(ours.len() >= game.len());
-    for (o, g) in ours.iter().zip(&game) {
-        if g.starts_with('S') {
-            let (o, g) = (o.rsplit_once('\t').unwrap(), g.rsplit_once('\t').unwrap());
-            assert_eq!(o.0, g.0);
-            let (a, b): (f64, f64) = (o.1.parse().unwrap(), g.1.parse().unwrap());
-            assert!((a - b).abs() < 4e-6, "{o:?} {g:?}");
-        } else {
-            assert_eq!(o, g);
-        }
-    }
+    assert_eq!(ours[..game.len()], game[..]);
+}
+
+/// SPEC-0027 against the log of `c-RTP-1.w3g`: a barracks selected with
+/// the mouse is ordered twice to train a footman and once to cancel, and
+/// given a rally point. The issued order, start, cancel and finish events,
+/// the gold, lumber, food and orders, and the footman's place and walk to
+/// the rally point at every tick are the game's line for line.
+#[test]
+fn training_follows_c_rtp_1() {
+    let path = game_data().join("replays/c-RTP-1.w3g");
+    let Ok(log) = std::fs::read_to_string(path.with_extension("log.txt")) else {
+        return;
+    };
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let run = play(&game_data(), &path, &replay);
+    let ours: Vec<String> = table(&run.preload, |w| {
+        Some(w.iter().map(|s| (*s).to_owned()).collect())
+    })
+    .into_iter()
+    .map(|l| l.replace('\t', " "))
+    .collect();
+    let game = log_table(&log);
+    assert!(ours.len() >= game.len());
+    assert_eq!(ours[..game.len()], game[..]);
 }

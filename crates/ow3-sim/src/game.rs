@@ -53,6 +53,7 @@ mod formation;
 mod movement;
 mod obstacles;
 pub mod players;
+mod training;
 mod widgets;
 
 /// The first handle id (SPEC-0006).
@@ -191,6 +192,13 @@ pub struct Unit {
     footprint: Option<Box<obstacles::Footprint>>,
     /// A building under construction (SPEC-0026).
     construction: Option<Box<Construction>>,
+    /// The queue of a building that trains units, and its rally point
+    /// (SPEC-0027).
+    queue: Option<Box<training::Queue>>,
+    rally: Option<[u32; 2]>,
+    /// An order `GetUnitCurrentOrder` gives for a while instead of the
+    /// unit's own (SPEC-0027): the id and the tick it holds until.
+    shown_order: Option<(i32, u64)>,
 }
 
 /// A building under construction (SPEC-0026, "Construction progress"):
@@ -219,6 +227,7 @@ const GROWTH_OFFSET: u32 = 0x38D1_B717;
 /// clock of the tick, at least `base`.
 fn construction(state: &mut State, tick: u64) {
     let clock = state.move_clock;
+    let mut ends = Vec::new();
     for &h in &state.units {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
@@ -230,7 +239,9 @@ fn construction(state: &mut State, tick: u64) {
             continue;
         }
         if tick == c.begin {
-            c.tb = Some(add(clock, GROWTH_OFFSET));
+            let tb = add(clock, GROWTH_OFFSET);
+            c.tb = Some(tb);
+            ends.push((h, add(tb, c.build_time)));
         }
         let Some(tb) = c.tb else {
             continue;
@@ -243,39 +254,38 @@ fn construction(state: &mut State, tick: u64) {
                 life
             });
     }
+    for (h, end) in ends {
+        training::start_timer(state, end, training::EngineTimer::Construction(h));
+    }
 }
 
-/// The buildings finished in this tick, after the script's timers
-/// (SPEC-0026): those with `clock(k + 1) - Tb` at least their build time.
-/// They have their full life, their food comes at the next tick, and
-/// their finish events are queued.
-fn finish_constructions(state: &mut State) {
-    let next = add(state.move_clock, crate::timers::TICK);
-    let mut finished = Vec::new();
-    for &h in &state.units {
-        if let Some(Object::Unit(u)) = state.objects.get(&h)
-            && u.alive
-            && let Some(c) = u.construction.as_deref()
-            && let Some(tb) = c.tb
-            && f32::from_bits(sub(next, tb)) >= f32::from_bits(c.build_time)
-        {
-            finished.push(h);
-        }
-    }
-    for h in finished {
-        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
-            continue;
+/// The construction of building `h` is finished, by its timer of the
+/// engine (SPEC-0026, "Completion"): it has its full life and gives its
+/// food, the finish event runs, and the queues waiting for food go on.
+pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32) {
+    let owner = {
+        let mut s = state.borrow_mut();
+        let s = &mut *s;
+        let Some(Object::Unit(u)) = s.objects.get_mut(&h) else {
+            return;
         };
-        u.construction = None;
-        let (max, regen, food) = state.data.units.get(&u.type_id).map_or((0, 0, 0), |t| {
-            (t.hp, widgets::life_rate(t, 0, state.night), t.food_made)
+        if !u.alive || u.construction.take().is_none() {
+            return;
+        }
+        let (max, regen, food) = s.data.units.get(&u.type_id).map_or((0, 0, 0), |t| {
+            (t.hp, widgets::life_rate(t, 0, s.night), t.food_made)
         });
         u.life = Regenerating::full(max, regen);
-        if food != 0 {
-            state.food_made.push((u.owner, food));
-        }
-        state.constructions.push((true, h));
-    }
+        let owner = u.owner;
+        *s.setup
+            .player_states
+            .entry((owner, PLAYER_STATE_RESOURCE_FOOD_CAP))
+            .or_default() += food;
+        s.constructions.push((true, h));
+        owner
+    };
+    widgets::constructions(vm, state);
+    training::food_freed(vm, state, owner);
 }
 
 /// The acquisition phase of a unit that never acquires (a NaN, never
@@ -494,6 +504,11 @@ struct Context {
     /// `GetEventDamage` and `GetEventDamageSource` (SPEC-0015).
     event_damage: Option<u32>,
     damage_source: Option<u32>,
+    /// `GetTrainedUnit` and `GetTrainedUnitType` (SPEC-0027).
+    trained_unit: Option<u32>,
+    trained_type: Option<i32>,
+    /// `GetIssuedOrderId` (SPEC-0027).
+    issued_order: Option<i32>,
 }
 
 /// Work waiting for a sleep check.
@@ -582,8 +597,13 @@ pub struct State {
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
-    /// Food of buildings finished at this tick, given at the next one.
-    food_made: Vec<(i32, i32)>,
+    /// Timers of the engine on the movement clock, by expiry and start
+    /// (SPEC-0027).
+    engine_timers: BTreeMap<(u32, u64), training::EngineTimer>,
+    engine_started: u64,
+    /// Inside a tick; orders given between ticks take the clock of the
+    /// next one (SPEC-0027).
+    in_tick: bool,
     /// Buildings started (false) and finished (true) in this tick, whose
     /// events run after the timers (SPEC-0026).
     constructions: Vec<(bool, u32)>,
@@ -648,7 +668,9 @@ impl State {
             orders_given: 0,
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
-            food_made: Vec::new(),
+            engine_timers: BTreeMap::new(),
+            engine_started: 0,
+            in_tick: false,
             constructions: Vec::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
@@ -1028,15 +1050,8 @@ impl<'a> Game<'a> {
             let mut state = self.state.borrow_mut();
             let state = &mut *state;
             state.ticks += 1;
+            state.in_tick = true;
             let tick = state.ticks;
-            // Food from buildings finished in the tick before (SPEC-0026).
-            for (player, food) in std::mem::take(&mut state.food_made) {
-                *state
-                    .setup
-                    .player_states
-                    .entry((player, PLAYER_STATE_RESOURCE_FOOD_CAP))
-                    .or_default() += food;
-            }
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less
@@ -1093,11 +1108,14 @@ impl<'a> Game<'a> {
                 going
             });
         }
+        // Timers of the engine come before the script's (SPEC-0027): the
+        // ends of trainings and constructions.
+        training::fire_engine_timers(&mut self.vm, &self.state);
+        self.park();
         // The unit updates come at the time `U` of the update cycle among
         // the script's timers of the tick (SPEC-0018, "Order within an
         // update tick"), and with them the buildings they start and the
-        // events of those (SPEC-0026). Buildings are finished after the
-        // timers.
+        // events of those (SPEC-0026).
         let at = movement::update_time(&mut self.state.borrow_mut());
         let mut tick = self.state.borrow_mut().timers.begin_tick();
         if let Some(at) = at {
@@ -1128,14 +1146,12 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
-        finish_constructions(&mut self.state.borrow_mut());
-        widgets::constructions(&mut self.vm, &self.state);
-        self.park();
         movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);
         self.park();
+        self.state.borrow_mut().in_tick = false;
     }
 
     fn fire(&mut self, fired: Fired<u32>) {
@@ -1313,7 +1329,20 @@ impl<'a> Game<'a> {
     }
 
     pub fn issue_immediate_order(&mut self, unit: u32, order: &str) -> bool {
-        movement::immediate_order(&mut self.state.borrow_mut(), unit, order)
+        let done = if order == "cancel" {
+            training::cancel(&mut self.vm, &self.state, unit)
+        } else {
+            movement::immediate_order(&mut self.state.borrow_mut(), unit, order)
+        };
+        self.park();
+        done
+    }
+
+    /// Orders building `unit` to train a unit of `type_id` (SPEC-0027).
+    pub fn issue_train_order(&mut self, unit: u32, type_id: i32) -> bool {
+        let done = training::train(&mut self.vm, &self.state, unit, type_id);
+        self.park();
+        done
     }
 
     /// How player `player` sees unit `unit`: its own or an ally's, an

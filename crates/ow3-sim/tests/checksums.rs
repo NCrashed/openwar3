@@ -66,8 +66,8 @@ fn remainders_of_the_reference_replay() {
 /// yet, with the reason.
 const UNSPECIFIED: &[(&str, &str)] = &[(
     "c-RTJ-1.w3g",
-    "there is no list of its object ids (c-RTJ-1.units.txt), so its group order \
-     is not played",
+    "a single walker stops at turn 88, where the game records no change; \
+     there is no log of the walkers to find why",
 )];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.

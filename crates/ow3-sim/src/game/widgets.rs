@@ -32,6 +32,11 @@ use super::{
 };
 
 const EVENT_PLAYER_UNIT_DEATH: i32 = 20;
+/// `PLAYER_STATE_RESOURCE_FOOD_CAP` and `PLAYER_STATE_RESOURCE_FOOD_USED`.
+const FOOD_CAP: i32 = 4;
+const FOOD_USED: i32 = 5;
+/// The game generator the alarm of a new building draws (SPEC-0026).
+const ALARM: usize = 21;
 const EVENT_UNIT_DAMAGED: i32 = 52;
 const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
 const EVENT_UNIT_DEATH: i32 = 53;
@@ -231,6 +236,14 @@ pub(super) fn create_unit(
     } else {
         super::NO_PHASE
     };
+    // A building's alarm ability draws game generator 21 once (SPEC-0026).
+    //
+    // PROVISIONAL: measured for a farm started by a worker; every building
+    // made is taken to have the ability (c-RTP-1, whose script makes a
+    // barracks and farms, matches only so).
+    if data.building {
+        state.game_random[ALARM].fraction();
+    }
     let unit = Unit {
         owner,
         type_id,
@@ -258,9 +271,24 @@ pub(super) fn create_unit(
         resources: 0,
         footprint: footprint.map(Box::new),
         construction: None,
+        queue: None,
+        rally: None,
+        shown_order: None,
     };
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
+    // A unit uses its food, a building gives its food (SPEC-0027).
+    //
+    // PROVISIONAL: measured only with trained units and finished
+    // buildings; units made by a script are taken to count the same.
+    let (key, food) = if data.building {
+        (FOOD_CAP, data.food_made)
+    } else {
+        (FOOD_USED, data.food_used)
+    };
+    if food != 0 {
+        *state.setup.player_states.entry((owner, key)).or_default() += food;
+    }
     Some(h)
 }
 
@@ -335,6 +363,21 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
         // building no more (SPEC-0022).
         super::obstacles::died(&mut state, widget);
         let owner = state.unit(Some(widget)).map(|u| u.owner);
+        // Its food is freed (SPEC-0027): the food used of a unit, the food
+        // of a finished building.
+        let food = state.unit(Some(widget)).and_then(|u| {
+            let t = state.data.units.get(&u.type_id)?;
+            match (t.building, u.construction.is_none()) {
+                (true, true) => Some((FOOD_CAP, t.food_made)),
+                (true, false) => None,
+                (false, _) => Some((FOOD_USED, t.food_used)),
+            }
+        });
+        if let (Some(owner), Some((key, food))) = (owner, food)
+            && food != 0
+        {
+            *state.setup.player_states.entry((owner, key)).or_default() -= food;
+        }
         let owner_handle = owner.map(|id| state.player_handle(id));
         let dying_thread = state.context;
         (state.events.clone(), owner.zip(owner_handle), dying_thread)
@@ -404,6 +447,10 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
             };
             fire_trigger(vm, state, trigger, context);
         }
+    }
+    // Queues waiting for food go on (SPEC-0027).
+    if let Some((owner, _)) = owner {
+        super::training::food_freed(vm, state, owner);
     }
 }
 
@@ -1556,6 +1603,33 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Handle(state.borrow().context.triggering_unit)))
         });
     }
+    // The unit and type of a training event (SPEC-0027).
+    native!(
+        add,
+        state,
+        "constant native GetTrainedUnit takes nothing returns unit",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.trained_unit))) }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetTrainedUnitType takes nothing returns integer",
+        |vm, state, args| {
+            Ok(Some(Value::Integer(
+                state.borrow().context.trained_type.unwrap_or(0),
+            )))
+        }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetIssuedOrderId takes nothing returns integer",
+        |vm, state, args| {
+            Ok(Some(Value::Integer(
+                state.borrow().context.issued_order.unwrap_or(0),
+            )))
+        }
+    );
     native!(
         add,
         state,

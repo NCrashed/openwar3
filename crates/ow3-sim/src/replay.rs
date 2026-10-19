@@ -54,13 +54,16 @@ pub struct Playback<'a> {
     /// The state of the game when each turn's checksum is taken, the
     /// first for turn 1.
     pub marks: Vec<Marks>,
+    /// The units walking at the last mark, and the walks ended so far.
+    walking: std::collections::BTreeSet<u32>,
+    stops: u32,
 }
 
 /// What of the game's state a turn checksum (SPEC-0024) sees, as far as
-/// the simulation has it: the generators, the handles made, and folds of
-/// the units, of those walking, of the buildings under construction and of
-/// the players' selections. Positions
-/// and life are not part of the checksum.
+/// the simulation has it: the generators, the handles made, a fold of the
+/// units, the walks ended, and folds of the buildings under construction
+/// and of the players' selections. Positions and life are not part of the
+/// checksum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
     pub e: u32,
@@ -151,6 +154,8 @@ impl<'a> Playback<'a> {
             end: 0,
             notes: Vec::new(),
             marks: Vec::new(),
+            walking: std::collections::BTreeSet::new(),
+            stops: 0,
         })
     }
 
@@ -163,17 +168,23 @@ impl<'a> Playback<'a> {
             handles: self.game.handles_made(),
             ..Marks::default()
         };
+        let mut walking = std::collections::BTreeSet::new();
         for u in self.game.units() {
             marks.units = fold(marks.units, u.handle);
             if u.constructing {
                 marks.constructing = fold(marks.constructing, u.handle);
             }
-            // A group member starts and stops walking without objects of
-            // its own (the cluster keeps the path).
+            // A walk that ends frees its objects (SPEC-0024); starting one
+            // changes nothing beyond the order. A group member starts and
+            // stops walking without objects of its own (the cluster keeps
+            // the path).
             if u.walking && !self.game.grouped(u.handle) {
-                marks.walking = fold(marks.walking, u.handle);
+                walking.insert(u.handle);
             }
         }
+        self.stops += self.walking.difference(&walking).count() as u32;
+        self.walking = walking;
+        marks.walking = self.stops;
         for (player, units) in &self.selections {
             marks.selections = fold(marks.selections, u32::from(*player));
             for &u in units {
@@ -341,6 +352,18 @@ impl<'a> Playback<'a> {
                 self.selections.insert(player, units);
             }
             Action::Order { order, .. } => {
+                // An order with a unit type trains it (SPEC-0027).
+                // PROVISIONAL: with several buildings selected the first
+                // that takes it trains.
+                if order_name(*order as i32).is_none() {
+                    if !selected
+                        .iter()
+                        .any(|&u| self.game.issue_train_order(u, *order as i32))
+                    {
+                        self.note(format!("train order {order:#x} not taken"));
+                    }
+                    return;
+                }
                 let Some(name) = self.order(*order) else {
                     return;
                 };

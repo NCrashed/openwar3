@@ -62,8 +62,11 @@ The timer ticks of the table above are these ticks minus 3.
 
 **Order within an update tick.** The unit updates of a tick are not
 always before its script timers. The update cycle has its own time
-`U`: `U1 = 0.03` for the update of tick 7 and `U(m+1) = add(U(m), 0.03)`
-(SPEC-0004) for each following update tick; `U(m)` lies between
+`U`: it is a periodic timer of the game's timer queue (SPEC-0002) with
+the period `P = 0x3CF5C290` (0.0300000012, one unit in the last place
+above the float nearest to 0.03), so `U1 = P` for the update of tick 7
+and `U(m+1) = add(U(m), P)` (SPEC-0004) for each following update
+tick; while the updates run, the queue's time is `U(m)`; `U(m)` lies between
 `clock(k)` and `clock(k + 1)` of its tick `k = 6 m + 1`. Inside the tick
 the updates (and what they cause: a construction start and its trigger
 event, SPEC-0026) come at time `U` among the timers that fire in the
@@ -71,9 +74,9 @@ tick, ordered with their expiries as timers are ordered with each
 other (SPEC-0002): after a timer whose expiry is below `U`, before one
 whose expiry is above. The 0.005 sum of the clock and the 0.03 sum lose
 different amounts to truncation, so `U` moves ahead of the clock of
-its tick: `U - clock(k)` is +0.0000001 in tick 307 (1.53 s), +0.0000930
-in tick 943 (4.71 s), +0.0001254 in tick 1045 (5.22 s), +0.0005322 in
-tick 1891 (9.45 s), +0.0005465 in tick 1909 and +0.0012760 in tick 2827
+its tick: `U - clock(k)` is +0.0000005 in tick 307 (1.53 s), +0.0000935
+in tick 943 (4.71 s), +0.0001259 in tick 1045 (5.22 s), +0.0005331 in
+tick 1891 (9.45 s), +0.0005474 in tick 1909 and +0.0012770 in tick 2827
 (14.13 s).
 
 A timer with timeout 0 started inside a timer callback expires 0.0001
@@ -83,8 +86,13 @@ actions run from a 0 s timer of a 1.0 s timer of `main`) fires in tick
 `k` with expiry `clock(k) + 0.0001`. Against that timer the update came
 first up to 4.71 s and after it from 5.22 s on (tests RTI, RTM and
 `c-RSR-1` of SPEC-0026). Measured through `TimerGetElapsed` of a
-reference timer read in construction start events (test RTM): the
-start times fit `U` to within 3e-6 s at 1.53, 5.22, 9.72 and 14.61 s.
+reference timer read in construction start events (test RTM): with
+the queue's time equal to `U(m)` for `m` = 51, 174, 324 and 487, the
+reads `sub(30.0, sub(e, U(m)))` (`e = add(add(1.0, 0.0001), 30.0)`, the
+expiry of the reference timer) give exactly the values printed,
+0.529901504, 4.219886768, 8.719846720 and 13.609804096 (`R2SW` with 9
+decimals); the period and the expiry `U(m)` were read from the timer's
+entry in memory.
 The orders of the tables above were given early in the game, where the
 updates still come first. How the cycle goes on once `U` has moved by
 a whole tick (after roughly 200 s at this rate) was not tested.

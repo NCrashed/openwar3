@@ -137,7 +137,7 @@ impl Animated {
 }
 
 /// What an alpha slot shows: geoset and material layer of a model.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AlphaSource {
     model: usize,
     geoset: usize,
@@ -736,13 +736,22 @@ fn animated_parts(
             let Some(texture) = textures.get(layer.texture_id as usize).cloned().flatten() else {
                 continue;
             };
-            alphas.push(AlphaSource {
+            // One slot per source: parts of the same model made again (a
+            // tree drawn on its own as well as in the scene) share the
+            // slots, so that the alphas of a pose reach them.
+            let source = AlphaSource {
                 model: model_index,
                 geoset: g,
                 material: geoset.material_id as usize,
                 layer: l,
-            });
-            let slot = alphas.len() as u32;
+            };
+            let slot = match alphas.iter().position(|s| *s == source) {
+                Some(i) => i as u32 + 1,
+                None => {
+                    alphas.push(source);
+                    alphas.len() as u32
+                }
+            };
             parts.push(Part {
                 vertices: vertices
                     .iter()

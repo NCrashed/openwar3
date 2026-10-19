@@ -648,6 +648,24 @@ or other mark, where, how large, in which colour, for how long, and
 whether the target's selection circle or the unit itself flashes
 instead.
 
+## Minimap (the viewer, SPEC-0028)
+
+SPEC-0028 gives only the minimap's rectangle. The viewer shows
+`war3mapMap.blp` over the playable area (the terrain less the camera
+bound complements of `war3map.w3i`), every unit as a plain square (own
+green, allies yellow, enemies red; buildings larger), gold mines as
+gold squares, no creeps, and the ground the camera sees as a dotted
+outline. Compared with the game the marks look much coarser. Needed:
+
+- the world area the image spans;
+- how units, buildings, gold mines (`war3map.mmp` icons?), start
+  locations and creep camps are drawn: shapes, sizes in pixels or
+  interface units, colours, borders, and which units show at all
+  (fog of war and visibility, hidden units);
+- how the camera's view is outlined;
+- what a right click on it does, and the five buttons (signal, terrain,
+  ally colours, creep camps, formation).
+
 ## Camera (the viewer, SPEC-0023)
 
 The projection has the field of view (70 degrees) across the diagonal

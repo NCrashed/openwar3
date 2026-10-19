@@ -428,3 +428,35 @@ fn a_hit_tree_is_drawn_on_its_own() {
     assert_eq!(hidden.len(), 1);
     assert_eq!(draws[0].pose, pose);
 }
+
+/// A tree drawn on its own as well as in the scene shares the alpha slots
+/// of its model, so that its Stand Hit shows it (it vanished for the time
+/// of the hit when the slots were made twice).
+#[test]
+fn a_tree_drawn_on_its_own_stays_visible() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    let map = dir.join("Maps/(12)IceCrown.w3m");
+    if !map.exists() {
+        return;
+    }
+    use ow3_viewer::models::UnitPose;
+    let mut scene = ow3_viewer::scene::Scene::load(&dir, &map, true, None).unwrap();
+    let mut chain = ow3_formats::mpq::ArchiveChain::open(&dir, &map).unwrap();
+    let tree = scene
+        .placements
+        .iter()
+        .find(|p| p.replaceable.is_some() && p.model.contains("Tree"))
+        .unwrap()
+        .clone();
+    let index = scene.animation.model(&mut chain, &tree.model).unwrap();
+    let slots = scene.animation.alpha_count();
+    scene
+        .animation
+        .unit_parts(index, 0, tree.replaceable.as_ref());
+    assert_eq!(scene.animation.alpha_count(), slots);
+    let (values, _) = scene
+        .animation
+        .pose_alphas(index, UnitPose::Hit(100))
+        .unwrap();
+    assert!(values.iter().any(|&a| a > 0.5), "{values:?}");
+}

@@ -552,6 +552,7 @@ pub(super) fn group_point_order(
     }
     // The group counts as one order, the newest (SPEC-0025).
     let given = state.orders_given;
+    state.group_orders.insert(given);
     for &h in &taken {
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
@@ -719,9 +720,11 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
 const WALKED_SQUARED: f32 = 0.1024;
 const ALL_WALK_AFTER: u32 = 65;
 
-/// Whether unit `h` is a member of a cluster.
+/// Whether unit `h` is a member of a cluster or follows a group order.
 pub(super) fn grouped(state: &State, h: u32) -> bool {
-    state.clusters.iter().any(|c| c.members.contains(&h))
+    let group_order = matches!(state.objects.get(&h), Some(Object::Unit(u))
+        if u.movement.is_some_and(|m| state.group_orders.contains(&m.given)));
+    group_order || state.clusters.iter().any(|c| c.members.contains(&h))
 }
 
 /// Squared distances in cells below this are near a place (16 cells).

@@ -54,14 +54,15 @@ pub struct Playback<'a> {
     /// The state of the game when each turn's checksum is taken, the
     /// first for turn 1.
     pub marks: Vec<Marks>,
-    /// The units walking at the last mark, and the walks ended so far.
+    /// The units following an order at the last mark, and the orders
+    /// ended so far.
     walking: std::collections::BTreeSet<u32>,
     stops: u32,
 }
 
 /// What of the game's state a turn checksum (SPEC-0024) sees, as far as
 /// the simulation has it: the generators, the handles made, a fold of the
-/// units, the walks ended, and folds of the buildings under construction
+/// units, the orders ended, and folds of the buildings under construction
 /// and of the players' selections. Positions and life are not part of the
 /// checksum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -174,11 +175,11 @@ impl<'a> Playback<'a> {
             if u.constructing {
                 marks.constructing = fold(marks.constructing, u.handle);
             }
-            // A walk that ends frees its objects (SPEC-0024); starting one
-            // changes nothing beyond the order. A group member starts and
-            // stops walking without objects of its own (the cluster keeps
-            // the path).
-            if u.walking && !self.game.grouped(u.handle) {
+            // An order that ends frees its objects, the path of a walk
+            // among them (SPEC-0024); a unit standing an update on its way
+            // or starting to walk changes nothing beyond the order. A group
+            // member has no path of its own (the cluster keeps it).
+            if u.order != 0 && !u.constructing && !self.game.grouped(u.handle) {
                 walking.insert(u.handle);
             }
         }

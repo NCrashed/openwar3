@@ -217,14 +217,10 @@ pub struct Construction {
 /// `PLAYER_STATE_RESOURCE_FOOD_CAP`.
 const PLAYER_STATE_RESOURCE_FOOD_CAP: i32 = 4;
 
-/// 0.0001: the start of growth comes this much after the clock of the
-/// tick work begins (SPEC-0026).
-const GROWTH_OFFSET: u32 = 0x38D1_B717;
-
 /// The life of the buildings under construction in this tick (SPEC-0026,
 /// "Construction progress"): from the tick `ks` work begins, `Tb` is its
-/// clock plus 0.0001 and the life `base + rate (T - Tb)` with `T` the
-/// clock of the tick, at least `base`.
+/// clock (plus 0.0001 when work began at the start, set then) and the life
+/// `base + rate (T - Tb)` with `T` the clock of the tick, at least `base`.
 fn construction(state: &mut State, tick: u64) {
     let clock = state.move_clock;
     let mut ends = Vec::new();
@@ -239,7 +235,9 @@ fn construction(state: &mut State, tick: u64) {
             continue;
         }
         if tick == c.begin {
-            let tb = add(clock, GROWTH_OFFSET);
+            // Work that begins later, the worker moved, grows from the
+            // clock itself (SPEC-0026).
+            let tb = clock;
             c.tb = Some(tb);
             ends.push((h, add(tb, c.build_time)));
         }
@@ -591,6 +589,8 @@ pub struct State {
     clusters: Vec<movement::Cluster>,
     /// Orders given so far (SPEC-0021, order of handling).
     orders_given: u64,
+    /// The numbers of the orders given to groups (SPEC-0025).
+    group_orders: BTreeSet<u64>,
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
@@ -666,6 +666,7 @@ impl State {
             paths: std::collections::BTreeMap::new(),
             clusters: Vec::new(),
             orders_given: 0,
+            group_orders: BTreeSet::new(),
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
@@ -1385,7 +1386,8 @@ impl<'a> Game<'a> {
         self.state.borrow().next_handle
     }
 
-    /// Whether a unit walks in a group's cluster (SPEC-0025).
+    /// Whether a unit walks in a group's cluster or by a group order
+    /// (SPEC-0025).
     pub fn grouped(&self, unit: u32) -> bool {
         movement::grouped(&self.state.borrow(), unit)
     }

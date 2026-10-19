@@ -64,11 +64,7 @@ fn remainders_of_the_reference_replay() {
 
 /// Replays of the test maps whose play needs what the specs do not give
 /// yet, with the reason.
-const UNSPECIFIED: &[(&str, &str)] = &[(
-    "c-RTJ-1.w3g",
-    "a single walker stops at turn 88, where the game records no change; \
-     there is no log of the walkers to find why",
-)];
+const UNSPECIFIED: &[(&str, &str)] = &[];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.
 fn test_replays() -> Vec<PathBuf> {

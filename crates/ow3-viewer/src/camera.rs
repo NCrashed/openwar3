@@ -59,14 +59,35 @@ fn perspective(tan_x: f32, tan_y: f32, near: f32, far: f32) -> Mat4 {
     ]
 }
 
+/// The tangents of the half-angles across and up a frame `aspect` times as
+/// wide as high, for field of view `fov` in radians spread over the
+/// frame's diagonal in proportion to its sides (SPEC-0023, "Field of
+/// view"): up and down `v = (fov / 2) / sqrt(1 + aspect^2)`, across
+/// `aspect * tan(v)`.
+pub fn frame_tangents(fov: f32, aspect: f32) -> (f32, f32) {
+    let v = fov * (1.0 / (1.0 + aspect * aspect).sqrt()) * 0.5;
+    let t = v.tan();
+    (aspect * t, t)
+}
+
+/// The world frame of the interface (SPEC-0023, SPEC-0028): left, bottom,
+/// right, top in its 0.8 x 0.6 units. The 3D view is computed for it and
+/// goes on beyond it under the bars.
+const WORLD_FRAME: [f32; 4] = [0.0, 0.13, 0.8, 0.58];
+
+/// For the window: the world frame's half height and the height of its
+/// centre, both in normalised device coordinates.
+fn world_frame_ndc() -> (f32, f32) {
+    let [_, bottom, _, top] = WORLD_FRAME;
+    let half = (top - bottom) / 0.6;
+    let centre = (top + bottom) / 0.6 - 1.0;
+    (half, centre)
+}
+
 /// The view and projection of a camera stored in a model (a portrait's),
 /// from `position` to `target` with field of view `fov` (radians) and the
 /// clipping distances `near` and `far`, into a frame `aspect` times as
-/// wide as high.
-///
-/// PROVISIONAL: the field of view is taken across the diagonal of the
-/// frame, as for the game's camera (`Camera::tangents`); SPEC-0028 does
-/// not say along which side it lies.
+/// wide as high (SPEC-0028, "Portrait").
 pub fn model_view_projection(
     position: [f32; 3],
     target: [f32; 3],
@@ -76,9 +97,8 @@ pub fn model_view_projection(
     aspect: f32,
 ) -> Mat4 {
     let view = look_at(position, target, [0.0, 0.0, 1.0]);
-    let t = (fov / 2.0).tan();
-    let diagonal = (aspect * aspect + 1.0).sqrt();
-    let projection = perspective(t * aspect / diagonal, t / diagonal, near, far);
+    let (tan_x, tan_y) = frame_tangents(fov, aspect);
+    let projection = perspective(tan_x, tan_y, near, far);
     multiply(&projection, &view)
 }
 
@@ -123,17 +143,24 @@ impl Camera {
         ]
     }
 
-    /// The tangents of half the horizontal and vertical fields of view.
+    /// The tangents of the half-angles across and up the world frame
+    /// (16:9, SPEC-0023).
     fn tangents(&self) -> (f32, f32) {
-        let t = (self.fov.to_radians() / 2.0).tan();
-        (0.8 * t, 0.6 * t)
+        let [left, bottom, right, top] = WORLD_FRAME;
+        frame_tangents(self.fov.to_radians(), (right - left) / (top - bottom))
     }
 
+    /// The projection fills the world frame of the window, the target at
+    /// its centre, and goes on beyond it (SPEC-0023).
     pub fn view_projection(&self) -> Mat4 {
         let view = look_at(self.eye(), self.target, [0.0, 0.0, 1.0]);
         let far = self.distance * 4.0 + 20_000.0;
         let (tan_x, tan_y) = self.tangents();
-        let projection = perspective(tan_x, tan_y, 16.0, far);
+        let (half, centre) = world_frame_ndc();
+        let mut projection = perspective(tan_x, tan_y / half, 16.0, far);
+        // y in the window = half * y in the frame + centre: the centre
+        // times the clip w (the view's -z).
+        projection[2][1] = -centre;
         multiply(&projection, &view)
     }
 
@@ -164,7 +191,11 @@ impl Camera {
         let s = normalize(cross(f, [0.0, 0.0, 1.0]));
         let u = cross(s, f);
         let (tan_x, tan_y) = self.tangents();
-        let (nx, ny) = ((2.0 * x / w - 1.0) * tan_x, (1.0 - 2.0 * y / h) * tan_y);
+        let (half, centre) = world_frame_ndc();
+        let (nx, ny) = (
+            (2.0 * x / w - 1.0) * tan_x,
+            (1.0 - 2.0 * y / h - centre) / half * tan_y,
+        );
         let direction = normalize([
             f[0] + s[0] * nx + u[0] * ny,
             f[1] + s[1] * nx + u[1] * ny,
@@ -223,22 +254,41 @@ mod tests {
         [out[0] / out[3], out[1] / out[3], out[2] / out[3]]
     }
 
-    /// The target is in the middle of the screen; a point north of it is
-    /// higher up the screen, a point east of it to the right.
+    /// The target is at the centre of the world frame, 0.355 of the window
+    /// up from its bottom (SPEC-0023); a point north of it is higher up the
+    /// screen, a point east of it to the right.
     #[test]
     fn looks_north_at_the_target() {
         let camera = Camera::new([1000.0, 2000.0, 0.0]);
         let m = camera.view_projection();
         let centre = project(&m, camera.target);
+        let (_, frame_centre) = world_frame_ndc();
+        assert!((frame_centre - (2.0 * 0.355 / 0.6 - 1.0)).abs() < 1e-3);
         assert!(
-            centre[0].abs() < 1e-4 && centre[1].abs() < 1e-4,
+            centre[0].abs() < 1e-4 && (centre[1] - frame_centre).abs() < 1e-4,
             "{centre:?}"
         );
         assert!((0.0..1.0).contains(&centre[2]));
         let north = project(&m, [1000.0, 2500.0, 0.0]);
-        assert!(north[1] > 0.1, "{north:?}");
+        assert!(north[1] > frame_centre + 0.1, "{north:?}");
         let east = project(&m, [1500.0, 2000.0, 0.0]);
         assert!(east[0] > 0.1, "{east:?}");
+    }
+
+    /// The tangents SPEC-0023 and SPEC-0028 give: the world frame at 70 and
+    /// 120 degrees, the footman's portrait at 45.
+    #[test]
+    fn tangents_over_the_diagonal() {
+        let world = 0.8 / 0.45;
+        let close = |(x, y): (f32, f32), (ex, ey): (f32, f32)| {
+            (x - ex).abs() < 5e-4 && (y - ey).abs() < 5e-4
+        };
+        let t70 = frame_tangents(70f32.to_radians(), world);
+        assert!(close(t70, (0.5490, 0.3088)), "{t70:?}");
+        let t120 = frame_tangents(120f32.to_radians(), world);
+        assert!(close(t120, (1.0027, 0.5640)), "{t120:?}");
+        let portrait = frame_tangents(std::f32::consts::FRAC_PI_4, 0.09 / 0.0856);
+        assert!(close(portrait, (0.2917, 0.2774)), "{portrait:?}");
     }
 
     /// The ray through a pixel meets flat ground where that ground point
@@ -262,24 +312,29 @@ mod tests {
     }
 
     /// Verification 1 of SPEC-0023: straight down from 1000 in a window of
-    /// 1016 x 734, a tile is 116.1 pixels across (116.75 measured) and
-    /// 112.5 up the screen, the 4:3 frame being stretched.
+    /// 1016 x 734, a tile is 118.4 pixels across and 114.1 up the screen by
+    /// the rule (116.75 and 112.5 measured, the models read standing above
+    /// the ground), the interface's 4:3 stretched; between fields of view
+    /// of 70 and 120 degrees the scale differs by 1.826.
     #[test]
     fn a_tile_seen_from_above() {
         let mut camera = Camera::new([0.0, 0.0, 0.0]);
         camera.distance = 1000.0;
         camera.pitch = 89.999;
-        let m = camera.view_projection();
+        let across = |camera: &Camera, w: f32| {
+            project(&camera.view_projection(), [128.0, 0.0, 0.0])[0] * w / 2.0
+        };
         let (w, h) = (1016.0, 734.0);
-        let east = project(&m, [128.0, 0.0, 0.0]);
-        let north = project(&m, [0.0, 128.0, 0.0]);
-        let across = east[0] * w / 2.0;
-        let up = north[1] * h / 2.0;
-        assert!((across - 116.1).abs() < 0.2, "{across}");
-        assert!(
-            (up / across - (734.0 / 1016.0) / 0.75).abs() < 0.001,
-            "{up}"
-        );
+        let a = across(&camera, w);
+        let north = project(&camera.view_projection(), [0.0, 128.0, 0.0]);
+        let (_, centre) = world_frame_ndc();
+        let up = (north[1] - centre) * h / 2.0;
+        assert!((a - 118.4).abs() < 0.2, "{a}");
+        assert!((up - 114.1).abs() < 0.2, "{up}");
+        let mut wide = camera;
+        wide.fov = 120.0;
+        let ratio = a / across(&wide, w);
+        assert!((ratio - 1.826).abs() < 0.005, "{ratio}");
     }
 
     #[test]

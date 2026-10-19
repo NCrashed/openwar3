@@ -35,7 +35,9 @@ fn renders_a_map_offscreen() {
         .chunks(4)
         .filter(|p| p[0].max(p[1]).max(p[2]) > 40)
         .count();
-    assert!(lit > lower.len() / 4 * 9 / 10, "{lit} lit pixels");
+    // (Dark forest near the camera fills part of it since the view is
+    // that of the world frame, SPEC-0023.)
+    assert!(lit > lower.len() / 4 * 3 / 4, "{lit} lit pixels");
     let green = lower
         .chunks(4)
         .filter(|p| p[1] > p[2] && p[1] > p[0])

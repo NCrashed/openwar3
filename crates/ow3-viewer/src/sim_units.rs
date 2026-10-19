@@ -518,6 +518,12 @@ impl Sim {
         }
     }
 
+    /// Where the map's script last put the camera, and how many times it
+    /// did.
+    pub fn camera_target(&self) -> Option<([f32; 2], u32)> {
+        self.game.camera_target()
+    }
+
     /// The time of day in hours.
     pub fn time_of_day(&self) -> f32 {
         self.game.time_of_day()

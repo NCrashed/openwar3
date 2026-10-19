@@ -460,3 +460,18 @@ fn a_tree_drawn_on_its_own_stays_visible() {
         .unwrap();
     assert!(values.iter().any(|&a| a > 0.5), "{values:?}");
 }
+
+/// The melee start puts the camera on the workers of the local player's
+/// start location (`SetCameraPositionForPlayer` in Blizzard.j).
+#[test]
+fn the_camera_starts_at_the_workers() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let ([x, y], moves) = sim.camera_target().unwrap();
+    assert!(moves >= 1);
+    let hall = view(&sim, first(&sim, b"htow"));
+    let d = ((x - hall.x).powi(2) + (y - hall.y).powi(2)).sqrt();
+    assert!(d < 600.0, "{d} from the town hall");
+}

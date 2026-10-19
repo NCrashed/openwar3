@@ -727,6 +727,9 @@ pub struct State {
     pub combat: crate::combat::Combat,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
     camera_bounds: [u32; 4],
+    /// Where scripts last put or panned the local player's camera
+    /// (`SetCameraPosition`, `PanCameraTo` and the like), and how many times.
+    camera_target: Option<([f32; 2], u32)>,
     next_handle: u32,
     /// Texts shown to the local player, in order.
     pub output: Vec<String>,
@@ -789,6 +792,7 @@ impl State {
             day_night_models: None,
             terrain_fog: None,
             camera_bounds: [0; 4],
+            camera_target: None,
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
             output: Vec::new(),
@@ -1472,6 +1476,12 @@ impl<'a> Game<'a> {
         let facing = facing::from_degrees(270f32.to_bits());
         let (x, y) = obstacles::site(&state, type_id, x.to_bits(), y.to_bits(), facing);
         (f32::from_bits(x), f32::from_bits(y))
+    }
+
+    /// Where scripts last put the local player's camera, and how many times
+    /// they did, so that a viewer sees each move once.
+    pub fn camera_target(&self) -> Option<([f32; 2], u32)> {
+        self.state.borrow().camera_target
     }
 
     /// The destructables that were damaged or died, for the viewer: the
@@ -2221,6 +2231,24 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         }
     }
 
+    // Where the camera goes: the point is kept for the viewer, the camera
+    // being the local player's (scripts call these inside a test of
+    // `GetLocalPlayer`). PROVISIONAL: no spec yet; a pan moves at once.
+    for declaration in [
+        "native SetCameraPosition takes real x, real y returns nothing",
+        "native PanCameraTo takes real x, real y returns nothing",
+        "native PanCameraToTimed takes real x, real y, real duration returns nothing",
+        "native PanCameraToWithZ takes real x, real y, real zOffsetDest returns nothing",
+        "native PanCameraToTimedWithZ takes real x, real y, real zOffsetDest, real duration returns nothing",
+    ] {
+        native!(add, state, declaration, |vm, state, args| {
+            let at = [real(&args[0]), real(&args[1])].map(f32::from_bits);
+            let mut state = state.borrow_mut();
+            let count = state.camera_target.map_or(0, |(_, n)| n) + 1;
+            state.camera_target = Some((at, count));
+            Ok(None)
+        });
+    }
     // Camera bounds, from which Blizzard.j derives the playable area.
     // PROVISIONAL: the bounds are the smallest and largest coordinates of
     // the four points given to `SetCameraBounds` (before that, of the

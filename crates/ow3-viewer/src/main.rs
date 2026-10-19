@@ -136,8 +136,12 @@ fn options() -> Result<Options, String> {
     Ok(options)
 }
 
-fn camera(scene: &Scene, values: Option<&[f32]>) -> Camera {
-    let mut camera = Camera::new(ow3_viewer::terrain_mesh::centre(&scene.terrain));
+fn camera(scene: &Scene, values: Option<&[f32]>, start: Option<[f32; 2]>) -> Camera {
+    // Where the script put the camera (the melee start: the workers), else
+    // the centre of the map.
+    let centre = ow3_viewer::terrain_mesh::centre(&scene.terrain);
+    let target = start.map_or(centre, |[x, y]| [x, y, 0.0]);
+    let mut camera = Camera::new(target);
     if let Some(v) = values {
         let get = |i: usize, default: f32| v.get(i).copied().unwrap_or(default);
         camera.target[0] = get(0, camera.target[0]);
@@ -161,7 +165,11 @@ fn screenshot(
     let (device, queue) = pollster::block_on(renderer::headless_device())?;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut renderer = Renderer::new(&device, &queue, format, scene);
-    let camera = camera(scene, options.camera.as_deref());
+    let start = sim
+        .as_deref()
+        .and_then(Sim::camera_target)
+        .map(|(at, _)| at);
+    let camera = camera(scene, options.camera.as_deref(), start);
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
     let mut sim_seconds = options.time;
@@ -261,6 +269,8 @@ struct App {
     size: (u32, u32),
     /// Whether the window covers the screen.
     fullscreen: bool,
+    /// The moves of the camera by the script seen so far.
+    camera_moves: u32,
     gpu: Option<Gpu>,
     /// When the animations started.
     started: std::time::Instant,
@@ -625,6 +635,15 @@ impl App {
         let elapsed = self.started.elapsed().as_millis() as i32;
         if let Some(sim) = &mut self.sim {
             sim.advance(dt.as_micros() as u64);
+            // A script that put the camera elsewhere moves it at once.
+            if let Some(([x, y], n)) = sim.camera_target()
+                && n != self.camera_moves
+            {
+                self.camera_moves = n;
+                let z = ow3_viewer::terrain_mesh::ground_z(&self.scene.terrain, x, y);
+                self.camera.target = [x, y, z];
+                self.controls.goal.target = [x, y, z];
+            }
             sim.ghost = ground;
             let mut units = sim.draws();
             // Trees hit or felled, in a pose of their own.
@@ -765,12 +784,14 @@ fn main() -> ExitCode {
             }
         };
     }
-    let camera = camera(&scene, options.camera.as_deref());
+    let start = sim.as_ref().and_then(Sim::camera_target);
+    let camera = camera(&scene, options.camera.as_deref(), start.map(|(at, _)| at));
     let mut app = App {
         scene,
         camera,
         size: options.size,
         fullscreen: !options.windowed,
+        camera_moves: start.map_or(0, |(_, n)| n),
         gpu: None,
         started: std::time::Instant::now(),
         sim,

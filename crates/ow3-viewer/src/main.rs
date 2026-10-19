@@ -156,7 +156,8 @@ fn screenshot(
     let mut sim_fog = None;
     renderer.selected = options.select;
     renderer.all_bars = options.alt;
-    if let Some(sim) = sim {
+    let mut sim = sim;
+    if let Some(sim) = sim.as_deref_mut() {
         // The simulation takes at most a few seconds of real time at once.
         let mut left = (f64::from(options.time) * 1e6) as u64;
         while left > 0 {
@@ -194,6 +195,10 @@ fn screenshot(
     renderer.set_game_time(sim_seconds);
     renderer.set_fog(options.fog.or(sim_fog));
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
+    if let Some(sim) = sim {
+        let frame = sim.interface();
+        renderer.prepare_ui(&device, &queue, &mut sim.chain, &frame, (w, h));
+    }
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
     image
@@ -455,6 +460,11 @@ impl App {
         gpu.renderer.all_bars = self.alt;
         gpu.renderer
             .prepare_overlay(&gpu.device, &gpu.queue, &self.camera, size);
+        if let Some(sim) = &mut self.sim {
+            let frame = sim.interface();
+            gpu.renderer
+                .prepare_ui(&gpu.device, &gpu.queue, &mut sim.chain, &frame, size);
+        }
         match gpu.surface.get_current_texture() {
             Ok(frame) => {
                 let view = frame

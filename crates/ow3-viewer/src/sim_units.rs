@@ -64,6 +64,8 @@ pub struct Sim {
     colours: crate::circles::Settings,
     /// The archives models are loaded from while it runs.
     pub chain: ArchiveChain,
+    /// The console over the view.
+    hud: crate::hud::Hud,
 }
 
 /// A model played once where an order went.
@@ -134,6 +136,9 @@ impl Sim {
             point_confirm: skin_model(&mut chain, "TargetPointConfirm"),
             unit_confirm: skin_model(&mut chain, "TargetUnitConfirm"),
             colours: crate::circles::Settings::load(&mut chain),
+            // PROVISIONAL: the Human console; the local player's race is not
+            // looked at yet.
+            hud: crate::hud::Hud::load(&mut chain, "Human"),
             chain,
         })
     }
@@ -235,6 +240,22 @@ impl Sim {
     /// The game time in seconds: 0.005 s a tick.
     pub fn game_seconds(&self) -> f32 {
         self.game.ticks() as f32 * 0.005
+    }
+
+    /// The interface over the view for this frame.
+    pub fn interface(&self) -> crate::ui::Frame {
+        self.hud.frame(self.resources())
+    }
+
+    /// The local player's gold, lumber and food for the resource bar.
+    pub fn resources(&self) -> crate::hud::Resources {
+        let state = |s| self.game.player_state(LOCAL_PLAYER, s);
+        crate::hud::Resources {
+            gold: state(1),
+            lumber: state(2),
+            food_used: state(5),
+            food_cap: state(4),
+        }
     }
 
     /// The time of day in hours.

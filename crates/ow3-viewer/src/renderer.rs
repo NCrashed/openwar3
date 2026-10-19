@@ -203,6 +203,7 @@ pub struct Renderer {
     /// when there is fog.
     fog: ([f32; 4], [f32; 4]),
     overlay: Overlay,
+    ui: crate::ui::UiRenderer,
     /// Selection circles, made when first needed.
     circles: Option<crate::circles::Circles>,
     format: wgpu::TextureFormat,
@@ -677,6 +678,7 @@ impl Renderer {
             water_frame: 0,
             fog: ([0.0; 4], [0.0; 4]),
             overlay: Overlay::new(device, format),
+            ui: crate::ui::UiRenderer::new(device, format),
             circles: None,
             format,
             anchors: Vec::new(),
@@ -742,6 +744,19 @@ impl Renderer {
     }
 
     /// Lays out the health bars of the units for a view of `size` pixels.
+    /// Lays out the interface `frame` over the view for a window `size`
+    /// pixels large.
+    pub fn prepare_ui(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        frame: &crate::ui::Frame,
+        size: (u32, u32),
+    ) {
+        self.ui.set(device, queue, chain, frame, size);
+    }
+
     pub fn prepare_overlay(
         &mut self,
         device: &wgpu::Device,
@@ -934,6 +949,7 @@ impl Renderer {
             // Particles over the water: the foam of the shores lies on it.
             self.particles.draw(&mut pass);
             self.overlay.draw(&mut pass);
+            self.ui.draw(&mut pass);
         }
         queue.submit([encoder.finish()]);
     }

@@ -28,7 +28,9 @@ pub struct UnitType {
     pub name: Option<String>,
     /// Hit points, as a bit pattern of a real.
     pub hp: u32,
-    /// A worker (`peon` among the classes of `type` in `UnitBalance.slk`).
+    /// The classes of `type` in `UnitBalance.slk` (`peon`, `townhall`,
+    /// `mechanical`, ...), lower case, and whether `peon` is one.
+    pub classes: Vec<String>,
     pub worker: bool,
     /// A building (`isbldg` in `UnitBalance.slk`).
     pub building: bool,
@@ -591,9 +593,8 @@ impl ObjectData {
                 unit.agility = real(values[11].as_ref());
                 unit.speed = real(values[13].as_ref());
                 unit.collision = real(values[14].as_ref());
-                unit.worker = values[15]
-                    .as_deref()
-                    .is_some_and(|t| t.split(',').any(|c| c.trim().eq_ignore_ascii_case("peon")));
+                unit.classes = classes(values[15].as_deref());
+                unit.worker = unit.classes.iter().any(|c| c == "peon");
                 let cost = |v: Option<&String>| v.and_then(|v| v.trim().parse().ok()).unwrap_or(0);
                 unit.gold_cost = cost(values[16].as_ref());
                 unit.lumber_cost = cost(values[17].as_ref());

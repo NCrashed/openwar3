@@ -27,6 +27,13 @@ fn first(sim: &Sim, code: &[u8; 4]) -> u32 {
         .handle
 }
 
+/// A place for a farm, 512 east of the town hall: the peasants and the
+/// gold mine of the start location are to its west.
+fn east_of_hall(sim: &Sim) -> (f32, f32) {
+    let hall = view(sim, first(sim, b"htow"));
+    (hall.x + 512.0, hall.y)
+}
+
 /// Unit `h` as the simulation shows it.
 fn view(sim: &Sim, h: u32) -> ow3_sim::game::UnitView {
     sim.units().into_iter().find(|u| u.handle == h).unwrap()
@@ -60,8 +67,8 @@ fn a_farm_is_not_placed_over_the_town_hall() {
         tint(&mut sim, [hall.x + 64.0, hall.y]),
         Some([1.0, 0.25, 0.25])
     );
-    let p = view(&sim, peasant);
-    assert_eq!(tint(&mut sim, [p.x + 400.0, p.y]), Some([0.3, 1.0, 0.3]));
+    let east = east_of_hall(&sim);
+    assert_eq!(tint(&mut sim, [east.0, east.1]), Some([0.3, 1.0, 0.3]));
 }
 
 #[test]
@@ -72,8 +79,8 @@ fn a_farm_waits_for_its_worker_and_takes_damage() {
     sim.advance(100_000);
     let peasant = first(&sim, b"hpea");
     let hhou = i32::from_be_bytes(*b"hhou");
-    let p = view(&sim, peasant);
-    sim.run(peasant, Command::Build(hhou), Some([p.x + 400.0, p.y]))
+    let east = east_of_hall(&sim);
+    sim.run(peasant, Command::Build(hhou), Some([east.0, east.1]))
         .unwrap();
     for _ in 0..60 {
         sim.advance(100_000);
@@ -162,19 +169,15 @@ fn a_peasant_builds_a_farm_and_the_town_hall_trains_one() {
         .find(|b| b.command == Command::Build(hhou))
         .unwrap();
     assert!(farm.hotkey.is_some());
-    // Built 400 to the east of the peasant.
-    let p = sim
-        .units()
-        .into_iter()
-        .find(|u| u.handle == peasant)
-        .unwrap();
+    // Built east of the town hall.
+    let east = east_of_hall(&sim);
     let line = sim
-        .run(peasant, Command::Build(hhou), Some([p.x + 400.0, p.y]))
+        .run(peasant, Command::Build(hhou), Some([east.0, east.1]))
         .unwrap();
     assert!(line.ends_with("taken"), "{line}");
     assert_eq!(sim.hud.card, Card::Main);
     assert_eq!(sim.resources().gold, 500 - 80);
-    for _ in 0..40 {
+    for _ in 0..100 {
         sim.advance(100_000);
     }
     assert!(
@@ -233,8 +236,10 @@ fn a_peasant_gathers_gold() {
     sim.command(peasant, Some(mine.handle), None, false)
         .unwrap();
     assert_eq!(view(&sim, peasant).order, 852_018);
+    // The start location's own mine, some 770 from the town hall.
+    let d = ((mine.x - p.x).powi(2) + (mine.y - p.y).powi(2)).sqrt();
+    assert!(d < 1000.0, "{d}");
     // In, out with 10 gold (the mine 10 down), and back to the town hall.
-    // (On this map creeps stand near the mine, so one trip is watched.)
     let mut hidden = false;
     let mut out = false;
     for _ in 0..400 {
@@ -254,13 +259,16 @@ fn a_peasant_gathers_gold() {
                     .any(|b| b.command == Command::ReturnGoods && b.place == (3, 1))
             );
         }
-        if sim.resources().gold > 500 {
-            break;
-        }
     }
     assert!(hidden && out);
-    assert_eq!(sim.resources().gold, 510);
-    assert_eq!(view(&sim, peasant).carrying, None);
+    // Trip after trip in 40 s.
+    let trips = (sim.resources().gold - 500) / 10;
+    assert!(trips >= 3, "{trips} trips");
+    let carried = view(&sim, peasant).carrying.map_or(0, |(_, n)| n);
+    assert_eq!(
+        view(&sim, mine.handle).resources,
+        before - 10 * trips - carried
+    );
 }
 
 #[test]

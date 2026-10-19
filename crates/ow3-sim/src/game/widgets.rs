@@ -47,6 +47,17 @@ const UNIT_STATE_MANA: i32 = 2;
 const UNIT_STATE_MAX_MANA: i32 = 3;
 const UNIT_TYPE_HERO: i32 = 0;
 const UNIT_TYPE_DEAD: i32 = 1;
+const UNIT_TYPE_STRUCTURE: i32 = 2;
+const UNIT_TYPE_GIANT: i32 = 9;
+const UNIT_TYPE_SUMMONED: i32 = 10;
+const UNIT_TYPE_UNDEAD: i32 = 14;
+const UNIT_TYPE_MECHANICAL: i32 = 15;
+const UNIT_TYPE_PEON: i32 = 16;
+const UNIT_TYPE_SAPPER: i32 = 17;
+const UNIT_TYPE_TOWNHALL: i32 = 18;
+const UNIT_TYPE_ANCIENT: i32 = 19;
+const UNIT_TYPE_TAUREN: i32 = 20;
+const UNIT_TYPE_SLEEPING: i32 = 23;
 /// Hit points of a unit when there is no game data: 1.0.
 const UNKNOWN_LIFE: u32 = 0x3F80_0000;
 /// Life at or below which a unit dies: 0.405 (SPEC-0013).
@@ -970,9 +981,25 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let unit = state.unit(handle(&args[0]));
+            let data = unit.and_then(|u| state.data.units.get(&u.type_id));
+            let class = |name: &str| data.is_some_and(|t| t.classes.iter().any(|c| c == name));
+            // PROVISIONAL: the types beyond hero and dead follow the
+            // type's data (`isbldg` and the classes of `type`), and
+            // sleeping a creep's sleep (SPEC-0030); the others are false.
             let answer = match handle(&args[1]).map(|t| t as i32) {
                 Some(UNIT_TYPE_HERO) => unit.is_some_and(|u| is_hero(u.type_id)),
                 Some(UNIT_TYPE_DEAD) => unit.is_some_and(|u| !u.alive),
+                Some(UNIT_TYPE_STRUCTURE) => data.is_some_and(|t| t.building),
+                Some(UNIT_TYPE_GIANT) => class("giant"),
+                Some(UNIT_TYPE_SUMMONED) => class("summoned"),
+                Some(UNIT_TYPE_UNDEAD) => class("undead"),
+                Some(UNIT_TYPE_MECHANICAL) => class("mechanical"),
+                Some(UNIT_TYPE_PEON) => class("peon"),
+                Some(UNIT_TYPE_SAPPER) => class("sapper"),
+                Some(UNIT_TYPE_TOWNHALL) => class("townhall"),
+                Some(UNIT_TYPE_ANCIENT) => class("ancient"),
+                Some(UNIT_TYPE_TAUREN) => class("tauren"),
+                Some(UNIT_TYPE_SLEEPING) => unit.is_some_and(|u| u.creep.sleeping),
                 _ => false,
             };
             Ok(Some(Value::Boolean(answer)))

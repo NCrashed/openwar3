@@ -65,6 +65,12 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
   the building rule, which gives -288). Doodads without a pathing
   texture (`LPcr`, `BOth`) were drawn at their stored position (within
   about 1 unit).
+- **Size and height of units.** A unit's model is drawn at the scale
+  `modelScale` of `Units\UnitUI.slk` (gryphon rider 1.2: a test model
+  drawn 1.17 to 1.2 times as large as on a footman, 1.0; abomination 0.9:
+  0.88). A flying unit is drawn at its flying height above the ground:
+  the gryphon rider (`moveHeight` 240) about 238 above it, seen from the
+  side next to a footman.
 - **Units** are drawn at the centre of their pathing footprint
   (SPEC-0020, "Size classes and footprints"): units of size class 1 and
   3, whose footprints are 2 x 2 and 4 x 4 cells and reach one cell more
@@ -77,8 +83,13 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
   +- 1 in y; 32 (class 2: knight, rifleman, grunt, paladin, archer,
   huntress, mortar team, Medivh): none; 48 (class 3: abomination and a
   footman copy): -16.3, -15.7. `GetUnitX` returned the given position in
-  all cases. A walking footman (class 1, `move` east at 270) was drawn
-  -7.4, -16.2 from its position (open question 4). A farm (pathing
+  all cases. Walking units are drawn the same way, at their current
+  position plus the offset of their class: footmen (class 1) and
+  knights (class 2) walking east and south, paused with `PauseGame` in
+  ticks 157 to 162, were drawn within 0.5 of their position plus the
+  offset at the end of the 25 ms chunk in which the pause took effect
+  (SPEC-0002: the ticks of that chunk still run); no interpolation
+  between ticks was seen. A farm (pathing
   texture 4 x 4) was drawn at its position as `GetUnitX` / `GetUnitY`
   gave it (`CreateUnit` at (-256, -192) had put it at (-256, 0), next to
   a walking footman; not examined further).
@@ -95,9 +106,8 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 2. The near and far planes (`CAMERA_FIELD_FARZ`) and fog.
 3. Whether the field of view applies the same way in full-screen modes
    and with the `fixedaspect` video setting.
-4. Where moving units are drawn (one walking footman was drawn about 9
-   units ahead of the class 1 offset in its direction of motion), flying
-   units and buildings; the snapping of doodads with other pathing
+4. How flying units' height follows the ground (only flat ground
+   tested), buildings, and the snapping of doodads with other pathing
    texture sizes.
 
 ## Sources

@@ -132,25 +132,28 @@ read in test RTI to the last place of the life (the time `T - Tb`
 derived from the life is `clock(k) - Ts - 0.0001` to within 5e-6 s
 everywhere, also after 35 s).
 
-**Completion.** Construction is finished in the tick `kf` that is the
-last one in which the life is still below `max`, that is the first
-tick for which `sub(clock(kf + 1), Tb) >= bldtm`. It happens after the
-script timers of that tick: a periodic timer firing in tick `kf` still
-reads a life below `max` (499.97 for a farm); from tick `kf + 1` on the
-life is `max`. Because of the clock drift `kf - ks` depends on when the
-work started: for a farm 7001 ticks when started at 1.53 or 4.71 s,
-7002 when started at 9.45 or 14.13 s; for barracks started at 2.79 s,
-12004 ticks. In tick `kf`:
+**Completion.** The end of the construction is a timer of the engine
+with the expiry `e = add(Tb, bldtm)` (SPEC-0027, "Timers of the
+engine"): it fires in the first tick `kc` with `clock(kc) >= e`, before
+the script timers of that tick, and while it runs the movement clock
+reads `e`. So a periodic timer of tick `kc - 1` still reads a life
+below `max` (499.97 for a farm), and from tick `kc` on the life is
+`max`; `kc - 1` is the last tick with `sub(clock(kc), Tb) < bldtm`.
+Because of the clock drift `kc - ks` depends on when the work started:
+for a farm 7002 ticks when started at 1.53 or 4.71 s, 7003 when
+started at 9.45 or 14.13 s; for barracks started at 2.79 s, 12005
+ticks. When it fires:
 
 - the life is set to `max`; from then on it is an ordinary unit life
   (SPEC-0013);
 - the actions of a trigger on `EVENT_PLAYER_UNIT_CONSTRUCT_FINISH` run
-  (after the timers of the tick);
+  (before the script timers of the tick, so a counter of the periodic
+  timer still has the value of the tick before);
 - the player's food cap grows by the type's `fmade` (6 for a farm);
-  `GetPlayerState(p, PLAYER_STATE_RESOURCE_FOOD_CAP)` shows the new
-  value from the next tick;
+  `GetPlayerState(p, PLAYER_STATE_RESOURCE_FOOD_CAP)` read by a timer
+  shows the new value from tick `kc` on;
 - the worker stops building: its current order changes from 852024 to
-  0 at its next update (two ticks later in the tests) and it stands
+  0 at its next update (one tick after `kc` in the tests) and it stands
   where it was.
 
 The progress was the same in every run and in playback of the replay.
@@ -261,13 +264,14 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
    periodic timer is 50 in that tick, 50.0629997, 50.0629959,
    50.0629959, 50.0629959 one tick later, and follows the formula
    above with `Ts = clock(ks)` at every tick read.
-5. **Completion** (RTI): the last tick with a life below 500 and the
-   tick of `EVENT_PLAYER_UNIT_CONSTRUCT_FINISH` are 7308, 7944, 8893
-   and 9829 (life 499.9747619, 499.9536132, 499.9906005, 499.9676513
-   there); the life is 500 from the next tick. Test RSY (barracks,
-   worker moved, work started 18 ticks after the creation) finished
-   12004 ticks after the start of work, test RSX (farm, worker moved,
-   12 ticks) 7001.
+5. **Completion** (RTI): the last ticks with a life below 500 are 7308,
+   7944, 8893 and 9829 (life 499.9747619, 499.9536132, 499.9906005,
+   499.9676513 there); the completion timer, with expiries 36.5300980,
+   39.7099953, 44.4495125, 49.1287270, fires in the next ticks, 7309,
+   7945, 8894, 9830, and the life is 500 from there. Test RSY
+   (barracks, worker moved, work started 18 ticks after the creation)
+   finished 12005 ticks after the start of work, test RSX (farm, worker
+   moved, 12 ticks) 7002.
 6. **Moved worker**: in RTG three of four workers moved out of the
    footprint start working 12 ticks after the creation and one 18
    ticks; in c-RSR-1 the farm is created in tick 1909 and the work

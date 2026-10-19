@@ -484,6 +484,9 @@ pub struct State {
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
+    /// Group members marked during this tick's steps, which local
+    /// searches pass by (SPEC-0025).
+    marked: std::collections::BTreeSet<u32>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -542,6 +545,7 @@ impl State {
             paths: std::collections::BTreeMap::new(),
             clusters: Vec::new(),
             starting: Vec::new(),
+            marked: std::collections::BTreeSet::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -1200,6 +1204,11 @@ impl<'a> Game<'a> {
     /// the game makes (units, timers, triggers and the like).
     pub fn handles_made(&self) -> u32 {
         self.state.borrow().next_handle
+    }
+
+    /// Whether a unit walks in a group's cluster (SPEC-0025).
+    pub fn grouped(&self, unit: u32) -> bool {
+        movement::grouped(&self.state.borrow(), unit)
     }
 
     /// The committed position (relative to the world's lower left corner)

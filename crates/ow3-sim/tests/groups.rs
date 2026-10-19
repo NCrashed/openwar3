@@ -54,13 +54,9 @@ fn updates(text: &str) -> Vec<Vec<(usize, Row)>> {
 
 /// The members walk to the places of the game at every update, start at
 /// the same updates (the knight and the footman at the first, the
-/// rifleman held to the 19th, the peasant to the 35th), and the knight and
-/// the rifleman move bit for bit as in the game throughout.
-///
-/// PROVISIONAL: the peasant and the footman take another first step: the
-/// game found their first local paths free of obstacles, the simulation
-/// does not (it sees the members standing next to them, SPEC-0021), so
-/// their positions are not compared.
+/// rifleman held to the 19th, the peasant to the 35th), and all four
+/// move bit for bit as in the game throughout: committed positions and
+/// velocities at every update.
 #[test]
 fn group_members_follow_the_game() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
@@ -95,7 +91,7 @@ fn group_members_follow_the_game() {
             if velocity != [0, 0] && game_started[member].is_none() {
                 game_started[member] = Some(k);
             }
-            if member == 1 || member == 2 {
+            {
                 assert_eq!((o, v), (position, velocity), "update {k} member {member}");
             }
         }

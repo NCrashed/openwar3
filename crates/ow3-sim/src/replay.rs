@@ -162,7 +162,9 @@ impl<'a> Playback<'a> {
         };
         for u in self.game.units() {
             marks.units = fold(marks.units, u.handle);
-            if u.walking {
+            // A group member starts and stops walking without objects of
+            // its own (the cluster keeps the path).
+            if u.walking && !self.game.grouped(u.handle) {
                 marks.walking = fold(marks.walking, u.handle);
             }
         }

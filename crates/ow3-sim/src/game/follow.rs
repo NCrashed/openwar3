@@ -145,27 +145,63 @@ pub fn squared_speed(v: [u32; 2]) -> u32 {
     add(mul(v[1], v[1]), mul(v[0], v[0]))
 }
 
+/// Step 1 of SPEC-0020: from waypoint `current`, the first waypoint at
+/// which the legs add up to 10 blocks, with its index. The goal is `None`
+/// for the order point: when no waypoint is far enough (the index is then
+/// `None` too) or when that waypoint is the last of a list that got there.
+fn next_segment(
+    waypoints: &[[u32; 2]],
+    reached: bool,
+    current: usize,
+) -> (Option<usize>, Option<[u32; 2]>) {
+    let mut sum = 0u32;
+    for j in current + 1..waypoints.len() {
+        sum = add(sum, path::length(waypoints[j - 1], waypoints[j]));
+        if real(sum) >= SEGMENT {
+            let last = reached && j == waypoints.len() - 1;
+            return (
+                Some(j),
+                (!last).then(|| path::blocks_to_cells(waypoints[j])),
+            );
+        }
+    }
+    (None, None)
+}
+
+/// The segment goals of a path from `from` to `order` (cells) for a unit
+/// of class `class`, in cells, ending at the order point: the waypoints a
+/// cluster walks (SPEC-0025, "Following the cluster's path").
+pub fn segment_goals(grid: &Grid, from: [u32; 2], order: [u32; 2], class: u8) -> Vec<[u32; 2]> {
+    let mut goals = Vec::new();
+    if let Some(found) = path::high_level(grid, from, order, class) {
+        let mut current = 0;
+        while let (Some(j), Some(goal)) = next_segment(&found.points, found.reached, current) {
+            goals.push(goal);
+            current = j;
+        }
+    }
+    goals.push(order);
+    goals
+}
+
 impl Follow {
     /// Step 1: the first waypoint from the current one at which the legs
     /// add up to 10 blocks, else the order point.
     fn take_segment(&mut self, order: [u32; 2]) {
-        let mut sum = 0u32;
-        for j in self.current + 1..self.waypoints.len() {
-            sum = add(sum, path::length(self.waypoints[j - 1], self.waypoints[j]));
-            if real(sum) >= SEGMENT {
-                self.current = j;
-                // The last waypoint of a list that got there is the order
-                // point itself.
-                if self.reached && j == self.waypoints.len() - 1 {
-                    break;
-                }
-                self.goal = path::blocks_to_cells(self.waypoints[j]);
+        let (index, goal) = next_segment(&self.waypoints, self.reached, self.current);
+        if let Some(j) = index {
+            self.current = j;
+        }
+        match goal {
+            Some(goal) => {
+                self.goal = goal;
                 self.final_goal = false;
-                return;
+            }
+            None => {
+                self.goal = order;
+                self.final_goal = true;
             }
         }
-        self.goal = order;
-        self.final_goal = true;
     }
 }
 
@@ -211,7 +247,8 @@ fn others(state: &State, h: u32) -> Others {
             _ => (false, super::movement::relative([u.x, u.y], min), [0, 0]),
         };
         for cell in path::occupied_cells(to_cells(position), class) {
-            if !moving {
+            // Marked group members are passed by as moving ones are.
+            if !moving && !state.marked.contains(&o) {
                 others.standing.insert(cell);
             }
             others.by_cell.entry(cell).or_default().push(o);

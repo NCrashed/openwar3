@@ -434,6 +434,10 @@ pub struct Cluster {
     offsets: Vec<[u32; 2]>,
     /// Updates since a member arrived while others were not near.
     stall: u32,
+    /// Updates of the cluster so far, and the members that have walked
+    /// (SPEC-0025, "Members in each other's searches").
+    updates: u32,
+    walked: std::collections::BTreeSet<u32>,
 }
 
 /// What a cluster tells a member at an update: whether it waits, the
@@ -515,6 +519,8 @@ pub(super) fn group_point_order(
                 angle: 0,
                 offsets: Vec::new(),
                 stall: 0,
+                updates: 0,
+                walked: std::collections::BTreeSet::new(),
             });
         }
     }
@@ -537,8 +543,7 @@ pub(super) fn group_point_order(
 ///
 /// PROVISIONAL: the hold rule is never suspended and one arrived member
 /// is not enough to go on (the member states of the 66-update countdown
-/// are open question 2); the waypoints are those of the high-level path
-/// of SPEC-0020 from the leader.
+/// are open question 2).
 fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let mut control = BTreeMap::new();
@@ -608,6 +613,25 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
             }
         }
         let held = super::formation::holds(&members, &arrived, cluster.angle);
+        // Members neither held nor walking yet are marked for the steps of
+        // this update: local searches pass them by (SPEC-0025, "Members in
+        // each other's searches").
+        cluster.updates += 1;
+        for &h in &cluster.members {
+            let v = state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .map_or([0, 0], |m| m.velocity);
+            if real_of(follow::squared_speed(v)) > WALKED_SQUARED {
+                cluster.walked.insert(h);
+            }
+        }
+        let all_walk = cluster.current > 0 || cluster.updates > ALL_WALK_AFTER;
+        for (i, &h) in cluster.members.iter().enumerate() {
+            if !held[i] && !all_walk && !cluster.walked.contains(&h) {
+                state.marked.insert(h);
+            }
+        }
         let speed = (!held.iter().any(|&h| h) && !arrived.iter().any(|&a| a)).then(|| {
             let speeds: Vec<u32> = cluster
                 .members
@@ -652,6 +676,17 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     clusters.retain(|c| c.members.len() > 1);
     state.clusters.extend(clusters);
     control
+}
+
+/// A member has walked once its speed was above 0.01 cells per second
+/// (squared, in world units per second), and all have after this many
+/// updates on the first path (SPEC-0025).
+const WALKED_SQUARED: f32 = 0.1024;
+const ALL_WALK_AFTER: u32 = 65;
+
+/// Whether unit `h` is a member of a cluster.
+pub(super) fn grouped(state: &State, h: u32) -> bool {
+    state.clusters.iter().any(|c| c.members.contains(&h))
 }
 
 /// Squared distances in cells below this are near a place (16 cells).
@@ -699,25 +734,12 @@ fn nearest(members: &[super::formation::Member], goal: [u32; 2]) -> usize {
 }
 
 /// The waypoints of a cluster from `from` to `goal`, in cells: those of
-/// the high-level path (SPEC-0020) after its start, ending at the goal.
+/// the segment goals of its path, as for a single unit (SPEC-0025).
 fn cluster_path(state: &State, from: [u32; 2], goal: [u32; 2], class: u8) -> Vec<[u32; 2]> {
-    let mut points: Vec<[u32; 2]> = state
-        .grid
-        .as_ref()
-        .and_then(|grid| crate::path::high_level(grid, from, goal, class))
-        .map(|found| {
-            let n = found
-                .points
-                .len()
-                .saturating_sub(usize::from(found.reached));
-            found.points[1.min(n)..n]
-                .iter()
-                .map(|&p| crate::path::blocks_to_cells(p))
-                .collect()
-        })
-        .unwrap_or_default();
-    points.push(goal);
-    points
+    match state.grid.as_ref() {
+        Some(grid) => follow::segment_goals(grid, from, goal, class),
+        None => vec![goal],
+    }
 }
 
 /// Sends each member of `cluster` to its place: the current waypoint plus
@@ -1258,6 +1280,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let cluster = control.get(&h).map_or(1, |c| c.size);
         // A member at its place short of the last waypoint waits there.
         let place_on_way = control.get(&h).is_some_and(|c| !c.last);
+        let held = control.get(&h).is_some_and(|c| c.held);
         let speed = match control.get(&h) {
             Some(c) if c.held => 0,
             Some(Control { speed: Some(g), .. }) if real_of(*g) < real_of(limit) => *g,
@@ -1454,7 +1477,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
-                    let mut steer = if state.grid.is_some() {
+                    // A held member does not follow its path; it turns
+                    // towards its place (SPEC-0025).
+                    let mut steer = if held {
+                        follow::Steer::Stand(goal)
+                    } else if state.grid.is_some() {
                         follow::steer(state, &walker(goal), tick)
                     } else if distance <= real_of(mul(ARRIVAL, ARRIVAL)) {
                         follow::Steer::Arrived
@@ -1526,6 +1553,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             super::attack::begin(state, h, target, tick, m.order_id);
         }
     }
+    state.marked.clear();
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
 }

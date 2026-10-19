@@ -61,7 +61,11 @@ waiting for another unit at that moment. For a moving unit `B`:
 
 If no unit made `A` wait, `A` is blocked as by a static obstacle: it
 stands still at this update and searches again at the next one
-(SPEC-0020), now seeing the units that stand.
+(SPEC-0020), now seeing the units that stand. This holds when `A` is
+within 12 cells of its goal and alone in its cluster; otherwise it
+stands up to 6 or 7 updates while still blocked before it searches, and
+the length is drawn from the script generator (SPEC-0025, "Blocked
+units: the patience counter").
 
 During every waiting update the heading still turns as in SPEC-0018:
 towards the current target at the first update of a 5-update wait,

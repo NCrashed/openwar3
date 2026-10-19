@@ -128,8 +128,9 @@ and a single member stands in the middle.
 
 ### Where the members walk
 
-Each member walks to the cluster's current waypoint plus its offset:
-on open ground `(add(Tx, ox_i), add(Ty, oy_i))`. (Checked to about 0.01
+Each member walks to the cluster's current waypoint plus its offset (see
+"Following the cluster's path"): on open ground
+`(add(Tx, ox_i), add(Ty, oy_i))`. (Checked to about 0.01
 in world units; the exact order of the operation was not read.) A member
 stops when it is within its arrival radius of that point (SPEC-0018),
 so a group comes to rest roughly in the formation's shape around the
@@ -194,18 +195,82 @@ A further rule, for clusters with a flag that was not seen set, lowers a
 member that is faster than the leader to 0.95 times the leader's speed
 limit when it is close to the leader.
 
-### Waits that draw the script generator
+### Blocked units: the patience counter (script generator)
 
-When a member of a cluster with at least two members has to wait for
-another unit on its path, the length of the wait is
-`7 + ((r >> 22) AND 1)` (7 or 8), with `r` one output of the **script
-generator** (SPEC-0007). (The game computes it as the integer part of
-`(x - 1) * 2` with `x = (r AND 0x7FFFFF) OR 0x3F800000` taken as a float
-in `[1, 2)`, which is exact.) (A unit alone in its
-cluster gets 2 under a condition on a distance; otherwise the same
-random wait.) This is why `E` of SPEC-0024 changes while a group walks
-although the script draws nothing. The unit of the wait (ticks or
-updates) and the exact condition were not studied (open question 2).
+This rule belongs to path following in general (SPEC-0020, SPEC-0021),
+for single units as well as group members; it is given here because it
+draws the script generator.
+
+Every unit following a path has a patience counter `P`, 0 when it is
+not blocked. At an update at which the unit's look-ahead is blocked and
+no unit makes it wait by the rules of SPEC-0021 ("Blocked by a unit"):
+
+1. if `P = 0`, it is set:
+   - `P = 2` if the squared distance from the unit's position to its
+     path's goal (for a group member: its place, waypoint plus offset)
+     is at most 144 (12 cells, 384 world units) **and** the unit's
+     cluster has at most one member;
+   - otherwise `P = 7 + ((r >> 22) AND 1)` (7 or 8), with `r` one output
+     of the **script generator** (SPEC-0007). (The game takes the
+     integer part of `(x - 1) * 2` with `x = (r AND 0x7FFFFF) OR
+     0x3F800000` as a float in `[1, 2)`, which is exact.)
+2. if `P = 1`, the unit gives up waiting: it searches its path again
+   (SPEC-0020) and `P` stays 1 until it is cleared;
+3. otherwise `P = P - 1` and the unit stands still at this update.
+
+`P` is cleared to 0 at any update at which the look-ahead is free again.
+So `P = 2` means "stand one update, then search again" (the rule of
+SPEC-0021), and 7 or 8 mean "stand up to 6 or 7 updates while still
+blocked, then search again". The counter is in updates of the unit
+(every 6 ticks).
+
+A unit far from its goal, or any member of a group, draws the script
+generator every time it starts to wait this way. This is why `E` of
+SPEC-0024 changes while a group walks although the script draws
+nothing. Measured (RSO): a footman of the group blocked by another
+member at (-8.51, -148.20), 403 from its place (101.99, -542.80), got
+`P` = 8, stood one update, and the counter was cleared at the next
+update when its way was free.
+
+### Following the cluster's path
+
+The cluster has a current waypoint `W` (at first the first waypoint of
+its path from the leader's position; on open ground the goal). Each
+member's place is `W` plus its offset, and a member that is at its place
+(within its arrival radius) is marked "arrived".
+
+At every cluster update, unless the cluster is at its last waypoint:
+
+- `near` = the members that have not arrived and whose squared distance
+  from their place is below 256 (16 cells; 16, that is 4 cells, for
+  clusters with a flag not seen set);
+- if at least one member has arrived and every other member has arrived
+  or is near, the cluster goes on to the next waypoint. While the
+  countdown of "Members that wait for their rank to pass" runs, one
+  arrived member is enough;
+- if at least one member has arrived but not all others are near, a
+  stall count goes up by one per update; when it exceeds 99 (198 or 396
+  with flags not seen set), the cluster goes on to the next waypoint
+  anyway.
+
+When the cluster goes on to the next waypoint `W'`, the formation angle
+becomes `A = angle(sub(W'x, Wx), sub(W'y, Wy))` (from the old waypoint to
+the new one), `W` becomes `W'`, the members' marks and the stall count
+are cleared, and the layout is computed again with the members' current
+positions. So the formation turns at every corner of the path.
+
+A member that has arrived at its place at the last waypoint leaves the
+cluster (the cluster's member count falls); the remaining members keep
+their offsets.
+
+Measured (RSQ, the four footmen of RSO with a wall from (-500, -260) to
+(600, -196) between them and the goal): first waypoint (-464, -336) at
+the west end of the wall, `A` = 3.72059 (213.2 degrees, from the leader
+to that waypoint); when the first member reached its place there (the
+countdown was running), the cluster went on to the goal with
+`A` = 6.01999 (344.9 degrees, from (-464, -336) to the goal); both
+layouts matched bit for bit; then the members left the cluster one by
+one as they arrived.
 
 ## Edge cases
 
@@ -218,11 +283,12 @@ updates) and the exact condition were not studied (open question 2).
 
 1. The flagged rule of "Group speed" (0.95 of the leader's speed) and
    the shared limit over several clusters.
-2. The path wait of a group member: when it happens, its unit, and the
-   condition for the wait of 2.
-3. When the layout is computed again (new waypoints, members lost or
-   added), how members follow a path with several waypoints, and the
-   exact member states that start the 66-update countdown.
+2. The member states that start the 66-update countdown, and how the
+   look-ahead decides "blocked" for group members (SPEC-0021).
+3. How a member's own path to its place is searched (members also
+   search their own paths; their targets move with the cluster's
+   waypoint), and what happens when units join or leave a cluster other
+   than by arriving.
 4. Cluster splitting with distant units, and the path distance used for
    units with hierarchical paths.
 

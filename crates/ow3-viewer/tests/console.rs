@@ -46,6 +46,22 @@ fn a_farm_is_not_placed_over_the_town_hall() {
         .unwrap();
     assert!(line.ends_with("refused"), "{line}");
     assert_eq!(sim.resources().gold, 500);
+    // While the farm waits for its place it shows red there, green on
+    // open ground.
+    sim.hud.pending = Some(Command::Build(hhou));
+    let tint = |sim: &mut Sim, at: [f32; 2]| {
+        sim.ghost = Some(at);
+        sim.draws()
+            .into_iter()
+            .find(|d| d.handle == 0)
+            .map(|d| d.tint)
+    };
+    assert_eq!(
+        tint(&mut sim, [hall.x + 64.0, hall.y]),
+        Some([1.0, 0.25, 0.25])
+    );
+    let p = view(&sim, peasant);
+    assert_eq!(tint(&mut sim, [p.x + 400.0, p.y]), Some([0.3, 1.0, 0.3]));
 }
 
 #[test]

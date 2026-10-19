@@ -574,6 +574,11 @@ impl App {
 
     /// Moves the camera and the simulation on and draws the next frame.
     fn frame(&mut self) {
+        // The ground under the mouse, outside the console.
+        let ground = self
+            .ui_point()
+            .filter(|&p| !ow3_viewer::hud::Hud::covers(p))
+            .and_then(|_| self.ground_point());
         let Some(gpu) = &mut self.gpu else {
             return;
         };
@@ -588,6 +593,7 @@ impl App {
         let elapsed = self.started.elapsed().as_millis() as i32;
         if let Some(sim) = &mut self.sim {
             sim.advance(dt.as_micros() as u64);
+            sim.ghost = ground;
             let units = sim.draws();
             gpu.renderer
                 .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);

@@ -1428,6 +1428,17 @@ impl<'a> Game<'a> {
         (f32::from_bits(x), f32::from_bits(y))
     }
 
+    /// Whether `player` may place a building of `type_id` at (`x`, `y`)
+    /// (SPEC-0026, "Where a building may be placed").
+    pub fn place_allowed(&self, player: i32, type_id: i32, x: f32, y: f32) -> bool {
+        movement::place_allowed(
+            &self.state.borrow(),
+            player,
+            type_id,
+            [x.to_bits(), y.to_bits()],
+        )
+    }
+
     /// Orders worker `unit` to build a building of `type_id` at (`x`,
     /// `y`) (SPEC-0026).
     pub fn issue_build_order(&mut self, unit: u32, type_id: i32, x: f32, y: f32) -> bool {

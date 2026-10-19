@@ -68,6 +68,9 @@ pub struct Sim {
     pub chain: ArchiveChain,
     /// The console over the view.
     pub hud: crate::hud::Hud,
+    /// The ground point under the mouse, where a building waiting for its
+    /// place is shown.
+    pub ghost: Option<[f32; 2]>,
 }
 
 /// A model played once where an order went.
@@ -141,6 +144,7 @@ impl Sim {
             // PROVISIONAL: the Human console; the local player's race is not
             // looked at yet.
             hud: crate::hud::Hud::load(&mut chain, "Human"),
+            ghost: None,
             chain,
         })
     }
@@ -407,6 +411,49 @@ impl Sim {
                 selection: look.selection,
                 relation: self.game.relation(LOCAL_PLAYER, u.handle),
                 tint: [1.0; 3],
+            });
+        }
+        // A building waiting for its place, on its grid under the mouse:
+        // green where it may stand, red where not (SPEC-0026).
+        // PROVISIONAL: the game's look of it is not specified.
+        if let (Some(crate::hud::Command::Build(t)), Some([x, y])) = (self.hud.pending, self.ghost)
+            && let Some(look) = self.models.get(&t)
+        {
+            let (x, y) = self.game.building_site(t, x, y);
+            let allowed = self.game.place_allowed(LOCAL_PLAYER, t, x, y);
+            let shift = self
+                .game
+                .state
+                .borrow()
+                .data
+                .units
+                .get(&t)
+                .map_or(0.0, |d| {
+                    crate::objects::unit_model_shift(d.collision, d.building)
+                });
+            let (x, y) = (x - shift, y - shift);
+            let placement = Placement {
+                model: look.model.clone(),
+                replaceable: None,
+                team: LOCAL_PLAYER as u8,
+                position: [x, y, self.game.ground_z(x, y)],
+                angle: 3.0 * std::f32::consts::FRAC_PI_2,
+                scale: [look.scale; 3],
+            };
+            draws.push(UnitDraw {
+                matrix: crate::models::placement_matrix(&placement),
+                model: placement.model,
+                team: placement.team,
+                handle: 0,
+                life: None,
+                pose: UnitPose::Stand,
+                selection: 0.0,
+                relation: None,
+                tint: if allowed {
+                    [0.3, 1.0, 0.3]
+                } else {
+                    [1.0, 0.25, 0.25]
+                },
             });
         }
         // The confirmations still playing, with handle 0, which no unit has.

@@ -2,9 +2,14 @@
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, C prints the camera as a `--camera`
-//! argument, Escape quits. A left click selects a unit;
-//! a right click then sends it to the ground point or attacks the enemy
-//! clicked (with Ctrl held, any unit clicked), and H stops it. The unit
+//! argument. A left click selects a unit; a right click then sends it to
+//! the ground point or attacks the enemy clicked (with Ctrl held, any unit
+//! clicked). The console below shows the resources, the selected unit and
+//! its command card: a click on a button or its hotkey (by the key's
+//! place, in any layout, before the camera's keys) gives the order, and
+//! one that takes a point waits for a left click on the ground (a right
+//! click drops it). Escape drops a waiting order or closes a list, and
+//! else quits. The unit
 //! under the mouse shows its circle and health bar; with Alt held every
 //! unit shows its bar (`--alt` in screenshots). The map's
 //! script runs in the simulation, which places the units (`--no-sim`: the
@@ -25,7 +30,7 @@ use ow3_viewer::sim_units::Sim;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 struct Options {
@@ -196,7 +201,7 @@ fn screenshot(
     renderer.set_fog(options.fog.or(sim_fog));
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     if let Some(sim) = sim {
-        let frame = sim.interface();
+        let frame = sim.interface(options.select, None);
         renderer.prepare_ui(&device, &queue, &mut sim.chain, &frame, (w, h));
     }
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
@@ -320,12 +325,20 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    logical_key, state, ..
-                },
+                event:
+                    KeyEvent {
+                        logical_key,
+                        physical_key,
+                        state,
+                        ..
+                    },
                 ..
             } => {
-                if logical_key == Key::Named(NamedKey::Escape) {
+                // Escape drops a waiting order or closes a list, else quits.
+                if logical_key == Key::Named(NamedKey::Escape)
+                    && state == ElementState::Pressed
+                    && !self.escape()
+                {
                     event_loop.exit();
                 }
                 let name = match &logical_key {
@@ -333,13 +346,17 @@ impl ApplicationHandler for App {
                     Key::Character(c) => c.to_string(),
                     _ => String::new(),
                 };
-                // H: the selected unit stops.
-                if matches!(name.as_str(), "h" | "H")
-                    && state == ElementState::Pressed
-                    && let (Some(gpu), Some(sim)) = (&self.gpu, &mut self.sim)
-                    && let Some(unit) = gpu.renderer.selected
+                // The hotkeys of the command card come before the camera's.
+                // By the key's place, so that they work in any layout.
+                let letter = match physical_key {
+                    PhysicalKey::Code(code) => {
+                        format!("{code:?}").strip_prefix("Key").map(str::to_owned)
+                    }
+                    PhysicalKey::Unidentified(_) => None,
+                };
+                if state == ElementState::Pressed && self.hotkey(letter.as_deref().unwrap_or(&name))
                 {
-                    sim.stop(unit);
+                    return;
                 }
                 // C: prints the camera as a `--camera` argument.
                 if matches!(name.as_str(), "c" | "C") && state == ElementState::Pressed {
@@ -372,24 +389,19 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
-                if let Some(gpu) = &mut self.gpu {
-                    let size = (gpu.config.width, gpu.config.height);
-                    let picked =
-                        gpu.renderer
-                            .pick(self.cursor.0, self.cursor.1, &self.camera, size);
-                    gpu.renderer.selected = picked;
-                    if let (Some(handle), Some(sim)) = (picked, &self.sim)
-                        && let Some(line) = sim.describe(handle)
-                    {
-                        println!("{line}");
-                    }
-                }
+                self.left_click();
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
                 ..
             } => {
+                // A right click drops an order waiting for its point.
+                if let Some(sim) = &mut self.sim
+                    && sim.hud.pending.take().is_some()
+                {
+                    return;
+                }
                 if let (Some(gpu), Some(sim)) = (&mut self.gpu, &mut self.sim)
                     && let Some(unit) = gpu.renderer.selected
                 {
@@ -412,6 +424,119 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    /// The mouse in the interface's coordinates.
+    fn ui_point(&self) -> Option<[f32; 2]> {
+        let gpu = self.gpu.as_ref()?;
+        let (w, h) = (
+            gpu.config.width.max(1) as f32,
+            gpu.config.height.max(1) as f32,
+        );
+        Some([
+            self.cursor.0 / w * ow3_viewer::ui::WIDTH,
+            (1.0 - self.cursor.1 / h) * ow3_viewer::ui::HEIGHT,
+        ])
+    }
+
+    /// The point on the ground under the mouse.
+    fn ground_point(&self) -> Option<[f32; 2]> {
+        let gpu = self.gpu.as_ref()?;
+        let size = (gpu.config.width, gpu.config.height);
+        let terrain = &self.scene.terrain;
+        let [x, y, _] = self
+            .camera
+            .ground_point(self.cursor.0, self.cursor.1, size, |x, y| {
+                ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
+            })?;
+        Some([x, y])
+    }
+
+    /// A command button pressed for the selected unit: an order that takes
+    /// a point waits for it, the others are carried out.
+    fn press(&mut self, button: ow3_viewer::hud::Button) {
+        let (Some(gpu), Some(sim)) = (&self.gpu, &mut self.sim) else {
+            return;
+        };
+        let Some(unit) = gpu.renderer.selected else {
+            return;
+        };
+        if button.command.targets() {
+            sim.hud.pending = Some(button.command);
+        } else if let Some(line) = sim.run(unit, button.command, None) {
+            println!("{line}");
+        }
+    }
+
+    /// A left click: a button of the console, the point of a waiting
+    /// order, or a unit to select.
+    fn left_click(&mut self) {
+        let point = self.ui_point();
+        let selected = self.gpu.as_ref().and_then(|g| g.renderer.selected);
+        if let (Some(p), Some(sim)) = (point, &self.sim)
+            && ow3_viewer::hud::Hud::covers(p)
+        {
+            let s = selected.and_then(|h| sim.selected(h));
+            if let Some(button) = sim.hud.button_at(s.as_ref(), p) {
+                self.press(button);
+            }
+            return;
+        }
+        let ground = self.ground_point();
+        if let (Some(sim), Some(unit)) = (&mut self.sim, selected)
+            && let Some(command) = sim.hud.pending.take()
+        {
+            if let Some(line) = sim.run(unit, command, ground) {
+                println!("{line}");
+            }
+            return;
+        }
+        if let Some(gpu) = &mut self.gpu {
+            let size = (gpu.config.width, gpu.config.height);
+            let picked = gpu
+                .renderer
+                .pick(self.cursor.0, self.cursor.1, &self.camera, size);
+            gpu.renderer.selected = picked;
+            if let Some(sim) = &mut self.sim {
+                sim.hud.card = ow3_viewer::hud::Card::Main;
+                if let Some(line) = picked.and_then(|h| sim.describe(h)) {
+                    println!("{line}");
+                }
+            }
+        }
+    }
+
+    /// A hotkey of the command card for the selected unit; whether it was
+    /// one.
+    fn hotkey(&mut self, key: &str) -> bool {
+        let mut chars = key.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            return false;
+        };
+        let (Some(gpu), Some(sim)) = (&self.gpu, &self.sim) else {
+            return false;
+        };
+        let s = gpu.renderer.selected.and_then(|h| sim.selected(h));
+        let Some(button) = sim.hud.button_of_key(s.as_ref(), c) else {
+            return false;
+        };
+        self.press(button);
+        true
+    }
+
+    /// Escape: drops a waiting order or closes a list; whether it did.
+    fn escape(&mut self) -> bool {
+        let Some(sim) = &mut self.sim else {
+            return false;
+        };
+        if sim.hud.pending.take().is_some() {
+            return true;
+        }
+        if sim.hud.card != ow3_viewer::hud::Card::Main {
+            sim.hud.card = ow3_viewer::hud::Card::Main;
+            return true;
+        }
+        false
+    }
+
     /// Moves the camera and the simulation on and draws the next frame.
     fn frame(&mut self) {
         let Some(gpu) = &mut self.gpu else {
@@ -461,7 +586,12 @@ impl App {
         gpu.renderer
             .prepare_overlay(&gpu.device, &gpu.queue, &self.camera, size);
         if let Some(sim) = &mut self.sim {
-            let frame = sim.interface();
+            let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+            let mouse = [
+                self.cursor.0 / w * ow3_viewer::ui::WIDTH,
+                (1.0 - self.cursor.1 / h) * ow3_viewer::ui::HEIGHT,
+            ];
+            let frame = sim.interface(gpu.renderer.selected, Some(mouse));
             gpu.renderer
                 .prepare_ui(&gpu.device, &gpu.queue, &mut sim.chain, &frame, size);
         }

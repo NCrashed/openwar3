@@ -310,6 +310,19 @@ pub enum Relation {
     Enemy,
 }
 
+/// What the interface shows of a unit's type (`Game::unit_stats`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnitStats {
+    /// The damage of one hit, least and most, and the JASS attack type.
+    pub damage: Option<(i32, i32)>,
+    pub attack_type: Option<i32>,
+    pub armor: f32,
+    /// An index into `combat::ARMOR_TYPES`.
+    pub armor_type: Option<usize>,
+    pub speed: f32,
+    pub building: bool,
+}
+
 /// A unit as [`Game::units`] shows it, for drawing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnitView {
@@ -1253,6 +1266,29 @@ impl<'a> Game<'a> {
             .collect()
     }
 
+    /// What the interface shows of unit `h`'s type: its damage range and
+    /// attack type, its armor and armor type, its speed.
+    pub fn unit_stats(&self, h: u32) -> Option<UnitStats> {
+        let state = self.state.borrow();
+        let u = state.unit(Some(h))?;
+        let t = state.data.units.get(&u.type_id)?;
+        let weapon = t.weapon.as_ref().map(|w| {
+            (
+                w.damage + w.dice,
+                w.damage + w.dice * w.sides,
+                w.attack_type,
+            )
+        });
+        Some(UnitStats {
+            damage: weapon.map(|(lo, hi, _)| (lo, hi)),
+            attack_type: weapon.map(|(_, _, a)| a),
+            armor: f32::from_bits(t.armor),
+            armor_type: t.armor_type,
+            speed: f32::from_bits(t.speed),
+            building: t.building,
+        })
+    }
+
     /// `GetPlayerState` of player `player` (an index) for state `state`.
     pub fn player_state(&self, player: i32, state: i32) -> i32 {
         let s = self.state.borrow();
@@ -1316,6 +1352,15 @@ impl<'a> Game<'a> {
     pub fn issue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) -> bool {
         let target = [x.to_bits(), y.to_bits()];
         movement::group_point_order(&mut self.state.borrow_mut(), units, order, target)
+    }
+
+    /// Where a building of `type_id` ordered at (`x`, `y`) stands: on the
+    /// grid of its pathing texture (SPEC-0022), facing 270 degrees.
+    pub fn building_site(&self, type_id: i32, x: f32, y: f32) -> (f32, f32) {
+        let state = self.state.borrow();
+        let facing = facing::from_degrees(270f32.to_bits());
+        let (x, y) = obstacles::site(&state, type_id, x.to_bits(), y.to_bits(), facing);
+        (f32::from_bits(x), f32::from_bits(y))
     }
 
     /// Orders worker `unit` to build a building of `type_id` at (`x`,

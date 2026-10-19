@@ -83,6 +83,15 @@ impl ArchiveChain {
             .and_then(|a| a.read(name).ok())
     }
 
+    /// Every copy of `name`, the archive of highest priority first.
+    pub fn read_all(&mut self, name: &str) -> Vec<Vec<u8>> {
+        self.archives
+            .iter_mut()
+            .filter(|a| a.contains(name))
+            .filter_map(|a| a.read(name).ok())
+            .collect()
+    }
+
     /// `name` from the map archive only.
     pub fn read_map_file(&mut self, name: &str) -> Option<Vec<u8>> {
         if !self.has_map {

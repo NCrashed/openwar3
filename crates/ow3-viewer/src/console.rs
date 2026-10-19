@@ -14,6 +14,13 @@ use ow3_formats::mpq::ArchiveChain;
 
 use crate::ui::{Blend, Frame, Justify, Quad, Text};
 
+/// What a layout fills in: the text of a string or button and the file
+/// of a texture, by name.
+pub struct Values<'a> {
+    pub texts: &'a dyn Fn(&str) -> Option<String>,
+    pub files: &'a dyn Fn(&str) -> Option<String>,
+}
+
 /// Left, bottom, right, top in interface coordinates.
 pub type Rect = [f32; 4];
 
@@ -118,7 +125,8 @@ impl Interface {
             }
         }
         let mut strings = HashMap::new();
-        if let Some(data) = chain.read("UI\\FrameDef\\GlobalStrings.fdf") {
+        // Every copy, the localized one first: it lacks some keys.
+        for data in chain.read_all("UI\\FrameDef\\GlobalStrings.fdf") {
             for (k, v) in string_lists(&String::from_utf8_lossy(&data)) {
                 strings.entry(k).or_insert(v);
             }
@@ -185,7 +193,7 @@ impl Interface {
         &self,
         name: &str,
         rect: Rect,
-        texts: &dyn Fn(&str) -> Option<String>,
+        values: &Values,
         out: &mut Frame,
     ) -> HashMap<String, Rect> {
         let mut named = HashMap::new();
@@ -193,7 +201,7 @@ impl Interface {
             named.insert(name.to_owned(), rect);
             let props = self.resolved(d);
             let decorate = has(&props, "DecorateFileNames");
-            self.children(d, rect, decorate, texts, out, &mut named);
+            self.children(d, rect, decorate, values, out, &mut named);
         }
         named
     }
@@ -203,7 +211,7 @@ impl Interface {
         d: &Definition,
         rect: Rect,
         decorate: bool,
-        texts: &dyn Fn(&str) -> Option<String>,
+        values: &Values,
         out: &mut Frame,
         named: &mut HashMap<String, Rect>,
     ) {
@@ -212,13 +220,33 @@ impl Interface {
             match child.kind.as_str() {
                 "Texture" => {
                     let r = self.rect_of(&props, rect, named, None);
-                    if let Some(q) = self.texture(&props, r, decorate) {
+                    if let Some(n) = &child.name {
+                        named.insert(n.clone(), r);
+                    }
+                    let file = child.name.as_deref().and_then(values.files);
+                    if let Some(mut q) = self.texture(&props, r, decorate) {
+                        if let Some(file) = file {
+                            q.texture = file;
+                        }
                         out.quads.push(q);
                     }
                 }
                 "String" => {
-                    let r = self.rect_of(&props, rect, named, Some([0.0, 0.0]));
-                    let text = child.name.as_deref().and_then(texts);
+                    // Without a size a string is a line of its font's
+                    // height at its anchor.
+                    let size = last(&props, "Font")
+                        .and_then(|v| v.get(1)?.number())
+                        .unwrap_or(0.01);
+                    let r = self.rect_of(&props, rect, named, Some([0.0, size]));
+                    if let Some(n) = &child.name {
+                        named.insert(n.clone(), r);
+                    }
+                    // Its `Text` only when it is a key of the strings: the
+                    // others are placeholders the game fills in.
+                    let text = child.name.as_deref().and_then(values.texts).or_else(|| {
+                        let key = last(&props, "Text")?.first()?.text().to_owned();
+                        self.strings.get(&key).cloned()
+                    });
                     if let Some(text) = text {
                         out.texts.push(self.text(&props, r, &text, decorate));
                     }
@@ -228,9 +256,9 @@ impl Interface {
                     if let Some(n) = &child.name {
                         named.insert(n.clone(), r);
                     }
-                    self.button(child, &props, r, decorate, texts, out);
+                    self.button(child, &props, r, decorate, values.texts, out);
                     let inner = decorate || has(&props, "DecorateFileNames");
-                    self.children(child, r, inner, texts, out, named);
+                    self.children(child, r, inner, values, out, named);
                 }
                 _ => {}
             }

@@ -83,7 +83,7 @@ pub struct Quad {
     /// The texture coordinates as `TexCoord` gives them: left, right, top,
     /// bottom.
     pub uv: [f32; 4],
-    /// The texture's file in the archives.
+    /// The texture's file in the archives; empty for a solid colour.
     pub texture: String,
     pub colour: [f32; 4],
     pub blend: Blend,
@@ -347,7 +347,14 @@ impl UiRenderer {
         path: &str,
     ) -> bool {
         if !self.textures.contains_key(path) {
-            let image = read_image(chain, path);
+            // An empty name is a plain white texture, for solid colours.
+            let image = if path.is_empty() {
+                let mut white = Image::new(1, 1);
+                white.set(0, 0, [255; 4]);
+                Some(white)
+            } else {
+                read_image(chain, path)
+            };
             let bind = image.map(|image| {
                 let view = upload_texture(device, queue, &image);
                 self.bind(device, &view)

@@ -156,6 +156,22 @@ pub(super) fn place_building(
     ((x, y), Some(footprint))
 }
 
+/// Where a building of type `type_id` put at (`x`, `y`) facing `facing`
+/// (radians as stored) stands: on the grid of its pathing texture.
+pub(super) fn site(state: &State, type_id: i32, x: u32, y: u32, facing: u32) -> (u32, u32) {
+    let texture = state
+        .data
+        .units
+        .get(&type_id)
+        .filter(|t| t.building)
+        .and_then(|t| t.path_texture.as_ref())
+        .and_then(|name| state.data.path_textures.get(name));
+    match texture {
+        Some(texture) => snap(texture, turn_of(facing), x, y),
+        None => (x, y),
+    }
+}
+
 /// Widget `h` died or is removed: a building's footprint goes, a
 /// destructable's changes to its texture of death.
 pub(super) fn died(state: &mut State, h: u32) {

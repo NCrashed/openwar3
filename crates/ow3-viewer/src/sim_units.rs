@@ -65,7 +65,7 @@ pub struct Sim {
     /// The archives models are loaded from while it runs.
     pub chain: ArchiveChain,
     /// The console over the view.
-    hud: crate::hud::Hud,
+    pub hud: crate::hud::Hud,
 }
 
 /// A model played once where an order went.
@@ -242,9 +242,70 @@ impl Sim {
         self.game.ticks() as f32 * 0.005
     }
 
-    /// The interface over the view for this frame.
-    pub fn interface(&self) -> crate::ui::Frame {
-        self.hud.frame(self.resources())
+    /// The interface over the view for this frame, with `selected` and the
+    /// mouse at `mouse` (interface coordinates).
+    pub fn interface(&self, selected: Option<u32>, mouse: Option<[f32; 2]>) -> crate::ui::Frame {
+        let s = selected.and_then(|h| self.selected(h));
+        self.hud.frame(self.resources(), s.as_ref(), mouse)
+    }
+
+    /// Unit `handle` as the console shows it.
+    pub fn selected(&self, handle: u32) -> Option<crate::hud::Selected> {
+        let u = self.game.units().into_iter().find(|u| u.handle == handle)?;
+        if !u.alive {
+            return None;
+        }
+        Some(crate::hud::Selected {
+            handle,
+            type_id: u.type_id,
+            own: u.owner == LOCAL_PLAYER,
+            life: u.life,
+            max_life: u.max_life,
+            mana: u.mana,
+            max_mana: u.max_mana,
+            stats: self.game.unit_stats(handle),
+        })
+    }
+
+    /// Carries out `command` of the command card for `unit`, at `point` on
+    /// the ground for one that takes a point. A line about it.
+    pub fn run(
+        &mut self,
+        unit: u32,
+        command: crate::hud::Command,
+        point: Option<[f32; 2]>,
+    ) -> Option<String> {
+        use crate::hud::{Card, Command};
+        let g = &mut self.game;
+        let done = match (command, point) {
+            (Command::BuildMenu, _) => {
+                self.hud.card = Card::Build;
+                return None;
+            }
+            (Command::Back, _) => {
+                self.hud.card = Card::Main;
+                return None;
+            }
+            (Command::Stop, _) => g.issue_immediate_order(unit, "stop"),
+            (Command::Hold, _) => g.issue_immediate_order(unit, "holdposition"),
+            (Command::CancelTrain, _) => g.issue_immediate_order(unit, "cancel"),
+            (Command::Train(t), _) => g.issue_train_order(unit, t),
+            (Command::Move, Some([x, y])) => g.issue_point_order(unit, "move", x, y),
+            (Command::Attack, Some([x, y])) => g.issue_point_order(unit, "attack", x, y),
+            (Command::Patrol, Some([x, y])) => g.issue_point_order(unit, "patrol", x, y),
+            (Command::Rally, Some([x, y])) => g.issue_point_order(unit, "setrally", x, y),
+            (Command::Build(t), Some([x, y])) => {
+                let (x, y) = g.building_site(t, x, y);
+                self.hud.card = Card::Main;
+                g.issue_build_order(unit, t, x, y)
+            }
+            _ => return None,
+        };
+        Some(format!(
+            "#{unit}: {command:?}{} {}",
+            point.map_or_else(String::new, |[x, y]| format!(" at ({x:.0}, {y:.0})")),
+            if done { "taken" } else { "refused" }
+        ))
     }
 
     /// The local player's gold, lumber and food for the resource bar.
@@ -269,6 +330,11 @@ impl Sim {
     }
 
     /// The units to draw now.
+    /// The units of the game as it stands.
+    pub fn units(&self) -> Vec<ow3_sim::game::UnitView> {
+        self.game.units()
+    }
+
     pub fn draws(&mut self) -> Vec<UnitDraw> {
         let now = self.game.ticks();
         let mut draws = Vec::new();

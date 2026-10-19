@@ -9,6 +9,7 @@ pub mod fdf;
 pub mod map;
 pub mod mdx;
 pub mod mpq;
+pub mod profile;
 pub mod replay;
 pub mod slk;
 pub mod tga;

@@ -170,6 +170,9 @@ fn kind(filter_mode: u32) -> Kind {
     }
 }
 
+/// A unit model by path, team colour and replaceable texture.
+type UnitKey = (String, u8, Option<(u32, String)>);
+
 struct GpuPart {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -196,7 +199,11 @@ pub struct ModelRenderer {
     /// Texture bind groups by path and clamping.
     bind_groups: BTreeMap<(String, bool), wgpu::BindGroup>,
     /// The instance buffer and model of each unit model and team.
-    unit_groups: BTreeMap<(String, u8), (usize, usize)>,
+    unit_groups: BTreeMap<UnitKey, (usize, usize)>,
+    /// The instances of the placed models as loaded, by group, and those
+    /// hidden now (group, instance), drawn in a pose of their own instead.
+    statics: Vec<Vec<Instance>>,
+    hidden: std::collections::BTreeSet<(usize, usize)>,
     /// The matrices of units in a pose of their own (dying, swinging),
     /// after those of the variants.
     unit_bones: Vec<crate::camera::Mat4>,
@@ -207,6 +214,37 @@ pub struct ModelRenderer {
 }
 
 impl ModelRenderer {
+    /// Hides the placed models `hidden` (group, instance) and shows again
+    /// those hidden before and not now.
+    pub fn hide_statics(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        hidden: std::collections::BTreeSet<(usize, usize)>,
+    ) {
+        if hidden == self.hidden {
+            return;
+        }
+        let groups: std::collections::BTreeSet<usize> = self
+            .hidden
+            .symmetric_difference(&hidden)
+            .map(|&(g, _)| g)
+            .collect();
+        for g in groups {
+            let Some(mut instances) = self.statics.get(g).cloned() else {
+                continue;
+            };
+            for &(_, i) in hidden.range((g, 0)..(g + 1, 0)) {
+                if let Some(instance) = instances.get_mut(i) {
+                    // A matrix of zeros draws nothing.
+                    instance.matrix = [[0.0; 4]; 4];
+                }
+            }
+            self.instance_buffers[g].write(device, queue, &instances);
+        }
+        self.hidden = hidden;
+    }
+
     /// How the models move.
     pub fn animation(&self) -> &Animation {
         &self.animation
@@ -443,6 +481,8 @@ impl ModelRenderer {
             samplers,
             bind_groups: BTreeMap::new(),
             unit_groups: BTreeMap::new(),
+            statics: Vec::new(),
+            hidden: std::collections::BTreeSet::new(),
             unit_bones: Vec::new(),
             unit_alphas: Vec::new(),
             bone_capacity: animation.bone_count(),
@@ -453,6 +493,7 @@ impl ModelRenderer {
         }
         for group in groups {
             renderer.add_group(device, &group.parts, &group.instances);
+            renderer.statics.push(group.instances.clone());
         }
         renderer.update(device, queue, 0);
         renderer
@@ -547,11 +588,13 @@ impl ModelRenderer {
             let Some(model) = self.animation.model(chain, &unit.model) else {
                 continue;
             };
-            let key = (unit.model.clone(), unit.team);
+            let key = (unit.model.clone(), unit.team, unit.replaceable.clone());
             let buffer = match self.unit_groups.get(&key) {
                 Some(&(buffer, _)) => buffer,
                 None => {
-                    let parts = self.animation.unit_parts(model, unit.team);
+                    let parts =
+                        self.animation
+                            .unit_parts(model, unit.team, unit.replaceable.as_ref());
                     for part in &parts {
                         if self
                             .bind_groups

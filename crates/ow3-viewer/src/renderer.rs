@@ -397,6 +397,7 @@ impl ModelView {
         let (path, team) = model;
         self.rect = None;
         let draw = crate::sim_units::UnitDraw {
+            replaceable: None,
             model: path.to_owned(),
             team,
             matrix: [
@@ -938,6 +939,17 @@ impl Renderer {
         let emitters = self.models.unit_emitters(chain, units, elapsed);
         self.particles
             .set_units(device, queue, chain, self.models.animation(), &emitters);
+    }
+
+    /// Hides the placed models `hidden` (group, instance), drawn with the
+    /// units in a pose of their own instead.
+    pub fn hide_statics(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        hidden: std::collections::BTreeSet<(usize, usize)>,
+    ) {
+        self.models.hide_statics(device, queue, hidden);
     }
 
     /// Lays out the health bars of the units for a view of `size` pixels.

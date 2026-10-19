@@ -45,6 +45,7 @@ macro_rules! native {
 
 mod boards;
 pub use boards::Button;
+pub use creeps::CREEPS;
 mod attack;
 mod creeps;
 mod enumerate;
@@ -133,6 +134,17 @@ pub struct Destructable {
     /// covers in the grid now (SPEC-0022).
     facing: u32,
     footprint: obstacles::Footprint,
+    /// The tick of its last damage and of its death, for the viewer.
+    hit_at: Option<u64>,
+    died_at: Option<u64>,
+}
+
+/// A destructable that was damaged or died (`Game::changed_destructables`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestructableChange {
+    pub index: usize,
+    pub hit_at: Option<u64>,
+    pub died_at: Option<u64>,
 }
 
 /// PROVISIONAL: a placeholder item lying on the ground.
@@ -1006,6 +1018,8 @@ impl<'a> Game<'a> {
                 alive: true,
                 facing,
                 footprint: obstacles::Footprint::default(),
+                hit_at: None,
+                died_at: None,
             };
             let handle = state.create(Object::Destructable(destructable));
             state.destructables.push(handle);
@@ -1458,6 +1472,29 @@ impl<'a> Game<'a> {
         let facing = facing::from_degrees(270f32.to_bits());
         let (x, y) = obstacles::site(&state, type_id, x.to_bits(), y.to_bits(), facing);
         (f32::from_bits(x), f32::from_bits(y))
+    }
+
+    /// The destructables that were damaged or died, for the viewer: the
+    /// index of each in the order they were made (the map's placed ones
+    /// first, in the order of `Map::destructables`), and the ticks of its
+    /// last damage and its death.
+    pub fn changed_destructables(&self) -> Vec<DestructableChange> {
+        let state = self.state.borrow();
+        state
+            .destructables
+            .iter()
+            .enumerate()
+            .filter_map(|(index, h)| match state.objects.get(h) {
+                Some(Object::Destructable(d)) if d.hit_at.is_some() || d.died_at.is_some() => {
+                    Some(DestructableChange {
+                        index,
+                        hit_at: d.hit_at,
+                        died_at: d.died_at,
+                    })
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// The living tree nearest to (`x`, `y`) within `radius`: its handle

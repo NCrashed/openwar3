@@ -39,6 +39,13 @@ pub struct Scene {
     pub particle_textures: BTreeMap<String, Image>,
     /// The shadows the editor baked (`war3map.shd`), if any.
     pub shadows: Option<ow3_formats::map::shadows::Shadows>,
+    /// The placements of the map's objects (not the cliffs), and the
+    /// group and instance each is drawn as, for drawing one of them in a
+    /// pose of its own (a tree hit or felled).
+    pub placements: Vec<crate::objects::Placement>,
+    pub slots: Vec<Option<(usize, usize)>>,
+    /// The placement at each position (x and y as bits), the first one.
+    by_position: std::collections::HashMap<(u32, u32), usize>,
 }
 
 /// The frames of the water texture of `kind`: `<texFile>00.blp` to
@@ -80,6 +87,45 @@ fn water_frames(chain: &mut ArchiveChain, kind: &ow3_render::water::WaterType) -
 }
 
 impl Scene {
+    /// The placed models at the map positions of `poses` drawn in those
+    /// poses (a tree hit or felled), and their static instances to hide
+    /// (group, instance).
+    pub fn posed(
+        &self,
+        poses: &[([f32; 2], crate::models::UnitPose)],
+    ) -> (
+        Vec<crate::sim_units::UnitDraw>,
+        std::collections::BTreeSet<(usize, usize)>,
+    ) {
+        let mut draws = Vec::new();
+        let mut hidden = std::collections::BTreeSet::new();
+        for &(at, pose) in poses {
+            let key = (at[0].to_bits(), at[1].to_bits());
+            let Some(&index) = self.by_position.get(&key) else {
+                continue;
+            };
+            let (Some(placement), Some(Some(slot))) =
+                (self.placements.get(index), self.slots.get(index))
+            else {
+                continue;
+            };
+            hidden.insert(*slot);
+            draws.push(crate::sim_units::UnitDraw {
+                model: placement.model.clone(),
+                replaceable: placement.replaceable.clone(),
+                team: placement.team,
+                matrix: models::placement_matrix(placement),
+                pose,
+                life: None,
+                handle: 0,
+                selection: 0.0,
+                relation: None,
+                tint: [1.0; 3],
+            });
+        }
+        (draws, hidden)
+    }
+
     /// With `without_units`, the units placed in the editor are left out
     /// for the simulation to place.
     /// `day_night` names the light models the script chose; without them
@@ -129,7 +175,8 @@ impl Scene {
         if let Some((_, _, kind)) = &water {
             placements.extend(crate::shore::placements(&terrain, kind, depths));
         }
-        let (mut groups, mut model_textures, mut animation) = models::load(&mut chain, &placements);
+        let (mut groups, mut model_textures, mut animation, slots) =
+            models::load(&mut chain, &placements);
         model_textures.extend(models::textures(&mut chain, &cliffs.groups));
         groups.extend(cliffs.groups);
         // The placed models with particle emitters, and their textures.
@@ -171,6 +218,14 @@ impl Scene {
             terrain_light,
             unit_light,
             shadows,
+            by_position: placements
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, p)| ((p.position[0].to_bits(), p.position[1].to_bits()), i))
+                .collect(),
+            placements,
+            slots,
             emitters,
             particle_textures,
         })

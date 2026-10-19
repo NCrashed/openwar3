@@ -110,6 +110,8 @@ struct Animated {
     walk: Option<usize>,
     /// The sequence Stand Work, if any.
     work: Option<usize>,
+    /// Stand Hit, played by a tree when it is hit, if any.
+    hit: Option<usize>,
     /// Walk Gold and Walk Lumber, if any (SPEC-0029).
     walk_gold: Option<usize>,
     walk_lumber: Option<usize>,
@@ -160,6 +162,8 @@ pub enum UnitPose {
     /// Milliseconds since it started walking with a load: 1 gold, 2
     /// lumber; Walk Gold or Walk Lumber loops.
     Carry(i32, u8),
+    /// Milliseconds since it was hit: Stand Hit played once.
+    Hit(i32),
     /// Milliseconds into its Portrait sequence, which loops (SPEC-0028).
     Portrait(i32),
     /// Stopped walking `since` milliseconds ago after walking `walked`.
@@ -227,6 +231,7 @@ impl Animation {
                         .position(|s| s.name.trim().eq_ignore_ascii_case(name))
                 };
                 let (walk_gold, walk_lumber) = (named("walk gold"), named("walk lumber"));
+                let hit = named("stand hit");
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
@@ -243,6 +248,7 @@ impl Animation {
                     walk,
                     work,
                     portrait,
+                    hit,
                     walk_gold,
                     walk_lumber,
                     top,
@@ -288,6 +294,10 @@ impl Animation {
         match pose {
             UnitPose::Stand => stand(),
             UnitPose::Death(elapsed) => held(animated.death, elapsed),
+            UnitPose::Hit(elapsed) => match animated.hit {
+                Some(hit) => held(hit, elapsed),
+                None => stand(),
+            },
             UnitPose::Once(elapsed) => held(animated.sequence, elapsed),
             UnitPose::Attack(elapsed) => match animated.attack {
                 Some(attack) => held(attack, elapsed),
@@ -363,6 +373,7 @@ impl Animation {
         let (sequence, elapsed) = match pose {
             UnitPose::Stand => return None,
             UnitPose::Death(elapsed) => (animated.death, elapsed),
+            UnitPose::Hit(elapsed) => (animated.hit?, elapsed),
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
             UnitPose::Work(elapsed) => (animated.work?, elapsed),
@@ -453,10 +464,16 @@ impl Animation {
     }
 
     /// The parts of model `index` for player `team`, with alpha slots.
-    pub fn unit_parts(&mut self, index: usize, team: u8) -> Vec<Part> {
+    pub fn unit_parts(
+        &mut self,
+        index: usize,
+        team: u8,
+        replaceable: Option<&(u32, String)>,
+    ) -> Vec<Part> {
         let model = self.models[index].model.clone();
         let palette = self.models[index].palette.clone();
-        let paths = ow3_render::model::texture_paths(&model, &[], team);
+        let replacements: Vec<(u32, String)> = replaceable.into_iter().cloned().collect();
+        let paths = ow3_render::model::texture_paths(&model, &replacements, team);
         animated_parts(&model, index, &palette, &paths, &mut self.alphas)
     }
 
@@ -538,6 +555,7 @@ impl Animation {
         match pose {
             UnitPose::Once(elapsed) => self.once_alphas(index, elapsed),
             UnitPose::Death(elapsed) => self.sequence_alphas(index, animated.death, elapsed, false),
+            UnitPose::Hit(elapsed) => self.sequence_alphas(index, animated.hit?, elapsed, false),
             UnitPose::Attack(elapsed) => {
                 self.sequence_alphas(index, animated.attack?, elapsed, false)
             }
@@ -798,8 +816,16 @@ pub fn parts(model: &Model, textures: &[Option<String>]) -> Vec<Part> {
 /// texture and the player whose team colour it shows.
 type GroupKey = (String, Option<(u32, String)>, u8);
 
+/// What [`load`] gives.
+pub type Loaded = (
+    Vec<Group>,
+    BTreeMap<String, Image>,
+    Animation,
+    Vec<Option<(usize, usize)>>,
+);
+
 /// translate(position) * rotate around z (angle) * scale.
-pub(crate) fn placement_matrix(p: &Placement) -> Mat4 {
+pub fn placement_matrix(p: &Placement) -> Mat4 {
     let (s, c) = p.angle.sin_cos();
     let [sx, sy, sz] = p.scale;
     [
@@ -810,20 +836,20 @@ pub(crate) fn placement_matrix(p: &Placement) -> Mat4 {
     ]
 }
 
-/// The models of `placements`, each with its instances, the textures they
-/// use by path, and their animation. Models that cannot be read are left
-/// out.
-pub fn load(
-    chain: &mut ArchiveChain,
-    placements: &[Placement],
-) -> (Vec<Group>, BTreeMap<String, Image>, Animation) {
+/// The models of `placements`: their groups, textures and animation, and
+/// for each placement its group and instance (`None` for a model that
+/// cannot be read or has nothing to draw).
+pub fn load(chain: &mut ArchiveChain, placements: &[Placement]) -> Loaded {
     let mut animation = Animation {
         bone_count: 1,
         ..Animation::default()
     };
     let mut groups: BTreeMap<GroupKey, Group> = BTreeMap::new();
+    // The group and instance of each placement.
+    let mut placed: Vec<Option<(GroupKey, usize)>> = Vec::with_capacity(placements.len());
     for placement in placements {
         let Some(index) = animation.model(chain, &placement.model) else {
+            placed.push(None);
             continue;
         };
         let animated = &animation.models[index];
@@ -835,7 +861,7 @@ pub fn load(
             .any(|t| matches!(t.replaceable_id, 1 | 2));
         let team = if team_coloured { placement.team } else { 0 };
         let key = (placement.model.clone(), placement.replaceable.clone(), team);
-        let group = groups.entry(key).or_insert_with(|| {
+        let group = groups.entry(key.clone()).or_insert_with(|| {
             let replacements: Vec<(u32, String)> = placement.replaceable.iter().cloned().collect();
             let paths = ow3_render::model::texture_paths(model, &replacements, team);
             Group {
@@ -852,6 +878,7 @@ pub fn load(
         });
         let animated = &animation.models[index];
         let variant = (group.instances.len() % VARIANTS) as u32;
+        placed.push(Some((key, group.instances.len())));
         group.instances.push(Instance {
             matrix: placement_matrix(placement),
             bone_base: animated.bone_base + variant * animated.palette.len() as u32,
@@ -860,12 +887,22 @@ pub fn load(
             terrain_light: 0,
         });
     }
+    let mut numbers: BTreeMap<GroupKey, usize> = BTreeMap::new();
     let groups: Vec<Group> = groups
-        .into_values()
-        .filter(|g| !g.parts.is_empty())
+        .into_iter()
+        .filter(|(_, g)| !g.parts.is_empty())
+        .enumerate()
+        .map(|(i, (key, g))| {
+            numbers.insert(key, i);
+            g
+        })
+        .collect();
+    let slots = placed
+        .into_iter()
+        .map(|p| p.and_then(|(key, i)| numbers.get(&key).map(|&g| (g, i))))
         .collect();
     let textures = textures(chain, &groups);
-    (groups, textures, animation)
+    (groups, textures, animation, slots)
 }
 
 /// The textures that the parts of `groups` use, by path.
@@ -902,7 +939,7 @@ mod tests {
         let Some(index) = animation.model(&mut chain, path) else {
             return;
         };
-        animation.unit_parts(index, 0);
+        animation.unit_parts(index, 0, None);
         let (start, slot) = animation.once_alphas(index, 0).unwrap();
         let (late, same) = animation.once_alphas(index, 1200).unwrap();
         assert_eq!(slot, same);
@@ -925,7 +962,7 @@ mod tests {
         let Some(index) = animation.model(&mut chain, path) else {
             return;
         };
-        animation.unit_parts(index, 0);
+        animation.unit_parts(index, 0, None);
         let (start, _) = animation.pose_alphas(index, UnitPose::Death(0)).unwrap();
         let (late, _) = animation
             .pose_alphas(index, UnitPose::Death(60_000))

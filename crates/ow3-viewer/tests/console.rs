@@ -286,6 +286,7 @@ fn a_peasant_gathers_lumber() {
     let mut chopped = false;
     let mut swung = false;
     let mut faced = false;
+    let mut shook = false;
     // Steps of 50 ms, to see the swings.
     for _ in 0..1800 {
         sim.advance(50_000);
@@ -302,13 +303,18 @@ fn a_peasant_gathers_lumber() {
                 d.handle == peasant && matches!(d.pose, ow3_viewer::models::UnitPose::Attack(_))
             });
         }
+        // The tree shakes after each hit.
+        shook |= sim
+            .destructable_poses()
+            .iter()
+            .any(|(_, pose)| matches!(pose, ow3_viewer::models::UnitPose::Hit(_)));
         if sim.resources().lumber > lumber {
             break;
         }
     }
     assert!(
-        full && chopped && faced && swung,
-        "{full} {chopped} {faced} {swung}"
+        full && chopped && faced && swung && shook,
+        "{full} {chopped} {faced} {swung} {shook}"
     );
     assert_eq!(sim.resources().lumber, lumber + 10);
     assert_eq!(view(&sim, peasant).order, 852_018);
@@ -370,7 +376,7 @@ fn a_load_shows_on_the_peasant() {
     let peasant = animation
         .model(&mut chain, "Units\\Human\\Peasant\\Peasant.mdx")
         .unwrap();
-    animation.unit_parts(peasant, 0);
+    animation.unit_parts(peasant, 0, None);
     let walk = animation
         .pose_alphas(peasant, UnitPose::Walk(300))
         .unwrap()
@@ -402,4 +408,23 @@ fn the_time_indicator_follows_the_day() {
     );
     let expected = sim.time_of_day() / 24.0 * 60_000.0;
     assert!((t as f32 - expected).abs() <= 1.0, "{t} {expected}");
+}
+
+/// A tree the simulation reports hit is drawn on its own, in its Stand
+/// Hit pose, and its static instance hidden.
+#[test]
+fn a_hit_tree_is_drawn_on_its_own() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b");
+    let map = dir.join("Maps/(12)IceCrown.w3m");
+    if !map.exists() {
+        return;
+    }
+    let scene = ow3_viewer::scene::Scene::load(&dir, &map, true, None).unwrap();
+    let loaded = ow3_sim::map::Map::load(&dir, &map).unwrap();
+    let d = &loaded.destructables[0];
+    let pose = ow3_viewer::models::UnitPose::Hit(100);
+    let (draws, hidden) = scene.posed(&[([d.x, d.y], pose)]);
+    assert_eq!(draws.len(), 1);
+    assert_eq!(hidden.len(), 1);
+    assert_eq!(draws[0].pose, pose);
 }

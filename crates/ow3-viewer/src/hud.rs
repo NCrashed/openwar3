@@ -140,7 +140,7 @@ const STEP: [f32; 2] = [0.043_625, 0.043];
 const INFO: Rect = [0.309_375, 0.0, 0.4975, 0.114_063];
 const RESOURCES: Rect = [0.461_719, 0.5782, 0.8, 0.6];
 const UPPER: Rect = [0.0, 0.578, 0.34, 0.6];
-const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
+pub const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
 /// The portrait (SPEC-0028).
 pub const PORTRAIT: Rect = [0.2075, 0.030_625, 0.2975, 0.116_23];
 /// The life and mana texts under the portrait.

@@ -7,6 +7,7 @@ pub mod cliff_mesh;
 pub mod console;
 pub mod controls;
 pub mod hud;
+pub mod minimap;
 pub mod model_renderer;
 pub mod models;
 pub mod objects;

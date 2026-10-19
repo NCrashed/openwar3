@@ -28,11 +28,15 @@ const ORDER_REPAIR: i32 = 852_024;
 /// A click on the ground this near a tree is on the tree (PROVISIONAL:
 /// trees are not picked by their models).
 const TREE_PICK: f32 = 64.0;
+/// Ticks a destructable shows its hit (a tree's Stand Hit is 300 ms).
+const HIT_TICKS: u64 = 60;
 
 /// One unit to draw.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UnitDraw {
     pub model: String,
+    /// A replaceable texture id and its path, for a tree.
+    pub replaceable: Option<(u32, String)>,
     pub team: u8,
     pub matrix: Mat4,
     /// What it is doing.
@@ -78,6 +82,11 @@ pub struct Sim {
     /// (`DayHours`, `ScaledAnimTime` of `Units\MiscData.txt`), for the
     /// time of day indicator (SPEC-0028).
     day_animation: (f32, f32),
+    /// The minimap (SPEC-0028).
+    pub minimap: crate::minimap::Minimap,
+    /// Where the map placed its destructables, in the order the game made
+    /// them.
+    placed: Vec<[f32; 2]>,
 }
 
 /// A model played once where an order went.
@@ -169,6 +178,8 @@ impl Sim {
             hud: crate::hud::Hud::load(&mut chain, "Human"),
             ghost: None,
             day_animation: day_animation(&mut chain),
+            minimap: crate::minimap::Minimap::new(loaded),
+            placed: loaded.destructables.iter().map(|d| [d.x, d.y]).collect(),
             chain,
         })
     }
@@ -305,6 +316,61 @@ impl Sim {
     pub fn interface(&self, selected: Option<u32>, mouse: Option<[f32; 2]>) -> crate::ui::Frame {
         let s = selected.and_then(|h| self.selected(h));
         self.hud.frame(self.resources(), s.as_ref(), mouse)
+    }
+
+    /// The placed destructables in a pose of their own now: where the map
+    /// placed each, and its pose (Stand Hit for a while after a hit, Death
+    /// once it died, held at its end).
+    ///
+    /// PROVISIONAL: no spec gives how a destructable shows a hit.
+    pub fn destructable_poses(&self) -> Vec<([f32; 2], UnitPose)> {
+        let now = self.game.ticks();
+        self.game
+            .changed_destructables()
+            .into_iter()
+            .filter_map(|c| {
+                let at = *self.placed.get(c.index)?;
+                let pose = match (c.died_at, c.hit_at) {
+                    (Some(t), _) => UnitPose::Death(millis(now.saturating_sub(t))),
+                    (None, Some(t)) if now.saturating_sub(t) < HIT_TICKS => {
+                        UnitPose::Hit(millis(now - t))
+                    }
+                    _ => return None,
+                };
+                Some((at, pose))
+            })
+            .collect()
+    }
+
+    /// The minimap's quads, with the outline of the ground `view` the
+    /// camera sees (its corners in order round it).
+    pub fn minimap_quads(&self, view: Option<[[f32; 2]; 4]>) -> Vec<crate::ui::Quad> {
+        use crate::minimap::Mark;
+        let ngol = i32::from_be_bytes(*b"ngol");
+        let marks: Vec<([f32; 2], bool, Mark)> = self
+            .game
+            .units()
+            .into_iter()
+            .filter(|u| u.alive && !u.hidden)
+            .filter_map(|u| {
+                let mark = if u.type_id == ngol {
+                    Mark::Mine
+                } else if u.owner == LOCAL_PLAYER {
+                    Mark::Own
+                } else if u.owner == ow3_sim::game::CREEPS {
+                    return None;
+                } else {
+                    match self.game.relation(LOCAL_PLAYER, u.handle)? {
+                        Relation::Friend => Mark::Ally,
+                        Relation::Enemy => Mark::Enemy,
+                        Relation::Neutral => return None,
+                    }
+                };
+                let building = self.game.unit_stats(u.handle).is_some_and(|s| s.building);
+                Some(([u.x, u.y], building, mark))
+            })
+            .collect();
+        self.minimap.quads(&marks, view)
     }
 
     /// Unit `handle` as the console shows it.
@@ -511,6 +577,7 @@ impl Sim {
                 scale: [look.scale; 3],
             };
             draws.push(UnitDraw {
+                replaceable: None,
                 matrix: crate::models::placement_matrix(&placement),
                 model: placement.model,
                 team: placement.team,
@@ -550,6 +617,7 @@ impl Sim {
                 scale: [look.scale; 3],
             };
             draws.push(UnitDraw {
+                replaceable: None,
                 matrix: crate::models::placement_matrix(&placement),
                 model: placement.model,
                 team: placement.team,
@@ -577,6 +645,7 @@ impl Sim {
                 scale: [e.scale; 3],
             };
             draws.push(UnitDraw {
+                replaceable: None,
                 matrix: crate::models::placement_matrix(&placement),
                 model: placement.model,
                 team: 0,

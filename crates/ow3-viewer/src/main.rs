@@ -11,7 +11,7 @@
 //! place, in any layout, before the camera's keys) gives the order, and
 //! one that takes a point waits for a left click on the ground (a right
 //! click drops it). Escape drops a waiting order or closes a list, and
-//! else quits. The unit
+//! else quits. A left click on the minimap moves the camera there. The unit
 //! under the mouse shows its circle and health bar; with Alt held every
 //! unit shows its bar (`--alt` in screenshots). The map's
 //! script runs in the simulation, which places the units (`--no-sim`: the
@@ -188,7 +188,10 @@ fn screenshot(
         sim_hour = sim.time_of_day();
         sim_seconds = sim.game_seconds();
         sim_fog = sim.terrain_fog();
-        let units = sim.draws();
+        let mut units = sim.draws();
+        let (posed, hidden) = scene.posed(&sim.destructable_poses());
+        units.extend(posed);
+        renderer.hide_statics(&device, &queue, hidden);
         renderer.set_units(
             &device,
             &queue,
@@ -208,7 +211,10 @@ fn screenshot(
     renderer.set_fog(options.fog.or(sim_fog));
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     if let Some(sim) = sim {
-        let frame = sim.interface(options.select, None);
+        let mut frame = sim.interface(options.select, None);
+        frame
+            .quads
+            .extend(sim.minimap_quads(outline(&camera, scene, (w, h))));
         renderer.prepare_ui(&device, &queue, &mut sim.chain, &frame, (w, h));
         let portrait = options.select.and_then(|h| sim.portrait(h));
         renderer.set_portrait(
@@ -514,6 +520,14 @@ impl App {
     fn left_click(&mut self) {
         let point = self.ui_point();
         let selected = self.gpu.as_ref().and_then(|g| g.renderer.selected);
+        // A click on the minimap moves the camera there.
+        if let (Some(p), Some(sim)) = (point, &self.sim)
+            && let Some([x, y]) = sim.minimap.to_world(p)
+        {
+            self.controls.goal.target[0] = x;
+            self.controls.goal.target[1] = y;
+            return;
+        }
         if let (Some(p), Some(sim)) = (point, &self.sim)
             && ow3_viewer::hud::Hud::covers(p)
         {
@@ -612,7 +626,11 @@ impl App {
         if let Some(sim) = &mut self.sim {
             sim.advance(dt.as_micros() as u64);
             sim.ghost = ground;
-            let units = sim.draws();
+            let mut units = sim.draws();
+            // Trees hit or felled, in a pose of their own.
+            let (posed, hidden) = self.scene.posed(&sim.destructable_poses());
+            units.extend(posed);
+            gpu.renderer.hide_statics(&gpu.device, &gpu.queue, hidden);
             gpu.renderer
                 .set_units(&gpu.device, &gpu.queue, &mut sim.chain, &units, elapsed);
             // The unit under the mouse, as the units stand in this frame.
@@ -650,7 +668,10 @@ impl App {
                 self.cursor.0 / w * ow3_viewer::ui::WIDTH,
                 (1.0 - self.cursor.1 / h) * ow3_viewer::ui::HEIGHT,
             ];
-            let frame = sim.interface(gpu.renderer.selected, Some(mouse));
+            let mut frame = sim.interface(gpu.renderer.selected, Some(mouse));
+            frame
+                .quads
+                .extend(sim.minimap_quads(outline(&self.camera, &self.scene, size)));
             gpu.renderer
                 .prepare_ui(&gpu.device, &gpu.queue, &mut sim.chain, &frame, size);
             let portrait = gpu.renderer.selected.and_then(|h| sim.portrait(h));
@@ -791,4 +812,28 @@ fn light(renderer: &mut Renderer, scene: &Scene, hour: f32) {
     };
     renderer.terrain_light = at(&scene.terrain_light);
     renderer.unit_light = at(&scene.unit_light);
+}
+
+/// The ground under the corners of the view of the world (SPEC-0028) seen
+/// by `camera` in a window `size` pixels large, round it from the lower
+/// left; `None` when a corner looks above the ground.
+fn outline(camera: &Camera, scene: &Scene, size: (u32, u32)) -> Option<[[f32; 2]; 4]> {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let world = ow3_viewer::hud::WORLD;
+    let y = |v: f32| (1.0 - v / ow3_viewer::ui::HEIGHT) * h;
+    let corners = [
+        (0.0, y(world[1])),
+        (w, y(world[1])),
+        (w, y(world[3])),
+        (0.0, y(world[3])),
+    ];
+    let terrain = &scene.terrain;
+    let mut out = [[0.0; 2]; 4];
+    for (o, (x, y)) in out.iter_mut().zip(corners) {
+        let [gx, gy, _] = camera.ground_point(x, y, size, |x, y| {
+            ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
+        })?;
+        *o = [gx, gy];
+    }
+    Some(out)
 }

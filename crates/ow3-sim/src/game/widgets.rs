@@ -716,11 +716,16 @@ pub(super) fn set_destructable_life(
 ) {
     let killed = {
         let mut state = state.borrow_mut();
+        let tick = state.ticks;
         match destructable_mut(&mut state, h) {
             Some(d) if d.alive => {
+                if f32::from_bits(life) < f32::from_bits(d.life) {
+                    d.hit_at = Some(tick);
+                }
                 if f32::from_bits(life) <= 0.0 {
                     d.alive = false;
                     d.life = 0;
+                    d.died_at = Some(tick);
                     true
                 } else {
                     d.life = life;
@@ -1106,10 +1111,12 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let h = handle(&args[0]);
             let killed = {
                 let mut state = state.borrow_mut();
+                let tick = state.ticks;
                 match destructable_mut(&mut state, h) {
                     Some(d) if d.alive => {
                         d.alive = false;
                         d.life = 0;
+                        d.died_at = Some(tick);
                         true
                     }
                     _ => false,
@@ -1470,6 +1477,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 facing,
                 !dead,
             );
+            let died_at = dead.then_some(state.ticks);
             let h = state.create(Object::Destructable(Destructable {
                 type_id,
                 x,
@@ -1479,6 +1487,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 alive: !dead,
                 facing,
                 footprint: super::obstacles::Footprint::default(),
+                hit_at: None,
+                died_at,
             }));
             state.destructables.push(h);
             super::obstacles::refresh_destructable(&mut state, h);

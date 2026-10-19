@@ -27,6 +27,7 @@ use ow3_math::{add, mul, sub};
 
 use super::{Object, State};
 use crate::path::{self, Cells, Grid, WithUnits};
+use crate::random::Random;
 
 /// 1/32, 32 and 0.49, the arrival radius in cells.
 const CELL: u32 = 0x3D00_0000;
@@ -46,6 +47,9 @@ const WINDOW: u64 = 2;
 /// Updates a unit waits for a moving one, and makes a slower one wait.
 const WAIT: u32 = 5;
 const MADE_TO_WAIT: u32 = 20;
+/// A blocked unit this near its goal (squared, in cells: 12 cells) and
+/// alone stands one update before it searches again (SPEC-0025).
+const NEAR_GOAL: f32 = 144.0;
 
 fn real(bits: u32) -> f32 {
     f32::from_bits(bits)
@@ -74,8 +78,13 @@ pub struct Follow {
     hold_until: u64,
     /// The order point in cells the waypoints were searched to.
     order: [u32; 2],
+    /// The tick of its last local search.
+    searched_at: u64,
     /// Updates the unit still stands waiting for another unit.
     wait: u32,
+    /// The patience counter of a blocked unit (SPEC-0025): 0 while its
+    /// way is free.
+    patience: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +228,14 @@ fn others(state: &State, h: u32) -> Others {
     others
 }
 
+/// What the units share while they decide their steps: the budget of
+/// local searches, the paths of the others and the script generator.
+struct Shared<'a> {
+    budget: &'a mut Budget,
+    paths: &'a mut BTreeMap<u32, Follow>,
+    random: &'a mut Random,
+}
+
 /// A unit at an update, as `steer` needs it.
 pub struct Walker {
     pub handle: u32,
@@ -229,6 +246,9 @@ pub struct Walker {
     pub class: u8,
     /// Its squared speed at the start of the update.
     pub squared_speed: u32,
+    /// The number of members of its group's cluster, 1 for a unit alone
+    /// (SPEC-0025).
+    pub cluster: usize,
     /// For an attacker, how it chases (SPEC-0019).
     pub chase: Option<Chase>,
 }
@@ -271,6 +291,8 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
             next: Next::Search,
             hold_until: 0,
             wait: 0,
+            patience: 0,
+            searched_at: 0,
             order: order_cells,
         };
         follow.take_segment(order_cells);
@@ -280,8 +302,11 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
         &mut follow,
         grid,
         &others,
-        &mut state.budget,
-        &mut state.paths,
+        &mut Shared {
+            budget: &mut state.budget,
+            paths: &mut state.paths,
+            random: &mut state.random,
+        },
         walker,
         tick,
     );
@@ -293,8 +318,7 @@ fn decide(
     follow: &mut Follow,
     grid: &Grid,
     others: &Others,
-    budget: &mut Budget,
-    paths: &mut BTreeMap<u32, Follow>,
+    shared: &mut Shared,
     walker: &Walker,
     tick: u64,
 ) -> Steer {
@@ -352,7 +376,7 @@ fn decide(
         if tick < follow.hold_until {
             return Steer::Stand(segment_goal);
         }
-        if budget.used(tick) > BUDGET {
+        if shared.budget.used(tick) > BUDGET {
             // Queued for a later window, without the hold.
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
@@ -369,8 +393,9 @@ fn decide(
             ),
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
-        budget.used += found.iterations;
-        if budget.used >= LONG_SEARCH {
+        shared.budget.used += found.iterations;
+        follow.searched_at = tick;
+        if shared.budget.used >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;
@@ -411,6 +436,7 @@ fn decide(
         .filter(|&(x, y)| !grid.passable(x, y) || others.by_cell.contains_key(&(x, y)))
         .collect();
     if failing.is_empty() {
+        follow.patience = 0;
         return Steer::Walk(to_world(target));
     }
     // Moving units in the way: wait for them, or make the slower ones of
@@ -422,11 +448,11 @@ fn decide(
                 continue;
             }
             let other = others.units[&b];
-            if !other.moving || paths.get(&b).is_some_and(|f| f.wait > 0) {
+            if !other.moving || shared.paths.get(&b).is_some_and(|f| f.wait > 0) {
                 continue;
             }
             let faster = real(other.squared_speed) >= real(walker.squared_speed);
-            match paths.get_mut(&b) {
+            match shared.paths.get_mut(&b) {
                 Some(path) if !faster && other.class == class => path.wait = MADE_TO_WAIT,
                 _ => {
                     follow.wait = WAIT - 1;
@@ -435,9 +461,37 @@ fn decide(
             }
         }
     }
-    // Blocked as by a wall: search again at the next update.
-    follow.next = Next::Search;
-    follow.local.clear();
+    // Blocked by units that made it wait for none: the patience counter
+    // (SPEC-0021, SPEC-0025 "Blocked units"). It stands, and searches
+    // again when its patience is out. Blocked by static obstacles alone it
+    // searches again at the next update (SPEC-0020).
+    //
+    // PROVISIONAL: the counter is measured with units in the way; that it
+    // does not count for static obstacles follows from the tests of
+    // SPEC-0020 (c-PF1), which match without it.
+    if examined.is_empty() {
+        follow.next = Next::Search;
+        follow.local.clear();
+        return Steer::Stand(segment_goal);
+    }
+    if follow.patience == 0 {
+        let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
+        let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
+        follow.patience = if near && walker.cluster <= 1 {
+            2
+        } else {
+            7 + ((shared.random.step() >> 22) & 1)
+        };
+    }
+    if follow.patience == 1 {
+        follow.next = Next::Search;
+        follow.local.clear();
+        if follow.searched_at == tick {
+            return Steer::Stand(segment_goal);
+        }
+        return decide(follow, grid, others, shared, walker, tick);
+    }
+    follow.patience -= 1;
     Steer::Stand(segment_goal)
 }
 

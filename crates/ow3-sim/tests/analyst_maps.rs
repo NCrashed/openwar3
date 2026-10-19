@@ -974,9 +974,9 @@ fn swings_against_the_goal_point() {
 /// for the front ranks to pass, and from the update the peasant starts
 /// all four walk at 190, the peasant's speed.
 ///
-/// PROVISIONAL: the game released the rifleman at its 19th update and the
-/// peasant at its 35th; here they start earlier (about the 15th and the
-/// 28th) with an order point taken as (0, -465).
+/// The order point here is taken as (0, -465); with the exact order of
+/// the replay c-RSP-1 the members start at the updates of the game
+/// (`tests/groups.rs`).
 #[test]
 fn group_ranks_form_up() {
     let Some(map) = load("c-RSP.w3x") else {

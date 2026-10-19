@@ -166,6 +166,11 @@ impl Moving {
         !self.arrived && self.walking
     }
 
+    /// The point walked to.
+    pub fn target_point(&self) -> [u32; 2] {
+        self.target
+    }
+
     /// The id of the order while it is on.
     pub fn order_id(&self) -> i32 {
         if self.arrived { 0 } else { self.order_id }
@@ -396,9 +401,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     true
 }
 
-/// Units ordered to a point together (SPEC-0025, "Clusters"). At their
-/// first update their places in the formation are laid out; at every
-/// update the cluster decides which members wait and the group's speed.
+/// Units ordered to a point together (SPEC-0025, "Clusters"), walking in
+/// formation along one path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
     /// In the order of the units in the order.
@@ -407,16 +411,27 @@ pub struct Cluster {
     goal: [u32; 2],
     /// The tick of the first update.
     first: u64,
-    /// The formation angle, from the first update on.
-    angle: Option<u32>,
+    /// The waypoints in cells relative to the world corner, from the
+    /// first update on, and the current one.
+    waypoints: Vec<[u32; 2]>,
+    current: usize,
+    /// The formation angle and the members' offsets from the waypoint,
+    /// in cells.
+    angle: u32,
+    offsets: Vec<[u32; 2]>,
+    /// Updates since a member arrived while others were not near.
+    stall: u32,
 }
 
-/// What a cluster tells a member at an update: whether it waits, and the
-/// group's speed if there is one.
+/// What a cluster tells a member at an update: whether it waits, the
+/// group's speed if there is one, whether its place is at the last
+/// waypoint, and the number of members.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Control {
     held: bool,
     speed: Option<u32>,
+    last: bool,
+    size: usize,
 }
 
 /// Units whose distance in cells, taken to its integer part, is at most
@@ -482,23 +497,35 @@ pub(super) fn group_point_order(
                 members,
                 goal: target,
                 first,
-                angle: None,
+                waypoints: Vec::new(),
+                current: 0,
+                angle: 0,
+                offsets: Vec::new(),
+                stall: 0,
             });
         }
     }
     !taken.is_empty()
 }
 
-/// The clusters updating at `tick` (SPEC-0025). At the first update the
-/// leader is the member nearest to the goal, the formation angle that
-/// from the leader to the goal, and each member walks to the goal plus its
-/// offset ("Formation angle and leader", "Layout"). At every update the
-/// members that wait for their rank to pass are held, and while none is
-/// held and none has reached its place all walk at the slowest member's
-/// speed ("Group speed"). A cluster whose members have all arrived ends.
+/// The clusters updating at `tick` (SPEC-0025).
 ///
-/// PROVISIONAL: the hold rule is never suspended (the member states that
-/// suspend it are open question 3).
+/// At the first update the leader is the member nearest to the goal, the
+/// cluster's path is searched from it, and the formation angle points
+/// from the leader to the first waypoint ("Formation angle and leader").
+/// Each member walks to the current waypoint plus its offset ("Layout").
+/// At every update the members at their places are marked arrived; the
+/// cluster goes on to the next waypoint, turning the formation and
+/// laying it out again, when one has arrived and the others are near or
+/// have waited too long ("Following the cluster's path"); at the last
+/// waypoint arrived members leave. Members that would walk ahead of a
+/// front rank are held, and while none is held and none has arrived all
+/// walk at the slowest member's speed ("Group speed").
+///
+/// PROVISIONAL: the hold rule is never suspended and one arrived member
+/// is not enough to go on (the member states of the 66-update countdown
+/// are open question 2); the waypoints are those of the high-level path
+/// of SPEC-0020 from the leader.
 fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let mut control = BTreeMap::new();
@@ -507,38 +534,74 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
         if tick < cluster.first || (tick - cluster.first) % UPDATE != 0 {
             continue;
         }
-        let goal = mul_both(relative(cluster.goal, min), CELL);
-        let (mut members, mut done, mut speeds) = (Vec::new(), Vec::new(), Vec::new());
         cluster
             .members
             .retain(|&h| state.unit(Some(h)).is_some_and(|u| u.alive));
-        for &h in &cluster.members {
-            let Some(u) = state.unit(Some(h)) else {
-                continue;
-            };
-            let data = state.data.units.get(&u.type_id);
-            members.push(super::formation::Member {
-                position: mul_both(relative([u.x, u.y], min), CELL),
-                radius: mul(data.map_or(0, |t| t.collision), CELL),
-                rank: data.map_or(0, |t| t.formation),
-            });
-            done.push(!u.movement.is_some_and(|m| m.ordered()));
-            speeds.push(data.map_or(0, |t| t.speed));
-        }
-        if done.iter().all(|&d| d) {
+        let (members, ordered) = cluster_members(state, &cluster.members, min);
+        if members.len() < 2 {
             cluster.members.clear();
             continue;
         }
-        let angle = match cluster.angle {
-            Some(angle) => angle,
-            None => {
-                let angle = lay_out(state, &cluster.members, &members, goal, min);
-                cluster.angle = Some(angle);
-                angle
+        if cluster.waypoints.is_empty() {
+            let goal = mul_both(relative(cluster.goal, min), CELL);
+            let leader = nearest(&members, goal);
+            let class = cluster
+                .members
+                .get(leader)
+                .and_then(|&h| state.unit(Some(h)))
+                .map_or(0, |u| {
+                    crate::path::size_class(
+                        state.data.units.get(&u.type_id).map_or(0, |t| t.collision),
+                    )
+                });
+            cluster.waypoints = cluster_path(state, members[leader].position, goal, class);
+            let w = cluster.waypoints[0];
+            let lead = members[leader].position;
+            cluster.angle = angle(sub(w[0], lead[0]), sub(w[1], lead[1]));
+            cluster.offsets = super::formation::offsets(&members, cluster.angle);
+            send_to_places(state, cluster, min);
+        }
+        // Who is at its place.
+        let w = cluster.waypoints[cluster.current];
+        let distances: Vec<u32> = members
+            .iter()
+            .zip(&cluster.offsets)
+            .map(|(m, o)| {
+                let place = [add(w[0], o[0]), add(w[1], o[1])];
+                let (dx, dy) = (sub(place[0], m.position[0]), sub(place[1], m.position[1]));
+                add(mul(dx, dx), mul(dy, dy))
+            })
+            .collect();
+        let mut arrived: Vec<bool> = distances
+            .iter()
+            .zip(&ordered)
+            .map(|(&d, &o)| !o || real_of(d) <= real_of(mul(ARRIVAL, ARRIVAL)))
+            .collect();
+        let last = cluster.current + 1 == cluster.waypoints.len();
+        if !last && arrived.iter().any(|&a| a) {
+            let near = arrived
+                .iter()
+                .zip(&distances)
+                .all(|(&a, &d)| a || real_of(d) < NEAR_PLACE);
+            cluster.stall += 1;
+            if near || cluster.stall > STALL {
+                let next = cluster.waypoints[cluster.current + 1];
+                cluster.angle = angle(sub(next[0], w[0]), sub(next[1], w[1]));
+                cluster.current += 1;
+                cluster.stall = 0;
+                cluster.offsets = super::formation::offsets(&members, cluster.angle);
+                send_to_places(state, cluster, min);
+                arrived = ordered.iter().map(|&o| !o).collect();
             }
-        };
-        let held = super::formation::holds(&members, &done, angle);
-        let speed = (!held.iter().any(|&h| h) && !done.iter().any(|&d| d)).then(|| {
+        }
+        let held = super::formation::holds(&members, &arrived, cluster.angle);
+        let speed = (!held.iter().any(|&h| h) && !arrived.iter().any(|&a| a)).then(|| {
+            let speeds: Vec<u32> = cluster
+                .members
+                .iter()
+                .filter_map(|&h| state.unit(Some(h)))
+                .map(|u| state.data.units.get(&u.type_id).map_or(0, |t| t.speed))
+                .collect();
             speeds[1..].iter().fold(
                 speeds[0],
                 |a, &s| {
@@ -546,14 +609,31 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
                 },
             )
         });
+        let last = cluster.current + 1 == cluster.waypoints.len();
+        let size = cluster.members.len();
         for (i, &h) in cluster.members.iter().enumerate() {
             control.insert(
                 h,
                 Control {
                     held: held[i],
                     speed,
+                    last,
+                    size,
                 },
             );
+        }
+        // At the last waypoint the arrived members leave.
+        if last {
+            let mut i = 0;
+            cluster.members.retain(|_| {
+                i += 1;
+                !arrived[i - 1]
+            });
+            let mut i = 0;
+            cluster.offsets.retain(|_| {
+                i += 1;
+                !arrived[i - 1]
+            });
         }
     }
     clusters.retain(|c| c.members.len() > 1);
@@ -561,30 +641,78 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     control
 }
 
-/// Lays out a cluster's places: each member walks to the goal plus its
-/// offset. The formation angle.
-fn lay_out(
-    state: &mut State,
+/// Squared distances in cells below this are near a place (16 cells).
+const NEAR_PLACE: f32 = 256.0;
+/// Updates a cluster waits for its members before it goes on anyway.
+const STALL: u32 = 99;
+
+/// The members of a cluster as the layout takes them, in cells, and
+/// whether each still follows its order.
+fn cluster_members(
+    state: &State,
     handles: &[u32],
-    members: &[super::formation::Member],
-    goal: [u32; 2],
     min: [u32; 2],
-) -> u32 {
+) -> (Vec<super::formation::Member>, Vec<bool>) {
+    handles
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)))
+        .map(|u| {
+            let data = state.data.units.get(&u.type_id);
+            (
+                super::formation::Member {
+                    position: mul_both(relative([u.x, u.y], min), CELL),
+                    radius: mul(data.map_or(0, |t| t.collision), CELL),
+                    rank: data.map_or(0, |t| t.formation),
+                },
+                u.movement.is_some_and(|m| m.ordered()),
+            )
+        })
+        .unzip()
+}
+
+/// The member nearest to `goal` (squared distance, the first of equals).
+fn nearest(members: &[super::formation::Member], goal: [u32; 2]) -> usize {
     let squared = |p: [u32; 2]| {
         let (dx, dy) = (sub(goal[0], p[0]), sub(goal[1], p[1]));
         add(mul(dx, dx), mul(dy, dy))
     };
-    let mut leader = 0;
+    let mut best = 0;
     for i in 1..members.len() {
-        if real_of(squared(members[i].position)) < real_of(squared(members[leader].position)) {
-            leader = i;
+        if real_of(squared(members[i].position)) < real_of(squared(members[best].position)) {
+            best = i;
         }
     }
-    let lead = members[leader].position;
-    let angle = angle(sub(goal[0], lead[0]), sub(goal[1], lead[1]));
-    let offsets = super::formation::offsets(members, angle);
-    for (&h, o) in handles.iter().zip(offsets) {
-        let to = [add(goal[0], o[0]), add(goal[1], o[1])];
+    best
+}
+
+/// The waypoints of a cluster from `from` to `goal`, in cells: those of
+/// the high-level path (SPEC-0020) after its start, ending at the goal.
+fn cluster_path(state: &State, from: [u32; 2], goal: [u32; 2], class: u8) -> Vec<[u32; 2]> {
+    let mut points: Vec<[u32; 2]> = state
+        .grid
+        .as_ref()
+        .and_then(|grid| crate::path::high_level(grid, from, goal, class))
+        .map(|found| {
+            let n = found
+                .points
+                .len()
+                .saturating_sub(usize::from(found.reached));
+            found.points[1.min(n)..n]
+                .iter()
+                .map(|&p| crate::path::blocks_to_cells(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    points.push(goal);
+    points
+}
+
+/// Sends each member of `cluster` to its place: the current waypoint plus
+/// its offset.
+fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
+    let w = cluster.waypoints[cluster.current];
+    for (&h, o) in cluster.members.iter().zip(&cluster.offsets) {
+        let to = [add(w[0], o[0]), add(w[1], o[1])];
         let to = absolute(mul_both(to, CELLS_TO_WORLD), min);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
@@ -593,7 +721,6 @@ fn lay_out(
         }
         state.paths.remove(&h);
     }
-    angle
 }
 
 /// 32: cells to world units.
@@ -971,6 +1098,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // A member of a group may be held or slowed (SPEC-0025); its own
         // limit stays.
         let limit = data.map_or(0, |t| t.speed);
+        let cluster = control.get(&h).map_or(1, |c| c.size);
+        // A member at its place short of the last waypoint waits there.
+        let place_on_way = control.get(&h).is_some_and(|c| !c.last);
         let speed = match control.get(&h) {
             Some(c) if c.held => 0,
             Some(Control { speed: Some(g), .. }) if real_of(*g) < real_of(limit) => *g,
@@ -1107,6 +1237,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             order: goal,
                             class,
                             squared_speed: follow::squared_speed(m.velocity),
+                            cluster: 1,
                             chase: Some(follow::Chase {
                                 target: target_now,
                                 range: range_cells,
@@ -1145,6 +1276,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         order,
                         class,
                         squared_speed,
+                        cluster,
                         chase: None,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
@@ -1170,6 +1302,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             } else {
                                 follow::Steer::Walk(goal)
                             };
+                        } else if place_on_way {
+                            m.walking = false;
+                            m.velocity = [0, 0];
                         } else {
                             m.arrived = true;
                             m.walking = false;
@@ -1307,6 +1442,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             order: goal,
             class,
             squared_speed: 0,
+            cluster: 1,
             chase: Some(follow::Chase {
                 target: goal,
                 range: mul(range, CELL),

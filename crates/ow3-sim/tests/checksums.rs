@@ -67,8 +67,14 @@ fn remainders_of_the_reference_replay() {
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-RSM-1.w3g",
-        "the speeds of a formation and the waits that draw the script \
-         generator are not specified (SPEC-0025, open questions 1 and 2)",
+        "members walking next to each other see each other in their local \
+         paths and look-ahead otherwise than in the game (SPEC-0021, SPEC-0025 \
+         open question 2)",
+    ),
+    (
+        "c-RSP-1.w3g",
+        "the first local paths of two members see the members standing next \
+         to them, which the game's do not (SPEC-0021)",
     ),
     (
         "c-RSN-1.w3g",

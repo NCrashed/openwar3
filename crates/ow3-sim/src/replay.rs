@@ -47,6 +47,8 @@ pub struct Playback<'a> {
     groups: BTreeMap<(u8, u8), Vec<u32>>,
     /// The creation numbers and types of the units, in creation order.
     ids: Vec<(u32, i32)>,
+    /// The tick the game runs to in the current time slot.
+    end: u64,
     /// What could not be played, in the order met.
     pub notes: Vec<String>,
     /// The state of the game when each turn's checksum is taken, the
@@ -143,6 +145,7 @@ impl<'a> Playback<'a> {
             selections: BTreeMap::new(),
             groups: BTreeMap::new(),
             ids: Vec::new(),
+            end: 0,
             notes: Vec::new(),
             marks: Vec::new(),
         })
@@ -185,6 +188,29 @@ impl<'a> Playback<'a> {
     /// the slot's actions are applied, and the game runs on to the last
     /// whole step within the slot's end.
     pub fn step_slot(&mut self) -> bool {
+        if !self.begin_slot() {
+            return false;
+        }
+        while self.game.ticks() < self.end {
+            self.game.step();
+        }
+        true
+    }
+
+    /// Plays one tick of the game, starting the next time slot when the
+    /// game has run those before; false at the end of the replay.
+    pub fn step_tick(&mut self) -> bool {
+        while self.game.ticks() >= self.end {
+            if !self.begin_slot() {
+                return false;
+            }
+        }
+        self.game.step();
+        true
+    }
+
+    /// Starts the next time slot: the turn's checksum, then its actions.
+    fn begin_slot(&mut self) -> bool {
         while let Some(event) = self.events.get(self.next).cloned() {
             self.next += 1;
             if let Event::TimeSlot { ms, actions, .. } = event {
@@ -201,10 +227,7 @@ impl<'a> Playback<'a> {
                     }
                 }
                 self.ms += u64::from(ms);
-                let end = u64::from(time_part(self.ms)) / TICK_MS;
-                while self.game.ticks() < end {
-                    self.game.step();
-                }
+                self.end = u64::from(time_part(self.ms)) / TICK_MS;
                 return true;
             }
         }

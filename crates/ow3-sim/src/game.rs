@@ -1190,6 +1190,16 @@ impl<'a> Game<'a> {
         self.state.borrow().next_handle
     }
 
+    /// The committed position (relative to the world's lower left corner)
+    /// and the velocity of a unit following an order, as bits (SPEC-0018,
+    /// "Movement arithmetic"), and its target.
+    pub fn motion_of(&self, unit: u32) -> Option<([u32; 2], [u32; 2], [u32; 2])> {
+        let state = self.state.borrow();
+        let u = state.unit(Some(unit))?;
+        let m = u.movement.as_ref()?;
+        Some((m.origin, m.velocity, m.target_point()))
+    }
+
     /// The lines the script has given `Preload`, in order.
     pub fn preload(&self) -> Vec<String> {
         self.state.borrow().preload.clone()

@@ -116,7 +116,8 @@ Call `ks` the tick of that update and `Ts = clock(ks)`.
 
     base = mul(max, 0.1)
     rate = div(mul(max, 0.9), bldtm)
-    Tb   = add(Ts, 0.0001)
+    Tb   = add(Ts, 0.0001)    worker not moved
+    Tb   = Ts                 worker moved
     life = clamp(add(base, mul(rate, sub(T, Tb))), base, max)
 
 where `T` is the clock of the tick in which the life is read. For a
@@ -130,7 +131,11 @@ s), each further tick adds `rate` times one clock step. The 0.0001 is
 the threshold of SPEC-0018 (`0x38D1B717`); it fits all 4 x 30 values
 read in test RTI to the last place of the life (the time `T - Tb`
 derived from the life is `clock(k) - Ts - 0.0001` to within 5e-6 s
-everywhere, also after 35 s).
+everywhere, also after 35 s). For a moved worker the life was not read
+this precisely; its `Tb = Ts` comes from the end of the construction:
+in test RSY the completion timer had the expiry 62.7899780, which is
+`add(clock(559), 60.0)` for the start of work in tick 559 and 0.0001
+less than with `add(Ts, 0.0001)`.
 
 **Completion.** The end of the construction is a timer of the engine
 with the expiry `e = add(Tb, bldtm)` (SPEC-0027, "Timers of the
@@ -158,6 +163,43 @@ ticks. When it fires:
 
 The progress was the same in every run and in playback of the replay.
 
+### Internal objects (SPEC-0024)
+
+The construction creates and frees entries of the object table
+(SPEC-0024, "Object table"), which change `C` and `D`. Measured in
+test RTI (`c-RTI-1.objects.tsv` lists every creation and freeing with
+its tick, entry, creation number and the kind of object, in order) and
+RSY. Offsets are in ticks; "deferred" means a freeing done by an engine
+timer started with timeout 0, which expires 0.0001 later and so runs
+in the next tick (SPEC-0027, "Timers of the engine").
+
+Worker not moved (RTI, four farms, the same each time):
+
+| Tick | Objects |
+|---|---|
+| the build order is taken | 17 new; the 15th of them freed at once; 7 of them freed in the next tick (deferred) |
+| `ks` (creation and start of work) | 45 new |
+| `ks + 1` (deferred) | 20 freed: 7 of the build order's objects and 13 of the 45 |
+| `ks + 6` (the worker's next update) | 2 freed: the last two of the build order's 17 (the worker's walk, SPEC-0024) |
+| `kc` (completion) | 2 new, then (deferred, still in tick `kc`) 7 freed: 5 of the 45 and the 2 new ones |
+| `kc + 3` | 6 freed (of the 45), after an event 0.01 s after the completion |
+| `kc + 177` | 5 freed (of the 45): the objects of the building's blight dispel, which runs from the completion in 11 steps of 16 ticks (0.08 s each) |
+
+The order of creation and freeing inside each row, which decides the
+entries reused (the last freed first), is that of
+`c-RTI-1.objects.tsv`. Of the 45 objects 29 are freed by the end of
+the construction; the other 16 stay with the building, and all 17 of
+the build order are freed.
+
+Worker moved (RSY): at the creation 49 objects are made, the 45 above
+less 3 that are made only when the work starts (two rate objects and a
+threshold object, the 43rd to 45th of the list above) plus 4 for the
+worker's walk to its new place (one of them freed at once, two freed
+at its next update after the start of work); the deferred freeing in
+the next tick frees 20 as above. When the work starts (12 or 18 ticks
+later) the 3 objects are made and one more object is freed in the next
+tick.
+
 ### Random numbers
 
 When the building is created, its alarm ability (the ability buildings
@@ -168,6 +210,10 @@ itself was not checked). The value is the delay until the first run
 of the ability's periodic check. Nothing else was drawn when the farm
 was placed. (The worker itself drew game generator 2 when it was
 created, as every unit with a weapon does, SPEC-0007 and SPEC-0019.)
+The draw belongs to the creation of any building with the alarm
+ability, not only one placed by a worker: in test RTS a farm and two
+barracks created by `CreateUnit` from the script drew game generator
+21 three times, in the tick of their creation.
 
 ### Checksum (SPEC-0024)
 

@@ -169,6 +169,11 @@ point (600, -3008)).
 
 ## Edge cases
 
+- Units created by `CreateUnit` from a script take their food at
+  once, also above the cap (test RTU: a footman, a peasant and three
+  more footmen with one farm gave food 2/6, 3/6, 9/6), and a farm
+  created by the script raises the cap at once (9/6 -> 9/12 in the
+  same call). Only training waits for food.
 - The first unit of a queue that starts at once is paid before its
   start event: the event already sees the lower gold and the higher
   food used.

@@ -33,6 +33,20 @@ checksums differ from the recorded ones: playback continues.
 Turns are numbered `k = 1, 2, ...` in replay order. `t_k` is the sum of
 the time increments (ms) of time slots `1..k`, `t_0 = 0`.
 
+**Actions between ticks.** The actions of a time slot are applied
+between two simulation ticks: after the script timers of one tick
+`k - 1` and before the engine timers, unit updates and script timers
+of the next tick `k`, with the movement clock (SPEC-0018) already
+reading `clock(k)`. So a script timer firing in tick `k` already sees
+their effect, and a time taken from the clock by the action is
+`clock(k)`. Measured: a train order given with the mouse
+(`c-RTP-1.w3g`, SPEC-0027) started its training between the periodic
+timer calls of ticks 1005 and 1006 at the queue time 5.02488, and the
+training ended in tick 5007, which is the tick of the expiry
+`add(clock(1006), 20.0)` (with `clock(1005)` it would have been tick
+5006); in `c-RSR-1.w3g` the gold of the build order was already paid
+when the periodic timer of that tick read it.
+
 **When actions take effect.** The checksum of turn `k` (the 0x22 block
 after time slot `k`) is computed before the actions of time slot `k`
 change the game: an action in slot `k` shows first in the checksum of

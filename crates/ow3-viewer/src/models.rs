@@ -110,6 +110,9 @@ struct Animated {
     walk: Option<usize>,
     /// The sequence Stand Work, if any.
     work: Option<usize>,
+    /// Walk Gold and Walk Lumber, if any (SPEC-0029).
+    walk_gold: Option<usize>,
+    walk_lumber: Option<usize>,
     /// The first sequence with Portrait and without Talk in its name.
     portrait: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
@@ -117,6 +120,18 @@ struct Animated {
     /// The first matrix of variant 0; variant `v` follows `v` blocks
     /// later.
     bone_base: u32,
+}
+
+impl Animated {
+    /// The walk with a load: Walk Gold (1) or Walk Lumber (2), else Walk.
+    fn carry(&self, load: u8) -> Option<usize> {
+        match load {
+            1 => self.walk_gold,
+            2 => self.walk_lumber,
+            _ => None,
+        }
+        .or(self.walk)
+    }
 }
 
 /// What an alpha slot shows: geoset and material layer of a model.
@@ -142,6 +157,9 @@ pub enum UnitPose {
     /// Milliseconds since it started working on a building; the Stand Work
     /// sequence loops.
     Work(i32),
+    /// Milliseconds since it started walking with a load: 1 gold, 2
+    /// lumber; Walk Gold or Walk Lumber loops.
+    Carry(i32, u8),
     /// Milliseconds into its Portrait sequence, which loops (SPEC-0028).
     Portrait(i32),
     /// Stopped walking `since` milliseconds ago after walking `walked`.
@@ -189,6 +207,13 @@ impl Animation {
                     .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
                 let work = work_index(&model);
                 let portrait = portrait_index(&model);
+                let named = |name: &str| {
+                    model
+                        .sequences
+                        .iter()
+                        .position(|s| s.name.trim().eq_ignore_ascii_case(name))
+                };
+                let (walk_gold, walk_lumber) = (named("walk gold"), named("walk lumber"));
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
@@ -205,6 +230,8 @@ impl Animation {
                     walk,
                     work,
                     portrait,
+                    walk_gold,
+                    walk_lumber,
                     top,
                     palette,
                     bone_base,
@@ -264,9 +291,10 @@ impl Animation {
                 }
                 None => stand(),
             },
-            UnitPose::Work(elapsed) | UnitPose::Portrait(elapsed) => {
+            UnitPose::Work(elapsed) | UnitPose::Portrait(elapsed) | UnitPose::Carry(elapsed, _) => {
                 let sequence = match pose {
                     UnitPose::Work(_) => animated.work,
+                    UnitPose::Carry(_, load) => animated.carry(load),
                     _ => animated.portrait,
                 };
                 match sequence {
@@ -326,6 +354,7 @@ impl Animation {
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
             UnitPose::Work(elapsed) => (animated.work?, elapsed),
             UnitPose::Portrait(elapsed) => (animated.portrait?, elapsed),
+            UnitPose::Carry(elapsed, load) => (animated.carry(load)?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
             UnitPose::Once(elapsed) => (animated.sequence, elapsed),
         };
@@ -338,7 +367,11 @@ impl Animation {
         let stand = || self.stand_pose(index, now, variant);
         let looping = matches!(
             pose,
-            UnitPose::Walk(_) | UnitPose::Work(_) | UnitPose::Portrait(_) | UnitPose::Halt { .. }
+            UnitPose::Walk(_)
+                | UnitPose::Work(_)
+                | UnitPose::Portrait(_)
+                | UnitPose::Carry(..)
+                | UnitPose::Halt { .. }
         );
         let at = |frame: i32| {
             let frame = if looping {

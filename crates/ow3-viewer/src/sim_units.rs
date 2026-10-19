@@ -25,6 +25,9 @@ use crate::objects::Placement;
 const TICK_MS: u64 = 5;
 /// The order of a worker building (`repair`, SPEC-0026).
 const ORDER_REPAIR: i32 = 852_024;
+/// A click on the ground this near a tree is on the tree (PROVISIONAL:
+/// trees are not picked by their models).
+const TREE_PICK: f32 = 64.0;
 
 /// One unit to draw.
 #[derive(Clone, Debug, PartialEq)]
@@ -204,6 +207,12 @@ impl Sim {
             return Some(format!("#{unit}: smart on #{target}"));
         }
         let [x, y, z] = at?;
+        // A worker on a tree gathers from it (SPEC-0029).
+        if let Some((tree, ..)) = self.game.tree_near(x, y, TREE_PICK)
+            && self.game.issue_target_order(unit, "harvest", tree)
+        {
+            return Some(format!("#{unit}: harvest #{tree}"));
+        }
         self.game.issue_point_order(unit, "smart", x, y);
         self.confirm(
             self.point_confirm.clone(),
@@ -276,6 +285,7 @@ impl Sim {
             mana: u.mana,
             max_mana: u.max_mana,
             stats: self.game.unit_stats(handle),
+            carrying: u.carrying.is_some(),
         })
     }
 
@@ -301,6 +311,12 @@ impl Sim {
             (Command::Stop, _) => g.issue_immediate_order(unit, "stop"),
             (Command::Hold, _) => g.issue_immediate_order(unit, "holdposition"),
             (Command::CancelTrain, _) => g.issue_immediate_order(unit, "cancel"),
+            (Command::ReturnGoods, _) => g.issue_immediate_order(unit, "returnresources"),
+            // On the ground: the tree there (a mine is clicked as a unit).
+            (Command::Gather, Some([x, y])) => match g.tree_near(x, y, TREE_PICK) {
+                Some((tree, ..)) => g.issue_target_order(unit, "harvest", tree),
+                None => false,
+            },
             (Command::Train(t), _) => g.issue_train_order(unit, t),
             (Command::Move, Some([x, y])) => g.issue_point_order(unit, "move", x, y),
             (Command::Attack, Some([x, y])) => g.issue_point_order(unit, "attack", x, y),
@@ -358,6 +374,7 @@ impl Sim {
         let name = match command {
             Command::Attack => "attack",
             Command::Move => "move",
+            Command::Gather => "harvest",
             _ => return None,
         };
         let done = self.game.issue_target_order(unit, name, target);
@@ -524,7 +541,11 @@ impl Sim {
         if u.walking {
             self.halts.remove(&u.handle);
             let since = *self.walks.entry(u.handle).or_insert(now);
-            return UnitPose::Walk(millis(now - since));
+            return match u.carrying {
+                // With a load: Walk Gold or Walk Lumber (SPEC-0029).
+                Some((load, _)) => UnitPose::Carry(millis(now - since), load),
+                None => UnitPose::Walk(millis(now - since)),
+            };
         }
         if let Some(since) = self.walks.remove(&u.handle) {
             self.halts.insert(u.handle, (now, now - since));

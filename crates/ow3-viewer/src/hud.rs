@@ -40,6 +40,8 @@ pub struct Selected {
     pub mana: f32,
     pub max_mana: f32,
     pub stats: Option<UnitStats>,
+    /// A worker carrying gold or lumber (SPEC-0029).
+    pub carrying: bool,
 }
 
 /// What a command button does.
@@ -59,6 +61,9 @@ pub enum Command {
     Rally,
     /// Takes back the last unit of a building's queue.
     CancelTrain,
+    /// Gather from a gold mine or tree (SPEC-0029), and take a load back.
+    Gather,
+    ReturnGoods,
 }
 
 impl Command {
@@ -66,7 +71,12 @@ impl Command {
     pub fn targets(self) -> bool {
         matches!(
             self,
-            Command::Move | Command::Attack | Command::Patrol | Command::Build(_) | Command::Rally
+            Command::Move
+                | Command::Attack
+                | Command::Patrol
+                | Command::Build(_)
+                | Command::Rally
+                | Command::Gather
         )
     }
 }
@@ -101,8 +111,9 @@ pub struct Hud {
     pub pending: Option<Command>,
 }
 
-/// The unit profile files of all races, the data and the strings.
-const UNIT_FILES: [&str; 12] = [
+/// The unit profile files of all races, the data and the strings, and
+/// those of the abilities all races share.
+const UNIT_FILES: [&str; 14] = [
     "Units\\HumanUnitFunc.txt",
     "Units\\OrcUnitFunc.txt",
     "Units\\NightElfUnitFunc.txt",
@@ -115,6 +126,8 @@ const UNIT_FILES: [&str; 12] = [
     "Units\\UndeadUnitStrings.txt",
     "Units\\NeutralUnitStrings.txt",
     "Units\\CampaignUnitStrings.txt",
+    "Units\\CommonAbilityFunc.txt",
+    "Units\\CommonAbilityStrings.txt",
 ];
 
 /// The command card (SPEC-0028): the top left corner of its first
@@ -202,6 +215,40 @@ impl Hud {
         })
     }
 
+    /// The button of ability `section`, in its other state (`Unart`,
+    /// `UnButtonpos`, `Untip`, `Unhotkey`) when `other`.
+    fn ability_button(&self, section: &str, other: bool) -> Option<Button> {
+        let key = |k: &str| {
+            if other {
+                format!("Un{}", k.to_ascii_lowercase())
+            } else {
+                k.to_owned()
+            }
+        };
+        let get = |k: &str| self.units.get(section, &key(k));
+        let place = self.units.list(
+            section,
+            &if other {
+                "UnButtonpos".to_owned()
+            } else {
+                "Buttonpos".to_owned()
+            },
+        );
+        let place = (place.first()?.parse().ok()?, place.get(1)?.parse().ok()?);
+        Some(Button {
+            place,
+            icon: self.interface.skin(get("Art")?),
+            tip: get("Tip").unwrap_or_default().to_owned(),
+            extended: get("Ubertip").unwrap_or_default().to_owned(),
+            hotkey: get("Hotkey").and_then(|h| h.chars().next()),
+            command: if other {
+                Command::ReturnGoods
+            } else {
+                Command::Gather
+            },
+        })
+    }
+
     fn unit_button(&self, type_id: i32, command: Command) -> Option<Button> {
         let section = code(type_id);
         let place = self.units.list(&section, "Buttonpos");
@@ -269,6 +316,10 @@ impl Hud {
                 out.extend(self.command_button("CmdAttack", Command::Attack));
                 out.extend(self.command_button("CmdPatrol", Command::Patrol));
                 if !self.units.list(&section, "Builds").is_empty() {
+                    // The harvest ability: gather, or with a load its
+                    // other state, return (PROVISIONAL: shown for every
+                    // worker).
+                    out.extend(self.ability_button("Ahar", s.carrying));
                     let race = &self.interface.race;
                     out.extend(
                         self.command_button(&format!("CmdBuild{race}"), Command::BuildMenu)

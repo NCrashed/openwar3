@@ -222,6 +222,14 @@ fn a_peasant_gathers_gold() {
         .unwrap();
     let before = mine.resources;
     assert!(before > 0);
+    // The card of a worker has gather at (3,1) (SPEC-0028).
+    let s = sim.selected(peasant).unwrap();
+    assert!(
+        sim.hud
+            .buttons(Some(&s))
+            .iter()
+            .any(|b| b.command == Command::Gather && b.place == (3, 1))
+    );
     sim.command(peasant, Some(mine.handle), None, false)
         .unwrap();
     assert_eq!(view(&sim, peasant).order, 852_018);
@@ -237,6 +245,14 @@ fn a_peasant_gathers_gold() {
             out = true;
             assert_eq!(v.order, 852_017);
             assert_eq!(view(&sim, mine.handle).resources, before - 10);
+            // With the load the card offers to take it back, at (3,1).
+            let s = sim.selected(peasant).unwrap();
+            assert!(
+                sim.hud
+                    .buttons(Some(&s))
+                    .iter()
+                    .any(|b| b.command == Command::ReturnGoods && b.place == (3, 1))
+            );
         }
         if sim.resources().gold > 500 {
             break;

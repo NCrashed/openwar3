@@ -25,6 +25,9 @@ struct Globals {
     unit_color: vec4<f32>,
     unit_ambient: vec4<f32>,
     shadow_area: vec4<f32>,
+    water: vec4<f32>,
+    fog_params: vec4<f32>,
+    fog_color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
@@ -58,6 +61,7 @@ struct VertexOut {
     @location(3) tint: vec3<f32>,
     @location(4) @interpolate(flat) terrain_light: u32,
     @location(5) world: vec2<f32>,
+    @location(6) depth: f32,
 };
 
 @vertex
@@ -85,6 +89,7 @@ fn vs(v: VertexIn) -> VertexOut {
     out.tint = v.tint;
     out.terrain_light = v.terrain_light;
     out.world = (model * skinned * vec4<f32>(v.position, 1.0)).xy;
+    out.depth = out.clip.w;
     return out;
 }
 
@@ -94,7 +99,7 @@ override UNSHADED: bool = false;
 fn lit(v: VertexOut) -> vec4<f32> {
     let texel = textureSample(skin, skin_sampler, v.uv);
     if UNSHADED {
-        return vec4<f32>(texel.rgb * v.tint, texel.a * v.alpha);
+        return vec4<f32>(fogged(texel.rgb * v.tint, v.depth), texel.a * v.alpha);
     }
     // Cliffs take the light of the terrain, other models that of units.
     var sun = globals.unit_sun;
@@ -111,7 +116,7 @@ fn lit(v: VertexOut) -> vec4<f32> {
     let n = normalize(v.normal);
     let facing = max(dot(n, sun.xyz), 0.0);
     let light = min(sun.w * color.rgb * facing + color.w * ambient.rgb, vec3<f32>(1.0));
-    return vec4<f32>(colour * v.tint * light, texel.a * v.alpha);
+    return vec4<f32>(fogged(colour * v.tint * light, v.depth), texel.a * v.alpha);
 }
 
 @fragment
@@ -246,7 +251,12 @@ impl ModelRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("models"),
             source: wgpu::ShaderSource::Wgsl(
-                format!("{SHADER}{}", crate::renderer::SHADOW_WGSL).into(),
+                format!(
+                    "{SHADER}{}{}",
+                    crate::renderer::SHADOW_WGSL,
+                    crate::renderer::FOG_WGSL
+                )
+                .into(),
             ),
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

@@ -24,8 +24,12 @@ use crate::renderer::DEPTH_FORMAT;
 const SHADER: &str = r#"
 struct Globals {
     view_projection: mat4x4<f32>,
+    fog_params: vec4<f32>,
+    fog_color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
+// Additive particles fade in the fog; the others take its colour.
+override ADDITIVE: bool = false;
 @group(1) @binding(0) var sprite: texture_2d<f32>;
 @group(1) @binding(1) var sprite_sampler: sampler;
 
@@ -38,6 +42,7 @@ struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) colour: vec4<f32>,
+    @location(2) depth: f32,
 };
 
 @vertex
@@ -46,14 +51,28 @@ fn vs(v: VertexIn) -> VertexOut {
     out.clip = globals.view_projection * vec4<f32>(v.position, 1.0);
     out.uv = v.uv;
     out.colour = v.colour;
+    out.depth = out.clip.w;
     return out;
 }
 
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
-    return textureSample(sprite, sprite_sampler, v.uv) * v.colour;
+    let c = textureSample(sprite, sprite_sampler, v.uv) * v.colour;
+    if ADDITIVE {
+        return vec4<f32>(c.rgb * (1.0 - fog_amount(v.depth)), c.a);
+    }
+    return vec4<f32>(fogged(c.rgb, v.depth), c.a);
 }
 "#;
+
+/// What the particle shader reads besides the textures.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+struct Globals {
+    view_projection: Mat4,
+    fog_params: [f32; 4],
+    fog_color: [f32; 4],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
@@ -130,6 +149,8 @@ pub struct Particles {
     draws: Vec<(usize, usize, Range<u32>)>,
     /// The time of the last step, in milliseconds.
     last: Option<i32>,
+    /// The fog, as the renderer has it.
+    fog: ([f32; 4], [f32; 4]),
 }
 
 impl Particles {
@@ -143,13 +164,15 @@ impl Particles {
     ) -> Particles {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("particles"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{SHADER}{}", crate::renderer::FOG_WGSL).into(),
+            ),
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("particle globals"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -181,7 +204,7 @@ impl Particles {
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particle globals"),
-            size: std::mem::size_of::<Mat4>() as u64,
+            size: std::mem::size_of::<Globals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -200,6 +223,7 @@ impl Particles {
         });
         let pipelines = (0..PIPELINES)
             .map(|mode| {
+                let constants = [("ADDITIVE", f64::from(u8::from(mode == 1)))];
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("particles"),
                     layout: Some(&layout),
@@ -218,7 +242,10 @@ impl Particles {
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
                         entry_point: Some("fs"),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        compilation_options: wgpu::PipelineCompilationOptions {
+                            constants: &constants,
+                            ..Default::default()
+                        },
                         targets: &[Some(wgpu::ColorTargetState {
                             format,
                             blend: Some(blend(mode)),
@@ -272,11 +299,17 @@ impl Particles {
             capacity,
             draws: Vec::new(),
             last: None,
+            fog: ([0.0; 4], [0.0; 4]),
         };
         for (path, image) in images {
             particles.add_texture(device, queue, path, image);
         }
         particles
+    }
+
+    /// The fog: style, start, end, density; colour and 1 when there is fog.
+    pub fn set_fog(&mut self, fog: ([f32; 4], [f32; 4])) {
+        self.fog = fog;
     }
 
     /// Makes `image` the texture of `path`.
@@ -465,7 +498,11 @@ impl Particles {
         queue.write_buffer(
             &self.globals,
             0,
-            bytemuck::cast_slice(&[camera.view_projection()]),
+            bytemuck::cast_slice(&[Globals {
+                view_projection: camera.view_projection(),
+                fog_params: self.fog.0,
+                fog_color: self.fog.1,
+            }]),
         );
     }
 

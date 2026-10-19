@@ -26,6 +26,33 @@ const CLEAR: wgpu::Color = wgpu::Color {
 /// of shadow by the shadow amount at a world point, before the light.
 /// The map holds the samples of `ow3_render::shadows`, block by block,
 /// and linear filtering between the samples of a block interpolates them.
+/// The terrain fog (SPEC-0017, "Terrain fog") for the shaders whose
+/// `globals` have `fog_params` (style, start, end, density) and
+/// `fog_color` (the colour, and 1 when there is fog): `fogged` mixes a
+/// colour with the fog's by the depth of the point along the camera's
+/// view.
+pub(crate) const FOG_WGSL: &str = r#"
+fn fog_amount(depth: f32) -> f32 {
+    if globals.fog_color.w == 0.0 {
+        return 0.0;
+    }
+    let style = globals.fog_params.x;
+    if style < 0.5 {
+        let span = max(globals.fog_params.z - globals.fog_params.y, 0.001);
+        return clamp((depth - globals.fog_params.y) / span, 0.0, 1.0);
+    }
+    let d = globals.fog_params.w * depth;
+    if style < 1.5 {
+        return 1.0 - exp(-d);
+    }
+    return 1.0 - exp(-d * d);
+}
+
+fn fogged(colour: vec3<f32>, depth: f32) -> vec3<f32> {
+    return mix(colour, globals.fog_color.rgb, fog_amount(depth));
+}
+"#;
+
 pub(crate) const SHADOW_WGSL: &str = r#"
 const SHADOW_COLOUR: vec3<f32> = vec3<f32>(0.048, 0.048, 0.095);
 const SHADOW_AMOUNT: f32 = 0.502;
@@ -57,6 +84,9 @@ struct Globals {
     shadow_area: vec4<f32>,
     // The frame of the water texture in x.
     water: vec4<f32>,
+    // Fog: style, start, end, density; colour and 1 when there is fog.
+    fog_params: vec4<f32>,
+    fog_color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
@@ -80,6 +110,8 @@ struct VertexOut {
     @location(2) tint: vec4<f32>,
     @location(3) @interpolate(flat) cell: u32,
     @location(4) world: vec2<f32>,
+    // The depth along the camera's view, for the fog.
+    @location(5) depth: f32,
 };
 
 @vertex
@@ -96,13 +128,14 @@ fn vs(v: VertexIn) -> VertexOut {
     out.tint = v.tint;
     out.cell = v.cell;
     out.world = v.position.xy;
+    out.depth = out.clip.w;
     return out;
 }
 
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = shaded(textureSample(atlas, atlas_sampler, v.uv, v.cell), v.world);
-    return vec4<f32>(texel.rgb * v.light * v.tint.rgb, texel.a);
+    return vec4<f32>(fogged(texel.rgb * v.light * v.tint.rgb, v.depth), texel.a);
 }
 
 @fragment
@@ -113,7 +146,7 @@ fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas, atlas_sampler, v.uv, u32(globals.water.x));
     let light = globals.unit_sun.w * globals.unit_color.rgb * max(globals.unit_sun.z, 0.0)
         + globals.unit_color.w * globals.unit_ambient.rgb;
-    return vec4<f32>(texel.rgb * v.tint.rgb * light, v.tint.a);
+    return vec4<f32>(fogged(texel.rgb * v.tint.rgb * light, v.depth), v.tint.a);
 }
 "#;
 
@@ -129,6 +162,8 @@ struct Globals {
     unit_ambient: [f32; 4],
     shadow_area: [f32; 4],
     water: [f32; 4],
+    fog_params: [f32; 4],
+    fog_color: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -164,6 +199,9 @@ pub struct Renderer {
     /// The type of the water, for its animation, and the frame shown.
     water_kind: Option<ow3_render::water::WaterType>,
     water_frame: u32,
+    /// The fog for the shaders: style, start, end, density; colour and 1
+    /// when there is fog.
+    fog: ([f32; 4], [f32; 4]),
     overlay: Overlay,
     /// Selection circles, made when first needed.
     circles: Option<crate::circles::Circles>,
@@ -398,7 +436,7 @@ impl Renderer {
     ) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground"),
-            source: wgpu::ShaderSource::Wgsl(format!("{SHADER}{SHADOW_WGSL}").into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{SHADER}{SHADOW_WGSL}{FOG_WGSL}").into()),
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
@@ -637,6 +675,7 @@ impl Renderer {
             water,
             water_kind: scene.water.as_ref().map(|(_, _, kind)| kind.clone()),
             water_frame: 0,
+            fog: ([0.0; 4], [0.0; 4]),
             overlay: Overlay::new(device, format),
             circles: None,
             format,
@@ -660,6 +699,17 @@ impl Renderer {
     ) {
         self.particles
             .update(device, queue, self.models.animation(), camera, elapsed);
+    }
+
+    /// The terrain fog the script set (SPEC-0017), or none.
+    pub fn set_fog(&mut self, fog: Option<ow3_sim::game::TerrainFog>) {
+        self.fog = fog.map_or(([0.0; 4], [0.0; 4]), |f| {
+            (
+                [f.style as f32, f.start, f.end, f.density],
+                [f.color[0], f.color[1], f.color[2], 1.0],
+            )
+        });
+        self.particles.set_fog(self.fog);
     }
 
     /// The water shows the frame of game time `seconds` (SPEC-0014).
@@ -825,6 +875,8 @@ impl Renderer {
             unit_ambient,
             shadow_area: self.shadow_area,
             water: [self.water_frame as f32, 0.0, 0.0, 0.0],
+            fog_params: self.fog.0,
+            fog_color: self.fog.1,
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

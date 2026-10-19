@@ -227,6 +227,11 @@ impl Sim {
         self.game.day_night_models()
     }
 
+    /// The terrain fog the script set (SPEC-0017), if any.
+    pub fn terrain_fog(&self) -> Option<ow3_sim::game::TerrainFog> {
+        self.game.terrain_fog()
+    }
+
     /// The game time in seconds: 0.005 s a tick.
     pub fn game_seconds(&self) -> f32 {
         self.game.ticks() as f32 * 0.005

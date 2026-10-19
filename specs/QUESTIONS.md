@@ -602,8 +602,9 @@ silent:
   unit (the centre of their footprint), buildings at their place, the
   selection circles and bars with the models; the map's own collision
   sizes are not read for units placed in the editor (`--no-sim`); units
-  of the simulation with `movetp` `fly` are drawn `moveHeight` above the
-  ground under them (only flat ground measured);
+  of the simulation with `movetp` `fly` are drawn `max(moveHeight,
+  moveFloor)` (with the map's changes) above the
+  ground under them (how it follows slopes in flight is open);
   destructables at their stored place and scale.
 
 ## Day/night lighting (`ow3-render::daylight`, the viewer)
@@ -636,7 +637,12 @@ spec is silent:
   west of the formula are not applied.
 - **Time of day** is `GAME_STATE_TIME_OF_DAY` as the script sets it; the
   day does not run yet, and without a script the viewer shows noon.
-- **Fog** is not drawn (open question 3).
+- **Fog** follows "Terrain fog" for the ground, water, all models and
+  particles (additive particles fade instead of taking the colour), by
+  the depth along the camera's view; only `SetTerrainFogEx` sets it
+  (the fields of `war3map.w3i` and the older natives are open, question
+  6); `--fog` sets one for checking. Water is fogged as one layer, where
+  the game seems to fog each layer by its own depth.
 
 ## Math natives (`ow3-math::natives`)
 

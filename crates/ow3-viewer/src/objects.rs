@@ -54,8 +54,7 @@ struct Look {
 /// models are drawn"): at the centre of its footprint on the grid of
 /// paths, which for the size classes 1 and 3 (SPEC-0020) has its extra
 /// cell to the west and south. Buildings are drawn at their position.
-/// Walking units are drawn the same way. PROVISIONAL: flying units take
-/// the offset of their size class too (not measured).
+/// Walking and flying units are drawn the same way.
 pub fn unit_model_shift(collision: u32, building: bool) -> f32 {
     match ow3_sim::path::size_class(collision) {
         1 | 3 if !building => 16.0,
@@ -320,21 +319,57 @@ pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, UnitLook> {
         .collect()
 }
 
-/// The height above the ground at which flying unit types are drawn
-/// (`moveHeight` of `Units\UnitData.slk` for `movetp` `fly`, SPEC-0023).
-/// PROVISIONAL: the map's own changes are not read, and the height
-/// follows the ground at the unit's point (only flat ground measured).
+/// The height above the ground under them at which flying unit types are
+/// drawn (SPEC-0023, "Size and height of units"): `max(moveHeight,
+/// moveFloor)` of `Units\UnitData.slk` for `movetp` `fly`, as the map's
+/// `war3map.w3u` changes them (`umvt`, `umvh`, `umvf`). PROVISIONAL: how
+/// the height follows slopes and cliff edges in flight is not measured.
 fn fly_heights(chain: &mut ArchiveChain) -> BTreeMap<RawCode, f32> {
-    table(
+    // (movement type, height, floor) by type.
+    let mut types: BTreeMap<RawCode, (String, f32, f32)> = table(
         chain,
         "Units\\UnitData.slk",
         "unitID",
-        &["movetp", "moveHeight"],
+        &["movetp", "moveHeight", "moveFloor"],
     )
     .into_iter()
-    .filter(|(_, v)| v[0].trim().eq_ignore_ascii_case("fly"))
-    .map(|(id, v)| (id, number(&v[1], 0.0)))
-    .collect()
+    .map(|(id, v)| {
+        let floor = number(&v[2], 0.0);
+        (
+            id,
+            (v[0].trim().to_ascii_lowercase(), number(&v[1], 0.0), floor),
+        )
+    })
+    .collect();
+    if let Some(mods) = chain
+        .read_map_file(ObjectKind::Units.file_name())
+        .and_then(|d| ObjectModifications::parse(&d, ObjectKind::Units).ok())
+    {
+        let changed = mods
+            .original
+            .iter()
+            .map(|d| (d.base, d))
+            .chain(mods.custom.iter().filter_map(|d| Some((d.id?, d))));
+        for (id, d) in changed {
+            let Some(mut t) = types.get(&d.base).cloned() else {
+                continue;
+            };
+            for m in &d.modifications {
+                match (&m.field.0, &m.value) {
+                    (b"umvt", ObjectValue::String(s)) => t.0 = s.trim().to_ascii_lowercase(),
+                    (b"umvh", ObjectValue::Real(v) | ObjectValue::Unreal(v)) => t.1 = *v,
+                    (b"umvf", ObjectValue::Real(v) | ObjectValue::Unreal(v)) => t.2 = *v,
+                    _ => {}
+                }
+            }
+            types.insert(id, t);
+        }
+    }
+    types
+        .into_iter()
+        .filter(|(_, t)| t.0 == "fly")
+        .map(|(id, t)| (id, t.1.max(t.2)))
+        .collect()
 }
 
 /// The look of every unit type: `Units\unitUI.slk`, then the map's

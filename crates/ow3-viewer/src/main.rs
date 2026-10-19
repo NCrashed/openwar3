@@ -1,4 +1,4 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]`
 //!
 //! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, C prints the camera as a `--camera`
@@ -43,6 +43,8 @@ struct Options {
     order: Option<[f32; 2]>,
     /// Every health bar shown, as with Alt held.
     alt: bool,
+    /// A terrain fog in place of the script's, for checking it.
+    fog: Option<ow3_sim::game::TerrainFog>,
 }
 
 fn options() -> Result<Options, String> {
@@ -57,6 +59,7 @@ fn options() -> Result<Options, String> {
         select: None,
         order: None,
         alt: false,
+        fog: None,
     };
     let mut map = None;
     while let Some(arg) = args.next() {
@@ -78,6 +81,23 @@ fn options() -> Result<Options, String> {
             }
             "--no-sim" => options.no_sim = true,
             "--alt" => options.alt = true,
+            "--fog" => {
+                let v: Result<Vec<f32>, _> = value("--fog")?
+                    .split(',')
+                    .map(|n| n.trim().parse())
+                    .collect();
+                let v = v.map_err(|_| "bad --fog")?;
+                let [style, start, end, density, r, g, b] = v[..] else {
+                    return Err("--fog takes seven numbers".into());
+                };
+                options.fog = Some(ow3_sim::game::TerrainFog {
+                    style: style as i32,
+                    start,
+                    end,
+                    density,
+                    color: [r, g, b],
+                });
+            }
             "--select" => {
                 options.select = Some(
                     value("--select")?
@@ -100,7 +120,7 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt]")?;
+    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]")?;
     Ok(options)
 }
 
@@ -133,6 +153,7 @@ fn screenshot(
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
     let mut sim_seconds = options.time;
+    let mut sim_fog = None;
     renderer.selected = options.select;
     renderer.all_bars = options.alt;
     if let Some(sim) = sim {
@@ -153,6 +174,7 @@ fn screenshot(
         }
         sim_hour = sim.time_of_day();
         sim_seconds = sim.game_seconds();
+        sim_fog = sim.terrain_fog();
         let units = sim.draws();
         renderer.set_units(
             &device,
@@ -170,6 +192,7 @@ fn screenshot(
     renderer.prepare_particles(&device, &queue, &camera, (options.time * 1000.0) as i32);
     light(&mut renderer, scene, sim_hour);
     renderer.set_game_time(sim_seconds);
+    renderer.set_fog(options.fog.or(sim_fog));
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -208,6 +231,8 @@ struct App {
     ctrl: bool,
     /// Whether Alt is held: every unit shows its health bar.
     alt: bool,
+    /// The fog of `--fog`, in place of the script's.
+    fog: Option<ow3_sim::game::TerrainFog>,
     /// Frames since `counted`, for the frame rate in the title.
     frames: u32,
     counted: std::time::Instant,
@@ -423,6 +448,8 @@ impl App {
             .as_ref()
             .map_or(elapsed as f32 / 1000.0, Sim::game_seconds);
         gpu.renderer.set_game_time(seconds);
+        gpu.renderer
+            .set_fog(self.fog.or(self.sim.as_ref().and_then(Sim::terrain_fog)));
         light(&mut gpu.renderer, &self.scene, hour);
         let size = (gpu.config.width, gpu.config.height);
         gpu.renderer.all_bars = self.alt;
@@ -513,6 +540,7 @@ fn main() -> ExitCode {
         cursor: (0.0, 0.0),
         ctrl: false,
         alt: false,
+        fog: options.fog,
         frames: 0,
         counted: std::time::Instant::now(),
         fps: 0.0,

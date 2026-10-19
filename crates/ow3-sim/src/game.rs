@@ -194,6 +194,18 @@ pub struct Unit {
 /// drawn).
 const NO_PHASE: u32 = u32::MAX;
 
+/// The fog of the terrain as `SetTerrainFogEx` sets it (SPEC-0017,
+/// "Terrain fog"): style 0 is linear from `start` to `end`, styles 1 and
+/// 2 exponential by `density`; the colour components are 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerrainFog {
+    pub style: i32,
+    pub start: f32,
+    pub end: f32,
+    pub density: f32,
+    pub color: [f32; 3],
+}
+
 /// How a player sees a unit, for the colour of its selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relation {
@@ -470,6 +482,8 @@ pub struct State {
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
     /// the script names them.
     pub day_night_models: Option<(String, String)>,
+    /// The fog of `SetTerrainFogEx` (SPEC-0017), if the script set one.
+    pub terrain_fog: Option<TerrainFog>,
     /// Damage constants (SPEC-0015).
     pub combat: crate::combat::Combat,
     /// Camera bounds as bit patterns: min x, min y, max x, max y.
@@ -522,6 +536,7 @@ impl State {
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
+            terrain_fog: None,
             camera_bounds: [0; 4],
             conditions: HashMap::new(),
             next_handle: FIRST_HANDLE + RESERVED_HANDLES,
@@ -1061,6 +1076,11 @@ impl<'a> Game<'a> {
     /// The terrain and unit models the script chose for the light.
     pub fn day_night_models(&self) -> Option<(String, String)> {
         self.state.borrow().day_night_models.clone()
+    }
+
+    /// The terrain fog the script set, if any.
+    pub fn terrain_fog(&self) -> Option<TerrainFog> {
+        self.state.borrow().terrain_fog
     }
 
     /// Sets where ground units may walk (SPEC-0020), as a map's
@@ -1989,6 +2009,23 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             let terrain = string(&args[0]).unwrap_or_default().to_owned();
             let unit = string(&args[1]).unwrap_or_default().to_owned();
             state.borrow_mut().day_night_models = Some((terrain, unit));
+            Ok(None)
+        }
+    );
+    // The fog of the terrain (SPEC-0017, "Terrain fog").
+    native!(
+        add,
+        state,
+        "native SetTerrainFogEx takes integer style, real zstart, real zend, real density, real red, real green, real blue returns nothing",
+        |vm, state, args| {
+            let r = |i: usize| f32::from_bits(real(&args[i]));
+            state.borrow_mut().terrain_fog = Some(TerrainFog {
+                style: integer(&args[0]),
+                start: r(1),
+                end: r(2),
+                density: r(3),
+                color: [r(4), r(5), r(6)],
+            });
             Ok(None)
         }
     );

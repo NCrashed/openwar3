@@ -427,6 +427,9 @@ pub struct UnitView {
     /// What a worker carries: 1 gold, 2 lumber, with the amount; and the
     /// gold left in a mine (SPEC-0029).
     pub carrying: Option<(u8, i32)>,
+    /// A worker hitting a tree: its next hit, the ticks between hits and
+    /// its damage point in ticks.
+    pub chopping: Option<(u64, u64, u64)>,
     pub resources: i32,
 }
 
@@ -1353,6 +1356,7 @@ impl<'a> Game<'a> {
                         harvest::Resource::Lumber => (2, n),
                     }),
                     resources: u.resources,
+                    chopping: harvest::chopping(&state, handle),
                 }),
                 _ => None,
             })

@@ -74,6 +74,10 @@ pub struct Sim {
     /// The ground point under the mouse, where a building waiting for its
     /// place is shown.
     pub ghost: Option<[f32; 2]>,
+    /// Hours of a day and the seconds of animation they span
+    /// (`DayHours`, `ScaledAnimTime` of `Units\MiscData.txt`), for the
+    /// time of day indicator (SPEC-0028).
+    day_animation: (f32, f32),
 }
 
 /// A model played once where an order went.
@@ -86,6 +90,22 @@ struct Effect {
     /// The tick it started at and its length in ticks.
     start: u64,
     length: u64,
+}
+
+/// `DayHours` and `ScaledAnimTime` of `[Misc]` in `Units\MiscData.txt`,
+/// 24 and 60 when missing.
+fn day_animation(chain: &mut ArchiveChain) -> (f32, f32) {
+    let mut profile = ow3_formats::profile::Profile::default();
+    for text in chain.read_all("Units\\MiscData.txt") {
+        profile.add(&String::from_utf8_lossy(&text));
+    }
+    let number = |key: &str, default: f32| {
+        profile
+            .get("Misc", key)
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(default)
+    };
+    (number("DayHours", 24.0), number("ScaledAnimTime", 60.0))
 }
 
 /// A model named by `key` of `UI\war3skins.txt` (`[Default]`, as `.mdx`)
@@ -148,6 +168,7 @@ impl Sim {
             // looked at yet.
             hud: crate::hud::Hud::load(&mut chain, "Human"),
             ghost: None,
+            day_animation: day_animation(&mut chain),
             chain,
         })
     }
@@ -411,6 +432,16 @@ impl Sim {
         self.game.time_of_day()
     }
 
+    /// The time of day indicator's model and its time in its Stand
+    /// sequence in milliseconds: `h / DayHours * ScaledAnimTime` seconds
+    /// (SPEC-0028).
+    pub fn time_indicator(&self) -> Option<(String, i32)> {
+        let model = self.hud.time_indicator_model()?;
+        let (hours, seconds) = self.day_animation;
+        let t = self.time_of_day() / hours * seconds * 1000.0;
+        Some((model, t as i32))
+    }
+
     /// Lets `micros` of real time pass.
     pub fn advance(&mut self, micros: u64) {
         self.game.advance(micros);
@@ -580,6 +611,17 @@ fn pose(u: &UnitView, now: u64) -> UnitPose {
     if u.order == ORDER_REPAIR && !u.walking {
         return UnitPose::Work(millis(now));
     }
+    // A worker hitting a tree swings so that each hit lands at its damage
+    // point (PROVISIONAL: SPEC-0029 does not name the sequence; Attack).
+    if let Some((next, period, point)) = u.chopping {
+        let swing = next.saturating_sub(point);
+        let start = if now >= swing {
+            swing
+        } else {
+            swing.saturating_sub(period)
+        };
+        return UnitPose::Attack(millis(now.saturating_sub(start)));
+    }
     let Some(attack) = u.attack else {
         return UnitPose::Stand;
     };
@@ -623,6 +665,7 @@ mod tests {
             constructing: false,
             carrying: None,
             resources: 0,
+            chopping: None,
         }
     }
 

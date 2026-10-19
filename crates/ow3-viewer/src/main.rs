@@ -219,6 +219,15 @@ fn screenshot(
             (w, h),
             (options.time * 1000.0) as i32,
         );
+        let indicator = sim.time_indicator();
+        renderer.set_time_indicator(
+            &device,
+            &queue,
+            &mut sim.chain,
+            indicator.as_ref().map(|(m, _)| m.as_str()),
+            (w, h),
+            indicator.as_ref().map_or(0, |(_, t)| *t),
+        );
     }
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -652,6 +661,15 @@ impl App {
                 portrait.as_ref().map(|(m, t)| (m.as_str(), *t)),
                 size,
                 elapsed,
+            );
+            let indicator = sim.time_indicator();
+            gpu.renderer.set_time_indicator(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.chain,
+                indicator.as_ref().map(|(m, _)| m.as_str()),
+                size,
+                indicator.as_ref().map_or(0, |(_, t)| *t),
             );
         }
         match gpu.surface.get_current_texture() {

@@ -275,15 +275,17 @@ fn a_peasant_gathers_lumber() {
     assert!(sim.harvest(peasant, tree));
     let lumber = sim.resources().lumber;
     let mut full = false;
+    let mut chopped = false;
     for _ in 0..900 {
         sim.advance(100_000);
         let v = view(&sim, peasant);
         full |= v.carrying == Some((2, 10)) && v.order == 852_017;
+        chopped |= v.chopping.is_some();
         if sim.resources().lumber > lumber {
             break;
         }
     }
-    assert!(full);
+    assert!(full && chopped);
     assert_eq!(sim.resources().lumber, lumber + 10);
     assert_eq!(view(&sim, peasant).order, 852_018);
 }
@@ -359,4 +361,21 @@ fn a_load_shows_on_the_peasant() {
             "load {load}: {walk:?} {carry:?}"
         );
     }
+}
+
+/// The time of day indicator of the Human console stands in its Stand
+/// sequence at `h / 24 * 60` s (SPEC-0028).
+#[test]
+fn the_time_indicator_follows_the_day() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let (model, t) = sim.time_indicator().unwrap();
+    assert_eq!(
+        model.to_ascii_lowercase(),
+        "ui\\console\\human\\humanui-timeindicator.mdx"
+    );
+    let expected = sim.time_of_day() / 24.0 * 60_000.0;
+    assert!((t as f32 - expected).abs() <= 1.0, "{t} {expected}");
 }

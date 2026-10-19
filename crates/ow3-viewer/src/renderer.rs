@@ -204,7 +204,9 @@ pub struct Renderer {
     fog: ([f32; 4], [f32; 4]),
     overlay: Overlay,
     ui: crate::ui::UiRenderer,
-    portrait: Portrait,
+    portrait: ModelView,
+    /// The time of day indicator (SPEC-0028).
+    time_indicator: ModelView,
     /// Selection circles, made when first needed.
     circles: Option<crate::circles::Circles>,
     format: wgpu::TextureFormat,
@@ -318,10 +320,10 @@ fn r8_texture(
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// The portrait of the selected unit (SPEC-0028): its model drawn through
-/// the model's own camera into the portrait frame, with globals of its
-/// own (plain light, no fog, no shadow).
-struct Portrait {
+/// One model of the interface drawn over the view through a projection of
+/// its own, with globals of its own (plain light, no fog, no shadow): the
+/// portrait of the selected unit, the time of day indicator (SPEC-0028).
+struct ModelView {
     models: ModelRenderer,
     globals: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -330,13 +332,13 @@ struct Portrait {
     rect: Option<[f32; 4]>,
 }
 
-impl Portrait {
+impl ModelView {
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         globals_layout: &wgpu::BindGroupLayout,
-    ) -> Portrait {
+    ) -> ModelView {
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("portrait globals"),
             size: std::mem::size_of::<Globals>() as u64,
@@ -372,13 +374,131 @@ impl Portrait {
             &std::collections::BTreeMap::new(),
             &crate::models::Animation::default(),
         );
-        Portrait {
+        ModelView {
             models,
             globals,
             bind_group,
             rect: None,
         }
     }
+
+    /// Poses `model`, a path read from `chain` and a team colour, in
+    /// `pose`; its index among the models read, `None` if it cannot be
+    /// read. Nothing is shown until [`ModelView::aim`].
+    fn pose(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        model: (&str, u8),
+        pose: crate::models::UnitPose,
+        elapsed: i32,
+    ) -> Option<usize> {
+        let (path, team) = model;
+        self.rect = None;
+        let draw = crate::sim_units::UnitDraw {
+            model: path.to_owned(),
+            team,
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            pose,
+            life: None,
+            handle: 0,
+            selection: 0.0,
+            relation: None,
+            tint: [1.0; 3],
+        };
+        self.models
+            .set_units(device, queue, chain, &[draw], elapsed);
+        self.models.update(device, queue, elapsed);
+        self.models.animation().index_of(path)
+    }
+
+    /// Shows the model through `view_projection` in the pixels `rect`
+    /// (left, top, width, height).
+    fn aim(&mut self, queue: &wgpu::Queue, view_projection: Mat4, rect: [f32; 4]) {
+        let light = PLAIN_LIGHT;
+        let globals = Globals {
+            view_projection,
+            terrain_sun: [0.0; 4],
+            terrain_color: [0.0; 4],
+            terrain_ambient: [0.0; 4],
+            unit_sun: [
+                light.direction[0],
+                light.direction[1],
+                light.direction[2],
+                light.intensity,
+            ],
+            unit_color: [
+                light.color[0],
+                light.color[1],
+                light.color[2],
+                light.ambient_intensity,
+            ],
+            unit_ambient: [light.ambient[0], light.ambient[1], light.ambient[2], 0.0],
+            shadow_area: [0.0, 0.0, 1.0, 1.0],
+            water: [0.0; 4],
+            fog_params: [0.0; 4],
+            fog_color: [0.0; 4],
+        };
+        queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        self.rect = Some(rect);
+    }
+
+    /// Draws the model if it is shown, its depth cleared first.
+    fn draw(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+    ) {
+        let Some([x, y, w, h]) = self.rect else {
+            return;
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("interface model"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_viewport(x, y, w, h, 0.0, 1.0);
+        pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        self.models.draw(&mut pass);
+    }
+}
+
+/// The pixels (left, top, width, height) of interface rectangle `rect`
+/// (left, bottom, right, top in 0.8 x 0.6 units) in a window `size`
+/// pixels large.
+fn pixels(rect: [f32; 4], size: (u32, u32)) -> [f32; 4] {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    [
+        rect[0] / crate::ui::WIDTH * w,
+        (1.0 - rect[3] / crate::ui::HEIGHT) * h,
+        (rect[2] - rect[0]) / crate::ui::WIDTH * w,
+        (rect[3] - rect[1]) / crate::ui::HEIGHT * h,
+    ]
 }
 
 pub(crate) fn upload_texture(
@@ -737,7 +857,8 @@ impl Renderer {
             &scene.model_textures,
             &scene.animation,
         );
-        let portrait = Portrait::new(device, queue, format, &globals_layout);
+        let portrait = ModelView::new(device, queue, format, &globals_layout);
+        let time_indicator = ModelView::new(device, queue, format, &globals_layout);
         Renderer {
             opaque,
             blended,
@@ -754,6 +875,7 @@ impl Renderer {
             overlay: Overlay::new(device, format),
             ui: crate::ui::UiRenderer::new(device, format),
             portrait,
+            time_indicator,
             circles: None,
             format,
             anchors: Vec::new(),
@@ -845,47 +967,30 @@ impl Renderer {
         size: (u32, u32),
         elapsed: i32,
     ) {
-        let rect = crate::hud::PORTRAIT;
-        let portrait = &mut self.portrait;
-        portrait.rect = None;
+        self.portrait.rect = None;
         let Some((path, team)) = model else {
             return;
         };
-        let draw = crate::sim_units::UnitDraw {
-            model: path.to_owned(),
-            team,
-            matrix: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            pose: crate::models::UnitPose::Portrait(elapsed),
-            life: None,
-            handle: 0,
-            selection: 0.0,
-            relation: None,
-            tint: [1.0; 3],
-        };
-        portrait
-            .models
-            .set_units(device, queue, chain, &[draw], elapsed);
-        portrait.models.update(device, queue, elapsed);
-        let animation = portrait.models.animation();
-        let Some(camera) = animation
-            .index_of(path)
-            .and_then(|i| animation.mdx(i).cameras.first())
+        let pose = crate::models::UnitPose::Portrait(elapsed);
+        let Some(index) = self
+            .portrait
+            .pose(device, queue, chain, (path, team), pose, elapsed)
         else {
             return;
         };
-        let (w, h) = (size.0 as f32, size.1 as f32);
-        let pixels = [
-            rect[0] / crate::ui::WIDTH * w,
-            (1.0 - rect[3] / crate::ui::HEIGHT) * h,
-            (rect[2] - rect[0]) / crate::ui::WIDTH * w,
-            (rect[3] - rect[1]) / crate::ui::HEIGHT * h,
-        ];
-        if pixels[2] < 1.0 || pixels[3] < 1.0 {
+        let Some(camera) = self
+            .portrait
+            .models
+            .animation()
+            .mdx(index)
+            .cameras
+            .first()
+            .cloned()
+        else {
+            return;
+        };
+        let rect = pixels(crate::hud::PORTRAIT, size);
+        if rect[2] < 1.0 || rect[3] < 1.0 {
             return;
         }
         let view_projection = crate::camera::model_view_projection(
@@ -894,34 +999,46 @@ impl Renderer {
             camera.field_of_view,
             camera.near,
             camera.far,
-            pixels[2] / pixels[3],
+            rect[2] / rect[3],
         );
-        let light = PLAIN_LIGHT;
-        let globals = Globals {
-            view_projection,
-            terrain_sun: [0.0; 4],
-            terrain_color: [0.0; 4],
-            terrain_ambient: [0.0; 4],
-            unit_sun: [
-                light.direction[0],
-                light.direction[1],
-                light.direction[2],
-                light.intensity,
-            ],
-            unit_color: [
-                light.color[0],
-                light.color[1],
-                light.color[2],
-                light.ambient_intensity,
-            ],
-            unit_ambient: [light.ambient[0], light.ambient[1], light.ambient[2], 0.0],
-            shadow_area: [0.0, 0.0, 1.0, 1.0],
-            water: [0.0; 4],
-            fog_params: [0.0; 4],
-            fog_color: [0.0; 4],
+        self.portrait.aim(queue, view_projection, rect);
+    }
+
+    /// Shows the time of day indicator `model` (SPEC-0028) over the
+    /// interface of a window `size` pixels large: the model's coordinates
+    /// are those of the interface (0.8 x 0.6, larger z nearer), and it
+    /// stands `time` milliseconds into its Stand sequence.
+    pub fn set_time_indicator(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        model: Option<&str>,
+        size: (u32, u32),
+        time: i32,
+    ) {
+        self.time_indicator.rect = None;
+        let Some(path) = model else {
+            return;
         };
-        queue.write_buffer(&portrait.globals, 0, bytemuck::bytes_of(&globals));
-        portrait.rect = Some(pixels);
+        let pose = crate::models::UnitPose::Once(time);
+        if self
+            .time_indicator
+            .pose(device, queue, chain, (path, 0), pose, time)
+            .is_none()
+        {
+            return;
+        }
+        let screen = [0.0, 0.0, crate::ui::WIDTH, crate::ui::HEIGHT];
+        let rect = pixels(screen, size);
+        // x and y to clip space over the interface, z to depth: 1 - z.
+        let view_projection = [
+            [2.0 / crate::ui::WIDTH, 0.0, 0.0, 0.0],
+            [0.0, 2.0 / crate::ui::HEIGHT, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0],
+            [-1.0, -1.0, 1.0, 1.0],
+        ];
+        self.time_indicator.aim(queue, view_projection, rect);
     }
 
     pub fn prepare_overlay(
@@ -1127,34 +1244,7 @@ impl Renderer {
             self.overlay.draw(&mut pass);
             self.ui.draw(&mut pass, false);
         }
-        if let Some([x, y, w, h]) = self.portrait.rect {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("portrait"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_viewport(x, y, w, h, 0.0, 1.0);
-            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
-            pass.set_bind_group(0, &self.portrait.bind_group, &[]);
-            self.portrait.models.draw(&mut pass);
-        }
+        self.portrait.draw(&mut encoder, target, depth);
         // The console over the portrait.
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1181,6 +1271,8 @@ impl Renderer {
             });
             self.ui.draw(&mut pass, true);
         }
+        // The time of day indicator over the console.
+        self.time_indicator.draw(&mut encoder, target, depth);
         queue.submit([encoder.finish()]);
     }
 }

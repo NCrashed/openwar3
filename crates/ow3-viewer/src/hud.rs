@@ -331,6 +331,21 @@ impl Hud {
         out
     }
 
+    /// The model of the time of day indicator of the race
+    /// (`TimeOfDayIndicator` of the skins, SPEC-0028), as `.mdx`.
+    pub fn time_indicator_model(&self) -> Option<String> {
+        let key = "TimeOfDayIndicator";
+        let path = self.interface.skin(key);
+        (path != key).then(|| {
+            let lower = path.to_ascii_lowercase();
+            match lower.strip_suffix(".mdl") {
+                Some(_) => format!("{}.mdx", &path[..path.len() - 4]),
+                None if lower.ends_with(".mdx") => path,
+                None => format!("{path}.mdx"),
+            }
+        })
+    }
+
     /// The rectangle of the button at `place`.
     fn button_rect(place: (u32, u32)) -> Rect {
         let x0 = CARD[0] + STEP[0] * place.0 as f32;

@@ -572,6 +572,21 @@ fn deliver(state: &mut State, h: u32) {
     }
 }
 
+/// Worker `h` hitting a tree: the tick of its next hit, the ticks between
+/// hits and the damage point of its weapon in ticks, for the swing shown.
+pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
+    let next = get(state, h)?.next_hit?;
+    let period = gathering(state, h)?.period;
+    let point = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .and_then(|t| t.weapon.as_ref())
+        .map_or(0, |w| {
+            (f64::from(f32::from_bits(w.damage_point)) * 200.0).round() as u64
+        });
+    Some((next, period, point))
+}
+
 /// What worker `h` carries, for the interface.
 pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
     get(state, h).and_then(|g| g.carry)

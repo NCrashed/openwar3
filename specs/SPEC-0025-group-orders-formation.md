@@ -182,8 +182,14 @@ would (SPEC-0018). The cluster then limits it:
   speed is the smallest speed limit (`spd`) of the members; otherwise
   there is no group speed. (A shared limit over several clusters of one
   order also exists; not studied.)
-- Each member's speed is `min(own speed, group speed)`, and its
-  velocity is set from that speed as in SPEC-0018, step 5.
+- Each member's speed is `s = min(own speed, group speed)`, and its
+  velocity is set from `s` as in SPEC-0018, step 5:
+  `w = (mul(s, cos H), mul(s, sin H))`. The limit of step 5 still uses
+  the unit's own `spd`, not the group speed, so with a group speed of
+  190 the velocity's length is 190 only up to the error of `cos` and
+  `sin` (between about 189.9999 and 190.004; in test RSP all 40
+  velocities checked were exactly `w` with `s = 190/32` cells per
+  second and no further limit).
 
 So while ranks form up, the moving members walk at their own speeds;
 once every member walks, all walk at the speed of the slowest; when the
@@ -298,8 +304,10 @@ one as they arrived.
 - Memory reads in live games (debugger): inputs and results of the layout
   for two groups, and the formation angle before and after the first
   cluster update.
-- Test maps RSM, RSO, RSP (groups of four selected with a box and given
-  a right click on the ground), replay `c-RSM-1.w3g`.
+- Test maps RSM, RSO, RSP, RSQ (groups of four selected with a box and
+  given a right click on the ground; RSQ with a wall), replays
+  `c-RSM-1.w3g` and `c-RSP-1.w3g` (with the members' state at every
+  cluster update in `c-RSP-1.members.tsv`).
 
 ## Verification
 
@@ -321,5 +329,5 @@ one as they arrived.
    pass", computed with the engine operations from the members'
    committed positions, velocities and commit times read from memory,
    gave the game's hold marks at all 86 cluster updates of the test.
-   The rifleman was released at its 19th update, the peasant at its
-   35th; from then on all four velocities had length 190.
+   The rifleman was held for 18 updates, the peasant for 34; from then
+   on all four walked with speed 190 (`c-RSP-1.members.tsv`).

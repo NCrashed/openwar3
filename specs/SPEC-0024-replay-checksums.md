@@ -33,6 +33,32 @@ checksums differ from the recorded ones: playback continues.
 Turns are numbered `k = 1, 2, ...` in replay order. `t_k` is the sum of
 the time increments (ms) of time slots `1..k`, `t_0 = 0`.
 
+**When actions take effect.** The checksum of turn `k` (the 0x22 block
+after time slot `k`) is computed before the actions of time slot `k`
+change the game: an action in slot `k` shows first in the checksum of
+turn `k + 1`. Measured in two live games of the same test (selection,
+`move` order, attack order given with the mouse), reading the parts of
+every turn checksum from memory:
+
+| Action in slot `k` | Turn `k + 1` | Turn `k + 2` | Turn `k + 3` |
+|---|---|---|---|
+| select a unit | `G` | - | - |
+| `move` (right click on the ground) | `C`, `D` | `C` | - |
+| attack (right click on an enemy) | `C`, `D`, `R` | `C` | `C`, `D` |
+
+(`C` and `D` change because the order creates internal objects, some of
+which are freed one turn later; the walk's path objects are freed when
+the unit arrives. `R` changes on the attack order because a game
+generator is drawn, SPEC-0019.) In the replay `c-RSL-1.w3g` the three
+actions are in slots 36, 51 and 77, so they show in turns 37, 52 and 78.
+
+Each hit of the attack draws a game generator (`R` changes in the turn
+after the hit). About 0.5 s after each hit the attacking unit creates a
+path cluster and a path, as when it starts to walk, and frees them
+again: `C` and `D` change in one turn and `C` in the next, or only `D`
+when the objects were created and freed between two checksums. No
+random number is drawn there.
+
 ### Turn checksum
 
     v = rol3(S XOR 6059)

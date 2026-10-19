@@ -967,3 +967,56 @@ fn swings_against_the_goal_point() {
         assert_eq!(stood, expected, "swing of {k}");
     }
 }
+
+/// SPEC-0025, test RSP: a peasant, a rifleman, a knight and a footman side
+/// by side, ordered together to the south. The knight and the footman walk
+/// at once at their own speeds, the rifleman and then the peasant wait
+/// for the front ranks to pass, and from the update the peasant starts
+/// all four walk at 190, the peasant's speed.
+///
+/// PROVISIONAL: the game released the rifleman at its 19th update and the
+/// peasant at its 35th; here they start earlier (about the 15th and the
+/// 28th) with an order point taken as (0, -465).
+#[test]
+fn group_ranks_form_up() {
+    let Some(map) = load("c-RSP.w3x") else {
+        return;
+    };
+    let program = map.check().unwrap();
+    let mut game = Game::load_map(&program, &map).unwrap();
+    game.start().unwrap();
+    while game.units().len() < 4 {
+        game.step();
+    }
+    for _ in 0..40 {
+        game.step();
+    }
+    let units: Vec<u32> = game.units().iter().map(|u| u.handle).collect();
+    assert!(game.issue_group_point_order(&units, "smart", 0.0, -465.0));
+    // The tick each unit first moves, and the speeds of all four after
+    // the peasant started.
+    let mut started = [None; 4];
+    let mut last: Vec<(f32, f32)> = game.units().iter().map(|u| (u.x, u.y)).collect();
+    for _ in 0..400 {
+        game.step();
+        let now: Vec<(f32, f32)> = game.units().iter().map(|u| (u.x, u.y)).collect();
+        for i in 0..4 {
+            if started[i].is_none() && now[i] != last[i] {
+                started[i] = Some(game.ticks());
+            }
+        }
+        if let Some(peasant) = started[0]
+            && game.ticks() == peasant + 12
+        {
+            for i in 0..4 {
+                let (dx, dy) = (now[i].0 - last[i].0, now[i].1 - last[i].1);
+                let speed = (dx * dx + dy * dy).sqrt() / 0.005;
+                assert!((speed - 190.0).abs() < 0.5, "unit {i}: {speed}");
+            }
+        }
+        last = now;
+    }
+    let [peasant, rifleman, knight, footman] = started.map(Option::unwrap);
+    assert_eq!(knight, footman);
+    assert!(knight < rifleman && rifleman < peasant, "{started:?}");
+}

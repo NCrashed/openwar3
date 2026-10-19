@@ -33,6 +33,7 @@
 //! (SPEC-0018, open question 1).
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use ow3_jass::semantics::Value;
@@ -263,12 +264,13 @@ fn heading_and_turn(m: &Moving, target: [u32; 2]) -> (u32, u32) {
 /// An update of a unit's motion towards `target` (SPEC-0018, steps 1 to
 /// 5): the heading turns by at most `turn_rate`, and the unit moves at
 /// `speed` when it may and the turn was within the propulsion window
-/// `window`. Whether it moves.
+/// `window`, its velocity limited to `limit`. Whether it moves.
 fn motion(
     m: &mut Moving,
     target: [u32; 2],
     may_move: bool,
     speed: u32,
+    limit: u32,
     turn_rate: u32,
     window: u32,
 ) -> bool {
@@ -288,11 +290,12 @@ fn motion(
         let [vx, vy] = wanted;
         let q = add(mul(vx, vx), mul(vy, vy));
         if real_of(q).abs() >= real_of(NO_TURN) {
-            // Limited to the speed (SPEC-0018, step 5): the approximate
+            // Limited to the unit's own speed (SPEC-0018, step 5; a group's
+            // speed does not change the limit, SPEC-0025): the approximate
             // cosine and sine make it a little longer.
             let len = sqrt(q);
-            m.velocity = if real_of(len) > real_of(speed) {
-                let k = mul(speed, div(ONE, len));
+            m.velocity = if real_of(len) > real_of(limit) {
+                let k = mul(limit, div(ONE, len));
                 [mul(vx, k), mul(vy, k)]
             } else {
                 [vx, vy]
@@ -393,8 +396,9 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     true
 }
 
-/// Units ordered to a point together (SPEC-0025, "Clusters"), waiting for
-/// their first update, where their places in the formation are laid out.
+/// Units ordered to a point together (SPEC-0025, "Clusters"). At their
+/// first update their places in the formation are laid out; at every
+/// update the cluster decides which members wait and the group's speed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
     /// In the order of the units in the order.
@@ -403,6 +407,16 @@ pub struct Cluster {
     goal: [u32; 2],
     /// The tick of the first update.
     first: u64,
+    /// The formation angle, from the first update on.
+    angle: Option<u32>,
+}
+
+/// What a cluster tells a member at an update: whether it waits, and the
+/// group's speed if there is one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Control {
+    held: bool,
+    speed: Option<u32>,
 }
 
 /// Units whose distance in cells, taken to its integer part, is at most
@@ -468,68 +482,118 @@ pub(super) fn group_point_order(
                 members,
                 goal: target,
                 first,
+                angle: None,
             });
         }
     }
     !taken.is_empty()
 }
 
-/// Lays out the clusters whose first update is now (SPEC-0025, "Formation
-/// angle and leader" and "Layout"): the leader is the member nearest to
-/// the goal, the angle that from the leader to the goal, and each member
-/// walks to the goal plus its offset.
-fn lay_out_clusters(state: &mut State, tick: u64) {
+/// The clusters updating at `tick` (SPEC-0025). At the first update the
+/// leader is the member nearest to the goal, the formation angle that
+/// from the leader to the goal, and each member walks to the goal plus its
+/// offset ("Formation angle and leader", "Layout"). At every update the
+/// members that wait for their rank to pass are held, and while none is
+/// held and none has reached its place all walk at the slowest member's
+/// speed ("Group speed"). A cluster whose members have all arrived ends.
+///
+/// PROVISIONAL: the hold rule is never suspended (the member states that
+/// suspend it are open question 3).
+fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    let (due, rest): (Vec<Cluster>, Vec<Cluster>) = std::mem::take(&mut state.clusters)
-        .into_iter()
-        .partition(|c| c.first == tick);
-    state.clusters = rest;
-    for cluster in due {
+    let mut control = BTreeMap::new();
+    let mut clusters = std::mem::take(&mut state.clusters);
+    for cluster in &mut clusters {
+        if tick < cluster.first || (tick - cluster.first) % UPDATE != 0 {
+            continue;
+        }
         let goal = mul_both(relative(cluster.goal, min), CELL);
-        let mut members = Vec::new();
-        let mut handles = Vec::new();
+        let (mut members, mut done, mut speeds) = (Vec::new(), Vec::new(), Vec::new());
+        cluster
+            .members
+            .retain(|&h| state.unit(Some(h)).is_some_and(|u| u.alive));
         for &h in &cluster.members {
             let Some(u) = state.unit(Some(h)) else {
                 continue;
             };
-            if !u.alive || !u.movement.is_some_and(|m| m.ordered()) {
-                continue;
-            }
             let data = state.data.units.get(&u.type_id);
             members.push(super::formation::Member {
                 position: mul_both(relative([u.x, u.y], min), CELL),
                 radius: mul(data.map_or(0, |t| t.collision), CELL),
                 rank: data.map_or(0, |t| t.formation),
             });
-            handles.push(h);
+            done.push(!u.movement.is_some_and(|m| m.ordered()));
+            speeds.push(data.map_or(0, |t| t.speed));
         }
-        if members.len() < 2 {
+        if done.iter().all(|&d| d) {
+            cluster.members.clear();
             continue;
         }
-        let squared = |p: [u32; 2]| {
-            let (dx, dy) = (sub(goal[0], p[0]), sub(goal[1], p[1]));
-            add(mul(dx, dx), mul(dy, dy))
+        let angle = match cluster.angle {
+            Some(angle) => angle,
+            None => {
+                let angle = lay_out(state, &cluster.members, &members, goal, min);
+                cluster.angle = Some(angle);
+                angle
+            }
         };
-        let mut leader = 0;
-        for i in 1..members.len() {
-            if real_of(squared(members[i].position)) < real_of(squared(members[leader].position)) {
-                leader = i;
-            }
-        }
-        let lead = members[leader].position;
-        let angle = angle(sub(goal[0], lead[0]), sub(goal[1], lead[1]));
-        let offsets = super::formation::offsets(&members, angle);
-        for (&h, o) in handles.iter().zip(offsets) {
-            let to = [add(goal[0], o[0]), add(goal[1], o[1])];
-            let to = absolute(mul_both(to, CELLS_TO_WORLD), min);
-            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-                && let Some(m) = u.movement.as_mut()
-            {
-                m.target = to;
-            }
-            state.paths.remove(&h);
+        let held = super::formation::holds(&members, &done, angle);
+        let speed = (!held.iter().any(|&h| h) && !done.iter().any(|&d| d)).then(|| {
+            speeds[1..].iter().fold(
+                speeds[0],
+                |a, &s| {
+                    if real_of(s) < real_of(a) { s } else { a }
+                },
+            )
+        });
+        for (i, &h) in cluster.members.iter().enumerate() {
+            control.insert(
+                h,
+                Control {
+                    held: held[i],
+                    speed,
+                },
+            );
         }
     }
+    clusters.retain(|c| c.members.len() > 1);
+    state.clusters.extend(clusters);
+    control
+}
+
+/// Lays out a cluster's places: each member walks to the goal plus its
+/// offset. The formation angle.
+fn lay_out(
+    state: &mut State,
+    handles: &[u32],
+    members: &[super::formation::Member],
+    goal: [u32; 2],
+    min: [u32; 2],
+) -> u32 {
+    let squared = |p: [u32; 2]| {
+        let (dx, dy) = (sub(goal[0], p[0]), sub(goal[1], p[1]));
+        add(mul(dx, dx), mul(dy, dy))
+    };
+    let mut leader = 0;
+    for i in 1..members.len() {
+        if real_of(squared(members[i].position)) < real_of(squared(members[leader].position)) {
+            leader = i;
+        }
+    }
+    let lead = members[leader].position;
+    let angle = angle(sub(goal[0], lead[0]), sub(goal[1], lead[1]));
+    let offsets = super::formation::offsets(members, angle);
+    for (&h, o) in handles.iter().zip(offsets) {
+        let to = [add(goal[0], o[0]), add(goal[1], o[1])];
+        let to = absolute(mul_both(to, CELLS_TO_WORLD), min);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.target = to;
+        }
+        state.paths.remove(&h);
+    }
+    angle
 }
 
 /// 32: cells to world units.
@@ -886,7 +950,7 @@ pub(super) fn step(state: &mut State) {
 /// The updates due at this tick, after the timers.
 pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let tick = state.ticks;
-    lay_out_clusters(state, tick);
+    let control = update_clusters(state, tick);
     let min = [state.world_bounds[0], state.world_bounds[1]];
     // Units updating in the same tick go from the last created (SPEC-0021).
     let mut moving = std::mem::take(&mut state.moving);
@@ -904,7 +968,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             _ => continue,
         };
         let data = state.data.units.get(&type_id);
-        let speed = data.map_or(0, |t| t.speed);
+        // A member of a group may be held or slowed (SPEC-0025); its own
+        // limit stays.
+        let limit = data.map_or(0, |t| t.speed);
+        let speed = match control.get(&h) {
+            Some(c) if c.held => 0,
+            Some(Control { speed: Some(g), .. }) if real_of(*g) < real_of(limit) => *g,
+            _ => limit,
+        };
         let turn_rate = data.map_or(PI, |t| t.turn_rate);
         let window = mul(data.map_or(0, |t| t.prop_window), DEGREES);
         let orient = data.map_or(0, |t| t.orient_interp);
@@ -1025,7 +1096,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 begin_attack = Some(target);
                             }
                         } else {
-                            motion(&mut m, goal, false, speed, turn_rate, window);
+                            motion(&mut m, goal, false, speed, limit, turn_rate, window);
                         }
                     } else if state.grid.is_some() {
                         // To the goal point by the paths of SPEC-0020 and
@@ -1052,19 +1123,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         };
                         match steer {
                             follow::Steer::Walk(to) => {
-                                motion(&mut m, to, true, speed, turn_rate, window);
+                                motion(&mut m, to, true, speed, limit, turn_rate, window);
                             }
                             follow::Steer::Stand(to) => {
-                                motion(&mut m, to, false, speed, turn_rate, window);
+                                motion(&mut m, to, false, speed, limit, turn_rate, window);
                             }
                             // At the goal but not in range of the target:
                             // it waits for the next goal.
                             follow::Steer::Arrived => {
-                                motion(&mut m, goal, false, speed, turn_rate, window);
+                                motion(&mut m, goal, false, speed, limit, turn_rate, window);
                             }
                         }
                     } else {
-                        motion(&mut m, goal, true, speed, turn_rate, window);
+                        motion(&mut m, goal, true, speed, limit, turn_rate, window);
                     }
                 } else {
                     let squared_speed = follow::squared_speed(m.velocity);
@@ -1108,11 +1179,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                     match steer {
                         follow::Steer::Walk(to) => {
-                            motion(&mut m, to, true, speed, turn_rate, window);
+                            motion(&mut m, to, true, speed, limit, turn_rate, window);
                         }
                         // No motion, but the heading turns (SPEC-0020).
                         follow::Steer::Stand(to) => {
-                            motion(&mut m, to, false, speed, turn_rate, window);
+                            motion(&mut m, to, false, speed, limit, turn_rate, window);
                         }
                         follow::Steer::Arrived => {}
                     }

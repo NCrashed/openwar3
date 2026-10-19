@@ -48,7 +48,7 @@ pub struct Member {
 
 /// Sorts `items` (indices) so that `key` decreases, deciding ties as the
 /// game does (SPEC-0025, "Places").
-fn sort_decreasing(items: &mut [usize], key: impl Fn(usize) -> u32) {
+pub(super) fn sort_decreasing(items: &mut [usize], key: impl Fn(usize) -> u32) {
     for k in (1..items.len()).rev() {
         let mut smallest = key(items[k]);
         let mut at = k;
@@ -165,6 +165,44 @@ pub fn offsets(members: &[Member], angle: u32) -> Vec<[u32; 2]> {
         .collect()
 }
 
+/// Which members are held at an update of their cluster (SPEC-0025,
+/// "Members that wait for their rank to pass"): a member stands while a
+/// member of a front rank is still behind it or beside it. `done` marks
+/// the members that have reached their places, which are left out.
+pub fn holds(members: &[Member], done: &[bool], angle: u32) -> Vec<bool> {
+    let n = members.len();
+    let (s, c) = (sin(angle ^ SIGN), cos(angle ^ SIGN));
+    let (mut lo, mut hi) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    for m in members {
+        let u = sub(mul(m.position[0], c), mul(m.position[1], s));
+        let e = add(m.radius, ONE);
+        lo.push(sub(u, e));
+        hi.push(add(u, e));
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    sort_decreasing(&mut order, |i| lo[i]);
+    let mut held = vec![false; n];
+    let mut low = 16;
+    for k in (0..n).rev() {
+        let i = order[k];
+        if done[i] {
+            continue;
+        }
+        let rank = members[i].rank;
+        if rank > low {
+            held[i] = true;
+            continue;
+        }
+        low = rank;
+        held[i] = order[..k]
+            .iter()
+            .rev()
+            .take_while(|&&j| real(lo[j]) < real(hi[i]))
+            .any(|&j| !done[j] && members[j].rank < rank);
+    }
+    held
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +230,30 @@ mod tests {
                 [0xC030_6647, 0x401C_2D3F],
                 [0x4046_76C1, 0x3FFD_EDF5],
             ]
+        );
+    }
+
+    /// SPEC-0025, "Members that wait for their rank to pass": the mixed
+    /// group side by side at the start of test RSP. The knight and the
+    /// footman walk, the rifleman and the peasant are held; a member that
+    /// has arrived no longer holds the others.
+    #[test]
+    fn holds_at_the_start() {
+        let members = [
+            row(0.5, 4)(XS[0]),
+            row(1.0, 2)(XS[1]),
+            row(1.0, 0)(XS[2]),
+            row(0.968_75, 0)(XS[3]),
+        ];
+        assert_eq!(
+            holds(&members, &[false; 4], ANGLE),
+            [true, true, false, false]
+        );
+        // With the front rank arrived, the rifleman walks and the peasant,
+        // ahead of it, still waits.
+        assert_eq!(
+            holds(&members, &[false, false, true, true], ANGLE),
+            [true, false, false, false]
         );
     }
 

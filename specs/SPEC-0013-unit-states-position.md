@@ -138,69 +138,67 @@ effect at once, with or without `permanent` (no difference was seen):
 
 ### Facing turn rule
 
-At every update, let `r` be the angle from the facing to the heading
-(the shorter way, after the heading's own turn of that update), and `w`
-the facing step of the previous update (0 when the facing was at rest).
+The facing `F` (radians, in `[0, 2 pi)`) turns towards a target angle
+`H`: the unit's stored heading, which `SetUnitFacing` sets and which a
+walking unit sets at every update to the direction of its velocity
+(SPEC-0018, "Movement arithmetic"). The unit also keeps the facing step
+`w` of the previous update (signed, 0 when the facing is at rest). All
+operations are those of SPEC-0004 and SPEC-0011; `2 pi = 0x40C90FDB`.
+At every update:
 
-1. If `r` is below about 0.001 radians (snaps were seen up to 0.0573
-   degrees, none at 0.0612), the facing is set to the heading and `w`
-   becomes 0.
-2. Otherwise the facing turns towards the heading by
+1. `d` = the signed difference from `F` to `H`, taken the shorter way,
+   computed exactly as the heading difference of SPEC-0018 ("Angle
+   difference") with `H` as the target angle and `F` as the current
+   angle. `r = |d|`.
+2. If `r < 0.001` (`0x3A83126F`): `F = H`, `w = 0`, done.
+3. `w = add(w, s)` if `d >= 0`, else `add(w, -s)`.
+4. The limit `c = min(m, r)`; if `r < R` (strict), then
+   `q = div(r, R)` and `c = mul(c, pow(q, P))` (`pow` of SPEC-0011).
+5. If `|w| > c`, `w` is set to `c` with the sign of `w`.
+6. `F = add(F, w)`. If `|F| >= 2 pi`, `F` is replaced by
+   `mul(frac(mul(|F|, div(1.0, 2 pi))), 2 pi)` with the sign of `F`,
+   where `frac` is the fractional part (for the values that occur, `F`
+   between `2 pi` and `2 pi + 0.3`, this is
+   `mul(sub(mul(F, div(1.0, 2 pi)), 1.0), 2 pi)`, which is not the same as
+   `sub(F, 2 pi)`). Then, if `F < 0`, `F = add(F, 2 pi)`.
 
-       step = min(w + s, m, B(r))
+`GetUnitFacing` returns `mul(F, RAD)` with `RAD = 0x42652EE1`
+(SPEC-0011).
 
-   and `w` becomes `step`.
+The constants by `orientInterp` (column `orientInterp` of
+`Units\UnitData.slk`, field `uori`; values 9 to 15 behave as 0):
 
-`s` (acceleration) and `m` (maximum step) per update, in radians, by
-`orientInterp` (all nine values measured with footman copies that
-differ only in `uori`; 0 to 5 are used by the game's units):
+| `orientInterp` | `s` | `m` | `R` | `P` | Example units |
+|---|---|---|---|---|---|
+| 0 | `0x3D8F5C29` (0.07) | `0x3E4CCCCE` (0.2) | `0x3E4CCCCE` (0.2) | 0.25 | `hfoo`, `hpea`, `hmil` |
+| 1 | `0x3CF5C290` (0.03) | `0x3DCCCCCE` (0.1) | `0x3E4CCCCE` (0.2) | 0.25 | `hmtt`, `hgry`, `hmtm` |
+| 2 | `0x3C75C290` (0.015) | `0x3ECCCCCE` (0.4) | `0x3F4CCCCE` (0.8) | 0.25 | `hgyr`, `hsor` |
+| 3 | `0x3BA3D70A` (0.005) | `0x3DCCCCCE` (0.1) | `0x3F99999A` (1.2) | 0.5 | ships (`hbot`, `hdes`), `nadk` |
+| 4 | `0x3D23D70B` (0.04) | `0x3E19999A` (0.15) | `0x3F99999A` (1.2) | 0.6 | `hkni`, `Hamg` |
+| 5 | `0x3D4CCCCD` (0.05) | `0x3E3851EC` (0.18) | `0x3F99999A` (1.2) | 0.6 | `ogru`, `Hpal` |
+| 6 | `0x3DCCCCCE` (0.1) | `0x3E99999A` (0.3) | `0x3F4CCCCE` (0.8) | 0.4 | - |
+| 7 | `0x3B449BA6` (0.003) | `0x3DA3D70B` (0.08) | `0x3F99999A` (1.2) | 0.5 | - |
+| 8 | `0x3A83126F` (0.001) | `0x3D4CCCCD` (0.05) | `0x3FB33334` (1.4) | 0.5 | - |
 
-| `orientInterp` | `s` | `m` | Example units |
-|---|---|---|---|
-| 0 | 0.07 | 0.2 | `hfoo`, `hpea`, `hmil` |
-| 1 | 0.03 | 0.1 | `hmtt`, `hgry`, `hmtm` |
-| 2 | 0.015 | at least 0.285 (not reached within 180 degrees) | `hgyr`, `hsor` |
-| 3 | 0.005 | 0.1 | ships (`hbot`, `hdes`), `nadk` |
-| 4 | 0.04 | 0.15 | `hkni`, `Hamg` |
-| 5 | 0.05 | 0.18 | `ogru`, `Hpal` |
-| 6 | 0.1 | 0.3 | - |
-| 7 | 0.003 | 0.08 | - |
-| 8 | 0.001 | 0.05 | - |
+`P` is `0x3E800000` (0.25), `0x3F000000` (0.5), `0x3F19999A` (0.6) or
+`0x3ECCCCCE` (0.4). Several constants are not the nearest float to the
+decimal value (0.2 is `0x3E4CCCCE`, not `0x3E4CCCCD`); use the bit
+patterns. Read from the memory of the running game.
 
-`B` is a braking limit that depends only on `r` and the `orientInterp`
-value. It is given as a measured table, `SPEC-0013-facing-brake.tsv`
-(columns `orient_interp`, `remaining_deg`, `step_deg`, in degrees):
-for each value, points from 0.057 degrees up to the largest remaining
-angle at which the brake was ever the smallest of the three terms
-(11.4 degrees for 0, 11.1 for 1, 18.1 for 2, 68 for 3, 68 for 4, 66 for
-5, 45 for 6, 66 for 7, 80 for 8). Above that range `B` never limited the
-step in any test, including full-speed turns of up to 180 degrees, so
-it can be taken as unlimited there. Interpolate linearly in
-`log r` / `log step`.
+So the brake of step 4 is `min(m, r) * (r / R)^P`: for `orientInterp`
+3, 7 and 8 this is the closed form found earlier from measurements
+(`sqrt(m^2 r / R)` for `r >= m`). The measured table
+`SPEC-0013-facing-brake.tsv` agrees with it and is kept only as data;
+the formula replaces it.
 
-For `orientInterp` 3, 7 and 8 the table follows a closed form, with `r`
-and the step in radians:
-
-    B(r) = sqrt(C * r)            if r >= m
-    B(r) = sqrt(C * r) * r / m    if r < m
-
-with `C` = 0.0083333 (3), 0.0053333 (7) and 0.0017857 (8), that is
-`m^2 / 1.2` for 3 and 7 and `m^2 / 1.4` for 8: a constant
-deceleration of `C / 2` per update while far from the end, then a
-faster fade. (`step^2 / r` is constant to six digits over the whole
-first range.) For the other values the brake has a different shape and
-only the table is available.
-
-The rule with these tables reproduces, at every update, the facing of
-495 measured turns (55 target angles from 0.3 to 180 degrees for each
-`orientInterp` value) within 0.002 degrees, apart from 11 single updates
-(a snap decided differently right at the threshold, and gaps in the
-table for `orientInterp` 6). It also reproduces the facing that chases
-a slowly turning heading during movement (SPEC-0018).
+The rule reproduced bit for bit the facing of a walking footman at every
+update of its first turn (target 20.56 degrees: facings 0.07, 0.21,
+0.3482... radians, then the snap; see SPEC-0018, Verification 5), read
+from the game's memory.
 
 Footman, 0 -> 180 degrees: steps of 0.07, 0.14, then 0.2 radians, the
-brake from about 7.5 degrees before the end, last values 179.954, then
-180.0 after 0.705 s.
+brake from about 11.5 degrees (0.2 radians) before the end, last values
+179.954, then 180.0 after 0.705 s.
 
 ### Position
 
@@ -226,8 +224,7 @@ brake from about 7.5 degrees before the end, last values 179.954, then
 
 ## Open questions
 
-1. A closed form of the brake for `orientInterp` 0, 1, 2, 4, 5 and 6,
-   and `m` for value 2.
+1. (Resolved: the brake is given by the formula of "Facing turn rule".)
 2. A thread resumed after `TriggerSleepAction` that sets life and starts
    a 0.005 s periodic timer reads no regeneration at the first expiry
    (all unit types), unlike a thread run from a timer trigger.

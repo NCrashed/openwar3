@@ -188,11 +188,21 @@ per second.
 
 **Game clock.** The movement system has its own clock `T`: 0 when the
 game starts, and at every tick `T = add(T, 0.005)` (`0x3BA3D70A`), so
-it lags behind the exact time (after 305 ticks it is `1.5249985`). The
-elapsed time between two clock values is `e = sub(T1, T0)`, taken as 0
-when `|e| < 0.0001` (`0x38D1B717`). (The clock is kept as a count of
+it lags behind the exact time (after 305 ticks it is `1.5249985`). With
+the ticks numbered as in "Phase from the start of the game", the clock
+in tick `k` is the result of `k - 1` such additions (in tick 205 it is
+`1.0199990`, in tick 301 `1.4999986`, read from memory). The elapsed
+time between two clock values is `e = sub(T1, T0)`, taken as 0 when
+`|e| < 0.0001` (`0x38D1B717`). (The clock is kept as a count of
 300-second periods plus this value; the change of period was not
 observed.)
+
+**Units of storage.** The game keeps positions and velocities in cells
+of 32 world units (position relative to the lower left corner, divided
+by 32; velocity in cells per second; `spd / 32` as the speed limit).
+Dividing by 32 is exact, and all results below came out with the same
+bits whether computed in cells or in world units, so the formulas are
+written in world units.
 
 **Position.** The game keeps for each unit a committed position `P`,
 the velocity `v` and the clock value `Tb` of the commit. The position
@@ -207,6 +217,19 @@ each update the position is committed first: `P = add(P, mul(v, e))`,
 angle is 0 if `|a| <= 0.00001`, `sub(2 pi, a)` if `y < 0`, and `a`
 otherwise, with `2 pi = 0x40C90FDB`. Angles are in `[0, 2 pi)`.
 
+**Angle difference.** For a target angle `A` and a current angle `H`
+(both as produced by the angle function above): `t = sub(H, A)`; then
+
+- if `t < 0` and `-t > pi`: `d = sub(-2 pi, t)`;
+- if `t >= 0` and `t > pi`: `d = sub(2 pi, t)`;
+- otherwise `d = -t` (sign flip, exact).
+
+`pi = 0x40490FDB`, `2 pi = 0x40C90FDB`. This is not the same as
+computing `sub(A, H)` and adding or subtracting `2 pi` afterwards: the
+order of the operations changes the last bits when one angle is near 0
+and the other near `2 pi`, which happens on every walk along the x axis
+(the heading wobbles around 0).
+
 **Update.** At each update of a walking unit, after the commit:
 
 1. The current heading `H` is the angle of `v`, or the stored heading
@@ -215,10 +238,9 @@ otherwise, with `2 pi = 0x40C90FDB`. Angles are in `[0, 2 pi)`.
    The heading is therefore not kept from one update to the next: it
    is recomputed from the velocity, and this round trip through `cos`,
    `sin` and `acos` is what makes it wander.
-2. `A` = angle of `sub(target, P)` (per coordinate), `d = sub(A, H)`;
-   if `d >= 0` and `d > pi` then `d = sub(d, 2 pi)`; if `d < 0` and
-   `-d > pi` then `d = add(d, 2 pi)` (`pi = 0x40490FDB`); `d = 0` if
-   `|d| < 0.0000002` (`0x3456BF95`).
+2. `A` = angle of `sub(target, P)` (per coordinate), `d` = the angle
+   difference from `H` to `A` (above); `d = 0` if `|d| < 0.0000002`
+   (`0x3456BF95`).
 3. The unit moves in this update if `|d| < propWin` and
    nothing else stops it (SPEC-0019, SPEC-0020); its speed is then
    `spd` (no acceleration was observed), otherwise 0. `propWin` is
@@ -227,12 +249,24 @@ otherwise, with `2 pi = 0x40C90FDB`. Angles are in `[0, 2 pi)`.
    unit of the last place below the nearest float to pi / 3. The test
    is strict: `|d|` equal to `propWin` does not move.
 4. The new heading is `H = add(H, d)` if `|d| <= turnRate`, else
-   `add(H, turnRate)` or `add(H, -turnRate)` with the sign of `d`. It is
-   also stored. (It may leave `[0, 2 pi)` by a little; `sin` and `cos`
-   are periodic.)
+   `add(H, turnRate)` or `add(H, -turnRate)` with the sign of `d`. (It
+   may leave `[0, 2 pi)` by a little; `sin` and `cos` are periodic.)
 5. With speed `s > 0` the wanted velocity is
    `w = (mul(s, cos H), mul(s, sin H))` and the new velocity is
-   `v = add(v, sub(w, v))` per coordinate; with speed 0 it is `(0, 0)`.
+   `v = add(v, sub(w, v))` per coordinate. Then the velocity is limited
+   to the unit's speed: with `q = add(mul(vx, vx), mul(vy, vy))`, if
+   `|q| < 0.0000002` (`0x3456BF95`) the velocity becomes `(0, 0)`;
+   otherwise, if `L = sqrt(q)` is greater than `spd` (strictly),
+   `k = mul(spd, div(1.0, L))` and `v = (mul(vx, k), mul(vy, k))`.
+   Because `cos` and `sin` of SPEC-0011 are approximations,
+   `cos^2 + sin^2` is often slightly above 1 (a footman's `|w|` came
+   out as 270.0040 for a heading of 20.56 degrees), and this step then
+   shortens the velocity a little and turns it by up to about 0.001
+   degrees. With speed 0 the velocity is `(0, 0)`.
+6. The stored heading becomes the angle of the new velocity (angle
+   function above, with `len = sqrt(q)`), or `H` brought into
+   `[0, 2 pi)` when the velocity is 0. The facing turns towards the
+   stored heading (SPEC-0013, "Facing turn rule").
 
 So a unit standing still (at an update where it must not move) still
 turns its heading towards the target of that update.
@@ -244,11 +278,11 @@ stored positions relative to the corner at ticks 12, 18, 24, 30 are
 (9296.099609, 10288.043945), (9304.199219, 10288.016602),
 (9312.298828, 10287.977539), (9320.398438, 10287.990234) exactly.
 
-Rarely the game commits the position also between two updates (one
-case at tick 115 of this example); the trigger was not found (it is
-not every crossing of a cell or half-cell line). Such a commit can
-shorten a step by one unit of the last place (1/1024 here); see Open
-questions.
+The position is committed only at the updates (and when an order is
+given). An earlier version of this spec assumed extra commits between
+updates to explain differences of 1/1024; they were the velocity limit
+of step 5 and the angle difference: traced in the running game, a
+walking footman's position was committed only at its updates.
 
 ## Edge cases
 
@@ -265,11 +299,8 @@ questions.
    peasant walked on at 15.6 and stopped at 15.65 and 15.85, so the
    distance is not the plain Euclidean one in world units (it is taken
    in cells, from positions that change continuously between updates).
-2. (Resolved: see Movement arithmetic.) Open: the trigger of the
-   occasional extra position commits between updates, and where the
-   game clock starts relative to the map script (the per-tick positions
-   of the example came out the same for any clock value at the order
-   between 0 and about 3 seconds).
+2. (Resolved: see Movement arithmetic, including the clock origin;
+   there are no extra commits between updates.)
 3. Path finding: SPEC-0020 covers static obstacles of the pathing map;
    detours around units, buildings, doodads and cliffs are open, and so
    is the long-distance case where a unit walking 5000 first headed 1.7
@@ -294,15 +325,15 @@ questions.
 
 ## Verification
 
-1. Footman at (-3000, -2000), facing 0, `move` to (-2000, -2000): first
-   motion at update 1, per-tick positions as above, rest at
-   x = -2011.9326 reached at tick 738 after the order (update 123),
-   `GetUnitCurrentOrder` 0 from tick 739. With the movement arithmetic
-   above the positions of every tick up to tick 116 are exact; the
-   occasional extra commits of the game then cost up to about 0.06 in x
-   by the end, so compare the update count and the tick of arrival
-   exactly, x within 0.1 and y within 0.05. (An implementation aiming
-   straight at the target in ordinary floating point got -2011.848.)
+1. Footman at (-3000, -2000), facing 0, `move` to (-2000, -2000), order
+   from a timer in tick 295: first motion at update 1, rest at
+   (-2011.9326171875, -1999.99609375) reached at tick 738 after the
+   order (update 123), `GetUnitCurrentOrder` 0 from tick 739. With the
+   movement arithmetic above, the positions of all 732 logged ticks are
+   exact to the bit, and so are the position and velocity at all 122
+   updates read from memory. (Without the velocity limit of step 5 the
+   rest point is -2011.870; an implementation aiming straight at the
+   target in ordinary floating point got -2011.848.)
 2. The start table above for `propWin` 10, 30, 60, 90 and the `turnRate`
    values listed: first motion at the predicted update in all 40 cases.
 3. Facing of a footman with `turnRate` 0.1 turning to 180 degrees:
@@ -312,4 +343,16 @@ questions.
    timer of `main`, from a 0.005 s periodic timer of `main` in its 6th,
    7th and 100th call, and from a 0.5 s timer of `main`: first motion in
    ticks 8, 8, 8, 14, 104, 104.
-
+5. **Diagonal walk, velocity limit and facing** (test map RSF): footman
+   created at (0, 0) facing 0 in tick 201 (a 1.0 s timer of `main`),
+   `move` to (800, 300) given in the same tick. First update with motion
+   in tick 205 (clock `1.0199990`): heading `0x3EB7B2A2`, wanted
+   velocity (252.8071, 94.8080) with length 270.0040, limited velocity
+   (`0x437CCDA7`, `0x42BD9CF4`) = (252.80333, 94.80655), stored heading
+   `0x3EB7B64C`. Facings after updates 1 to 9: `0x3D8F5C29`,
+   `0x3E570A3D`, `0x3EB246E1`, `0x3EB4E335`, `0x3EB60B7C`,
+   `0x3EB6A397`, `0x3EB6FC1D`, `0x3EB7314F`, `0x3EB754CC`, then the snap
+   to the stored heading of update 10, `0x3EB7B96E`. Rest at
+   (788.6640625, 295.75), 12.1064 from the target, after 104 updates.
+   Position, velocity and facing at every update match the game's
+   memory bit for bit.

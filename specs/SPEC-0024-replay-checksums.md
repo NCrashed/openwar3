@@ -42,7 +42,7 @@ the time increments (ms) of time slots `1..k`, `t_0 = 0`.
     checksum = fold(v, E)
 
 - 6059 is the build number of 1.27b.
-- `S`: the system sum (below).
+- `S`: the state sum (below).
 - `B`: in single player, the game time in ms that has run when the
   checksum is computed, which is `25 * floor(t_(k-1) / 25)` (the game
   runs in steps of 25 ms, SPEC-0002). In network games a different value
@@ -53,42 +53,33 @@ the time increments (ms) of time slots `1..k`, `t_0 = 0`.
 - `D`: the next creation number.
 - `E = bh(a) + bh(b)` of the script generator state `a`, `b` (SPEC-0007).
 
-### System sum S
+### State sum S
 
-Twenty slots, numbered 0 to 19, each empty or holding one value `c_i`.
-`S` folds them from slot 19 down to slot 0, starting from 0 and skipping
-empty slots: `h = fold(h, c_i)`.
+    h = K1
+    h = fold(h, G)     the game sum (below)
+    h = fold(h, K2)
+    h = fold(h, K3)
+    h = fold(h, R)     the game generators
+    h = fold(h, N)     the network sum (below)
+    S = fold(h, X)     the cheats
 
-| Slot | Value |
-|---|---|
-| 0 | cheat flags: the set of active cheats, with bit 12 cleared (0 without cheats) |
-| 1 | empty |
-| 2 | `N`, the network sum (below) |
-| 3 | `R`: the sum of `bh(a) + bh(b)` over the 45 game generators of SPEC-0007 |
-| 4 | static (game data table) |
-| 5 | static (ability data) |
-| 6 | `G`, the game sum (below) |
-| 7 | static (game data table) |
-| 8 | empty |
-| 9 | static (upgrade data) |
-| 10, 11 | empty |
-| 12 to 18 | static: object data of units, items, destructables, (15 empty), abilities, buffs, upgrades |
-| 19 | static (other custom data, 0 in the tests) |
-
-Static values are computed once from the loaded data and do not change
-during the game. Measured on test maps made from `(12)IceCrown` without
-changed object data:
-
-- slots 19 down to 7 folded: `S7 = 0xEA73D958`, so that
-  `S = fold(fold(fold(fold(fold(fold(S7, G), c5), c4), R), N), c0)`;
-- `c4 = 0x414C0D79`, `c5 = 0xA996F046`.
+- `R`: the sum of `bh(a) + bh(b)` over the 45 game generators of
+  SPEC-0007 (their order does not matter).
+- `X`: the set of active cheats as bit flags, with bit 12 cleared; 0
+  without cheats.
+- `K1`, `K2`, `K3`: constants of the game. They depend only on the
+  loaded game data and the object data of the map (unit, item,
+  destructable, ability, buff and upgrade data, the ability and upgrade
+  tables) and do not change during the game. Measured on test maps made
+  from `(12)IceCrown` without changed object data: `K1 = 0xEA73D958`,
+  `K2 = 0xA996F046`, `K3 = 0x414C0D79`. How they are computed from the
+  data is not specified (open question 5).
 
 Every step above is linear over XOR, so the checksum can also be written
-as `F XOR K`, where `F` is the checksum computed with all static values
-set to 0 and `K` depends only on the static values. An implementation
-that does not reproduce the static values can take `K` from the first
-recorded checksum whose other parts it knows, and use it for the rest of
-the game.
+as `F XOR K`, where `F` is the checksum computed with `K1`, `K2`, `K3` set
+to 0 and `K` depends only on them. An implementation can take `K` from
+the first recorded checksum whose other parts it knows, and use it for
+the rest of the game.
 
 ### Network sum N
 
@@ -110,8 +101,8 @@ more) also add `bh(id)`; this was not tested.
     G = 12
     for player = 0 .. 11: G = fold(G, P(player))
 
-Players 12 to 15 (neutral) do not take part. All 12 slots counted in the
-tests, including empty ones.
+Players 12 to 15 (neutral) do not take part. All 12 players counted in
+the tests, including empty player slots.
 
 The player sum:
 
@@ -170,14 +161,41 @@ and `(857, 863)` for two footmen. `C`, `D` and every `idsum` therefore
 depend on the creation and freeing of all these objects (open
 question 2).
 
+The same pairs identify units in the actions of a replay. In a replay
+recorded with real mouse clicks (test map RSL), selecting the player's
+footman wrote the pair (827, 830) in the selection action and in the
+subgroup action (with the type `hfoo`), and the attack order on the
+enemy footman wrote its pair (845, 848) together with the target point
+(0, -700), the enemy's position; the same pairs were read from the
+units in memory. `GetHandleId` gave unrelated numbers (1048680,
+1048681). The creation number is never reused and grows with the order
+of creation, so it identifies a unit for the whole game; the entry
+number can be reused after the object is freed. A unit takes many
+creation numbers when it is made (its own and those of its internal
+objects): two footmen created one after the other by the script got
+creation numbers 830 and 848, in another test 828 and 863. Units placed
+on the map before the game starts were not examined (open question 6).
+
 ## Edge cases
 
 - Only the sum `R` over the game generators is used, so two generator
   states with the same byte sums give the same checksum.
 - The first turns of a game (before about 1.2 s on the test map) had
   other `C` and `D` values while the script created objects.
-- The cheat slot clears one bit, so one cheat flag never changes the
-  checksum.
+- Two games of the same map that draw the same random numbers still
+  get different checksums from turn 2 on (seen with `c-RSA-1.w3g` and
+  `c-RSA-2.w3g`): the length of each time slot follows the real clock
+  (100, 101, 102 ms in single player), so `B` and `N` differ. The random
+  generators start from the same state in every game (SPEC-0007, "State
+  at game start"); the random seed of the replay header is not used for
+  them.
+- In the first 100 ms of every game some internal objects are freed,
+  so `C` changes between turn 1 and turn 2 (on an empty test map from
+  "no free entry" to the free entry 806) while nothing else does; the
+  random generators are not used there. The checksum of turn 2 therefore
+  always differs from what turn 1 would predict.
+- `X` has bit 12 cleared, so the cheat with that flag never changes
+  the checksum.
 
 ## Open questions
 
@@ -191,7 +209,11 @@ question 2).
    list of the player.
 4. The second marked unit of the selection; the key order of the 10
    control groups (groups were empty in the tests).
-5. The static values on other maps and with changed object data.
+5. How `K1`, `K2`, `K3` are computed from the data, and their values on
+   other maps and with changed object data.
+6. The creation numbers of units placed on the map, and a rule that
+   gives the creation number of each unit without reproducing the object
+   table (which objects a unit of each type creates).
 
 ## Sources
 
@@ -200,7 +222,7 @@ question 2).
 - Memory reads of the running game (1.27b under Wine): the stored turn
   checksum matched the replay's 0x22 values (68 of 68); dumps taken
   while the game was paused by the script at different times in two
-  games gave the same `S7`.
+  games gave the same `K1`.
 - Replays of test maps recorded with `EndGame(false)` (they are in
   `game-data/1.27b/replays/`, see its `README.txt`).
 
@@ -214,7 +236,7 @@ question 2).
    the replay's time slot blocks.
 3. **Full checksum:** for each row of `SPEC-0024-vectors.tsv` (turns 12
    to 206 of `c-RSF-1.w3g`), the formula above with the row's `B`, `N`,
-   `C`, `D`, `E`, `R`, `G`, the constants `S7`, `c4`, `c5` and `c0 = 0`
+   `C`, `D`, `E`, `R`, `G`, the constants `K1`, `K2`, `K3` and `X = 0`
    gives the row's `checksum`, which is the replay's 0x22 value. All 195
    rows match.
 4. **Using the checksum without the object table:** between two turns

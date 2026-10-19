@@ -90,6 +90,31 @@ of its acquisition checks, SPEC-0019); generator 9 draws the reaction
 delay of attack orders and of acquisitions (SPEC-0019). The other uses
 are not known yet.
 
+### State at game start
+
+Every game starts from the same state, before `main` of the map script
+runs. With `s0 = 0x77617233` (the bytes of the text "3raw" read as a
+little-endian word):
+
+- the script generator is seeded with `s0` by the seeding formula,
+  **without** the discarded step: `a = 0x77617233`, `b = 0x2C08AC40`;
+- a separate helper generator is also seeded with `s0` (no discarded
+  step); its first 45 outputs `w0..w44` seed the game generators: game
+  generator `i` is seeded with `w_i`, without a discarded step. Game
+  generator 0 is seeded with 0x2C46961D, generator 1 with 0xB9614EFC.
+
+So the first script random value of a game that has not drawn any
+before is the output of one step from that state: three
+`GetRandomInt(0, 2147483647)` at the start give 371411726, 1555081086,
+1646406250.
+
+The random seed stored in the replay header differs from game to game,
+but it does not take part in this: the state was the same in three
+single player games with different header seeds, and a replay played
+back with its header seed changed drew the same values. A replay played
+back starts from the same state, so playback repeats all random values.
+Network games were not tested.
+
 ### Table equivalence
 
 The table was recovered from measured outputs. Any table that differs
@@ -107,12 +132,11 @@ member of that class.
 
 ## Open questions
 
-1. The state at game start without `SetRandomSeed`. In single player
-   started with `-loadfile` the first `GetRandomInt(0, 2147483647)` was
-   57869864 in two runs; how the start state depends on the game (lobby
-   seed, replay header) is not known.
-2. What the game generators other than number 2 are used for, and their
-   state at game start.
+1. The state at game start in network games. (An earlier note gave
+   57869864 as the first `GetRandomInt(0, 2147483647)` in single player;
+   that map drew random numbers during its initialisation. On a map that
+   does not, the first value is 371411726, see "State at game start".)
+2. What the game generators other than numbers 2 and 9 are used for.
 
 ## Sources
 
@@ -136,3 +160,9 @@ member of that class.
   `GetRandomReal(2.5, 7.25)` printed with `R2SW(x, 1, 9)` gives
   4.846750208 5.005834102 3.415878752 5.382181632 4.171306608
   2.869395968.
+- Game start: on a map that draws no random numbers before, the script
+  generator state is `a = 0x77617233`, `b = 0x2C08AC40` and game
+  generators 0 and 1 are `(0x2C46961D, 0x3CB404A0)` and
+  `(0xB9614EFC, 0x2C1C141C)` (states read from memory); the first three
+  `GetRandomInt(0, 2147483647)` are 371411726, 1555081086, 1646406250, in
+  the game and when its replay is played back.

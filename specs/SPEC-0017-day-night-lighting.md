@@ -218,7 +218,36 @@ ratio of shadowed to lit colour does not depend on the time of day or
 the light model. Cliff models are darkened in the same way (SPEC-0014,
 rule 9).
 
-## Edge cases
+### Terrain fog
+
+Fog is set by the script with `SetTerrainFogEx(style, zstart, zend,
+density, red, green, blue)`; the World Editor writes such a call into
+`main` when the map has fog (23 of the shipped maps in the test
+installation do, all with style 0). `(12)IceCrown`, whose script makes no call, showed
+no fog. Whether the game applies the fog fields of `war3map.w3i`
+(version 25) by itself was not tested. The colour components are 0 to
+1.
+
+The ground, units, destructables and water (the ones tested) are mixed
+with the fog colour:
+
+    pixel = (1 - f) * colour + f * fog colour
+
+where `colour` is the pixel as described above (lit, shadowed) and `f`
+depends on `z`, the depth of the point along the camera's view
+direction (not its distance from the eye: looking straight down at
+flat ground, `f` was the same over the whole screen):
+
+- style 0 (linear): `f = (z - zstart) / (zend - zstart)`, limited to
+  0 .. 1; `density` is not used;
+- style 1: `f = 1 - exp(-density * z)`;
+- style 2: `f = 1 - exp(-(density * z)^2)`;
+- `zstart` and `zend` are not used by styles 1 and 2.
+
+So the densities used by the shipped maps for style 0 (0 to 84.5) have
+no effect, and a style 1 or 2 density of 0.5 hides everything.
+
+
 
 - The clamp at 1 is per channel and applied to the light before the
   texture: at Ashenvale noon all three channels saturate and a white
@@ -245,6 +274,12 @@ rule 9).
    last, partial block); sample positions were measured to within about
    5 world units (all measured positions lay 3 to 5 units west of the
    formula, not explained).
+6. Fog: cliffs and doodads, the sky and the area outside the map,
+   `SetTerrainFog` (the older native), `ResetTerrainFog`, the fog fields
+   of `war3map.w3i`, how water and the ground under it are fogged (the
+   three channels of a water pixel gave different `f`, 0.42 to 0.49, as
+   if each layer were fogged by its own depth), and other styles than
+   0, 1, 2.
 
 ## Sources
 
@@ -331,4 +366,17 @@ values are 0 or 1 below the model:
    115.9, 136)`, `(12.8, 21.7, 32.6)`, `(50.2, 85.4, 128.1)`, `(56.2,
    95.6, 136)`. The footman model in a map whose `war3map.shd` is all
    shadow: the same values as without it.
+9. **Fog.** Flat white ground (drawn `(245, 245, 252)`), camera straight
+   down at heights 500 to 6000, fog colour red:
+   - style 0, 2000 .. 4000: no fog up to 2000; `(248, 184, 189)` at
+     2500, `(250, 123, 126)` at 3000, `(253, 61, 63)` at 3500,
+     `(255, 0, 0)` from 4000; the same at the centre and the corners of
+     the screen;
+   - style 1, density 0.001: `f` 0.392, 0.633, 0.776, 0.865, 0.951,
+     0.984, 0.996 at 500, 1000, 1500, 2000, 3000, 4000, 6000 (formula:
+     0.393, 0.632, 0.777, 0.865, 0.950, 0.982, 0.998);
+   - style 2, density 0.0005: 0.061, 0.220, 0.429, 0.633, 0.894, 0.984,
+     1.000 (formula: 0.061, 0.221, 0.430, 0.632, 0.895, 0.982, 1.000);
+   - style 1 and 2 with density 0.5: full fog from 500 on.
+   A unit, a destructable and water were fogged as well.
 

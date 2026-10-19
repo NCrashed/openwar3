@@ -68,9 +68,18 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 - **Size and height of units.** A unit's model is drawn at the scale
   `modelScale` of `Units\UnitUI.slk` (gryphon rider 1.2: a test model
   drawn 1.17 to 1.2 times as large as on a footman, 1.0; abomination 0.9:
-  0.88). A flying unit is drawn at its flying height above the ground:
-  the gryphon rider (`moveHeight` 240) about 238 above it, seen from the
-  side next to a footman.
+  0.88). A flying unit is drawn at its flying height above the ground
+  under it: the gryphon rider (`moveHeight` 240) about 238 above flat
+  ground, seen from the side next to a footman, and 232 to 242 above
+  ground raised by raw height 256 (`GetLocationZ` 256), read from the
+  scale and position of a flat marker seen straight down with the
+  camera target on low ground. The flying height is
+  `max(moveHeight, moveFloor)` of `Units\UnitData.slk` as changed by the
+  map's `war3map.w3u`: a gryphon rider copy with `moveHeight` 60
+  (`moveFloor` 90) had `GetUnitFlyHeight` 90 and was drawn 90 above
+  flat ground and 82 to 89 above the raised ground; a copy with
+  collision size 31 kept 240. Only one value below `moveFloor` was
+  tried.
 - **Units** are drawn at the centre of their pathing footprint
   (SPEC-0020, "Size classes and footprints"): units of size class 1 and
   3, whose footprints are 2 x 2 and 4 x 4 cells and reach one cell more
@@ -83,7 +92,10 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
   +- 1 in y; 32 (class 2: knight, rifleman, grunt, paladin, archer,
   huntress, mortar team, Medivh): none; 48 (class 3: abomination and a
   footman copy): -16.3, -15.7. `GetUnitX` returned the given position in
-  all cases. Walking units are drawn the same way, at their current
+  all cases. Flying units follow the same rule: the gryphon rider
+  (collision 8, class 0) is drawn at its position, its copy with
+  collision 31 (class 1) 16 west and 16 south of it, over flat and over
+  raised ground. Walking units are drawn the same way, at their current
   position plus the offset of their class: footmen (class 1) and
   knights (class 2) walking east and south, paused with `PauseGame` in
   ticks 157 to 162, were drawn within 0.5 of their position plus the
@@ -106,9 +118,9 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 2. The near and far planes (`CAMERA_FIELD_FARZ`) and fog.
 3. Whether the field of view applies the same way in full-screen modes
    and with the `fixedaspect` video setting.
-4. How flying units' height follows the ground (only flat ground
-   tested), buildings, and the snapping of doodads with other pathing
-   texture sizes.
+4. How a flying unit's height changes while it flies over a slope or a
+   cliff edge (smoothing, timing), buildings, and the snapping of
+   doodads with other pathing texture sizes.
 
 ## Sources
 
@@ -135,3 +147,13 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 3. **From the side** (angle of attack 359): the top edges of the block
    raised by raw height 128 and of the block one cliff level up are on
    the same screen row.
+4. **Flying units over raised ground**: ground raised by raw height 256
+   at x 3200 to 4736, y -4864 to -3328, otherwise flat; camera straight
+   down at distance 3000 with the target at (2400, -4000); paused gryphon
+   riders (`moveHeight` 240) at (1900, -4000) and (3700, -4000), copies
+   with collision 31 at (1900, -3500) and (3700, -3500), copies with
+   `moveHeight` 60 at (1900, -4500) and (3700, -4500), each drawn as a
+   flat marker. `GetUnitFlyHeight` gives 240, 240, 240, 240, 90, 90. The
+   markers are where points at heights 240, 496, 240, 496, 90 and 346
+   above zero, shifted by 16 west and south for the collision 31 copies,
+   project (within about 8 units in height).

@@ -209,7 +209,11 @@ through the camera stored in the model; the portrait models and the
 building models looked at have one camera each, with a field of view
 of 0.7854 rad (45 degrees), near and far distances 8 and 1000 (the
 footman's portrait: position (40.18, 194.43, 88.61), target (8.25,
-214.87, 90.07)). It plays the model's sequences whose names contain
+214.87, 90.07)). The projection is that of SPEC-0023 ("Field of
+view") for the portrait frame: `a` = 0.09 / 0.08560 = 1.0514, so with
+45 degrees the half-angle up and down is `v` = 0.39270 / 1.45097 =
+0.27065 rad, `tan(v)` = 0.2774, and across `a * tan(v)` = 0.2917; the
+camera's target is drawn at the centre of the frame. It plays the model's sequences whose names contain
 `Portrait` and not `Talk` (`Portrait`, `Portrait 2`, `Portrait 3` of the
 footman; `Portrait -1` of the farm) while the unit is selected, and a
 `Portrait Talk` sequence while the unit's acknowledgement sound plays.
@@ -334,6 +338,9 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 
 ## Sources
 
+- Test map RUT on 1.27b under Wine, 2026-10-20: a selected footman;
+  the portrait camera (field of view, near, far) and the frame it is
+  drawn for read from the memory of the running game.
 - Frame rectangles read from the memory of the game (1.27b under Wine)
   in a 1024 x 768 and a 1280 x 720 window, test map RTP with a barracks
   selected and a footman in training, 2026-10-19/20.

@@ -7,7 +7,7 @@
 //! frame.
 //!
 //! PROVISIONAL: models come from `Units\unitUI.slk` (`file`,
-//! `modelScale`); custom types of the map, flying heights, decay and
+//! `modelScale`), flying units at their `moveHeight`; custom types of the map, decay and
 //! hidden units' corpses are not handled.
 
 use std::collections::BTreeMap;
@@ -271,7 +271,7 @@ impl Sim {
                 model: look.model.clone(),
                 replaceable: None,
                 team: u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0),
-                position: [x, y, self.game.ground_z(x, y)],
+                position: [x, y, self.game.ground_z(x, y) + look.fly_height],
                 angle: u.facing,
                 scale: [look.scale; 3],
             };

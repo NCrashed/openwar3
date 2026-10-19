@@ -54,8 +54,8 @@ struct Look {
 /// models are drawn"): at the centre of its footprint on the grid of
 /// paths, which for the size classes 1 and 3 (SPEC-0020) has its extra
 /// cell to the west and south. Buildings are drawn at their position.
-/// PROVISIONAL: walking units (drawn about 9 further ahead) and flying
-/// ones are not measured.
+/// Walking units are drawn the same way. PROVISIONAL: flying units take
+/// the offset of their size class too (not measured).
 pub fn unit_model_shift(collision: u32, building: bool) -> f32 {
     match ow3_sim::path::size_class(collision) {
         1 | 3 if !building => 16.0,
@@ -100,6 +100,8 @@ pub struct UnitLook {
     /// The selection scale, which times `ScaleFactor` of `[SelectionCircle]`
     /// in `UI\MiscData.txt` gives the size of its selection circle.
     pub selection: f32,
+    /// The height above the ground a flying unit is drawn at; 0 for others.
+    pub fly_height: f32,
 }
 
 /// The given columns of each row of an SLK table, by raw code.
@@ -303,6 +305,7 @@ pub fn placements(chain: &mut ArchiveChain, without_units: bool) -> Vec<Placemen
 /// The look of every unit type of `Units\unitUI.slk` and the map, by raw
 /// code value.
 pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, UnitLook> {
+    let heights = fly_heights(chain);
     unit_looks(chain)
         .into_iter()
         .map(|(id, look)| {
@@ -310,10 +313,28 @@ pub fn unit_models(chain: &mut ArchiveChain) -> BTreeMap<i32, UnitLook> {
                 model: model_path(&look, 0),
                 scale: look.scale,
                 selection: look.selection,
+                fly_height: heights.get(&id).copied().unwrap_or(0.0),
             };
             (i32::from_be_bytes(id.0), unit)
         })
         .collect()
+}
+
+/// The height above the ground at which flying unit types are drawn
+/// (`moveHeight` of `Units\UnitData.slk` for `movetp` `fly`, SPEC-0023).
+/// PROVISIONAL: the map's own changes are not read, and the height
+/// follows the ground at the unit's point (only flat ground measured).
+fn fly_heights(chain: &mut ArchiveChain) -> BTreeMap<RawCode, f32> {
+    table(
+        chain,
+        "Units\\UnitData.slk",
+        "unitID",
+        &["movetp", "moveHeight"],
+    )
+    .into_iter()
+    .filter(|(_, v)| v[0].trim().eq_ignore_ascii_case("fly"))
+    .map(|(id, v)| (id, number(&v[1], 0.0)))
+    .collect()
 }
 
 /// The look of every unit type: `Units\unitUI.slk`, then the map's
@@ -372,11 +393,6 @@ fn unit_looks(chain: &mut ArchiveChain) -> BTreeMap<RawCode, Look> {
 mod tests {
     use super::*;
 
-    /// SPEC-0023, "Where models are drawn": `LPcr` (default 1, limits 0.8
-    /// and 1.2) stored at 0.5, 1.0 and 2.0 is drawn at 0.8, 1.0 and 1.2;
-    /// `LOca` (1.2, 1, 1.4) at 1.2, 1.2 and 1.68; `LOca`, which has a
-    /// pathing texture, moves from 0, 400, -400, 256, -256 to 32, 416,
-    /// -416, 288, -224.
     /// SPEC-0023: the table of collision sizes and model shifts; buildings
     /// are not shifted.
     #[test]
@@ -396,6 +412,11 @@ mod tests {
         assert_eq!(shift(31.0, true), 0.0);
     }
 
+    /// SPEC-0023, "Where models are drawn": `LPcr` (default 1, limits 0.8
+    /// and 1.2) stored at 0.5, 1.0 and 2.0 is drawn at 0.8, 1.0 and 1.2;
+    /// `LOca` (1.2, 1, 1.4) at 1.2, 1.2 and 1.68; `LOca`, which has a
+    /// pathing texture, moves from 0, 400, -400, 256, -256 to 32, 416,
+    /// -416, 288, -224.
     #[test]
     fn doodad_scale_and_grid() {
         let pcr = DoodadRule {

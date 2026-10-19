@@ -601,7 +601,9 @@ silent:
   models of units of size classes 1 and 3 16 west and 16 south of the
   unit (the centre of their footprint), buildings at their place, the
   selection circles and bars with the models; the map's own collision
-  sizes are not read for units placed in the editor (`--no-sim`);
+  sizes are not read for units placed in the editor (`--no-sim`); units
+  of the simulation with `movetp` `fly` are drawn `moveHeight` above the
+  ground under them (only flat ground measured);
   destructables at their stored place and scale.
 
 ## Day/night lighting (`ow3-render::daylight`, the viewer)

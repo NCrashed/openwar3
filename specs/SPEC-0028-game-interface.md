@@ -193,6 +193,30 @@ string files, here of a Russian client):
   over the progress bar, and its growing life (SPEC-0026) below the
   portrait.
 
+### Portrait
+
+The portrait shows a model chosen from the selected unit's model file
+`M` (the `file` field of its type, without the extension):
+
+1. `M_portrait` if that file exists (for example
+   `Units\Human\Footman\Footman_portrait.mdx`);
+2. otherwise `M` itself (buildings: the farm's own model);
+3. if the unit has no model, the orc peon's portrait
+   (`units\orc\peon\peon_portrait`).
+
+The model is drawn into the portrait frame (above, 0.09 x 0.08560)
+through the camera stored in the model; the portrait models and the
+building models looked at have one camera each, with a field of view
+of 0.7854 rad (45 degrees), near and far distances 8 and 1000 (the
+footman's portrait: position (40.18, 194.43, 88.61), target (8.25,
+214.87, 90.07)). It plays the model's sequences whose names contain
+`Portrait` and not `Talk` (`Portrait`, `Portrait 2`, `Portrait 3` of the
+footman; `Portrait -1` of the farm) while the unit is selected, and a
+`Portrait Talk` sequence while the unit's acknowledgement sound plays.
+How one of several `Portrait` sequences is picked, and the timing of
+the talk sequences (`UI\SoundInfo\PortraitAnims.slk`), were not
+studied.
+
 ### Selection
 
 The player's selection holds at most 12 units. Units are named in
@@ -297,7 +321,7 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 
 ## Open questions
 
-1. The portrait (model, camera, animation); the exact strings and
+1. The choice among several portrait sequences; the exact strings and
    colours of the information panel, upgrades shown as bonuses, groups,
    heroes and items; what happens when two buttons have the same
    `Buttonpos`: next parts of this spec.

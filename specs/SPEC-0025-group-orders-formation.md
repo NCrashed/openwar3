@@ -1,6 +1,6 @@
 ---
 id: SPEC-0025
-title: Group orders and formation (part 1: layout)
+title: Group orders and formation (layout, holds, group speed)
 status: draft
 reference_version: 1.27b
 analysts: ["analyst workspace (static analysis of the binary, memory reads, replays with mouse clicks)"]
@@ -12,10 +12,10 @@ A point order given to several selected units at once (replay action
 with the group flag, SPEC-0024) does not send every unit to the order
 point. The units are split into movement groups ("clusters"); each
 cluster walks one path, and every member walks to its own place in a
-formation around the cluster's waypoint. This part gives the clusters,
-the formation angle, the leader and the exact layout of the places. The
-speeds while the formation forms and marches are in part 2 (open
-question 1).
+formation around the cluster's waypoint. This spec gives the clusters,
+the formation angle, the leader, the exact layout of the places, which
+members wait so that the ranks form up in the right order, and the
+common speed of the group.
 
 Units in this spec: positions and lengths are in cells of 32 world
 units, measured from the lower left corner of the world (SPEC-0018,
@@ -135,6 +135,65 @@ stops when it is within its arrival radius of that point (SPEC-0018),
 so a group comes to rest roughly in the formation's shape around the
 order point.
 
+### Members that wait for their rank to pass
+
+At every update of a cluster with more than one member, before the
+members move, each member's "hold" mark is cleared and then set again
+by the following rule (when the rule is not suspended, see below). A
+held member does not walk at this update (speed 0); it still turns
+towards its target.
+
+1. For every member `i`, with its current position `p_i` (committed
+   position plus velocity times the elapsed time, SPEC-0018) and
+   `s = sin(-A)`, `c = cos(-A)`:
+   `u_i = sub(mul(px_i, c), mul(py_i, s))` (as in the layout),
+   `e_i = add(r_i, 1.0)`, `lo_i = sub(u_i, e_i)`, `hi_i = add(u_i, e_i)`.
+2. Sort the members by `lo` in decreasing order (the selection sort of
+   the layout, step 4).
+3. Go through the sorted list from the last entry (smallest `lo`, the
+   rearmost) to the first, keeping `low` = the smallest rank seen so far
+   (start 16). Members that have reached their place are skipped. For
+   the member at position `k` with rank `b`:
+   - if `b > low`: it is held (a unit of a rear rank stands ahead of a
+     unit of a front rank that is behind it);
+   - otherwise (`b <= low`, and `low` becomes `b`): look at the entries
+     `k - 1, k - 2, ...` towards the front while `lo` of that entry is
+     strictly below `hi_k`; if one of them has not reached its place and
+     has a smaller rank than `b`, the member is held.
+
+The rule is suspended (no member is held) while a countdown of the
+cluster runs: when, at an update with the countdown at 0, some member
+is in a state that excludes it (blocked, searching or waiting on its
+path, among others; open question 3), the countdown is set to 66
+updates instead.
+
+In test RSP (peasant rank 4, rifleman 2, knight 0, footman 0 side by
+side, order to the south) the knight and footman walked at once, the
+rifleman was held for 18 updates and the peasant for 34, until the
+front ranks had passed them.
+
+### Group speed
+
+Each member computes its own speed for the update as a single unit
+would (SPEC-0018). The cluster then limits it:
+
+- If no member is held and no member has reached its place, the group
+  speed is the smallest speed limit (`spd`) of the members; otherwise
+  there is no group speed. (A shared limit over several clusters of one
+  order also exists; not studied.)
+- Each member's speed is `min(own speed, group speed)`, and its
+  velocity is set from that speed as in SPEC-0018, step 5.
+
+So while ranks form up, the moving members walk at their own speeds;
+once every member walks, all walk at the speed of the slowest; when the
+first member reaches its place, the others go on at their own speeds.
+In RSP all four walked at 190 (the peasant's speed) from update 35 on;
+in RSO the last footman sped up to 270 after the others had stopped.
+
+A further rule, for clusters with a flag that was not seen set, lowers a
+member that is faster than the leader to 0.95 times the leader's speed
+limit when it is close to the leader.
+
 ### Waits that draw the script generator
 
 When a member of a cluster with at least two members has to wait for
@@ -157,17 +216,13 @@ updates) and the exact condition were not studied (open question 2).
 
 ## Open questions
 
-1. Speeds (part 2): in test RSP (peasant, rifleman, knight, footman in a
-   row, order 465 to the south) the knight and footman started at once
-   at their own speeds (350, 270), the rifleman at update 10, the
-   peasant at update 18; from about update 18 on all four walked at
-   190, the peasant's speed, until each reached its place. The rules for
-   when a member starts and when the group speed applies are not known
-   yet. Each unit's own speed limit is not changed by the group.
+1. The flagged rule of "Group speed" (0.95 of the leader's speed) and
+   the shared limit over several clusters.
 2. The path wait of a group member: when it happens, its unit, and the
    condition for the wait of 2.
 3. When the layout is computed again (new waypoints, members lost or
-   added) and how members follow a path with several waypoints.
+   added), how members follow a path with several waypoints, and the
+   exact member states that start the 66-update countdown.
 4. Cluster splitting with distant units, and the path distance used for
    units with hierarchical paths.
 
@@ -196,3 +251,9 @@ updates) and the exact condition were not studied (open question 2).
    in front, rifleman 5.5 cells behind, peasant another 5.5 behind.
 3. Both formation angles of the example in "Formation angle and leader"
    follow from the angle function bit for bit.
+4. **Holds** (RSP): the rule of "Members that wait for their rank to
+   pass", computed with the engine operations from the members'
+   committed positions, velocities and commit times read from memory,
+   gave the game's hold marks at all 86 cluster updates of the test.
+   The rifleman was released at its 19th update, the peasant at its
+   35th; from then on all four velocities had length 190.

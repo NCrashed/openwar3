@@ -1,13 +1,13 @@
 //! Plays a replay in the simulation and prints what could not be played
 //! and the state at the end.
 //!
-//! `cargo run --release -p ow3-sim --example play_replay -- <replay.w3g> [--units]`
+//! `cargo run --release -p ow3-sim --example play_replay -- <replay.w3g> [--units] [--preload]`
 //!
 //! The map is the one the replay names, under the game directory
 //! (`game-data/1.27b`, or the directory in `OW3_GAME_DATA`). At the end it
 //! prints a hash of the units (handle, owner, type, position, facing,
 //! life), which two runs of the same replay must share; with `--units` it
-//! lists them.
+//! lists them, and with `--preload` the lines the script gave `Preload`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -61,6 +61,11 @@ fn main() -> ExitCode {
     for note in &playback.notes {
         println!("{note}");
     }
+    if args.iter().any(|a| a == "--preload") {
+        for line in &playback.game.preload() {
+            println!("preload: {line}");
+        }
+    }
     let units = playback.game.units();
     // FNV-1a over the units' state.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -86,7 +91,8 @@ fn main() -> ExitCode {
         }
     }
     println!(
-        "{} ms played, {} ticks, {} units, state {hash:016x}",
+        "seed {:#010x}, {} ms played, {} ticks, {} units, state {hash:016x}",
+        replay.seed,
         playback.ms(),
         playback.game.ticks(),
         units.len()

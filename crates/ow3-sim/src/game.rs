@@ -1165,6 +1165,11 @@ impl<'a> Game<'a> {
     pub fn output(&self) -> Vec<String> {
         self.state.borrow().output.clone()
     }
+
+    /// The lines the script has given `Preload`, in order.
+    pub fn preload(&self) -> Vec<String> {
+        self.state.borrow().preload.clone()
+    }
 }
 
 /// Runs `f` with `context` as the event responses, restoring the previous

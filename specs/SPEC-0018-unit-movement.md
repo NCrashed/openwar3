@@ -26,7 +26,8 @@ the `k`-th update after the order.
 updated in the same ticks, every 6th tick of the game, whenever it was
 created. Units created 1, 4, 7, ... 19 ticks apart and ordered in the
 same tick all had their update in the same tick. Within a tick the unit
-updates come before script timers, so an order given from a timer is
+updates came before the script timers of these tests (see "Order
+within an update tick" below), so an order given from a timer is
 taken at the next update tick after the order's tick, also when the
 order's tick is itself an update tick:
 
@@ -58,6 +59,31 @@ and a 0 s timer started in `main` fires in tick 1 before it). Then:
   its facing in tick 7; one created in tick 47 in tick 49.
 
 The timer ticks of the table above are these ticks minus 3.
+
+**Order within an update tick.** The unit updates of a tick are not
+always before its script timers. The update cycle has its own time
+`U`: `U1 = 0.0299` (`0.03 - 0.0001`) for the update of tick 7 and
+`U(m+1) = add(U(m), 0.03)` (SPEC-0004) for each following update tick.
+Inside the update tick, the updates (and what they do: a construction
+start, its trigger event) come at time `U` among the timers that fire
+in that tick, ordered with their expiries as timers are ordered with
+each other (SPEC-0002): before a timer whose expiry is above `U`, after
+one whose expiry is below. Because the 0.005 tick sum and the 0.03 sum
+lose different amounts to truncation, `U` starts about 0.0001 below the
+clock of its tick and passes it after about 5 s: `U - clock(k)` is
+-0.0000999 in tick 307 (1.53 s), -0.0000072 in tick 943 (4.71 s),
++0.0004320 in tick 1891 (9.45 s), +0.0004463 in tick 1909 and
++0.0011759 in tick 2827 (14.13 s). A 0.005 s periodic timer started
+from a 1.0 s timer of `main` has its expiries at the clocks of the
+ticks (it fires in tick `k` with expiry `clock(k)`), so in those tests
+the update came before that timer up to 4.71 s and after it from 9.45 s
+on (SPEC-0026, tests RTI, RTM and `c-RSR-1`). Measured through
+`TimerGetElapsed` of a reference timer read in a construction start
+event: the start times in RTM fit `U` to within 3e-6 s at 1.53, 5.22,
+9.72 and 14.61 s. The orders of the tables above were given from
+timers at the start of the game, where the updates still come first.
+How the cycle continues once `U` has drifted by a whole tick (after
+roughly 200 s at this rate) was not tested.
 
 ### Two angles: heading and facing
 

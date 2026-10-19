@@ -65,16 +65,15 @@ At that update:
 - the building is created at the target point, in the tick of that
   update. The actions of a trigger on
   `EVENT_PLAYER_UNIT_CONSTRUCT_START` run right after the creation. The
-  order between this and the script timers of the same tick was not
-  always the same: in `c-RSR-1` and for the last two farms of test RTI
-  the creation came after the periodic timer of the tick (the timer
-  still read the worker before the start and the unit count without
-  the building, and saw them from the next tick), for the first two
-  farms of RTI before it (the timer of the creation tick already read
-  the building's life, and the trigger saw the timer's counter of the
-  previous tick). A possible cause is that the start is ordered with
-  the timers of the tick by time, against the expiry of the periodic
-  timer (SPEC-0002); this was not checked (open question 6);
+  order between this and the script timers firing in the same tick is
+  that of SPEC-0018, "Order within an update tick": the start comes at
+  the time `U` of the update cycle. In `c-RSR-1` and for the last two
+  farms of test RTI it came after the periodic timer of the tick (the
+  timer still read the worker before the start and the unit count
+  without the building, and saw them from the next tick), for the first
+  two farms of RTI before it (the timer of the creation tick already
+  read the building's life, and the trigger saw the timer's counter of
+  the previous tick);
 - the worker's current order becomes 852024 (`repair`, by
   `OrderId2String`) while it builds;
 - if the worker's footprint (SPEC-0020, size classes; a peasant is
@@ -214,8 +213,6 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
    (cells or world units).
 5. Other races (Orc and Night Elf workers, Undead summoning) and
    several workers on one building.
-6. The order within a tick of the creation (and of other unit updates)
-   and the script timers firing in that tick.
 
 ## Sources
 
@@ -230,7 +227,9 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
   RTA, RTG, RTH (growth delay), RTB (worker positions and facings at
   the start), RTC .. RTF (heading of the worker at the start), RTI (four
   farms started at different times, life read every tick near the
-  start and the end).
+  start and the end), RTL and RTM (four farms; the time of each
+  construction start event and of every periodic timer call read
+  through `TimerGetElapsed` of a reference timer).
 - Debugger on the running game and on playback of `c-RSR-1.w3g`: the
   movement clock at the creation of the buildings, at the start of
   work and at each read of the script's periodic timer.

@@ -37,6 +37,14 @@ is read from the code and not tested.
 
 Each cluster gets the order point as its goal `T`.
 
+**Order of handling.** In a tick, the members of a cluster are handled
+one after the other in the cluster's order (the order of the units in
+the order, member 0 first), and the clusters among themselves and
+among single units newest order first (SPEC-0021, "Searches of many
+units in the same tick"). In `c-RSM-2` the members' look-ahead checks
+came in the order 0, 1, 2, 3 in every tick, member 0 being the first
+created footman.
+
 ### Formation angle and leader
 
 - When the order is given, the formation angle is
@@ -255,15 +263,28 @@ of SPEC-0021 ("Blocked by a unit"):
      of the **script generator** (SPEC-0007). (The game takes the
      integer part of `(x - 1) * 2` with `x = (r AND 0x7FFFFF) OR
      0x3F800000` as a float in `[1, 2)`, which is exact.)
-2. if `P = 1`, the unit gives up waiting: it searches its path again
-   (SPEC-0020) and `P` stays 1 until it is cleared;
-3. otherwise `P = P - 1` and the unit stands still at this update.
+2. if `P = 1`: a different reaction, read from the code but not seen in
+   the tests (open question);
+3. otherwise `P = P - 1`.
 
-`P` is cleared to 0 at any update at which the look-ahead is free again.
-So `P = 2` means "stand one update, then search again" (the rule of
-SPEC-0021), and 7 or 8 mean "stand up to 6 or 7 updates while still
-blocked, then search again". The counter is in updates of the unit
-(every 6 ticks).
+Except in case 2, the unit then stands still at this update and drops
+its local path. At its next update it searches a new local path to the
+same segment goal (SPEC-0020, step 2, with the throttle and the shared
+budget of SPEC-0020 and SPEC-0021). That search sees the units that
+stand in the way (SPEC-0021, "What each check sees"), so it usually
+leads round them, and the look-ahead check is then made along the new
+path. `P` is cleared to 0 at any update at which the look-ahead is free
+again. So `P` counts consecutive updates at which the unit is blocked by
+units in spite of a fresh path, each of them followed by a new search;
+`P = 2` reaches case 2 at the second such update, 7 or 8 at the seventh
+or eighth. The counter is in updates of the unit (every 6 ticks).
+
+Measured (`c-RSM-2.w3g`): member 1 is blocked at the update with clock
+5.609832 by member 2, which stands waiting for its 5 updates; `P`
+becomes 7 and member 1 stands. At the next update (5.639830) it makes a
+local search, its look-ahead is free, `P` is cleared and it walks on
+the new path round member 2 (velocity (-2.194, -8.147) cells/s), while
+member 2 still waits. The same happens again at 5.729823 and 5.759821.
 
 A unit far from its goal, or any member of a group, draws the script
 generator every time it starts to wait this way. This is why `E` of
@@ -356,6 +377,8 @@ one as they arrived.
    than by arriving.
 4. Cluster splitting with distant units, and the path distance used for
    units with hierarchical paths.
+5. What a unit does when its patience counter is 1 at a further block
+   (case 2 of "Blocked units: the patience counter").
 
 ## Sources
 

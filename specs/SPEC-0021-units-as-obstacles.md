@@ -61,11 +61,10 @@ waiting for another unit at that moment. For a moving unit `B`:
 
 If no unit made `A` wait, `A` is blocked as by a static obstacle: it
 stands still at this update and searches again at the next one
-(SPEC-0020), now seeing the units that stand. This holds when `A` is
-within 12 cells of its goal and alone in its cluster; otherwise it
-stands up to 6 or 7 updates while still blocked before it searches, and
-the length is drawn from the script generator (SPEC-0025, "Blocked
-units: the patience counter").
+(SPEC-0020), now seeing the units that stand. A counter of such
+consecutive blocks decides when the unit reacts differently; it draws
+the script generator (SPEC-0025, "Blocked units: the patience
+counter").
 
 During every waiting update the heading still turns as in SPEC-0018:
 towards the current target at the first update of a 5-update wait,
@@ -87,8 +86,20 @@ unit may have left.
 
 ### Searches of many units in the same tick
 
-Units whose updates fall in the same tick are handled in reverse order
-of creation (the last created first).
+Units whose updates fall in the same tick are handled by the order
+they were last given, the most recent order first. Every `move` order
+of a single unit, and every group order (SPEC-0025), forms a cluster;
+the clusters are handled newest first, and the members of a group
+cluster one after the other in the cluster's order. A new order puts
+the unit (or the group) at the front. In the tests of this spec the
+orders were given in the order of creation, so the last created unit
+came first. Measured (test RTK): footmen `A`, `B`, `C` created in this
+order, `move` given to `B`, 0.3 s later to `A`, 0.3 s later to `C`:
+order of handling `B`, then `A B`, then `C A B`; a new `move` to `B`
+0.9 s later gave `B C A`. In test RTJ a group of four ordered with the
+mouse after two single walkers had their orders was handled before
+both, its members in cluster order, then the single walkers newest
+first.
 
 Local searches share a budget of 1100 iterations (heap removals,
 SPEC-0020) per window of game ticks. A search may run only when the

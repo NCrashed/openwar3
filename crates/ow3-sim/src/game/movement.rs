@@ -986,6 +986,17 @@ fn resume_reach(state: &State, building: u32) -> f32 {
     BUILD_REACH_SQUARED.sqrt() + size
 }
 
+/// A worker that reached tree `target` turns to it: its heading points at
+/// the tree, which its facing follows.
+///
+/// PROVISIONAL: SPEC-0029 does not give the facing of a worker at a tree.
+fn face_tree(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
+    if let Some(Object::Destructable(d)) = state.objects.get(&target) {
+        let tree = relative([d.x, d.y], min);
+        m.heading = angle(sub(tree[0], m.origin[0]), sub(tree[1], m.origin[1]));
+    }
+}
+
 /// The buildings a living worker builds now (order `repair`, standing).
 pub(super) fn worked(state: &State) -> std::collections::BTreeSet<u32> {
     state
@@ -1699,6 +1710,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
+            face_tree(state, &mut m, target, min);
             m.arrived = false;
         }
         if let Order::Work { .. } = m.order {
@@ -1925,6 +1937,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
+            face_tree(state, &mut m, target, min);
             m.arrived = false;
         }
         // The facing follows the heading (SPEC-0018).

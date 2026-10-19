@@ -279,21 +279,37 @@ fn a_peasant_gathers_lumber() {
     sim.advance(100_000);
     let peasant = first(&sim, b"hpea");
     let hall = view(&sim, first(&sim, b"htow"));
-    let (tree, ..) = sim.tree_near(hall.x, hall.y, 3000.0).unwrap();
+    let (tree, tx, ty) = sim.tree_near(hall.x, hall.y, 3000.0).unwrap();
     assert!(sim.harvest(peasant, tree));
     let lumber = sim.resources().lumber;
     let mut full = false;
     let mut chopped = false;
-    for _ in 0..900 {
-        sim.advance(100_000);
+    let mut swung = false;
+    let mut faced = false;
+    // Steps of 50 ms, to see the swings.
+    for _ in 0..1800 {
+        sim.advance(50_000);
         let v = view(&sim, peasant);
         full |= v.carrying == Some((2, 10)) && v.order == 852_017;
-        chopped |= v.chopping.is_some();
+        if v.chopping.is_some() {
+            chopped = true;
+            // It faces the tree and swings at it.
+            let to = (ty - v.y).atan2(tx - v.x);
+            let off = (v.facing - to + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            faced |= off.abs() < 0.2;
+            swung |= sim.draws().iter().any(|d| {
+                d.handle == peasant && matches!(d.pose, ow3_viewer::models::UnitPose::Attack(_))
+            });
+        }
         if sim.resources().lumber > lumber {
             break;
         }
     }
-    assert!(full && chopped);
+    assert!(
+        full && chopped && faced && swung,
+        "{full} {chopped} {faced} {swung}"
+    );
     assert_eq!(sim.resources().lumber, lumber + 10);
     assert_eq!(view(&sim, peasant).order, 852_018);
 }

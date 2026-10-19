@@ -207,31 +207,23 @@ impl Sim {
             if !self.game.issue_target_order(unit, "attack", target) {
                 return None;
             }
-            // The confirmation on the target, as large as its selection, in
-            // the colour of its circle.
-            if let Some(u) = self.game.units().into_iter().find(|u| u.handle == target) {
-                let scale = self.models.get(&u.type_id).map_or(1.0, |l| l.selection);
-                let at = [u.x, u.y, self.game.ground_z(u.x, u.y)];
-                let colour = match self.game.relation(LOCAL_PLAYER, target) {
-                    Some(Relation::Friend) => self.colours.friend,
-                    Some(Relation::Enemy) => self.colours.enemy,
-                    _ => self.colours.neutral,
-                };
-                self.confirm(self.unit_confirm.clone(), at, scale, colour);
-            }
+            self.confirm_unit(target);
             return Some(format!("#{unit}: attack #{target}"));
         }
-        // A worker on its building under construction goes on with it.
+        // A worker on its building under construction goes on with it, on a
+        // gold mine gathers from it.
         if let Some(target) = on.filter(|&t| t != unit)
             && self.game.issue_target_order(unit, "smart", target)
         {
+            self.confirm_unit(target);
             return Some(format!("#{unit}: smart on #{target}"));
         }
         let [x, y, z] = at?;
         // A worker on a tree gathers from it (SPEC-0029).
-        if let Some((tree, ..)) = self.game.tree_near(x, y, TREE_PICK)
+        if let Some((tree, tx, ty)) = self.game.tree_near(x, y, TREE_PICK)
             && self.game.issue_target_order(unit, "harvest", tree)
         {
+            self.confirm_tree(tx, ty);
             return Some(format!("#{unit}: harvest #{tree}"));
         }
         self.game.issue_point_order(unit, "smart", x, y);
@@ -242,6 +234,30 @@ impl Sim {
             self.colours.friend,
         );
         Some(format!("#{unit}: move to ({x:.0}, {y:.0})"))
+    }
+
+    /// The confirmation of an order on unit `target`: as large as its
+    /// selection, in the colour of its circle.
+    fn confirm_unit(&mut self, target: u32) {
+        if let Some(u) = self.game.units().into_iter().find(|u| u.handle == target) {
+            let scale = self.models.get(&u.type_id).map_or(1.0, |l| l.selection);
+            let at = [u.x, u.y, self.game.ground_z(u.x, u.y)];
+            let colour = match self.game.relation(LOCAL_PLAYER, target) {
+                Some(Relation::Friend) => self.colours.friend,
+                Some(Relation::Enemy) => self.colours.enemy,
+                _ => self.colours.neutral,
+            };
+            self.confirm(self.unit_confirm.clone(), at, scale, colour);
+        }
+    }
+
+    /// The confirmation of an order on the tree at (`x`, `y`), in the
+    /// neutral colour.
+    ///
+    /// PROVISIONAL: the game's look of it is not specified.
+    fn confirm_tree(&mut self, x: f32, y: f32) {
+        let at = [x, y, self.game.ground_z(x, y)];
+        self.confirm(self.unit_confirm.clone(), at, 1.0, self.colours.neutral);
     }
 
     /// Shows the confirmation `model` at `at` in the colour `colour`.
@@ -335,7 +351,13 @@ impl Sim {
             (Command::ReturnGoods, _) => g.issue_immediate_order(unit, "returnresources"),
             // On the ground: the tree there (a mine is clicked as a unit).
             (Command::Gather, Some([x, y])) => match g.tree_near(x, y, TREE_PICK) {
-                Some((tree, ..)) => g.issue_target_order(unit, "harvest", tree),
+                Some((tree, tx, ty)) => {
+                    let done = g.issue_target_order(unit, "harvest", tree);
+                    if done {
+                        self.confirm_tree(tx, ty);
+                    }
+                    done
+                }
                 None => false,
             },
             (Command::Train(t), _) => g.issue_train_order(unit, t),
@@ -399,6 +421,9 @@ impl Sim {
             _ => return None,
         };
         let done = self.game.issue_target_order(unit, name, target);
+        if done {
+            self.confirm_unit(target);
+        }
         Some(format!(
             "#{unit}: {command:?} on #{target} {}",
             if done { "taken" } else { "refused" }

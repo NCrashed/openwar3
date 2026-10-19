@@ -200,11 +200,24 @@ impl Animation {
                 let walk = model
                     .sequences
                     .iter()
-                    .position(|s| s.name.to_ascii_lowercase().starts_with("walk"));
+                    .position(|s| s.name.trim().eq_ignore_ascii_case("walk"))
+                    .or_else(|| {
+                        model
+                            .sequences
+                            .iter()
+                            .position(|s| s.name.to_ascii_lowercase().starts_with("walk"))
+                    });
+                // Attack itself before Attack Gold and the like.
                 let attack = model
                     .sequences
                     .iter()
-                    .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
+                    .position(|s| s.name.trim().eq_ignore_ascii_case("attack"))
+                    .or_else(|| {
+                        model
+                            .sequences
+                            .iter()
+                            .position(|s| s.name.to_ascii_lowercase().starts_with("attack"))
+                    });
                 let work = work_index(&model);
                 let portrait = portrait_index(&model);
                 let named = |name: &str| {

@@ -8,11 +8,9 @@
 //! the units a building trains (`Trains`) of the unit data, with their
 //! icons (`Art`), places (`Buttonpos`), names, tips and hotkeys.
 //!
-//! PROVISIONAL: the places of the top-level frames on the screen are not
-//! in the definition files and not yet specified. The button bar and the
-//! resource bar stand over the parts of the console's top as wide as they
-//! are; the info panel, the life and mana under the portrait and the
-//! command card stand in the openings of the console's bottom.
+//! The frames stand where SPEC-0028 places them. The world is seen only
+//! between 0.13 and 0.58 of the interface's height; below, the console's
+//! openings show black.
 
 use ow3_formats::mpq::ArchiveChain;
 use ow3_formats::profile::Profile;
@@ -119,15 +117,23 @@ const UNIT_FILES: [&str; 12] = [
     "Units\\CampaignUnitStrings.txt",
 ];
 
-/// The command card: the top left corner of its first button, the size
-/// of a button and the step between buttons.
-const CARD: [f32; 2] = [0.6175, 0.1325];
-const BUTTON: f32 = 0.0385;
-const STEP: [f32; 2] = [0.043, 0.0435];
-/// The info panel and the life and mana texts under the portrait.
-const INFO: Rect = [0.305, 0.02, 0.505, 0.125];
-const LIFE: Rect = [0.2125, 0.021, 0.294, 0.033];
-const MANA: Rect = [0.2125, 0.008, 0.294, 0.020];
+/// The command card (SPEC-0028): the top left corner of its first
+/// button, the size of a button and the step between buttons.
+const CARD: [f32; 2] = [0.618_125, 0.131];
+const BUTTON: f32 = 0.038;
+const STEP: [f32; 2] = [0.043_625, 0.043];
+/// The information panel, the resource bar, the upper button bar and the
+/// view of the world (SPEC-0028).
+const INFO: Rect = [0.309_375, 0.0, 0.4975, 0.114_063];
+const RESOURCES: Rect = [0.461_719, 0.5782, 0.8, 0.6];
+const UPPER: Rect = [0.0, 0.578, 0.34, 0.6];
+const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
+/// The life and mana texts under the portrait.
+///
+/// PROVISIONAL: their places are not specified yet; they stand under the
+/// portrait (0.2075 to 0.2975).
+const LIFE: Rect = [0.2075, 0.017, 0.2975, 0.029];
+const MANA: Rect = [0.2075, 0.004, 0.2975, 0.016];
 
 fn code(type_id: i32) -> String {
     String::from_utf8_lossy(&type_id.to_be_bytes()).into_owned()
@@ -297,7 +303,7 @@ impl Hud {
     /// Whether `point` lies on the console rather than the view: its bottom
     /// part or its top bar.
     pub fn covers(point: [f32; 2]) -> bool {
-        point[1] < 0.135 || point[1] > ui::HEIGHT - 0.032
+        point[1] < WORLD[1] || point[1] > WORLD[3]
     }
 
     /// The console for `resources` and `selected`, with the tooltip of the
@@ -315,10 +321,10 @@ impl Hud {
             files: &none,
         };
         let screen = [0.0, 0.0, ui::WIDTH, ui::HEIGHT];
-        // PROVISIONAL: black under the console's openings; how the view
-        // of the world ends at the console is not specified.
+        // Black under the console's openings, below the view of the world
+        // (SPEC-0028).
         out.quads.push(Quad {
-            rect: [0.0, 0.0, ui::WIDTH, 0.13],
+            rect: [0.0, 0.0, ui::WIDTH, WORLD[1]],
             uv: [0.0, 1.0, 0.0, 1.0],
             texture: String::new(),
             colour: [0.0, 0.0, 0.0, 1.0],
@@ -326,7 +332,7 @@ impl Hud {
         });
         self.interface
             .lay_out("ConsoleUI", screen, &plain, &mut out);
-        let buttons = [0.0, ui::HEIGHT - 0.022, 0.34, ui::HEIGHT];
+        let buttons = UPPER;
         self.interface
             .lay_out("UpperButtonBarFrame", buttons, &plain, &mut out);
         let upkeep = self.interface.string("UPKEEP_NONE");
@@ -339,12 +345,7 @@ impl Hud {
             "ResourceBarUpkeepText" => Some(upkeep.clone()),
             _ => None,
         };
-        let bar = [
-            ui::WIDTH - 0.338_281_25,
-            ui::HEIGHT - 0.0218,
-            ui::WIDTH,
-            ui::HEIGHT,
-        ];
+        let bar = RESOURCES;
         self.interface.lay_out(
             "ResourceBarFrame",
             bar,

@@ -62,7 +62,7 @@ pub(super) fn start_timer(state: &mut State, expiry: u32, timer: EngineTimer) {
     state.engine_timers.insert(key, timer);
 }
 
-fn cancel_timer(state: &mut State, timer: EngineTimer) {
+pub(super) fn cancel_timer(state: &mut State, timer: EngineTimer) {
     state.engine_timers.retain(|_, t| *t != timer);
 }
 

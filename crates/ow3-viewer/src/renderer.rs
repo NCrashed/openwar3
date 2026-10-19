@@ -832,7 +832,9 @@ impl Renderer {
 
     /// The unit under pixel (`x`, `y`) of a view of `size` pixels: the one
     /// whose upright line from foot to head passes closest, within 24
-    /// pixels.
+    /// pixels or the radius of its selection circle on the screen, the
+    /// distance taken relative to that reach (so a peasant next to a town
+    /// hall is still picked near its own line).
     pub fn pick(&self, x: f32, y: f32, camera: &Camera, size: (u32, u32)) -> Option<u32> {
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
         let m = camera.view_projection();
@@ -855,8 +857,15 @@ impl Renderer {
             };
             let (px, py) = (foot[0] + dx * t, foot[1] + dy * t);
             let distance = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
-            if distance < 24.0 && best.is_none_or(|(d, _)| distance < d) {
-                best = Some((distance, a.handle));
+            let radius = a.selection * crate::overlay::WIDTH_PER_SCALE / 2.0;
+            let side = [a.foot[0] + radius, a.foot[1], a.foot[2]];
+            let reach = screen(side).map_or(0.0, |s| {
+                ((s[0] - foot[0]).powi(2) + (s[1] - foot[1]).powi(2)).sqrt()
+            });
+            let reach = reach.max(24.0);
+            let score = distance / reach;
+            if score < 1.0 && best.is_none_or(|(d, _)| score < d) {
+                best = Some((score, a.handle));
             }
         }
         best.map(|(_, handle)| handle)

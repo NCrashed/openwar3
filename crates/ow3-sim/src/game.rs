@@ -205,13 +205,66 @@ pub struct Unit {
 /// its life is `base + rate * (T - Tb)` from the clock `Tb` of tick
 /// `begin` on, and it is finished when the next tick's clock reaches
 /// `Tb + build_time`.
+///
+/// PROVISIONAL (SPEC-0026 does not cover it): the work stops while no
+/// worker builds it, the life staying where it is, and goes on from that
+/// life when a worker comes back, `base` then that life and the end the
+/// time the rest takes at `rate`. Damage taken is kept apart (`lost`) and
+/// taken off the growing life.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Construction {
     base: u32,
     rate: u32,
+    max: u32,
     build_time: u32,
     begin: u64,
     tb: Option<u32>,
+    /// Whether work has begun once.
+    started: bool,
+    /// The life lost to damage, and the life set in the last tick.
+    lost: u32,
+    last: u32,
+}
+
+impl Construction {
+    pub(crate) fn new(base: u32, rate: u32, max: u32, build_time: u32, begin: u64) -> Self {
+        Construction {
+            base,
+            rate,
+            max,
+            build_time,
+            begin,
+            tb: None,
+            started: false,
+            lost: 0,
+            last: base,
+        }
+    }
+
+    /// The life grown by clock `clock`, at least `base`.
+    fn grown(&self, clock: u32) -> u32 {
+        let Some(tb) = self.tb else {
+            return self.base;
+        };
+        let life = add(self.base, mul(self.rate, sub(clock, tb)));
+        if f32::from_bits(life) < f32::from_bits(self.base) {
+            self.base
+        } else {
+            life
+        }
+    }
+
+    /// Work begins at clock `tb`; when it will be done.
+    fn work(&mut self, tb: u32) -> u32 {
+        let left = if self.started {
+            div(sub(self.max, self.base), self.rate)
+        } else {
+            self.build_time
+        };
+        self.started = true;
+        self.tb = Some(tb);
+        add(tb, left)
+    }
 }
 
 /// `PLAYER_STATE_RESOURCE_FOOD_CAP`.
@@ -223,7 +276,10 @@ const PLAYER_STATE_RESOURCE_FOOD_CAP: i32 = 4;
 /// `base + rate (T - Tb)` with `T` the clock of the tick, at least `base`.
 fn construction(state: &mut State, tick: u64) {
     let clock = state.move_clock;
+    // The buildings a worker builds now.
+    let worked = movement::worked(state);
     let mut ends = Vec::new();
+    let mut paused = Vec::new();
     for &h in &state.units {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
@@ -234,23 +290,32 @@ fn construction(state: &mut State, tick: u64) {
         if !u.alive {
             continue;
         }
-        if tick == c.begin {
-            // Work that begins later, the worker moved, grows from the
-            // clock itself (SPEC-0026).
-            let tb = clock;
-            c.tb = Some(tb);
-            ends.push((h, add(tb, c.build_time)));
+        // Damage since the last tick.
+        let now = u.life.value();
+        if now != c.last {
+            c.lost = add(c.lost, sub(c.last, now));
         }
-        let Some(tb) = c.tb else {
-            continue;
+        let working = worked.contains(&h);
+        if c.tb.is_some() && !working {
+            // The worker left: the life stays.
+            c.base = c.grown(clock);
+            c.tb = None;
+            paused.push(h);
+        } else if c.tb.is_none() && working && tick >= c.begin {
+            // Work that begins later, the worker moved, grows from the
+            // clock itself (SPEC-0026); so does work taken up again.
+            ends.push((h, c.work(clock)));
+        }
+        let life = if c.lost == 0 {
+            c.grown(clock)
+        } else {
+            sub(c.grown(clock), c.lost)
         };
-        let life = add(c.base, mul(c.rate, sub(clock, tb)));
-        u.life
-            .set(if f32::from_bits(life) < f32::from_bits(c.base) {
-                c.base
-            } else {
-                life
-            });
+        u.life.set(life);
+        c.last = u.life.value();
+    }
+    for h in paused {
+        training::cancel_timer(state, training::EngineTimer::Construction(h));
     }
     for (h, end) in ends {
         training::start_timer(state, end, training::EngineTimer::Construction(h));

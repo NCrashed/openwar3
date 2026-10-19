@@ -1,6 +1,7 @@
-//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]`
+//! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--windowed] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]`
 //!
-//! Shows a map in a window: arrows or WASD move, the mouse wheel or +/-
+//! Shows a map on the full screen (in a window with `--windowed` or
+//! `--size`; F11 switches): arrows or WASD move, the mouse wheel or +/-
 //! zooms, Q/E turn, R/F tilt, C prints the camera as a `--camera`
 //! argument. A left click selects a unit; a right click then sends it to
 //! the ground point or attacks the enemy clicked (with Ctrl held, any unit
@@ -31,12 +32,14 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 struct Options {
     map: PathBuf,
     screenshot: Option<PathBuf>,
     size: (u32, u32),
+    /// A window of `size` in place of the full screen.
+    windowed: bool,
     camera: Option<Vec<f32>>,
     /// Seconds into the animations of a screenshot.
     time: f32,
@@ -58,6 +61,7 @@ fn options() -> Result<Options, String> {
         map: PathBuf::new(),
         screenshot: None,
         size: (1280, 720),
+        windowed: false,
         camera: None,
         time: 0.0,
         no_sim: false,
@@ -78,7 +82,9 @@ fn options() -> Result<Options, String> {
                     w.parse().map_err(|_| "bad width")?,
                     h.parse().map_err(|_| "bad height")?,
                 );
+                options.windowed = true;
             }
+            "--windowed" => options.windowed = true,
             "--camera" => {
                 let v = value("--camera")?;
                 let numbers: Result<Vec<f32>, _> = v.split(',').map(|n| n.trim().parse()).collect();
@@ -125,7 +131,7 @@ fn options() -> Result<Options, String> {
             _ => return Err(format!("unexpected argument {arg}")),
         }
     }
-    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]")?;
+    options.map = map.ok_or("usage: ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--windowed] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]")?;
     Ok(options)
 }
 
@@ -228,6 +234,8 @@ struct App {
     scene: Scene,
     camera: Camera,
     size: (u32, u32),
+    /// Whether the window covers the screen.
+    fullscreen: bool,
     gpu: Option<Gpu>,
     /// When the animations started.
     started: std::time::Instant,
@@ -254,7 +262,8 @@ impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         let attributes = Window::default_attributes()
             .with_title("openwar3")
-            .with_inner_size(winit::dpi::PhysicalSize::new(self.size.0, self.size.1));
+            .with_inner_size(winit::dpi::PhysicalSize::new(self.size.0, self.size.1))
+            .with_fullscreen(self.fullscreen.then_some(Fullscreen::Borderless(None)));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -340,6 +349,15 @@ impl ApplicationHandler for App {
                     && !self.escape()
                 {
                     event_loop.exit();
+                }
+                if logical_key == Key::Named(NamedKey::F11)
+                    && state == ElementState::Pressed
+                    && let Some(gpu) = &self.gpu
+                {
+                    self.fullscreen = !self.fullscreen;
+                    gpu.window
+                        .set_fullscreen(self.fullscreen.then_some(Fullscreen::Borderless(None)));
+                    return;
                 }
                 let name = match &logical_key {
                     Key::Named(named) => format!("{named:?}"),
@@ -481,10 +499,20 @@ impl App {
             return;
         }
         let ground = self.ground_point();
+        let on = self.gpu.as_ref().and_then(|gpu| {
+            let size = (gpu.config.width, gpu.config.height);
+            gpu.renderer
+                .pick(self.cursor.0, self.cursor.1, &self.camera, size)
+        });
         if let (Some(sim), Some(unit)) = (&mut self.sim, selected)
             && let Some(command) = sim.hud.pending.take()
         {
-            if let Some(line) = sim.run(unit, command, ground) {
+            // On a unit: the order with it as the target, if it takes one.
+            let line = on
+                .filter(|&t| t != unit)
+                .and_then(|t| sim.run_on(unit, command, t))
+                .or_else(|| sim.run(unit, command, ground));
+            if let Some(line) = line {
                 println!("{line}");
             }
             return;
@@ -672,6 +700,7 @@ fn main() -> ExitCode {
         scene,
         camera,
         size: options.size,
+        fullscreen: !options.windowed,
         gpu: None,
         started: std::time::Instant::now(),
         sim,

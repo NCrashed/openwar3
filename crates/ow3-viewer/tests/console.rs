@@ -27,6 +27,76 @@ fn first(sim: &Sim, code: &[u8; 4]) -> u32 {
         .handle
 }
 
+/// Unit `h` as the simulation shows it.
+fn view(sim: &Sim, h: u32) -> ow3_sim::game::UnitView {
+    sim.units().into_iter().find(|u| u.handle == h).unwrap()
+}
+
+#[test]
+fn a_farm_waits_for_its_worker_and_takes_damage() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let hhou = i32::from_be_bytes(*b"hhou");
+    let p = view(&sim, peasant);
+    sim.run(peasant, Command::Build(hhou), Some([p.x + 400.0, p.y]))
+        .unwrap();
+    for _ in 0..60 {
+        sim.advance(100_000);
+    }
+    let farm = sim
+        .units()
+        .into_iter()
+        .find(|u| u.type_id == hhou && u.owner == 0)
+        .unwrap()
+        .handle;
+    assert!(view(&sim, farm).constructing);
+    // Sent away, the worker leaves the farm as it is.
+    let p = view(&sim, peasant);
+    sim.run(peasant, Command::Move, Some([p.x - 300.0, p.y]));
+    sim.advance(100_000);
+    let left = view(&sim, farm).life;
+    for _ in 0..30 {
+        sim.advance(100_000);
+    }
+    assert_eq!(view(&sim, farm).life, left);
+    // Back on it, the work goes on and ends.
+    sim.command(peasant, Some(farm), None, false).unwrap();
+    for _ in 0..60 {
+        sim.advance(100_000);
+    }
+    let grown = view(&sim, farm).life;
+    assert!(grown > left, "{grown} after {left}");
+    // A hit from its own worker takes life off as it grows.
+    let other = sim
+        .units()
+        .into_iter()
+        .find(|u| u.type_id == i32::from_be_bytes(*b"hpea") && u.owner == 0 && u.handle != peasant)
+        .unwrap()
+        .handle;
+    sim.run_on(other, Command::Attack, farm).unwrap();
+    for _ in 0..80 {
+        sim.advance(100_000);
+    }
+    let hit = view(&sim, farm);
+    assert!(hit.constructing);
+    // 8 s of growth at the farm's rate.
+    let undamaged = grown + 8.0 * 12.857_142;
+    assert!(
+        hit.life < undamaged - 4.0,
+        "{} not below {undamaged}",
+        hit.life
+    );
+    sim.command(other, None, Some([p.x, p.y, 0.0]), false);
+    for _ in 0..400 {
+        sim.advance(100_000);
+    }
+    let done = view(&sim, farm);
+    assert!(!done.constructing);
+}
+
 #[test]
 fn a_peasant_builds_a_farm_and_the_town_hall_trains_one() {
     let Some(mut sim) = start() else {

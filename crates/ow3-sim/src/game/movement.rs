@@ -130,6 +130,8 @@ pub enum Order {
     Build { type_id: i32 },
     /// Build the building just started: the worker stays.
     Repair { building: u32 },
+    /// Walk to a building under construction and go on building it.
+    Resume { building: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -872,6 +874,46 @@ pub(super) fn start_buildings(state: &mut State) {
     }
 }
 
+/// Whether `h` is a worker and `building` a building of its player under
+/// construction.
+fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
+    let worker = state
+        .unit(Some(h))
+        .filter(|u| state.data.units.get(&u.type_id).is_some_and(|t| t.worker));
+    match (worker, state.objects.get(&building)) {
+        (Some(w), Some(Object::Unit(b))) => {
+            b.alive && b.owner == w.owner && b.construction.is_some()
+        }
+        _ => false,
+    }
+}
+
+/// A worker resumes building within this distance of a building's edge
+/// (PROVISIONAL: the reach of a start, SPEC-0026, plus the building's
+/// collision size).
+fn resume_reach(state: &State, building: u32) -> f32 {
+    let size = state
+        .unit(Some(building))
+        .and_then(|b| state.data.units.get(&b.type_id))
+        .map_or(0.0, |t| real_of(t.collision));
+    BUILD_REACH_SQUARED.sqrt() + size
+}
+
+/// The buildings a living worker builds now (order `repair`, standing).
+pub(super) fn worked(state: &State) -> std::collections::BTreeSet<u32> {
+    state
+        .units
+        .iter()
+        .filter_map(|h| match state.objects.get(h) {
+            Some(Object::Unit(u)) if u.alive => match u.movement.map(|m| m.order) {
+                Some(Order::Repair { building }) => Some(building),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 /// Ticks from the start of a building to the tick work begins, with the
 /// worker moved off its footprint (SPEC-0026: usually two updates; 18
 /// ticks were also seen and the rule is not known). Without the move work
@@ -901,20 +943,14 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     // clock of that tick plus 0.0001 (`game::construction`).
     let delay = if moved { WORK_DELAY_MOVED } else { 0 };
     let begin = state.ticks + delay;
-    let tb = (delay == 0).then(|| add(state.move_clock, GROWTH_OFFSET));
+    let mut construction = super::Construction::new(base, rate, max, build_time, begin);
+    let end = (delay == 0).then(|| construction.work(add(state.move_clock, GROWTH_OFFSET)));
     if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
         b.life = super::Regenerating::full(max, 0);
         b.life.set(base);
-        b.construction = Some(Box::new(super::Construction {
-            base,
-            rate,
-            build_time,
-            begin,
-            tb,
-        }));
+        b.construction = Some(Box::new(construction));
     }
-    if let Some(tb) = tb {
-        let end = add(tb, build_time);
+    if let Some(end) = end {
         super::training::start_timer(
             state,
             end,
@@ -1069,6 +1105,23 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             Some(at) if target != h => order(state, h, Order::Point, ORDER_MOVE, at),
             _ => false,
         };
+    }
+    if matches!(name, "smart" | "repair") && unfinished_of_own(state, h, target) {
+        // PROVISIONAL (not in SPEC-0026): a worker sent to its player's
+        // building under construction goes on building it.
+        return match position_of(state, target) {
+            Some(at) => order(
+                state,
+                h,
+                Order::Resume { building: target },
+                ORDER_REPAIR,
+                at,
+            ),
+            None => false,
+        };
+    }
+    if name == "smart" && hostile(state, h, target) {
+        return target_order_taken(state, h, "attack", target);
     }
     if name != "attack" {
         return false;
@@ -1482,6 +1535,24 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     motion(&mut m, site, false, speed, limit, turn_rate, window);
                 }
                 turning_to_site = true;
+            }
+        }
+        // A worker sent back to a building under construction takes up the
+        // work once near it.
+        if let Order::Resume { building } = m.order
+            && !waiting
+        {
+            let reach = resume_reach(state, building);
+            let near = position_of(state, building).is_some_and(|at| {
+                let at = relative(at, min);
+                let (dx, dy) = (sub(at[0], here[0]), sub(at[1], here[1]));
+                real_of(add(mul(dx, dx), mul(dy, dy))) <= reach * reach
+            });
+            if !unfinished_of_own(state, h, building) {
+                m.arrived = true;
+            } else if near {
+                m.order = Order::Repair { building };
+                m.arrived = false;
             }
         }
         // A worker building stays until the building is finished.

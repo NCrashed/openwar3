@@ -23,6 +23,8 @@ use crate::objects::Placement;
 
 /// Milliseconds of game time per tick.
 const TICK_MS: u64 = 5;
+/// The order of a worker building (`repair`, SPEC-0026).
+const ORDER_REPAIR: i32 = 852_024;
 
 /// One unit to draw.
 #[derive(Clone, Debug, PartialEq)]
@@ -191,6 +193,12 @@ impl Sim {
             }
             return Some(format!("#{unit}: attack #{target}"));
         }
+        // A worker on its building under construction goes on with it.
+        if let Some(target) = on.filter(|&t| t != unit)
+            && self.game.issue_target_order(unit, "smart", target)
+        {
+            return Some(format!("#{unit}: smart on #{target}"));
+        }
         let [x, y, z] = at?;
         self.game.issue_point_order(unit, "smart", x, y);
         self.confirm(
@@ -304,6 +312,28 @@ impl Sim {
         Some(format!(
             "#{unit}: {command:?}{} {}",
             point.map_or_else(String::new, |[x, y]| format!(" at ({x:.0}, {y:.0})")),
+            if done { "taken" } else { "refused" }
+        ))
+    }
+
+    /// Carries out `command` of the command card for `unit` on unit
+    /// `target` clicked; `None` when the command takes no unit, and the
+    /// ground point is used.
+    pub fn run_on(
+        &mut self,
+        unit: u32,
+        command: crate::hud::Command,
+        target: u32,
+    ) -> Option<String> {
+        use crate::hud::Command;
+        let name = match command {
+            Command::Attack => "attack",
+            Command::Move => "move",
+            _ => return None,
+        };
+        let done = self.game.issue_target_order(unit, name, target);
+        Some(format!(
+            "#{unit}: {command:?} on #{target} {}",
             if done { "taken" } else { "refused" }
         ))
     }
@@ -442,6 +472,9 @@ fn millis(ticks: u64) -> i32 {
 fn pose(u: &UnitView, now: u64) -> UnitPose {
     if let Some(died) = u.died_at {
         return UnitPose::Death(millis(now.saturating_sub(died)));
+    }
+    if u.order == ORDER_REPAIR && !u.walking {
+        return UnitPose::Work(millis(now));
     }
     let Some(attack) = u.attack else {
         return UnitPose::Stand;

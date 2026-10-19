@@ -108,6 +108,8 @@ struct Animated {
     attack: Option<usize>,
     /// The first sequence named Walk, if any.
     walk: Option<usize>,
+    /// The sequence Stand Work, if any.
+    work: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
     palette: Vec<u32>,
     /// The first matrix of variant 0; variant `v` follows `v` blocks
@@ -135,6 +137,9 @@ pub enum UnitPose {
     Attack(i32),
     /// Milliseconds since it started walking; the Walk sequence loops.
     Walk(i32),
+    /// Milliseconds since it started working on a building; the Stand Work
+    /// sequence loops.
+    Work(i32),
     /// Stopped walking `since` milliseconds ago after walking `walked`.
     Halt { walked: i32, since: i32 },
     /// Milliseconds into its Stand sequence played once, for effects such
@@ -178,6 +183,7 @@ impl Animation {
                     .sequences
                     .iter()
                     .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
+                let work = work_index(&model);
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
@@ -192,6 +198,7 @@ impl Animation {
                     death,
                     attack,
                     walk,
+                    work,
                     top,
                     palette,
                     bone_base,
@@ -251,6 +258,14 @@ impl Animation {
                 }
                 None => stand(),
             },
+            UnitPose::Work(elapsed) => match animated.work {
+                Some(work) => {
+                    let mut moment = Moment::at(model, work, elapsed);
+                    moment.global = now;
+                    moment
+                }
+                None => stand(),
+            },
         }
     }
 
@@ -292,6 +307,7 @@ impl Animation {
             UnitPose::Death(elapsed) => (animated.death, elapsed),
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
+            UnitPose::Work(elapsed) => (animated.work?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
             UnitPose::Once(elapsed) => (animated.sequence, elapsed),
         };
@@ -302,7 +318,10 @@ impl Animation {
             time => time.min(1_000) as i32,
         };
         let stand = || self.stand_pose(index, now, variant);
-        let looping = matches!(pose, UnitPose::Walk(_) | UnitPose::Halt { .. });
+        let looping = matches!(
+            pose,
+            UnitPose::Walk(_) | UnitPose::Work(_) | UnitPose::Halt { .. }
+        );
         let at = |frame: i32| {
             let frame = if looping {
                 frame.rem_euclid(length + 1)
@@ -482,6 +501,20 @@ impl Animation {
         // Slot 0 is the constant 1, so source `i` has slot `i + 1`.
         Some((values, first as u32 + 1))
     }
+}
+
+/// The sequence a worker plays while it builds: Stand Work, or the first
+/// whose name begins with it.
+fn work_index(model: &Model) -> Option<usize> {
+    let names: Vec<String> = model
+        .sequences
+        .iter()
+        .map(|s| s.name.trim().to_ascii_lowercase())
+        .collect();
+    names
+        .iter()
+        .position(|n| n == "stand work")
+        .or_else(|| names.iter().position(|n| n.starts_with("stand work")))
 }
 
 /// The height of the top of `model` at the start of `sequence`: the highest

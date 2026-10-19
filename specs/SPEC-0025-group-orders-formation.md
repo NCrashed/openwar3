@@ -142,7 +142,11 @@ At every update of a cluster with more than one member, before the
 members move, each member's "hold" mark is cleared and then set again
 by the following rule (when the rule is not suspended, see below). A
 held member does not walk at this update (speed 0); it still turns
-towards its target.
+towards its target. It does not follow its path at this update either:
+it makes no search (SPEC-0020), no look-ahead check, and neither waits
+nor counts patience (SPEC-0021 and "Blocked units: the patience
+counter" below); its path is kept for the update at which it is no
+longer held.
 
 1. For every member `i`, with its current position `p_i` (committed
    position plus velocity times the elapsed time, SPEC-0018) and
@@ -297,12 +301,22 @@ At every cluster update, unless the cluster is at its last waypoint:
 At the last waypoint the stall count is used differently: it goes up by
 one at every update (whether or not a member has arrived) and is reset
 to 0 at an update in which a member leaves the cluster (in
-`c-RSP-1.members.tsv` it is 1 at the second update). An arrived member
-normally leaves at once; but if it is also marked as blocked, the
-cluster has more than one member, the stall count is below 20 and its
-squared distance from its place is above 256 (more than 16 cells), it
-stays and searches its path again instead (read from the code, not
-tested).
+`c-RSP-1.members.tsv` it is 1 at the second update).
+
+Here "arrived" has a wider sense than "at its place": a member is also
+marked arrived when its own path following has ended without reaching
+the place, that is when it gave up (a path that cannot be continued,
+SPEC-0020, partial path end with no way on). Such a member usually
+also carries the "blocked" mark. An arrived member normally leaves the
+cluster at once, where it stands. But if it is marked blocked, the
+cluster has more than one member, the stall count is below 20 (the
+first 20 updates at the last waypoint or since a member last left) and
+its squared distance from its place is above 256 (more than 16 cells),
+it stays in the cluster and searches its path to its place again. So a
+member that got stuck far from its place gets new searches during the
+first 20 updates, and after that it leaves the cluster where it got
+stuck. A member that stopped within 16 cells of its place leaves at
+once. (Read from the code, not tested.)
 
 When the cluster goes on to the next waypoint `W'`, the formation angle
 becomes `A = angle(sub(W'x, Wx), sub(W'y, Wy))` (from the old waypoint to
@@ -351,8 +365,8 @@ one as they arrived.
   cluster update.
 - Test maps RSM, RSO, RSP, RSQ (groups of four selected with a box and
   given a right click on the ground; RSQ with a wall), replays
-  `c-RSM-1.w3g` and `c-RSP-1.w3g` (with the members' state at every
-  cluster update in `c-RSP-1.members.tsv`).
+  `c-RSM-1.w3g`, `c-RSM-2.w3g` and `c-RSP-1.w3g` (with the members' state
+  at every cluster update in `c-RSM-2.members.tsv` and `c-RSP-1.members.tsv`).
 
 ## Verification
 

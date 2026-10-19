@@ -14,6 +14,9 @@ fn every_replay_parses() {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        if path.extension().is_none_or(|e| e != "w3g") {
+            continue;
+        }
         let data = std::fs::read(&path).unwrap();
         // The game leaves an empty TempReplay.w3g behind.
         if data.is_empty() {

@@ -408,13 +408,7 @@ impl<'a> Playback<'a> {
                     return;
                 };
                 for unit in selected {
-                    if name == "smart" {
-                        if !self.game.issue_target_order(unit, "attack", target) {
-                            self.game.issue_target_order(unit, "move", target);
-                        }
-                    } else {
-                        self.game.issue_target_order(unit, name, target);
-                    }
+                    self.game.issue_target_order(unit, name, target);
                 }
             }
             // Speed, pauses, saving, the interface and the like change

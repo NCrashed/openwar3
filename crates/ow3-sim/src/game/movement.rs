@@ -1120,8 +1120,14 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             None => false,
         };
     }
-    if name == "smart" && hostile(state, h, target) {
-        return target_order_taken(state, h, "attack", target);
+    if name == "smart" {
+        // On an enemy an attack, on anything else a move to it.
+        let then = if hostile(state, h, target) {
+            "attack"
+        } else {
+            "move"
+        };
+        return target_order_taken(state, h, then, target);
     }
     if name != "attack" {
         return false;

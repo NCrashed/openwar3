@@ -107,9 +107,10 @@ The throttle of SPEC-0020 compares the iterations of the whole window
 
 ### Groups
 
-Units ordered together as a group mark each other during the group's
-movement step so that their searches ignore each other. Group and
-formation movement was not studied.
+Members of a group that are neither held nor already walking are
+marked while the group moves, and marked units are ignored by local
+searches and seeing a point (SPEC-0025, "Members in each other's
+searches"). Held members are standing obstacles.
 
 ## Edge cases
 

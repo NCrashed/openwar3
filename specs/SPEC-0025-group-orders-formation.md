@@ -173,6 +173,30 @@ side, order to the south) the knight and footman walked at once, the
 rifleman was held for 18 updates and the peasant for 34, until the
 front ranks had passed them.
 
+### Members in each other's searches
+
+At every update of a cluster with more than one member, while its
+members take their steps, each member that is neither held nor already
+walking is marked; the marks are removed after the step. A member counts
+as walking from the end of its first step with a speed above 0.01; all
+members count as walking once the cluster has gone on to a later
+waypoint, and after 65 cluster updates on its first path. Local searches and seeing a point (SPEC-0021) ignore
+marked units, as they ignore moving units; the look-ahead check sees
+them. Held members are not marked and are standing obstacles for the
+others.
+
+In `c-RSP-1` at the first cluster update the knight (50, 0) and the
+footman (150, 0) were marked, the rifleman (-50, 0) and the peasant
+(-150, 0) were held. So the footman's search could meet nobody, while
+the rifleman's footprint stood next to the knight (this explains the
+clean and the not clean search seen by the implementation; the searches
+themselves were not read from memory). The footprint of a standing unit
+in a search is the footprint of its size class at the cell of its
+position (SPEC-0021, "Occupied cells"): the rifleman (collision 32,
+class 2) occupies 3 x 3 cells around the cell of (-50, 0), that is
+x from -96 to 0 and y from -32 to 64 in world units; the knight would
+occupy x 0 to 96 (same y).
+
 ### Group speed
 
 Each member computes its own speed for the update as a single unit
@@ -208,8 +232,15 @@ for single units as well as group members; it is given here because it
 draws the script generator.
 
 Every unit following a path has a patience counter `P`, 0 when it is
-not blocked. At an update at which the unit's look-ahead is blocked and
-no unit makes it wait by the rules of SPEC-0021 ("Blocked by a unit"):
+not blocked. The counter is used only when the look-ahead is blocked by
+**units**: when the cells ahead are closed by the pathing map (walls,
+and as far as tested buildings), the unit searches again at once as in
+SPEC-0020 and `P` is not touched. (In the game, a blocked look-ahead
+with no unit to wait for first runs a test of the cells ahead against
+the static pathing; when that test fails the unit searches again, when
+it passes the counter below applies.) At an update at which the unit's
+look-ahead is blocked by units and no unit makes it wait by the rules
+of SPEC-0021 ("Blocked by a unit"):
 
 1. if `P = 0`, it is set:
    - `P = 2` if the squared distance from the unit's position to its
@@ -240,8 +271,12 @@ update when its way was free.
 
 ### Following the cluster's path
 
-The cluster has a current waypoint `W` (at first the first waypoint of
-its path from the leader's position; on open ground the goal). Each
+The cluster has a current waypoint `W`: a segment goal of the cluster's
+own path, which is searched from the leader's position. The segment
+goals are chosen exactly as for a single unit (SPEC-0020, "Segment
+goal": the first high-level waypoint at which the summed leg lengths
+reach 10.0 blocks, or the goal; the same code is used). On open ground
+`W` is the goal; in RSQ the first segment goal was (-464, -336). Each
 member's place is `W` plus its offset, and a member that is at its place
 (within its arrival radius) is marked "arrived".
 
@@ -259,6 +294,16 @@ At every cluster update, unless the cluster is at its last waypoint:
   with flags not seen set), the cluster goes on to the next waypoint
   anyway.
 
+At the last waypoint the stall count is used differently: it goes up by
+one at every update (whether or not a member has arrived) and is reset
+to 0 at an update in which a member leaves the cluster (in
+`c-RSP-1.members.tsv` it is 1 at the second update). An arrived member
+normally leaves at once; but if it is also marked as blocked, the
+cluster has more than one member, the stall count is below 20 and its
+squared distance from its place is above 256 (more than 16 cells), it
+stays and searches its path again instead (read from the code, not
+tested).
+
 When the cluster goes on to the next waypoint `W'`, the formation angle
 becomes `A = angle(sub(W'x, Wx), sub(W'y, Wy))` (from the old waypoint to
 the new one), `W` becomes `W'`, the members' marks and the stall count
@@ -266,8 +311,8 @@ are cleared, and the layout is computed again with the members' current
 positions. So the formation turns at every corner of the path.
 
 A member that has arrived at its place at the last waypoint leaves the
-cluster (the cluster's member count falls); the remaining members keep
-their offsets.
+cluster as described above (the cluster's member count falls); the
+remaining members keep their offsets.
 
 Measured (RSQ, the four footmen of RSO with a wall from (-500, -260) to
 (600, -196) between them and the goal): first waypoint (-464, -336) at

@@ -511,36 +511,58 @@ impl Animation {
     /// in: the alphas of its slots at that moment and the first of those
     /// slots, so that each instance fades on its own.
     pub fn once_alphas(&self, index: usize, elapsed: i32) -> Option<(Vec<f32>, u32)> {
-        self.sequence_alphas(index, self.models[index].sequence, elapsed)
+        self.sequence_alphas(index, self.models[index].sequence, elapsed, false)
     }
 
     /// The alphas of a unit in `pose` when they are its own: a dying unit
     /// fades by its Death sequence (and stays as its last frame shows it),
     /// an effect by its sequence; other poses share those of Stand.
     pub fn pose_alphas(&self, index: usize, pose: UnitPose) -> Option<(Vec<f32>, u32)> {
+        let animated = &self.models[index];
+        // The geosets shown follow the sequence played: the sack of gold
+        // and the bundle of lumber of a worker show in Walk Gold and Walk
+        // Lumber only.
         match pose {
             UnitPose::Once(elapsed) => self.once_alphas(index, elapsed),
-            UnitPose::Death(elapsed) => {
-                self.sequence_alphas(index, self.models[index].death, elapsed)
+            UnitPose::Death(elapsed) => self.sequence_alphas(index, animated.death, elapsed, false),
+            UnitPose::Attack(elapsed) => {
+                self.sequence_alphas(index, animated.attack?, elapsed, false)
             }
-            _ => None,
+            UnitPose::Walk(elapsed)
+            | UnitPose::Halt {
+                walked: elapsed, ..
+            } => self.sequence_alphas(index, animated.walk?, elapsed, true),
+            UnitPose::Carry(elapsed, load) => {
+                self.sequence_alphas(index, animated.carry(load)?, elapsed, true)
+            }
+            UnitPose::Work(elapsed) => self.sequence_alphas(index, animated.work?, elapsed, true),
+            UnitPose::Portrait(elapsed) => {
+                self.sequence_alphas(index, animated.portrait?, elapsed, true)
+            }
+            UnitPose::Stand => None,
         }
     }
 
     /// The alphas of model `index` `elapsed` milliseconds into `sequence`,
-    /// held at its end, and the first of its slots.
+    /// held at its end or `looping`, and the first of its slots.
     fn sequence_alphas(
         &self,
         index: usize,
         sequence: usize,
         elapsed: i32,
+        looping: bool,
     ) -> Option<(Vec<f32>, u32)> {
         let animated = &self.models[index];
         let first = self.alphas.iter().position(|s| s.model == index)?;
         let start = Moment::start(&animated.model, sequence);
         let length = (start.interval[1] - start.interval[0]).max(0);
+        let into = if looping {
+            elapsed.rem_euclid(length + 1)
+        } else {
+            elapsed.clamp(0, length)
+        };
         let moment = Moment {
-            frame: start.frame + elapsed.clamp(0, length),
+            frame: start.frame + into,
             global: elapsed,
             ..start
         };

@@ -61,6 +61,25 @@ const UPDATE: u64 = 6;
 const PHASE: u64 = 1;
 const FIRST_UPDATE: u64 = 7;
 
+/// 0.03: the time of the first update of the cycle and its step
+/// (SPEC-0018, "Order within an update tick").
+const UPDATE_STEP: u32 = 0x3CF5_C28F;
+
+/// At an update tick, the time `U` of the update cycle for it (0.03 at
+/// tick 7, then 0.03 more at every update tick), else `None`.
+pub(super) fn update_time(state: &mut State) -> Option<u32> {
+    let tick = state.ticks;
+    if tick < FIRST_UPDATE || tick % UPDATE != PHASE {
+        return None;
+    }
+    state.update_time = if tick == FIRST_UPDATE {
+        UPDATE_STEP
+    } else {
+        add(state.update_time, UPDATE_STEP)
+    };
+    Some(state.update_time)
+}
+
 /// The first update after `tick`: updates come before the script's timers
 /// in a tick, so an order given at an update tick waits for the next.
 pub(super) fn next_update_after(tick: u64) -> u64 {
@@ -2051,6 +2070,46 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 state.combat.reaction_delay,
             );
             react(state, h, tick, delay, tick);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SPEC-0018, "Order within an update tick": `U` against the clock of
+    /// its tick (the sum of `k - 1` ticks) at the ticks the spec gives.
+    #[test]
+    fn update_time_against_the_clock() {
+        let (mut u, mut clock) = (0, 0);
+        let mut found = Vec::new();
+        for k in 1..=2827u64 {
+            if k > 1 {
+                clock = add(clock, crate::timers::TICK);
+            }
+            if k >= FIRST_UPDATE && k % UPDATE == PHASE {
+                u = if k == FIRST_UPDATE {
+                    UPDATE_STEP
+                } else {
+                    add(u, UPDATE_STEP)
+                };
+                if [307, 943, 1045, 1891, 1909, 2827].contains(&k) {
+                    found.push(f32::from_bits(u) - f32::from_bits(clock));
+                }
+            }
+        }
+        let expected = [
+            0.000_000_1f32,
+            0.000_093_0,
+            0.000_125_4,
+            0.000_532_2,
+            0.000_546_5,
+            0.001_276_0,
+        ];
+        assert_eq!(found.len(), expected.len());
+        for (f, e) in found.iter().zip(expected) {
+            assert!((f - e).abs() < 2e-7, "{found:?}");
         }
     }
 }

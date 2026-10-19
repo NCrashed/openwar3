@@ -231,15 +231,33 @@ fn a_farm_is_built() {
     assert_eq!(peasant.order, 0);
 }
 
-/// SPEC-0026, construction progress, against the log of `c-RTI-1.w3g`:
-/// four farms whose life a timer reads at every tick near the start and
-/// the end of construction and every 1000 ticks (`T b n life`), and
-/// their finish events (`F n`). Every line the simulation logs too has
-/// the same life, and the farms are finished in the same ticks.
-///
-/// PROVISIONAL: the first two farms were started before the timer of
-/// their tick in the game, after it in the simulation (SPEC-0026, open
-/// question 6), so their logs start one tick later.
+/// The lines of a script log in the form of the analysts' tables: the
+/// `@@` lines of `Preload`, fields joined by tabs, with `fields` choosing
+/// and ordering the fields of each kind (`None` drops the line).
+fn table(preload: &[String], fields: impl Fn(&[&str]) -> Option<Vec<String>>) -> Vec<String> {
+    preload
+        .iter()
+        .filter_map(|l| l.strip_prefix("@@"))
+        .filter_map(|l| fields(&l.split(' ').collect::<Vec<_>>()))
+        .map(|f| f.join("\t"))
+        .collect()
+}
+
+/// The lines of an analysts' log table, without comments and trailing
+/// tabs.
+fn log_table(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.trim_end_matches('\t').to_owned())
+        .collect()
+}
+
+/// SPEC-0026 and SPEC-0018 ("Order within an update tick"), against the
+/// log of `c-RTI-1.w3g`: four farms whose life a timer reads at every tick
+/// near the start and the end of construction and every 1000 ticks
+/// (`T b n life`), their start events (`S b n`, before the timer of their
+/// tick for the first two farms, after it for the others) and their
+/// finish events (`F n`). The log is the game's line for line.
 #[test]
 fn construction_follows_c_rti_1() {
     let path = game_data().join("replays/c-RTI-1.w3g");
@@ -248,32 +266,55 @@ fn construction_follows_c_rti_1() {
     };
     let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
     let run = play(&game_data(), &path, &replay);
-    let mut ours = std::collections::BTreeMap::new();
-    let mut finished = Vec::new();
-    for line in run.preload.iter().filter_map(|l| l.strip_prefix("@@")) {
-        let w: Vec<&str> = line.split(' ').collect();
+    let ours = table(&run.preload, |w| {
+        let pick = |i: &[usize]| Some(i.iter().map(|&i| w[i].to_owned()).collect());
         match w[0] {
-            "T" => {
-                ours.insert((w[1].to_owned(), w[2].to_owned()), w[3].to_owned());
-            }
-            "F" => finished.push(w[1].to_owned()),
-            _ => {}
+            "T" => pick(&[0, 1, 2, 3]),
+            "S" => pick(&[0, 1, 2]),
+            "F" => Some(vec!["F".into(), String::new(), w[1].into()]),
+            _ => None,
+        }
+    });
+    assert_eq!(ours, log_table(&log));
+}
+
+/// SPEC-0018 ("Order within an update tick") against the log of
+/// `c-RTM-1.w3g`: the times of 3180 calls of a periodic timer read from a
+/// reference timer (`Q n time`), the life of four farms (`T b n life`) and
+/// their start events with the time of the reference timer (`S b n
+/// time`): the first farm starts before the timer of its tick, the
+/// others after it. The log is the game's line for line.
+///
+/// PROVISIONAL: the times of two start events differ from the game's by
+/// one unit in the last place of the reference timer's remaining time
+/// (1.9e-6 s); they are compared to within 4e-6 s.
+#[test]
+fn update_time_follows_c_rtm_1() {
+    let path = game_data().join("replays/c-RTM-1.w3g");
+    let Ok(log) = std::fs::read_to_string(path.with_extension("log.tsv")) else {
+        return;
+    };
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let run = play(&game_data(), &path, &replay);
+    let ours = table(&run.preload, |w| {
+        let pick = |i: &[usize]| Some(i.iter().map(|&i| w[i].to_owned()).collect());
+        match w[0] {
+            "Q" => pick(&[0, 1, 2]),
+            "T" => pick(&[0, 1, 2, 3]),
+            "S" => pick(&[0, 1, 2, 5]),
+            _ => None,
+        }
+    });
+    let game = log_table(&log);
+    assert!(ours.len() >= game.len());
+    for (o, g) in ours.iter().zip(&game) {
+        if g.starts_with('S') {
+            let (o, g) = (o.rsplit_once('\t').unwrap(), g.rsplit_once('\t').unwrap());
+            assert_eq!(o.0, g.0);
+            let (a, b): (f64, f64) = (o.1.parse().unwrap(), g.1.parse().unwrap());
+            assert!((a - b).abs() < 4e-6, "{o:?} {g:?}");
+        } else {
+            assert_eq!(o, g);
         }
     }
-    let (mut compared, mut game_finished) = (0, Vec::new());
-    for line in log.lines().filter(|l| !l.starts_with('#')) {
-        let w: Vec<&str> = line.split('\t').collect();
-        match w[0] {
-            "T" => {
-                if let Some(life) = ours.get(&(w[1].to_owned(), w[2].to_owned())) {
-                    assert_eq!(life, w[3], "farm {} at {}", w[1], w[2]);
-                    compared += 1;
-                }
-            }
-            "F" => game_finished.push(w[2].to_owned()),
-            _ => {}
-        }
-    }
-    assert!(compared > 90, "{compared}");
-    assert_eq!(finished, game_finished);
 }

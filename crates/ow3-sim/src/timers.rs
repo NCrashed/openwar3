@@ -205,6 +205,29 @@ impl<T> TimerQueue<T> {
         }
     }
 
+    /// The next timer that expires within the tick and before `before`
+    /// (strictly), as [`TimerQueue::next_due`] takes it. None in a tick in
+    /// which the queue wraps at 300 s.
+    pub fn next_due_before(&mut self, tick: &mut Tick, before: u32) -> Option<Fired<T>> {
+        if tick.after_wrap.is_some() {
+            return None;
+        }
+        let (expiry, _) = *self.pending.first_key_value()?.0;
+        if real(expiry) < real(before) {
+            self.next_due(tick)
+        } else {
+            None
+        }
+    }
+
+    /// Moves the queue time on to `time` within a tick, for what happens
+    /// at that time between the timers (the unit updates, SPEC-0018).
+    pub fn move_to(&mut self, time: u32) {
+        if real(time) > real(self.time) {
+            self.time = time;
+        }
+    }
+
     pub fn end_tick(&mut self, tick: Tick) {
         debug_assert!(tick.after_wrap.is_none(), "next_due was not drained");
         self.time = tick.limit;

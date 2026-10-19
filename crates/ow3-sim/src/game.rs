@@ -566,6 +566,8 @@ pub struct State {
     /// The clock of the movement system: 0.005 added every tick in the
     /// engine arithmetic (SPEC-0018).
     move_clock: u32,
+    /// The time of the update cycle at its last update tick (SPEC-0018).
+    update_time: u32,
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
@@ -639,6 +641,7 @@ impl State {
             world_bounds: [0; 4],
             grid: None,
             move_clock: 0,
+            update_time: 0,
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             clusters: Vec::new(),
@@ -1090,10 +1093,33 @@ impl<'a> Game<'a> {
                 going
             });
         }
-        // The unit updates come before the script's timers (SPEC-0018,
-        // "Phase").
-        movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // The unit updates come at the time `U` of the update cycle among
+        // the script's timers of the tick (SPEC-0018, "Order within an
+        // update tick"), and with them the buildings they start and the
+        // events of those (SPEC-0026). Buildings are finished after the
+        // timers.
+        let at = movement::update_time(&mut self.state.borrow_mut());
         let mut tick = self.state.borrow_mut().timers.begin_tick();
+        if let Some(at) = at {
+            loop {
+                let fired = self
+                    .state
+                    .borrow_mut()
+                    .timers
+                    .next_due_before(&mut tick, at);
+                let Some(fired) = fired else {
+                    break;
+                };
+                self.fire(fired);
+                self.park();
+            }
+            // What happens at the updates sees the queue time `U`.
+            self.state.borrow_mut().timers.move_to(at);
+        }
+        movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        movement::start_buildings(&mut self.state.borrow_mut());
+        widgets::constructions(&mut self.vm, &self.state);
+        self.park();
         loop {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
                 break;
@@ -1102,8 +1128,6 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
-        // Buildings start and are finished after the timers (SPEC-0026).
-        movement::start_buildings(&mut self.state.borrow_mut());
         finish_constructions(&mut self.state.borrow_mut());
         widgets::constructions(&mut self.vm, &self.state);
         self.park();

@@ -1166,6 +1166,22 @@ impl<'a> Game<'a> {
         self.state.borrow().output.clone()
     }
 
+    /// The parts `E` and `R` of the turn checksum (SPEC-0024): the sums of
+    /// the script generator and of the game generators.
+    pub fn generator_sums(&self) -> (u32, u32) {
+        let state = self.state.borrow();
+        (
+            state.random.checksum(),
+            crate::checksum::generators_sum(&state.game_random),
+        )
+    }
+
+    /// The number of handles given out so far: grows with every object
+    /// the game makes (units, timers, triggers and the like).
+    pub fn handles_made(&self) -> u32 {
+        self.state.borrow().next_handle
+    }
+
     /// The lines the script has given `Preload`, in order.
     pub fn preload(&self) -> Vec<String> {
         self.state.borrow().preload.clone()

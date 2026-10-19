@@ -179,6 +179,10 @@ pub enum Event {
     TimeSlot {
         ms: u16,
         actions: Vec<(u8, Vec<Action>)>,
+        /// What the block adds to the network sum of the turn checksum
+        /// (SPEC-0024): `bh(id + bh(w))`, with `w` the block's bytes after
+        /// its length folded as words and then bytes.
+        network: u32,
     },
     Chat {
         player: u8,
@@ -412,7 +416,7 @@ fn events(r: &mut Reader) -> Result<Vec<Event>> {
             0x1E | 0x1F => {
                 let size = usize::from(r.u16()?);
                 let block = r.bytes(size)?;
-                time_slot(block, at)?
+                time_slot(id, block, at)?
             }
             0x20 => {
                 let player = r.u8()?;
@@ -453,7 +457,7 @@ fn events(r: &mut Reader) -> Result<Vec<Event>> {
     Ok(events)
 }
 
-fn time_slot(block: &[u8], at: usize) -> Result<Event> {
+fn time_slot(id: u8, block: &[u8], at: usize) -> Result<Event> {
     let mut r = Reader::new(block);
     let ms = r.u16()?;
     let mut actions = Vec::new();
@@ -469,7 +473,34 @@ fn time_slot(block: &[u8], at: usize) -> Result<Event> {
         })?;
         actions.push((player, list));
     }
-    Ok(Event::TimeSlot { ms, actions })
+    let words = block.chunks_exact(4);
+    let rest = words.remainder();
+    let mut w = 0;
+    for word in words {
+        w = fold(w, u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+    }
+    for &byte in rest {
+        w = fold(w, u32::from(byte));
+    }
+    Ok(Event::TimeSlot {
+        ms,
+        actions,
+        network: bh(u32::from(id).wrapping_add(bh(w))),
+    })
+}
+
+/// The step of the turn checksum (SPEC-0024): `rol3(h XOR x)`.
+pub fn fold(h: u32, x: u32) -> u32 {
+    (h ^ x).rotate_left(3)
+}
+
+/// The byte hash of the turn checksum (SPEC-0024): the sum over the four
+/// bytes `b` of `x` of `(b * 0x7A2D) XOR b`.
+pub fn bh(x: u32) -> u32 {
+    x.to_le_bytes()
+        .iter()
+        .map(|&b| (u32::from(b) * 0x7A2D) ^ u32::from(b))
+        .fold(0, u32::wrapping_add)
 }
 
 fn units(r: &mut Reader) -> Result<Vec<[u32; 2]>> {
@@ -613,6 +644,16 @@ fn player_actions(block: &[u8]) -> Result<Vec<Action>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SPEC-0024, verification 1.
+    #[test]
+    fn byte_hash() {
+        assert_eq!(bh(0x0000_0001), 0x7A2C);
+        assert_eq!(bh(0x0000_0100), 0x7A2C);
+        assert_eq!(bh(0x0000_00FF), 0x79_B22C);
+        assert_eq!(bh(0x1234_5678), 0x83_B8F0);
+        assert_eq!(bh(0xFFFF_FFFF), 0x1E6_C8B0);
+    }
 
     #[test]
     fn encoded_string() {

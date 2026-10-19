@@ -5,19 +5,24 @@
 //!
 //! PROVISIONAL, until the specs say how the game does it:
 //! - the objects of the actions are matched with units by the first of
-//!   their two ids taken as the unit's handle;
+//!   their two ids taken as the unit's handle (the ids are the object's
+//!   entry in the engine's object table and its creation number,
+//!   SPEC-0024, which the simulation does not keep);
 //! - an order goes to every unit the player has selected;
 //! - `smart` on a unit is an attack, and a move when the attack is not
 //!   taken;
-//! - the seed reseeds the generators as `SetRandomSeed` does;
+//! - the seed reseeds the generators as `SetRandomSeed` does (wrong: the
+//!   replays c-RSB-1 and c-RSC-1 have different seeds and the same random
+//!   values);
 //! - the actions of a slot come before its ticks, and a slot of `ms`
 //!   milliseconds runs the ticks whose 5 ms end within it.
 
 use std::collections::BTreeMap;
 
-use ow3_formats::replay::{Action, Event, Replay};
+use ow3_formats::replay::{Action, Event, Replay, fold};
 use ow3_jass::check::Program;
 
+use crate::checksum::time_part;
 use crate::game::players::LobbySlot;
 use crate::game::{Game, order_name};
 use crate::map::Map;
@@ -41,6 +46,41 @@ pub struct Playback<'a> {
     groups: BTreeMap<(u8, u8), Vec<u32>>,
     /// What could not be played, in the order met.
     pub notes: Vec<String>,
+    /// The state of the game when each turn's checksum is taken, the
+    /// first for turn 1.
+    pub marks: Vec<Marks>,
+}
+
+/// What of the game's state a turn checksum (SPEC-0024) sees, as far as
+/// the simulation has it: the generators, the handles made, and folds of
+/// the units, of those walking and of the players' selections. Positions
+/// and life are not part of the checksum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub e: u32,
+    pub r: u32,
+    pub handles: u32,
+    pub units: u32,
+    pub walking: u32,
+    pub selections: u32,
+}
+
+impl Marks {
+    /// The names of the parts that differ between `self` and `other`.
+    pub fn changes(&self, other: &Marks) -> Vec<&'static str> {
+        [
+            ("E", self.e != other.e),
+            ("R", self.r != other.r),
+            ("handles", self.handles != other.handles),
+            ("units", self.units != other.units),
+            ("walking", self.walking != other.walking),
+            ("selections", self.selections != other.selections),
+        ]
+        .into_iter()
+        .filter(|&(_, changed)| changed)
+        .map(|(name, _)| name)
+        .collect()
+    }
 }
 
 impl<'a> Playback<'a> {
@@ -92,7 +132,7 @@ impl<'a> Playback<'a> {
             .unwrap_or(0);
         game.start_lobby(&lobby, local, replay.seed)
             .map_err(|e| e.to_string())?;
-        Ok(Playback {
+        let mut playback = Playback {
             game,
             events: replay.events.clone(),
             next: 0,
@@ -101,7 +141,34 @@ impl<'a> Playback<'a> {
             selections: BTreeMap::new(),
             groups: BTreeMap::new(),
             notes: Vec::new(),
-        })
+            marks: Vec::new(),
+        };
+        playback.mark();
+        Ok(playback)
+    }
+
+    /// Keeps the marks of the next turn's checksum.
+    fn mark(&mut self) {
+        let (e, r) = self.game.generator_sums();
+        let mut marks = Marks {
+            e,
+            r,
+            handles: self.game.handles_made(),
+            ..Marks::default()
+        };
+        for u in self.game.units() {
+            marks.units = fold(marks.units, u.handle);
+            if u.walking {
+                marks.walking = fold(marks.walking, u.handle);
+            }
+        }
+        for (player, units) in &self.selections {
+            marks.selections = fold(marks.selections, u32::from(*player));
+            for &u in units {
+                marks.selections = fold(marks.selections, u);
+            }
+        }
+        self.marks.push(marks);
     }
 
     /// Game time played, in milliseconds.
@@ -114,16 +181,25 @@ impl<'a> Playback<'a> {
     pub fn step_slot(&mut self) -> bool {
         while let Some(event) = self.events.get(self.next).cloned() {
             self.next += 1;
-            if let Event::TimeSlot { ms, actions } = event {
+            if let Event::TimeSlot { ms, actions, .. } = event {
                 for (player, list) in actions {
                     for action in list {
                         self.apply(player, &action);
                     }
                 }
+                // The next turn's checksum sees the game at the end of
+                // this slot rounded down to 25 ms (SPEC-0024).
                 let before = self.ms / TICK_MS;
                 self.ms += u64::from(ms);
-                for _ in before..self.ms / TICK_MS {
+                let marked = (u64::from(time_part(self.ms)) / TICK_MS).max(before);
+                for tick in before..self.ms / TICK_MS {
+                    if tick == marked {
+                        self.mark();
+                    }
                     self.game.step();
+                }
+                if marked == self.ms / TICK_MS {
+                    self.mark();
                 }
                 return true;
             }

@@ -3,6 +3,7 @@
 
 use std::sync::OnceLock;
 
+use ow3_formats::replay::bh;
 use ow3_math::{add, mul, sub};
 
 /// The 61-entry table of SPEC-0007, read from `SPEC-0007-rng-table.tsv`.
@@ -114,6 +115,12 @@ impl Random {
             return lo;
         }
         add(mul(self.fraction(), d), lo)
+    }
+
+    /// What the generator's state adds to the turn checksum (SPEC-0024):
+    /// `bh(a) + bh(b)`.
+    pub fn checksum(&self) -> u32 {
+        bh(self.a).wrapping_add(bh(self.b))
     }
 
     /// A real in `0..1` from the low 23 bits of one output, as

@@ -4,6 +4,7 @@
 //! live in a queue with its own time, and sleeping script threads are timed
 //! on a separate sleep clock.
 
+pub mod checksum;
 pub mod clock;
 pub mod combat;
 pub mod data;

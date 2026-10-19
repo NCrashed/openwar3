@@ -1,13 +1,16 @@
 //! Plays a replay in the simulation and prints what could not be played
 //! and the state at the end.
 //!
-//! `cargo run --release -p ow3-sim --example play_replay -- <replay.w3g> [--units] [--preload]`
+//! `cargo run --release -p ow3-sim --example play_replay -- <replay.w3g> [--units] [--preload] [--sums]`
 //!
 //! The map is the one the replay names, under the game directory
 //! (`game-data/1.27b`, or the directory in `OW3_GAME_DATA`). At the end it
 //! prints a hash of the units (handle, owner, type, position, facing,
 //! life), which two runs of the same replay must share; with `--units` it
 //! lists them, and with `--preload` the lines the script gave `Preload`.
+//! With `--sums` it lists the turns at which the recorded checksums show a
+//! change of the game's state (SPEC-0024, verification 4) or the
+//! simulation's state changes.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -60,6 +63,31 @@ fn main() -> ExitCode {
     playback.run();
     for note in &playback.notes {
         println!("{note}");
+    }
+    if args.iter().any(|a| a == "--sums") {
+        // The turns at which the recorded checksum's remainder changes,
+        // next to those at which the simulation's state changes.
+        let turns = ow3_sim::checksum::turns(&replay);
+        for k in 1..turns.len() {
+            let recorded = turns[k].remainder() != turns[k - 1].remainder();
+            let ours = match (playback.marks.get(k - 1), playback.marks.get(k)) {
+                (Some(a), Some(b)) => b.changes(a),
+                _ => Vec::new(),
+            };
+            if recorded || !ours.is_empty() {
+                println!(
+                    "turn {} ({} ms): recorded {}, ours {}",
+                    k + 1,
+                    turns[k].before,
+                    if recorded { "changes" } else { "same" },
+                    if ours.is_empty() {
+                        "same".to_owned()
+                    } else {
+                        ours.join(" ")
+                    }
+                );
+            }
+        }
     }
     if args.iter().any(|a| a == "--preload") {
         for line in &playback.game.preload() {

@@ -608,6 +608,46 @@ the spec is silent:
   is taken as 768 (refused below it); the spec gives a limit above 749
   and at most 768. Other races' halls are not checked.
 
+## Gathering (`game::harvest`, `game::movement`, SPEC-0029)
+
+Workers on a gold mine next to the town hall look clumsier here than in
+the game: they bump into each other and into the waiting ones, walk
+round them and lose time, as if in the game workers that gather did not
+block each other. Needed:
+
+- **Collisions of gathering workers.** Do workers with order `harvest`
+  or `resumeharvesting` block other units, and are they blocked, in the
+  local search, the look-ahead check and the high-level search
+  (SPEC-0020, SPEC-0021)? Only towards other gathering workers, towards
+  all units, or only near the mine and the drop-off? Does it change for
+  a worker that carries a load?
+- **Workers waiting at a busy mine.** Where exactly they stand, whether
+  they block the ones coming and going, and how the one leaving is put
+  out (SPEC-0029 says "a free cell nearby" when its place is taken).
+- **The path to the mine and back.** Is it the usual walk of SPEC-0018
+  and SPEC-0020 to the mine's or drop-off's position, or a goal of its
+  own (the nearest cell touching the building, a point on its side)?
+  Is the path searched again at every trip, or kept?
+- **Facing and animations.** The facing of a worker that reaches a tree
+  (here it turns to the tree), the sequence of the hits on a tree (here
+  `Attack`, the hit at the weapon's damage point; the model also has
+  `Attack Lumber`, `Stand Lumber`, `Stand Ready Lumber`), and what a
+  worker waiting at a mine or standing with a load plays.
+
+Until answered: gathering workers walk, block and are blocked like any
+unit.
+
+## Order confirmation (the viewer)
+
+The viewer shows the model of `TargetUnitConfirm` (skins) on a unit or a
+tree ordered as a target, and `TargetPointConfirm` on the ground point
+of a move. A look at the game shows that this is not how it works there.
+Needed: what the game shows for each kind of order (move, attack, smart
+on a unit, harvest on a mine and on a tree, build, rally): which model
+or other mark, where, how large, in which colour, for how long, and
+whether the target's selection circle or the unit itself flashes
+instead.
+
 ## Camera (the viewer, SPEC-0023)
 
 The projection has the field of view (70 degrees) across the diagonal

@@ -45,6 +45,52 @@ The order takes effect in the turn after its time slot (SPEC-0024,
 - the worker's current order (`GetUnitCurrentOrder`) becomes the
   building's rawcode as an integer (1751674741 for `hhou`).
 
+### Where a building may be placed
+
+A build order (`IssueBuildOrderById` from a script, the click of the
+interface) is refused at once when the place is not allowed: the
+native returns false, nothing is paid and the worker's order does not
+change. The place is the building's position snapped to the grid
+(SPEC-0022, "Snapping") and its cells are all the cells of its pathing
+texture there (SPEC-0022), also the unblocked border of textures like
+`12x12Simple` (the barracks: 12 x 12 cells, of which only the inner
+8 x 8 block walking). The place is allowed when all of these hold:
+
+1. **Buildable ground.** No cell has the "not buildable" flag (0x08)
+   of `war3map.wpm` (SPEC-0020). The other flags do not matter: cells
+   with only "not walkable" (0x02), only "not flyable" (0x04), without
+   the ground flag 0x40 (water), with 0x20 or with 0x80 were accepted.
+   Measured by marking one cell at a time: every one of the 12 x 12
+   cells of a barracks (offsets -6 to 5 from the cell at its centre in
+   both directions) and of the 4 x 4 of a farm (-2 to 1) refused the
+   order, the cells just outside did not.
+2. **No other building or destructable.** The texture does not
+   overlap the texture of another building of any player (two farms
+   128 apart, that is touching, were allowed; 64 apart refused) or a
+   destructable (a tree at the centre refused it). A gold mine counts as
+   a building with its texture `16x16Goldmine` (a farm 256 from a mine
+   was refused, 320 allowed).
+3. **No unit of another player.** No unit of another player (an enemy,
+   also a unit of `Player(15)`) has its footprint (SPEC-0020) on a cell
+   of the texture: a footman 64 from the centre of a farm refused it,
+   96 did not. The player's own units do not count (a footman standing
+   at the centre did not refuse it; they are moved away when the
+   building starts, above).
+4. **Town halls away from gold mines.** A town hall (`htow`) is
+   refused when the distance between its centre and the centre of a
+   gold mine is below a limit between 749 and 768: distances 704, 707,
+   716, 724, 730, 746 and 749 refused it, 768, 771, 773, 781, 810, 815
+   and 820 allowed it, in all directions (along the axes and at other
+   angles; the limit is a distance between the centres, not a gap
+   between the textures). Other buildings (farm, lumber mill,
+   barracks) near a mine only obey rule 2.
+
+The earlier refusals of script build orders on the IceCrown test map
+(sites at (192, -384), (2304, 2304) and others) came from rule 1: that
+map's own `war3map.wpm` marks those cells as not buildable (checked:
+flag 0x08 there, only 0x40 at the sites that were accepted); maps made
+with a pathing map of all 0 refused none of them.
+
 ### The walk and the start of construction
 
 The worker walks towards the building's position like a `move` order
@@ -240,8 +286,8 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
 
 - In one test five of twenty script build orders were not executed at
   all (the worker kept order 0 and did not move); all five sites were
-  in one column of the test map. The reason (placement check) was not
-  found.
+  in one column of the IceCrown test map, whose pathing map marks those
+  cells as not buildable (rule 1 of "Where a building may be placed").
 - Objects created by a script also take entries of the object table
   (SPEC-0024): in a test whose script created and destroyed a group at
   every tick, the creation counter `D` grew every turn and the farm got
@@ -254,9 +300,10 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
    after completion (expected `q2` down by one and `q1`, `q4` up by
    one; not checked), and cancelling.
 2. The placement search for the worker, and the exact footprint test.
-3. The checks that reject a build order (blocked or unbuildable ground,
-   not enough resources, the failed test sites), and what is refunded
-   when construction is cancelled.
+3. Placement beyond the four rules above (map bounds, visibility,
+   blight, the exact limit of rule 4), what happens when the place
+   becomes blocked while the worker walks, not enough resources, and
+   what is refunded when construction is cancelled.
 4. Whether the distance of 100 depends on the building or the worker
    (only farms and peasants were measured), and the exact comparison
    (cells or world units).
@@ -273,7 +320,9 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
   with script build orders, logged every tick.
 - Test maps RSU and RSW (farm, life logged every tick with
   `R2SW(x, 1, 7)`), RSX (farm and barracks), RSY (barracks), RSZ and
-  RTA, RTG, RTH (growth delay), RTB (worker positions and facings at
+  RTA, RTG, RTH (growth delay), RTZ, RUA to RUE (placement: one cell
+  not buildable at each offset, cell flags, units, buildings, trees and
+  gold mines at measured distances), RTB (worker positions and facings at
   the start), RTC .. RTF (heading of the worker at the start), RTI (four
   farms started at different times, life read every tick near the
   start and the end), RTL and RTM (four farms; the time of each

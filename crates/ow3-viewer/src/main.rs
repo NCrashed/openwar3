@@ -1,9 +1,10 @@
 //! `ow3-viewer <map> [--screenshot <out.png>] [--size <w>x<h>] [--windowed] [--camera <x>,<y>,<distance>,<yaw>,<pitch>] [--time <seconds>] [--no-sim] [--select <unit> [--order <x>,<y>]] [--alt] [--fog <style>,<start>,<end>,<density>,<r>,<g>,<b>]`
 //!
 //! Shows a map on the full screen (in a window with `--windowed` or
-//! `--size`; F11 switches): arrows or WASD move, the mouse wheel or +/-
-//! zooms, Q/E turn, R/F tilt, C prints the camera as a `--camera`
-//! argument. A left click selects a unit; a right click then sends it to
+//! `--size`; F11 switches): the arrows or the mouse at an edge of the
+//! screen move, the mouse wheel or +/- zooms, Q/E turn, R/F tilt (all
+//! after the hotkeys of the command card), C prints the camera as a
+//! `--camera` argument. A left click selects a unit; a right click then sends it to
 //! the ground point or attacks the enemy clicked (with Ctrl held, any unit
 //! clicked). The console below shows the resources, the selected unit and
 //! its command card: a click on a button or its hotkey (by the key's
@@ -401,7 +402,13 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+                if let Some(gpu) = &self.gpu {
+                    let size = (gpu.config.width as f32, gpu.config.height as f32);
+                    self.controls.cursor(Some(self.cursor), size);
+                    gpu.window.request_redraw();
+                }
             }
+            WindowEvent::CursorLeft { .. } => self.controls.cursor(None, (0.0, 0.0)),
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,

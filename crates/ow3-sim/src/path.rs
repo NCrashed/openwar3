@@ -36,6 +36,8 @@ pub struct Grid {
     /// (flyable).
     walk: Vec<bool>,
     fly: Vec<bool>,
+    /// Cells of the pathing map without 0x08 (buildable, SPEC-0026).
+    build: Vec<bool>,
     /// How many footprints block each cell for walking (red) and flying
     /// (green).
     red: Vec<u16>,
@@ -78,7 +80,9 @@ impl Grid {
     pub fn new(pathing: &ow3_formats::map::pathing::Pathing) -> Grid {
         let walk = pathing.cells.iter().map(|&v| v & 0x02 == 0).collect();
         let fly = pathing.cells.iter().map(|&v| v & 0x04 == 0).collect();
-        Grid::from_layers(pathing.width as i32, pathing.height as i32, walk, fly)
+        let mut grid = Grid::from_layers(pathing.width as i32, pathing.height as i32, walk, fly);
+        grid.build = pathing.cells.iter().map(|&v| v & 0x08 == 0).collect();
+        grid
     }
 
     /// A grid of `width` x `height` walkable or closed cells, row by row
@@ -95,6 +99,7 @@ impl Grid {
             height,
             walk,
             fly,
+            build: vec![true; cells],
             red: vec![0; cells],
             green: vec![0; cells],
             levels: [(); 4].map(|_| Level {
@@ -153,6 +158,12 @@ impl Grid {
     pub fn passable(&self, x: i32, y: i32) -> bool {
         self.index(x, y)
             .is_some_and(|i| self.walk[i] && self.red[i] == 0)
+    }
+
+    /// Whether a building may stand on cell (`x`, `y`) by the pathing map
+    /// (no 0x08, SPEC-0026). Cells outside may not.
+    pub fn buildable(&self, x: i32, y: i32) -> bool {
+        self.index(x, y).is_some_and(|i| self.build[i])
     }
 
     /// Whether cell (`x`, `y`) is free for the high-level search: also

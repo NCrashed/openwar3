@@ -33,6 +33,22 @@ fn view(sim: &Sim, h: u32) -> ow3_sim::game::UnitView {
 }
 
 #[test]
+fn a_farm_is_not_placed_over_the_town_hall() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let hall = view(&sim, first(&sim, b"htow"));
+    let hhou = i32::from_be_bytes(*b"hhou");
+    let line = sim
+        .run(peasant, Command::Build(hhou), Some([hall.x + 64.0, hall.y]))
+        .unwrap();
+    assert!(line.ends_with("refused"), "{line}");
+    assert_eq!(sim.resources().gold, 500);
+}
+
+#[test]
 fn a_farm_waits_for_its_worker_and_takes_damage() {
     let Some(mut sim) = start() else {
         return;

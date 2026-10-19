@@ -172,6 +172,45 @@ pub(super) fn site(state: &State, type_id: i32, x: u32, y: u32, facing: u32) -> 
     }
 }
 
+/// The cells the whole pathing texture of a building of type `type_id`
+/// covers at (`x`, `y`), a position on its grid, facing `facing`:
+/// `X0`, `X1`, `Y0`, `Y1`. `None` for a type without a texture.
+pub(super) fn texture_rect(
+    state: &State,
+    type_id: i32,
+    x: u32,
+    y: u32,
+    facing: u32,
+) -> Option<(i32, i32, i32, i32)> {
+    let texture = state
+        .data
+        .units
+        .get(&type_id)
+        .filter(|t| t.building)
+        .and_then(|t| t.path_texture.as_ref())
+        .and_then(|name| state.data.path_textures.get(name))?;
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    Some(cells(texture, turn_of(facing), x, y, min).rect)
+}
+
+/// Whether the cells `rect` (`X0`, `X1`, `Y0`, `Y1`) overlap the texture
+/// of a living building of any player or of a living destructable
+/// (SPEC-0026, "Where a building may be placed", rule 2).
+pub(super) fn overlaps_objects(state: &State, rect: (i32, i32, i32, i32)) -> bool {
+    let meets = |f: &Footprint| {
+        (!f.red.is_empty() || !f.green.is_empty() || f.rect != (0, 0, 0, 0))
+            && f.rect.0 <= rect.1
+            && rect.0 <= f.rect.1
+            && f.rect.2 <= rect.3
+            && rect.2 <= f.rect.3
+    };
+    state.objects.values().any(|o| match o {
+        Object::Unit(u) => u.alive && u.footprint.as_deref().is_some_and(meets),
+        Object::Destructable(d) => d.alive && meets(&d.footprint),
+        _ => false,
+    })
+}
+
 /// Widget `h` died or is removed: a building's footprint goes, a
 /// destructable's changes to its texture of death.
 pub(super) fn died(state: &mut State, h: u32) {

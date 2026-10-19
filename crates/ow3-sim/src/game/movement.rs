@@ -834,6 +834,9 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
     if !worker || has(GOLD) < gold || has(LUMBER) < lumber {
         return false;
     }
+    if !place_allowed(state, owner, type_id, target) {
+        return false;
+    }
     if !order(state, h, Order::Build { type_id }, type_id, target) {
         return false;
     }
@@ -841,6 +844,74 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
     let states = &mut state.setup.player_states;
     *states.entry((owner, GOLD)).or_default() -= gold;
     *states.entry((owner, LUMBER)).or_default() -= lumber;
+    true
+}
+
+/// A town hall may not stand this near a gold mine, centre to centre
+/// (SPEC-0026 rule 4: the limit lies above 749 and at most 768).
+/// PROVISIONAL: 768.
+const MINE_DISTANCE: f32 = 768.0;
+
+/// Whether player `owner` may place a building of `type_id` at `target`
+/// (SPEC-0026, "Where a building may be placed"): the cells of its
+/// pathing texture there, snapped to its grid, are all buildable, meet no
+/// texture of another building or destructable and no footprint of a
+/// unit of another player, and a town hall keeps away from gold mines.
+pub(super) fn place_allowed(state: &State, owner: i32, type_id: i32, target: [u32; 2]) -> bool {
+    let facing = super::facing::from_degrees(270f32.to_bits());
+    let (x, y) = super::obstacles::site(state, type_id, target[0], target[1], facing);
+    let Some(rect) = super::obstacles::texture_rect(state, type_id, x, y, facing) else {
+        return true;
+    };
+    let (x0, x1, y0, y1) = rect;
+    // 1. Buildable ground.
+    if let Some(grid) = state.grid.as_ref()
+        && !(y0..=y1).all(|cy| (x0..=x1).all(|cx| grid.buildable(cx, cy)))
+    {
+        return false;
+    }
+    // 2. Other buildings and destructables.
+    if super::obstacles::overlaps_objects(state, rect) {
+        return false;
+    }
+    // 3. Units of other players.
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    for h in &state.units {
+        let Some(Object::Unit(u)) = state.objects.get(h) else {
+            continue;
+        };
+        let Some(t) = state.data.units.get(&u.type_id) else {
+            continue;
+        };
+        if !u.alive || u.owner == owner || t.building {
+            continue;
+        }
+        let at = mul_both(relative([u.x, u.y], min), CELL);
+        let class = crate::path::size_class(t.collision);
+        let on = crate::path::occupied_cells(at, class)
+            .iter()
+            .any(|&(cx, cy)| (x0..=x1).contains(&cx) && (y0..=y1).contains(&cy));
+        if on {
+            return false;
+        }
+    }
+    // 4. Town halls away from gold mines.
+    if type_id == i32::from_be_bytes(*b"htow") {
+        let mine = i32::from_be_bytes(*b"ngol");
+        let limit = mul(MINE_DISTANCE.to_bits(), MINE_DISTANCE.to_bits());
+        for h in &state.units {
+            let Some(Object::Unit(u)) = state.objects.get(h) else {
+                continue;
+            };
+            if !u.alive || u.type_id != mine {
+                continue;
+            }
+            let (dx, dy) = (sub(u.x, x), sub(u.y, y));
+            if real_of(add(mul(dx, dx), mul(dy, dy))) < real_of(limit) {
+                return false;
+            }
+        }
+    }
     true
 }
 

@@ -20,14 +20,14 @@ pub enum Action {
 }
 
 impl Action {
-    /// The action of a key, by its name as winit gives it ("w",
+    /// The action of a key, by its name as winit gives it ("q",
     /// "ArrowUp", ...).
     pub fn of_key(name: &str) -> Option<Action> {
         Some(match name {
-            "w" | "W" | "ArrowUp" => Action::Forward,
-            "s" | "S" | "ArrowDown" => Action::Back,
-            "a" | "A" | "ArrowLeft" => Action::Left,
-            "d" | "D" | "ArrowRight" => Action::Right,
+            "ArrowUp" => Action::Forward,
+            "ArrowDown" => Action::Back,
+            "ArrowLeft" => Action::Left,
+            "ArrowRight" => Action::Right,
             "q" | "Q" => Action::TurnLeft,
             "e" | "E" => Action::TurnRight,
             "r" | "R" => Action::TiltUp,
@@ -51,8 +51,14 @@ const ZOOM_SPEED: f32 = 2.5;
 /// second is `exp(-EASE)`.
 const EASE: f32 = 12.0;
 
+/// Pixels from the edge of the screen in which the mouse pans the camera.
+pub const EDGE: f32 = 4.0;
+
 pub struct Controls {
     held: Vec<Action>,
+    /// Panning by the mouse at the edge of the screen: -1, 0 or 1 to the
+    /// right and forward.
+    edge: [f32; 2],
     /// Where the camera is heading.
     pub goal: Camera,
 }
@@ -61,6 +67,7 @@ impl Controls {
     pub fn new(camera: Camera) -> Controls {
         Controls {
             held: Vec::new(),
+            edge: [0.0; 2],
             goal: camera,
         }
     }
@@ -73,6 +80,21 @@ impl Controls {
         }
     }
 
+    /// The mouse is at (`x`, `y`) pixels of a view `size` large, or out of
+    /// it (`None`): at an edge it pans the camera that way.
+    pub fn cursor(&mut self, at: Option<(f32, f32)>, size: (f32, f32)) {
+        let side = |p: f32, length: f32| {
+            if p < EDGE {
+                -1.0
+            } else if p >= length - EDGE {
+                1.0
+            } else {
+                0.0
+            }
+        };
+        self.edge = at.map_or([0.0; 2], |(x, y)| [side(x, size.0), -side(y, size.1)]);
+    }
+
     /// The mouse wheel turned by `lines`.
     pub fn wheel(&mut self, lines: f32) {
         self.goal.zoom(0.85f32.powf(lines));
@@ -80,7 +102,7 @@ impl Controls {
 
     /// Whether a key is held, so that frames should keep coming.
     pub fn moving(&self, camera: &Camera) -> bool {
-        !self.held.is_empty() || *camera != self.goal
+        !self.held.is_empty() || self.edge != [0.0; 2] || *camera != self.goal
     }
 
     /// Moves the goal by the held keys over `dt` seconds and brings
@@ -88,8 +110,8 @@ impl Controls {
     pub fn update(&mut self, camera: &mut Camera, dt: f32, ground: impl Fn(f32, f32) -> f32) {
         let dt = dt.clamp(0.0, 0.25);
         let held = |a| if self.held.contains(&a) { 1.0 } else { 0.0 };
-        let forward = held(Action::Forward) - held(Action::Back);
-        let right = held(Action::Right) - held(Action::Left);
+        let forward = (held(Action::Forward) - held(Action::Back) + self.edge[1]).clamp(-1.0, 1.0);
+        let right = (held(Action::Right) - held(Action::Left) + self.edge[0]).clamp(-1.0, 1.0);
         let step = self.goal.distance * PAN_SPEED * dt;
         self.goal.pan(right * step, forward * step);
         self.goal.turn(

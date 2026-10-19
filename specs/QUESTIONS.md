@@ -583,6 +583,31 @@ the spec is silent:
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.
 
+## Construction (`game::movement`, `game`, SPEC-0026)
+
+- **Several workers on one building** (power build). In the game more
+  Human workers on a building under construction finish it sooner, and
+  each costs something. Here only one worker builds and a second one
+  changes nothing. Needed: the rate with `n` workers, what they cost,
+  how a second worker joins (order, reach), and what the life and the
+  completion timer do when one joins or leaves.
+- **A worker leaving the building, and coming back.** Until answered:
+  the building stops growing while no worker builds it (its completion
+  timer is dropped); a worker sent back to it by a right click (`smart`
+  on the building, current order `repair`) takes the work up again
+  within 100 plus the building's collision size of its centre, from the
+  life it had, finishing after `(max - life) / rate`.
+- **Damage under construction.** Until answered: damage is taken off
+  the growing life and kept off it.
+- **Other races.** Orc workers build like Human ones here, only one at
+  a time; Night Elf wisps (consumed), Undead acolytes (summon and leave)
+  and Orc burrows are not done. Needed: how each race builds, and
+  whether several Orc workers can build together (in the game they
+  cannot).
+- **Placement rule 4.** The limit between a town hall and a gold mine
+  is taken as 768 (refused below it); the spec gives a limit above 749
+  and at most 768. Other races' halls are not checked.
+
 ## Camera (the viewer, SPEC-0023)
 
 The projection has the field of view (70 degrees) across the diagonal

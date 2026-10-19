@@ -109,7 +109,7 @@ pub enum Order {
     /// Build a building of `type_id` at the target point (SPEC-0026).
     Build { type_id: i32 },
     /// Build the building just started: the worker stays.
-    Repair,
+    Repair { building: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -120,6 +120,8 @@ const BUILD_REACH_SQUARED: f32 = 10_000.0;
 /// The game generator that the alarm ability of a new building draws
 /// (SPEC-0026).
 const ALARM: usize = 21;
+/// A worker starts its building facing it within this angle (0.2).
+const FACING_SITE: u32 = 0x3E4C_CCCD;
 
 /// A unit following an order.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -805,59 +807,99 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
 }
 
 /// The workers that came near their sites at the updates of this tick
-/// start their buildings, after the script's timers: a script timer of
-/// that tick still sees the worker walking with its build order
-/// (`c-RSR-1.log.tsv`, SPEC-0026). The worker then stands with order
-/// `repair`.
-///
-/// PROVISIONAL: whether the start comes after the timers of the update's
-/// tick or in the next tick is not specified; the log of c-RSR-1 fits
-/// both.
-pub(super) fn start_buildings(state: &mut State) {
+/// start their buildings at the end of the updates: script timers of the
+/// tick already see the building (SPEC-0026). The worker then stands with
+/// order `repair` until the building is finished.
+fn start_buildings(state: &mut State) {
     for (h, type_id, site) in std::mem::take(&mut state.starting) {
-        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
-        let Some(m) = u.movement.as_mut() else {
-            continue;
-        };
-        if m.order != (Order::Build { type_id }) || m.target != site {
+        if u.movement
+            .is_none_or(|m| m.order != (Order::Build { type_id }) || m.target != site)
+        {
             continue;
         }
-        m.order = Order::Repair;
-        m.order_id = ORDER_REPAIR;
-        m.walking = false;
-        m.velocity = [0, 0];
+        let Some(building) = start_construction(state, h, type_id, site) else {
+            continue;
+        };
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.order = Order::Repair { building };
+            m.order_id = ORDER_REPAIR;
+        }
         state.paths.remove(&h);
-        start_construction(state, h, type_id, site);
     }
 }
 
-/// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
-/// building appears there, its alarm draws game generator 21 once, and a
-/// worker that stands on its footprint moves to a free place next to it.
+/// Ticks from the start of a building to the tick whose clock is `Tb`,
+/// with the worker standing outside its footprint and moved off it
+/// (SPEC-0026). The life first grows in the tick after: the second tick
+/// after the start, or the 14th.
 ///
-/// PROVISIONAL: the building is made whole (construction is open
-/// question 1), and the worker's free place is the nearest cell centre
-/// whose cells are all passable (open question 2).
-fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) {
-    let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
-        return;
-    };
+/// PROVISIONAL: SPEC-0026 gives `Tb` as the clock of the second tick and
+/// the end 7000 ticks (farm) and 12003 ticks (barracks) after it; with the
+/// clock of the first tick and the end rule of the spec both counts come
+/// out from the first tick of growth, and so does "50 in the creation
+/// tick and the next one".
+const GROWTH_DELAY: u64 = 1;
+const GROWTH_DELAY_MOVED: u64 = 13;
+
+/// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
+/// building appears there with a tenth of its life, its alarm draws game
+/// generator 21 once, and a worker that stands on its footprint moves to
+/// a free place next to it. The building.
+///
+/// PROVISIONAL: the worker's free place is the nearest cell centre whose
+/// cells are all passable (open question 2); growth starts 14 ticks after
+/// the start when the worker was moved, as measured for farms (barracks
+/// took 20, open question 1).
+fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -> Option<u32> {
+    let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
-    if super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing]).is_none() {
-        return;
-    }
+    let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
     state.game_random[ALARM].fraction();
+    let moved = move_off_footprint(state, h);
+    let data = state.data.units.get(&type_id);
+    let (max, build_time) = data.map_or((0, 0), |t| (t.hp, t.build_time));
+    let base = mul(max, TENTH);
+    let rate = div(mul(max, NINE_TENTHS), build_time);
+    let delay = if moved {
+        GROWTH_DELAY_MOVED
+    } else {
+        GROWTH_DELAY
+    };
+    let begin = state.ticks + delay;
+    if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
+        b.life = super::Regenerating::full(max, 0);
+        b.life.set(base);
+        b.construction = Some(Box::new(super::Construction {
+            base,
+            rate,
+            build_time,
+            begin,
+            tb: None,
+        }));
+    }
+    Some(building)
+}
+
+/// 0.1 and 0.9.
+const TENTH: u32 = 0x3DCC_CCCD;
+const NINE_TENTHS: u32 = 0x3F66_6666;
+
+/// Moves worker `h` off a footprint it stands on; whether it was moved.
+fn move_off_footprint(state: &mut State, h: u32) -> bool {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let Some(u) = state.unit(Some(h)) else {
-        return;
+        return false;
     };
     let class =
         crate::path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
     let here = mul_both(relative([u.x, u.y], min), CELL);
     let Some(grid) = state.grid.as_ref() else {
-        return;
+        return false;
     };
     let free = |p: [u32; 2]| {
         crate::path::occupied_cells(p, class)
@@ -865,7 +907,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) {
             .all(|&(x, y)| grid.passable(x, y))
     };
     if free(here) {
-        return;
+        return false;
     }
     let (cx, cy) = crate::path::cell_of(here);
     let mut best: Option<([u32; 2], u32)> = None;
@@ -883,7 +925,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) {
         }
     }
     let Some((p, _)) = best else {
-        return;
+        return false;
     };
     let [x, y] = absolute(mul_both(p, CELLS_TO_WORLD), min);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -893,6 +935,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) {
             m.origin = relative([x, y], min);
         }
     }
+    true
 }
 
 /// `IssuePointOrder(h, name, target)`: what the native returns.
@@ -1335,8 +1378,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.swing_gate = Some(tick + UPDATE);
             }
         }
-        // A worker near the site of its building starts it after the
-        // script's timers of this tick (SPEC-0026; `start_buildings`).
+        // A worker near the site of its building and facing it starts it
+        // at the end of this tick's updates (SPEC-0026; `start_buildings`);
+        // one near but facing away turns on the spot first.
+        let mut turning_to_site = false;
         if let Order::Build { type_id } = m.order
             && !m.arrived
             && !waiting
@@ -1344,14 +1389,31 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let site = relative(m.target, min);
             let (dx, dy) = (sub(site[0], here[0]), sub(site[1], here[1]));
             if real_of(add(mul(dx, dx), mul(dy, dy))) <= BUILD_REACH_SQUARED {
-                state.starting.push((h, type_id, m.target));
+                let off = super::facing::angle_difference(angle(dx, dy), normal(m.heading));
+                if real_of(off).abs() <= real_of(FACING_SITE) {
+                    state.starting.push((h, type_id, m.target));
+                    m.walking = false;
+                    m.velocity = [0, 0];
+                } else {
+                    motion(&mut m, site, false, speed, limit, turn_rate, window);
+                }
+                turning_to_site = true;
             }
         }
-        if m.order == Order::Repair {
+        // A worker building stays until the building is finished.
+        if let Order::Repair { building } = m.order {
             m.walking = false;
             m.velocity = [0, 0];
+            let building_now = matches!(
+                state.objects.get(&building),
+                Some(Object::Unit(b)) if b.alive && b.construction.is_some()
+            );
+            if !building_now {
+                m.arrived = true;
+            }
         }
-        if !m.arrived && !waiting && m.order != Order::Repair {
+        let repairing = matches!(m.order, Order::Repair { .. });
+        if !m.arrived && !waiting && !repairing && !turning_to_site {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
                 m.velocity = [0, 0];
@@ -1553,6 +1615,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             super::attack::begin(state, h, target, tick, m.order_id);
         }
     }
+    start_buildings(state);
     state.marked.clear();
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;

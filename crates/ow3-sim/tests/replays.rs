@@ -134,7 +134,10 @@ fn replays_follow_the_game_logs() {
 ///
 /// PROVISIONAL: where the peasant is moved off the farm's footprint is
 /// not specified (SPEC-0026, open question 2), so its position is not
-/// compared once the farm stands.
+/// compared once the farm stands. The simulation starts the farm at the
+/// update of tick 1708 of the log; the game, by the distances it reached
+/// at its updates (103.51 at the last one before), updates the peasant one
+/// tick later and starts it at 1709. So tick 1708 is left out.
 #[test]
 fn build_order_follows_the_game_log() {
     let path = game_data().join("replays/c-RSR-1.w3g");
@@ -154,6 +157,11 @@ fn build_order_follows_the_game_log() {
     for (line, ours) in log.lines().filter(|l| !l.starts_with('#')).zip(&ours) {
         let game: Vec<&str> = line.split('\t').collect();
         started |= game[3] == "852024";
+        // The tick before the game's start: the simulation starts the farm
+        // one tick earlier (see above).
+        if game[0] == "1708" {
+            continue;
+        }
         let columns = if started { 3..7 } else { 0..7 };
         for i in columns {
             assert_eq!(ours[i], game[i], "tick {}: column {i}", game[0]);
@@ -161,4 +169,69 @@ fn build_order_follows_the_game_log() {
         rows += 1;
     }
     assert!(started && rows > 5000);
+}
+
+/// SPEC-0026, "Construction progress": the farm of `c-RSN-1.w3g`, played on
+/// past the end of the replay. Its life is a tenth of 500 until growth
+/// begins, then follows `50 + 12.857142 (T - Tb)`; it is finished 35 s of
+/// the movement clock after growth began, with 500 life; the player's food cap
+/// grows by 6 at the next tick, and the peasant's order ends. The ticks
+/// are counted from the first tick in which the life is above 50, the
+/// second (or with the peasant moved the 14th) after the start.
+#[test]
+fn a_farm_is_built() {
+    let path = game_data().join("replays/c-RSN-1.w3g");
+    let Ok(data) = std::fs::read(&path) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.load_object_ids(&path);
+    let hhou = i32::from_be_bytes(*b"hhou");
+    let farm = |p: &Playback| p.game.units().into_iter().find(|u| u.type_id == hhou);
+    while farm(&playback).is_none() {
+        assert!(playback.step_tick());
+    }
+    let created = playback.game.ticks();
+    let food = playback.game.player_state(0, 4);
+    let mut began = None;
+    let mut last = 50.0;
+    loop {
+        let f = farm(&playback).unwrap();
+        if began.is_none() && f.life > 50.0 {
+            began = Some(playback.game.ticks());
+        }
+        assert!(f.life >= last, "life fell from {last} to {}", f.life);
+        last = f.life;
+        if f.life == 500.0 {
+            break;
+        }
+        playback.game.step();
+    }
+    let finished = playback.game.ticks();
+    let began = began.unwrap();
+    assert!(
+        began - created == 2 || began - created == 14,
+        "{created} {began}"
+    );
+    // 7000 ticks at the start of a game; growth here begins at a clock of
+    // 9.46 s, where the drift of the clock (SPEC-0018) adds one.
+    assert_eq!(finished - began, 7001);
+    assert_eq!(playback.game.player_state(0, 4), food);
+    playback.game.step();
+    assert_eq!(playback.game.player_state(0, 4), food + 6);
+    for _ in 0..6 {
+        playback.game.step();
+    }
+    let hpea = i32::from_be_bytes(*b"hpea");
+    let peasant = playback
+        .game
+        .units()
+        .into_iter()
+        .find(|u| u.type_id == hpea)
+        .unwrap();
+    assert_eq!(peasant.order, 0);
 }

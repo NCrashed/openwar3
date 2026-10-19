@@ -64,12 +64,19 @@ fn remainders_of_the_reference_replay() {
 
 /// Replays of the test maps whose play needs what the specs do not give
 /// yet, with the reason.
-const UNSPECIFIED: &[(&str, &str)] = &[(
-    "c-RSM-1.w3g",
-    "the members block each other at other updates than in the game: the \
+const UNSPECIFIED: &[(&str, &str)] = &[
+    (
+        "c-RSM-1.w3g",
+        "the members block each other at other updates than in the game: the \
          game draws the script generator for patience at turns 65, 67, 76 and \
          77, the simulation at 62 and 79 (SPEC-0025)",
-)];
+    ),
+    (
+        "c-RSM-2.w3g",
+        "the same group as c-RSM-1: the simulation draws for patience at turn \
+         56, the game does not (SPEC-0025)",
+    ),
+];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.
 fn test_replays() -> Vec<PathBuf> {

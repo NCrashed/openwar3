@@ -59,6 +59,10 @@ pub struct UnitType {
     /// `UnitBalance.slk`; `ugol`, `ulum` of a map), SPEC-0026.
     pub gold_cost: i32,
     pub lumber_cost: i32,
+    /// Build time in seconds as a real (`bldtm`, `ubld`) and the food a
+    /// finished unit gives (`fmade`, `ufma`), SPEC-0026.
+    pub build_time: u32,
+    pub food_made: i32,
     /// Armor value (`def`), armor type (`defType`, an index into
     /// [`crate::combat::ARMOR_TYPES`]) and a hero's agility (`AGI`),
     /// SPEC-0015.
@@ -539,6 +543,8 @@ impl ObjectData {
                 "type",
                 "goldcost",
                 "lumbercost",
+                "bldtm",
+                "fmade",
             ],
         )? {
             let b = Balance {
@@ -565,6 +571,8 @@ impl ObjectData {
                 let cost = |v: Option<&String>| v.and_then(|v| v.trim().parse().ok()).unwrap_or(0);
                 unit.gold_cost = cost(values[16].as_ref());
                 unit.lumber_cost = cost(values[17].as_ref());
+                unit.build_time = real(values[18].as_ref());
+                unit.food_made = cost(values[19].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -648,6 +656,10 @@ impl ObjectData {
             }
             unit.turn_rate = def.number(b"umvr").unwrap_or(unit.turn_rate);
             unit.prop_window = def.number(b"uprw").unwrap_or(unit.prop_window);
+            unit.build_time = def.number(b"ubld").unwrap_or(unit.build_time);
+            if let Some(food) = def.number(b"ufma") {
+                unit.food_made = f32::from_bits(food) as i32;
+            }
             if let Some(gold) = def.number(b"ugol") {
                 unit.gold_cost = f32::from_bits(gold) as i32;
             }

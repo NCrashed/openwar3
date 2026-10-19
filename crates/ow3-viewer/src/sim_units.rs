@@ -395,6 +395,7 @@ mod tests {
             max_mana: 0.0,
             walking: false,
             target: None,
+            order: 0,
         }
     }
 

@@ -189,6 +189,70 @@ pub struct Unit {
     resources: i32,
     /// A building's pathing texture in the grid (SPEC-0022).
     footprint: Option<Box<obstacles::Footprint>>,
+    /// A building under construction (SPEC-0026).
+    construction: Option<Box<Construction>>,
+}
+
+/// A building under construction (SPEC-0026, "Construction progress"):
+/// its life is `base + rate * (T - Tb)` from the clock `Tb` of tick
+/// `begin` on, and it is finished when the next tick's clock reaches
+/// `Tb + build_time`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Construction {
+    base: u32,
+    rate: u32,
+    build_time: u32,
+    begin: u64,
+    tb: Option<u32>,
+}
+
+/// `PLAYER_STATE_RESOURCE_FOOD_CAP`.
+const PLAYER_STATE_RESOURCE_FOOD_CAP: i32 = 4;
+
+/// One tick of the buildings under construction (SPEC-0026,
+/// "Construction progress"), with the movement clock of the tick: growth
+/// begins at its tick, the life follows the clock, and a building is
+/// finished when the next tick's clock reaches the end of its build time.
+/// A finished building has its full life, and its food comes at the next
+/// tick.
+fn construction(state: &mut State, tick: u64) {
+    let clock = state.move_clock;
+    let mut finished = Vec::new();
+    for &h in &state.units {
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        let Some(c) = u.construction.as_mut() else {
+            continue;
+        };
+        if !u.alive {
+            continue;
+        }
+        if tick == c.begin {
+            c.tb = Some(clock);
+        }
+        let Some(tb) = c.tb else {
+            continue;
+        };
+        u.life.set(add(c.base, mul(c.rate, sub(clock, tb))));
+        let next = add(clock, crate::timers::TICK);
+        if f32::from_bits(next) >= f32::from_bits(add(tb, c.build_time)) {
+            finished.push(h);
+        }
+    }
+    for h in finished {
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        u.construction = None;
+        let (max, regen, food) = state.data.units.get(&u.type_id).map_or((0, 0, 0), |t| {
+            (t.hp, widgets::life_rate(t, 0, state.night), t.food_made)
+        });
+        u.life = Regenerating::full(max, regen);
+        if food != 0 {
+            state.food_made.push((u.owner, food));
+        }
+    }
 }
 
 /// The acquisition phase of a unit that never acquires (a NaN, never
@@ -240,6 +304,8 @@ pub struct UnitView {
     pub walking: bool,
     /// The target of its attack order, given or acquired.
     pub target: Option<u32>,
+    /// The id of the order it follows, 0 without one.
+    pub order: i32,
 }
 
 /// An attack in progress, in ticks.
@@ -487,6 +553,8 @@ pub struct State {
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
+    /// Food of buildings finished at this tick, given at the next one.
+    food_made: Vec<(i32, i32)>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
@@ -546,6 +614,7 @@ impl State {
             clusters: Vec::new(),
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
+            food_made: Vec::new(),
             heights: crate::heights::Heights::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
@@ -925,6 +994,14 @@ impl<'a> Game<'a> {
             let state = &mut *state;
             state.ticks += 1;
             let tick = state.ticks;
+            // Food from buildings finished in the tick before (SPEC-0026).
+            for (player, food) in std::mem::take(&mut state.food_made) {
+                *state
+                    .setup
+                    .player_states
+                    .entry((player, PLAYER_STATE_RESOURCE_FOOD_CAP))
+                    .or_default() += food;
+            }
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less
@@ -965,6 +1042,7 @@ impl<'a> Game<'a> {
             }
             // Moving units advance every tick, before the timers (SPEC-0018).
             movement::step(state);
+            construction(state, tick);
             state.turning.retain(|h| {
                 let Some(Object::Unit(unit)) = state.objects.get_mut(h) else {
                     return false;
@@ -992,7 +1070,6 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
-        movement::start_buildings(&mut self.state.borrow_mut());
         movement::attack_moves(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
@@ -1090,10 +1167,21 @@ impl<'a> Game<'a> {
                     max_mana: f32::from_bits(u.mana.max),
                     walking: u.movement.is_some_and(|m| m.walking()),
                     target: u.movement.and_then(|m| m.target()),
+                    order: u.movement.map_or(0, |m| m.order_id()),
                 }),
                 _ => None,
             })
             .collect()
+    }
+
+    /// `GetPlayerState` of player `player` (an index) for state `state`.
+    pub fn player_state(&self, player: i32, state: i32) -> i32 {
+        let s = self.state.borrow();
+        s.setup
+            .player_states
+            .get(&(player, state))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Game ticks so far (0.005 s of game time each).

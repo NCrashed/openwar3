@@ -185,7 +185,7 @@ fn hero_part(type_id: i32, strength: i32) -> u32 {
 
 /// The life regeneration of a unit of `data` with a hero's strength part
 /// `hero_part`, by day or at `night`.
-fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
+pub(super) fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
     match data.regen_type {
         RegenType::Always => add(data.life_regen, hero_part),
         RegenType::Night if night => add(data.life_regen, hero_part),
@@ -257,6 +257,7 @@ pub(super) fn create_unit(
         user_data: 0,
         resources: 0,
         footprint: footprint.map(Box::new),
+        construction: None,
     };
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);

@@ -64,19 +64,11 @@ fn remainders_of_the_reference_replay() {
 
 /// Replays of the test maps whose play needs what the specs do not give
 /// yet, with the reason.
-const UNSPECIFIED: &[(&str, &str)] = &[
-    (
-        "c-RSM-1.w3g",
-        "the members block each other at other updates than in the game: the \
-         game draws the script generator for patience at turns 65, 67, 76 and \
-         77, the simulation at 62 and 79 (SPEC-0025)",
-    ),
-    (
-        "c-RSM-2.w3g",
-        "the same group as c-RSM-1: the simulation draws for patience at turn \
-         56, the game does not (SPEC-0025)",
-    ),
-];
+const UNSPECIFIED: &[(&str, &str)] = &[(
+    "c-RTJ-1.w3g",
+    "there is no list of its object ids (c-RTJ-1.units.txt), so its group order \
+     is not played",
+)];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.
 fn test_replays() -> Vec<PathBuf> {
@@ -136,7 +128,9 @@ fn state_changes_at_the_recorded_turns() {
         });
         // Buildings and their workers change state the simulation does not
         // have (objects of the work, freed after it).
-        let builds = path.file_name().is_some_and(|n| n == "c-RTI-1.w3g");
+        let builds = path
+            .file_name()
+            .is_some_and(|n| n == "c-RTI-1.w3g" || n == "c-RTM-1.w3g");
         if actions || builds {
             let missing: Vec<usize> = ours
                 .iter()

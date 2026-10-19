@@ -78,8 +78,6 @@ pub struct Follow {
     hold_until: u64,
     /// The order point in cells the waypoints were searched to.
     order: [u32; 2],
-    /// The tick of its last local search.
-    searched_at: u64,
     /// Updates the unit still stands waiting for another unit.
     wait: u32,
     /// The patience counter of a blocked unit (SPEC-0025): 0 while its
@@ -329,7 +327,6 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
             hold_until: 0,
             wait: 0,
             patience: 0,
-            searched_at: 0,
             order: order_cells,
         };
         follow.take_segment(order_cells);
@@ -431,7 +428,6 @@ fn decide(
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
         shared.budget.used += found.iterations;
-        follow.searched_at = tick;
         if shared.budget.used >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }
@@ -499,36 +495,30 @@ fn decide(
         }
     }
     // Blocked by units that made it wait for none: the patience counter
-    // (SPEC-0021, SPEC-0025 "Blocked units"). It stands, and searches
-    // again when its patience is out. Blocked by static obstacles alone it
-    // searches again at the next update (SPEC-0020).
+    // (SPEC-0021, SPEC-0025 "Blocked units") counts such blocks in a row.
+    // Either way the unit stands, drops its local path and searches a new
+    // one at its next update (SPEC-0020).
     //
     // PROVISIONAL: the counter is measured with units in the way; that it
     // does not count for static obstacles follows from the tests of
-    // SPEC-0020 (c-PF1), which match without it.
-    if examined.is_empty() {
-        follow.next = Next::Search;
-        follow.local.clear();
-        return Steer::Stand(segment_goal);
-    }
-    if follow.patience == 0 {
-        let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
-        let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
-        follow.patience = if near && walker.cluster <= 1 {
-            2
-        } else {
-            7 + ((shared.random.step() >> 22) & 1)
-        };
-    }
-    if follow.patience == 1 {
-        follow.next = Next::Search;
-        follow.local.clear();
-        if follow.searched_at == tick {
-            return Steer::Stand(segment_goal);
+    // SPEC-0020 (c-PF1), which match without it. What a unit does at a
+    // block with a counter of 1 is not known (SPEC-0025, open question 5);
+    // here the same, with the counter staying 1.
+    if !examined.is_empty() {
+        if follow.patience == 0 {
+            let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
+            let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
+            follow.patience = if near && walker.cluster <= 1 {
+                2
+            } else {
+                7 + ((shared.random.step() >> 22) & 1)
+            };
+        } else if follow.patience > 1 {
+            follow.patience -= 1;
         }
-        return decide(follow, grid, others, shared, walker, tick);
     }
-    follow.patience -= 1;
+    follow.next = Next::Search;
+    follow.local.clear();
     Steer::Stand(segment_goal)
 }
 

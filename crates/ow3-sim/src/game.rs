@@ -572,6 +572,8 @@ pub struct State {
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
+    /// Orders given so far (SPEC-0021, order of handling).
+    orders_given: u64,
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
@@ -640,6 +642,7 @@ impl State {
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             clusters: Vec::new(),
+            orders_given: 0,
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             food_made: Vec::new(),

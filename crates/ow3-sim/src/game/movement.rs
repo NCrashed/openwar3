@@ -168,6 +168,9 @@ pub struct Moving {
     swing_gate: Option<u64>,
     /// The next goal of a resumed chase comes with an update standing.
     renew_stands: bool,
+    /// The number of the order, counted over the game: units are handled
+    /// newest order first (SPEC-0021).
+    given: u64,
 }
 
 impl Moving {
@@ -364,6 +367,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         return false;
     }
     let busy = u.movement.filter(|m| m.ordered());
+    let given = state.orders_given + 1;
     let moving = match busy {
         // Taken at the next update, which the unit keeps.
         Some(m) => Moving {
@@ -374,6 +378,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             chase: None,
             renew_stands: false,
+            given,
             swing_gate: None,
             swing_waits: false,
             ..m
@@ -395,11 +400,13 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             chase: None,
             renew_stands: false,
+            given,
             swing_gate: None,
             swing_waits: false,
         },
     };
-    // A new order takes the unit out of a group waiting to be laid out.
+    state.orders_given = given;
+    // A new order takes the unit out of its group.
     for cluster in &mut state.clusters {
         cluster.members.retain(|&m| m != h);
     }
@@ -524,6 +531,15 @@ pub(super) fn group_point_order(
                 updates: 0,
                 walked: std::collections::BTreeSet::new(),
             });
+        }
+    }
+    // The group counts as one order, the newest (SPEC-0025).
+    let given = state.orders_given;
+    for &h in &taken {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.given = given;
         }
     }
     !taken.is_empty()
@@ -1297,35 +1313,23 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let tick = state.ticks;
     let control = update_clusters(state, tick);
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    // Units updating in the same tick go from the last created (SPEC-0021).
+    // Units updating in the same tick go by their orders, the newest first,
+    // and the members of a group in the order of its cluster (SPEC-0021,
+    // "Searches of many units in the same tick"; SPEC-0025).
     let mut moving = std::mem::take(&mut state.moving);
-    let created: std::collections::HashMap<u32, usize> = state
-        .units
-        .iter()
-        .enumerate()
-        .map(|(i, &h)| (h, i))
-        .collect();
-    moving.sort_by_key(|h| std::cmp::Reverse(created.get(h).copied()));
-    // The members of a cluster update in the cluster's order, in the
-    // places of the order above.
-    //
-    // PROVISIONAL: not in the specs; found with c-RSM-2.members.tsv, whose
-    // members walk as in the game only so (a member updating after another
-    // sees the cells of that one's previous update, SPEC-0021).
-    for cluster in &state.clusters {
-        let slots: Vec<usize> = (0..moving.len())
-            .filter(|&i| cluster.members.contains(&moving[i]))
-            .collect();
-        let members: Vec<u32> = cluster
-            .members
+    let key = |h: &u32| {
+        let given = match state.objects.get(h) {
+            Some(Object::Unit(u)) => u.movement.map_or(0, |m| m.given),
+            _ => 0,
+        };
+        let member = state
+            .clusters
             .iter()
-            .copied()
-            .filter(|h| moving.contains(h))
-            .collect();
-        for (&slot, &h) in slots.iter().zip(&members) {
-            moving[slot] = h;
-        }
-    }
+            .find_map(|c| c.members.iter().position(|m| m == h))
+            .unwrap_or(0);
+        (std::cmp::Reverse(given), member)
+    };
+    moving.sort_by_key(key);
     let mut still = Vec::with_capacity(moving.len());
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {

@@ -208,12 +208,21 @@ impl<'a> Playback<'a> {
     /// Plays one tick of the game, starting the next time slot when the
     /// game has run those before; false at the end of the replay.
     pub fn step_tick(&mut self) -> bool {
+        if !self.begin_due_slots() {
+            return false;
+        }
+        self.game.step();
+        true
+    }
+
+    /// Starts the time slots whose turn the game has reached, applying
+    /// their actions before the next tick; false at the end of the replay.
+    pub fn begin_due_slots(&mut self) -> bool {
         while self.game.ticks() >= self.end {
             if !self.begin_slot() {
                 return false;
             }
         }
-        self.game.step();
         true
     }
 

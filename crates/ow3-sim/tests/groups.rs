@@ -74,6 +74,9 @@ fn mismatches(name: &str, limit: usize) -> Option<Vec<String>> {
         while playback.game.ticks() < row.tick - 1 {
             playback.step_tick();
         }
+        // The slots whose turn has come are applied before the updates of
+        // the next tick.
+        playback.begin_due_slots();
         let (o, v, t) = playback
             .game
             .motion_of(units[row.member])
@@ -111,21 +114,12 @@ fn mixed_group_follows_the_game() {
     }
 }
 
-/// `c-RSM-2`: four footmen. They move bit for bit as in the game up to
-/// the update of tick 1129.
-///
-/// PROVISIONAL: there member 1, blocked by member 2 (which waits for
-/// another unit) and given a patience of 7 at the update before, walks on
-/// in the game along a new path with its patience cleared, while
-/// SPEC-0025 has it stand until its patience runs out.
+/// `c-RSM-2`: four footmen ordered twice. They block each other, wait,
+/// count their patience and search round each other, and move bit for bit
+/// as in the game at every update of both orders.
 #[test]
-fn group_of_four_follows_the_game_to_tick_1129() {
-    if let Some(found) = mismatches("c-RSM-2", 1) {
-        assert!(
-            found
-                .first()
-                .is_none_or(|f| f.starts_with("tick 1135 member 1:")),
-            "{found:#?}"
-        );
+fn group_of_four_follows_the_game() {
+    if let Some(found) = mismatches("c-RSM-2", 5) {
+        assert!(found.is_empty(), "{found:#?}");
     }
 }

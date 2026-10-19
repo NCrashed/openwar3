@@ -346,6 +346,48 @@ time to time:
   | 270 | never caught | 213.9 |
   | 300 | never caught | 234.2 |
 
+### Following an allied unit
+
+`smart` on a unit of the same player (a right click on it) and `move`
+with that unit as the target behave the same: the unit follows the
+other one (tests RUO, RUP, RUQ, RUS; footmen following a footman or a
+peasant). Let `gap = d - c_f - c_l`, the distance between the centres
+less the collision sizes of the follower and the leader (31 for the
+footman, 16 for the peasant).
+
+- **Follow range** 300. The follower walks towards the leader and
+  stops at the first of its updates at which `gap <= 300` (the range
+  test above with range 300). With the leader standing still and start
+  gaps 303 to 1238, the follower stopped at gaps from 292.3 to 299.9;
+  with a start gap of 303 it stopped after one update.
+- **Start within the range.** When the start gap is 300 or less, the
+  follower still walks towards the leader: it stops at the first update
+  at which the gap is no larger than the distance it has walked since
+  the order, so it covers about half of the start gap (start gaps 238
+  to 298: stops at gaps 119 to 144 after 15 to 19 updates; a start gap
+  of 303 already gives the rule above).
+- **A moving leader.** The follower takes the leader's position as its
+  goal point and takes a new one from time to time as in a chase (about
+  every 102 ticks, see "Chasing a moving target"); when the leader
+  stopped, the follower stopped at a gap of 295.5, by the follow range.
+
+Measured stops (footman following a footman, start gaps 300 and less;
+the same numbers with a peasant as the leader when the start gap is the
+same):
+
+| Start gap | Updates walked | Gap at the stop |
+|---|---|---|
+| 238.0 | 15 | 116.5 |
+| 245.0 | 16 | 115.4 |
+| 259.0 | 16 | 129.4 |
+| 262.5 | 17 | 124.8 |
+| 273.0 | 17 | 135.3 |
+| 276.5 | 18 | 130.7 |
+| 283.0 | 18 | 137.2 |
+| 298.0 | 19 | 144.1 |
+| 303.0 | 1 | 294.9 |
+| 338.0 | 5 | 297.5 |
+
 ### Acquisition by idle units
 
 An idle unit with a weapon attacks an enemy unit on its own:
@@ -417,9 +459,18 @@ An idle unit with a weapon attacks an enemy unit on its own:
 6. How the start block is chosen when the attacker's own block is not
    free (one case seen), and what the attacker does when no free block
    is near.
+7. Following: whether the rule for a start within the range compares
+   the gap with the distance walked or with half the start gap (the
+   same thing on a straight way), where the boundary between the two
+   rules lies for start gaps between 298 and 303, the current order of
+   a follower that stands, following units of other players.
 
 ## Sources
 
+- Test maps RUO, RUP, RUQ and RUS on 1.27b under Wine, 2026-10-20:
+  pairs of a footman and a footman or peasant standing still on one
+  line, start distances 300 to 1500, `smart` and `move` on the leader,
+  the follower's position logged every tick until it stopped.
 - Test maps of 2026-10-18 for attack-move (paused enemy footmen beside
   the way) and retaliation (a glaive thrower attacking an idle footman,
   idle footmen, riflemen, archers and peasants around it).
@@ -531,3 +582,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
     footmen 0.5 s before its order, with an acquisition range of 1150 it
     acquired the footman at (0, 0) at its own first check, one draw, and
     the attack order drew the second).
+10. **Following** (RUS). A footman at (-7000, y) given `smart` on a
+   standing footman at (-7000 + D, y): for D = 345 (start gap 283) it
+   stops after 18 updates, 145.8 from its start; for D = 365 (gap 303)
+   after one update; for D = 400 (gap 338) after 5 updates, 40.5 from
+   its start.

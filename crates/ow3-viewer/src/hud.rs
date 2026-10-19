@@ -128,6 +128,8 @@ const INFO: Rect = [0.309_375, 0.0, 0.4975, 0.114_063];
 const RESOURCES: Rect = [0.461_719, 0.5782, 0.8, 0.6];
 const UPPER: Rect = [0.0, 0.578, 0.34, 0.6];
 const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
+/// The portrait (SPEC-0028).
+pub const PORTRAIT: Rect = [0.2075, 0.030_625, 0.2975, 0.116_23];
 /// The life and mana texts under the portrait.
 ///
 /// PROVISIONAL: their places are not specified yet; they stand under the
@@ -330,6 +332,8 @@ impl Hud {
             colour: [0.0, 0.0, 0.0, 1.0],
             blend: Blend::Alpha,
         });
+        // The portrait lies between it and the console.
+        out.under = out.quads.len();
         self.interface
             .lay_out("ConsoleUI", screen, &plain, &mut out);
         let buttons = UPPER;

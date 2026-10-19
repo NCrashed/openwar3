@@ -320,6 +320,31 @@ impl Sim {
         ))
     }
 
+    /// The portrait model of unit `h` and its team (SPEC-0028): the
+    /// `_portrait` file next to its model if there is one, else the model
+    /// itself, and the orc peon's portrait for a unit without a model.
+    pub fn portrait(&self, h: u32) -> Option<(String, u8)> {
+        let u = self.game.units().into_iter().find(|u| u.handle == h)?;
+        let team = u8::try_from(u.owner).ok().filter(|&t| t < 16).unwrap_or(0);
+        let model = match self.models.get(&u.type_id) {
+            Some(look) => {
+                let base = look
+                    .model
+                    .strip_suffix(".mdx")
+                    .or_else(|| look.model.strip_suffix(".MDX"))
+                    .unwrap_or(&look.model);
+                let portrait = format!("{base}_portrait.mdx");
+                if self.chain.contains(&portrait) {
+                    portrait
+                } else {
+                    look.model.clone()
+                }
+            }
+            None => "units\\orc\\peon\\peon_portrait.mdx".to_owned(),
+        };
+        Some((model, team))
+    }
+
     /// Carries out `command` of the command card for `unit` on unit
     /// `target` clicked; `None` when the command takes no unit, and the
     /// ground point is used.

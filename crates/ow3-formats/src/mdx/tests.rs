@@ -105,7 +105,13 @@ fn sample() -> Vec<u8> {
     bone.sized(&node).u32(0).u32(u32::MAX);
     file.chunk(b"BONE", &bone);
     file.chunk(b"PIVT", Writer::default().f32(0.5).f32(0.5).f32(0.0));
-    file.chunk(b"CAMS", Writer::default().u32(7));
+    let mut camera = Writer::default();
+    camera.text("Portrait", 80);
+    for v in [1.0, 2.0, 3.0, 0.5, 1000.0, 8.0, 4.0, 5.0, 6.0] {
+        camera.f32(v);
+    }
+    file.chunk(b"CAMS", Writer::default().sized(&camera));
+    file.chunk(b"CLID", Writer::default().u32(7));
     file.0
 }
 
@@ -140,8 +146,16 @@ fn parses_a_small_model() {
     assert_eq!(translation.keys[0].reals(), [1.0, 2.0, 3.0]);
     assert!(translation.keys[0].tangents.is_some());
     assert_eq!(model.pivots, [[0.5, 0.5, 0.0]]);
+    let camera = &model.cameras[0];
+    assert_eq!(camera.name, "Portrait");
+    assert_eq!(camera.position, [1.0, 2.0, 3.0]);
+    assert_eq!(
+        (camera.field_of_view, camera.far, camera.near),
+        (0.5, 1000.0, 8.0)
+    );
+    assert_eq!(camera.target, [4.0, 5.0, 6.0]);
     assert_eq!(model.other_chunks.len(), 1);
-    assert_eq!(&model.other_chunks[0].0.0, b"CAMS");
+    assert_eq!(&model.other_chunks[0].0.0, b"CLID");
 }
 
 #[test]

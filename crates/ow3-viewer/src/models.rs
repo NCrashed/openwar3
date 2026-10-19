@@ -110,6 +110,8 @@ struct Animated {
     walk: Option<usize>,
     /// The sequence Stand Work, if any.
     work: Option<usize>,
+    /// The first sequence with Portrait and without Talk in its name.
+    portrait: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
     palette: Vec<u32>,
     /// The first matrix of variant 0; variant `v` follows `v` blocks
@@ -140,6 +142,8 @@ pub enum UnitPose {
     /// Milliseconds since it started working on a building; the Stand Work
     /// sequence loops.
     Work(i32),
+    /// Milliseconds into its Portrait sequence, which loops (SPEC-0028).
+    Portrait(i32),
     /// Stopped walking `since` milliseconds ago after walking `walked`.
     Halt { walked: i32, since: i32 },
     /// Milliseconds into its Stand sequence played once, for effects such
@@ -184,6 +188,7 @@ impl Animation {
                     .iter()
                     .position(|s| s.name.to_ascii_lowercase().starts_with("attack"));
                 let work = work_index(&model);
+                let portrait = portrait_index(&model);
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
@@ -199,6 +204,7 @@ impl Animation {
                     attack,
                     walk,
                     work,
+                    portrait,
                     top,
                     palette,
                     bone_base,
@@ -258,15 +264,26 @@ impl Animation {
                 }
                 None => stand(),
             },
-            UnitPose::Work(elapsed) => match animated.work {
-                Some(work) => {
-                    let mut moment = Moment::at(model, work, elapsed);
-                    moment.global = now;
-                    moment
+            UnitPose::Work(elapsed) | UnitPose::Portrait(elapsed) => {
+                let sequence = match pose {
+                    UnitPose::Work(_) => animated.work,
+                    _ => animated.portrait,
+                };
+                match sequence {
+                    Some(sequence) => {
+                        let mut moment = Moment::at(model, sequence, elapsed);
+                        moment.global = now;
+                        moment
+                    }
+                    None => stand(),
                 }
-                None => stand(),
-            },
+            }
         }
+    }
+
+    /// The index of the model at `path` if it was read.
+    pub fn index_of(&self, path: &str) -> Option<usize> {
+        self.paths.get(path).copied().flatten()
     }
 
     /// The height of the top of model `index` in its Stand pose.
@@ -308,6 +325,7 @@ impl Animation {
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
             UnitPose::Work(elapsed) => (animated.work?, elapsed),
+            UnitPose::Portrait(elapsed) => (animated.portrait?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
             UnitPose::Once(elapsed) => (animated.sequence, elapsed),
         };
@@ -320,7 +338,7 @@ impl Animation {
         let stand = || self.stand_pose(index, now, variant);
         let looping = matches!(
             pose,
-            UnitPose::Walk(_) | UnitPose::Work(_) | UnitPose::Halt { .. }
+            UnitPose::Walk(_) | UnitPose::Work(_) | UnitPose::Portrait(_) | UnitPose::Halt { .. }
         );
         let at = |frame: i32| {
             let frame = if looping {
@@ -501,6 +519,16 @@ impl Animation {
         // Slot 0 is the constant 1, so source `i` has slot `i + 1`.
         Some((values, first as u32 + 1))
     }
+}
+
+/// The sequence a portrait plays: the first whose name has Portrait and
+/// not Talk (SPEC-0028). PROVISIONAL: how the game picks one of several
+/// is not known.
+fn portrait_index(model: &Model) -> Option<usize> {
+    model.sequences.iter().position(|s| {
+        let name = s.name.to_ascii_lowercase();
+        name.contains("portrait") && !name.contains("talk")
+    })
 }
 
 /// The sequence a worker plays while it builds: Stand Work, or the first

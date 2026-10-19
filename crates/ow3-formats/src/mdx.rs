@@ -3,9 +3,9 @@
 //!
 //! A file is `MDLX` followed by chunks: a four-character tag, a byte size
 //! and the data. Parsed here: `VERS`, `MODL`, `SEQS`, `GLBS`, `TEXS`,
-//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH`, `PIVT`, `LITE` and `PRE2`. Other chunks
-//! (particle emitters, ribbons, events, cameras, collision shapes,
-//! texture animations) are kept as raw bytes.
+//! `MTLS`, `GEOS`, `GEOA`, `BONE`, `HELP`, `ATCH`, `PIVT`, `LITE`, `PRE2`
+//! and `CAMS`. Other chunks (other particle emitters, ribbons, events,
+//! collision shapes, texture animations) are kept as raw bytes.
 //!
 //! Animated values are stored as tracks of 32-bit words: the number of
 //! words per key depends on the track's tag (3 for a translation, 4 for a
@@ -186,6 +186,20 @@ pub struct Light {
     pub tracks: Vec<Track>,
 }
 
+/// A camera (`CAMS`), such as the one a portrait is seen through.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelCamera {
+    pub name: String,
+    pub position: [f32; 3],
+    /// Field of view in radians and the far and near clipping distances.
+    pub field_of_view: f32,
+    pub far: f32,
+    pub near: f32,
+    pub target: [f32; 3],
+    /// `KCTR` (position), `KTTR` (target), `KCRL` (roll).
+    pub tracks: Vec<Track>,
+}
+
 /// A particle emitter of the second kind (`PRE2`): it sends out textured
 /// quads from its node, which age through three segments of colour,
 /// alpha and size.
@@ -250,6 +264,7 @@ pub struct Model {
     pub lights: Vec<Light>,
     pub particle_emitters: Vec<ParticleEmitter2>,
     pub pivots: Vec<[f32; 3]>,
+    pub cameras: Vec<ModelCamera>,
     /// Chunks not parsed, with their data, in file order.
     pub other_chunks: Vec<(RawCode, Vec<u8>)>,
 }
@@ -395,6 +410,28 @@ fn light(r: &mut Reader) -> Result<Light> {
         intensity,
         ambient_color,
         ambient_intensity,
+        tracks,
+    })
+}
+
+fn camera(r: &mut Reader) -> Result<ModelCamera> {
+    let start = r.position();
+    let size = r.u32()?;
+    let end = object_end(r, start, size)?;
+    let name = r.fixed_string(NAME_LEN)?;
+    let position = vec3(r)?;
+    let field_of_view = r.f32()?;
+    let far = r.f32()?;
+    let near = r.f32()?;
+    let target = vec3(r)?;
+    let tracks = tracks_until(r, end)?;
+    Ok(ModelCamera {
+        name,
+        position,
+        field_of_view,
+        far,
+        near,
+        target,
         tracks,
     })
 }
@@ -712,6 +749,7 @@ impl Model {
                 b"PIVT" => model.pivots = fixed(&mut c, 12, offset, vec3)?,
                 b"LITE" => model.lights = items(&mut c, light)?,
                 b"PRE2" => model.particle_emitters = items(&mut c, particle_emitter2)?,
+                b"CAMS" => model.cameras = items(&mut c, camera)?,
                 _ => {
                     model.other_chunks.push((tag, c.bytes(size)?.to_vec()));
                 }

@@ -204,6 +204,7 @@ pub struct Renderer {
     fog: ([f32; 4], [f32; 4]),
     overlay: Overlay,
     ui: crate::ui::UiRenderer,
+    portrait: Portrait,
     /// Selection circles, made when first needed.
     circles: Option<crate::circles::Circles>,
     format: wgpu::TextureFormat,
@@ -267,6 +268,20 @@ fn shadow_texture(
         }
         None => (1, 1, vec![0u8]),
     };
+    let view = r8_texture(device, queue, width, height, &texels);
+    let t = &scene.terrain;
+    let area = [t.origin_x, t.origin_y, width as f32, height as f32];
+    (view, area)
+}
+
+/// A texture of one byte per texel, rows from the bottom.
+fn r8_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    width: u32,
+    height: u32,
+    texels: &[u8],
+) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shadows"),
         size: wgpu::Extent3d {
@@ -288,7 +303,7 @@ fn shadow_texture(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        &texels,
+        texels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width),
@@ -300,12 +315,70 @@ fn shadow_texture(
             depth_or_array_layers: 1,
         },
     );
-    let t = &scene.terrain;
-    let area = [t.origin_x, t.origin_y, width as f32, height as f32];
-    (
-        texture.create_view(&wgpu::TextureViewDescriptor::default()),
-        area,
-    )
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// The portrait of the selected unit (SPEC-0028): its model drawn through
+/// the model's own camera into the portrait frame, with globals of its
+/// own (plain light, no fog, no shadow).
+struct Portrait {
+    models: ModelRenderer,
+    globals: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    /// The pixels it is drawn into: left, top, width, height; `None` when
+    /// nothing is shown.
+    rect: Option<[f32; 4]>,
+}
+
+impl Portrait {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        globals_layout: &wgpu::BindGroupLayout,
+    ) -> Portrait {
+        let globals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("portrait globals"),
+            size: std::mem::size_of::<Globals>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let no_shadow = r8_texture(device, queue, 1, 1, &[0]);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("portrait globals"),
+            layout: globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&no_shadow),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        let models = ModelRenderer::new(
+            device,
+            queue,
+            format,
+            globals_layout,
+            &[],
+            &std::collections::BTreeMap::new(),
+            &crate::models::Animation::default(),
+        );
+        Portrait {
+            models,
+            globals,
+            bind_group,
+            rect: None,
+        }
+    }
 }
 
 pub(crate) fn upload_texture(
@@ -664,6 +737,7 @@ impl Renderer {
             &scene.model_textures,
             &scene.animation,
         );
+        let portrait = Portrait::new(device, queue, format, &globals_layout);
         Renderer {
             opaque,
             blended,
@@ -679,6 +753,7 @@ impl Renderer {
             fog: ([0.0; 4], [0.0; 4]),
             overlay: Overlay::new(device, format),
             ui: crate::ui::UiRenderer::new(device, format),
+            portrait,
             circles: None,
             format,
             anchors: Vec::new(),
@@ -755,6 +830,98 @@ impl Renderer {
         size: (u32, u32),
     ) {
         self.ui.set(device, queue, chain, frame, size);
+    }
+
+    /// Shows `model` (read from `chain`, in the colours of `team`) in the
+    /// portrait frame of the interface (SPEC-0028) of a window `size` pixels
+    /// large, `elapsed` milliseconds into its Portrait sequence; `None`
+    /// shows nothing.
+    pub fn set_portrait(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chain: &mut ow3_formats::mpq::ArchiveChain,
+        model: Option<(&str, u8)>,
+        size: (u32, u32),
+        elapsed: i32,
+    ) {
+        let rect = crate::hud::PORTRAIT;
+        let portrait = &mut self.portrait;
+        portrait.rect = None;
+        let Some((path, team)) = model else {
+            return;
+        };
+        let draw = crate::sim_units::UnitDraw {
+            model: path.to_owned(),
+            team,
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            pose: crate::models::UnitPose::Portrait(elapsed),
+            life: None,
+            handle: 0,
+            selection: 0.0,
+            relation: None,
+            tint: [1.0; 3],
+        };
+        portrait
+            .models
+            .set_units(device, queue, chain, &[draw], elapsed);
+        portrait.models.update(device, queue, elapsed);
+        let animation = portrait.models.animation();
+        let Some(camera) = animation
+            .index_of(path)
+            .and_then(|i| animation.mdx(i).cameras.first())
+        else {
+            return;
+        };
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        let pixels = [
+            rect[0] / crate::ui::WIDTH * w,
+            (1.0 - rect[3] / crate::ui::HEIGHT) * h,
+            (rect[2] - rect[0]) / crate::ui::WIDTH * w,
+            (rect[3] - rect[1]) / crate::ui::HEIGHT * h,
+        ];
+        if pixels[2] < 1.0 || pixels[3] < 1.0 {
+            return;
+        }
+        let view_projection = crate::camera::model_view_projection(
+            camera.position,
+            camera.target,
+            camera.field_of_view,
+            camera.near,
+            camera.far,
+            pixels[2] / pixels[3],
+        );
+        let light = PLAIN_LIGHT;
+        let globals = Globals {
+            view_projection,
+            terrain_sun: [0.0; 4],
+            terrain_color: [0.0; 4],
+            terrain_ambient: [0.0; 4],
+            unit_sun: [
+                light.direction[0],
+                light.direction[1],
+                light.direction[2],
+                light.intensity,
+            ],
+            unit_color: [
+                light.color[0],
+                light.color[1],
+                light.color[2],
+                light.ambient_intensity,
+            ],
+            unit_ambient: [light.ambient[0], light.ambient[1], light.ambient[2], 0.0],
+            shadow_area: [0.0, 0.0, 1.0, 1.0],
+            water: [0.0; 4],
+            fog_params: [0.0; 4],
+            fog_color: [0.0; 4],
+        };
+        queue.write_buffer(&portrait.globals, 0, bytemuck::bytes_of(&globals));
+        portrait.rect = Some(pixels);
     }
 
     pub fn prepare_overlay(
@@ -958,7 +1125,61 @@ impl Renderer {
             // Particles over the water: the foam of the shores lies on it.
             self.particles.draw(&mut pass);
             self.overlay.draw(&mut pass);
-            self.ui.draw(&mut pass);
+            self.ui.draw(&mut pass, false);
+        }
+        if let Some([x, y, w, h]) = self.portrait.rect {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("portrait"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            pass.set_bind_group(0, &self.portrait.bind_group, &[]);
+            self.portrait.models.draw(&mut pass);
+        }
+        // The console over the portrait.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("interface"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.ui.draw(&mut pass, true);
         }
         queue.submit([encoder.finish()]);
     }

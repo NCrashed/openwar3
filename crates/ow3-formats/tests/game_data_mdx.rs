@@ -125,3 +125,24 @@ fn every_model_parses() {
         failures[..failures.len().min(30)].join("\n")
     );
 }
+
+/// The footman's portrait has the camera SPEC-0028 read from the game.
+#[test]
+fn the_footman_portrait_camera() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b/War3.mpq");
+    if !path.exists() {
+        return;
+    }
+    let mut mpq = Archive::open_path(&path).unwrap();
+    let data = mpq
+        .read("Units\\Human\\Footman\\Footman_portrait.mdx")
+        .unwrap();
+    let model = Model::parse(&data).unwrap();
+    assert_eq!(model.cameras.len(), 1);
+    let camera = &model.cameras[0];
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.01);
+    assert!(near(camera.position, [40.18, 194.43, 88.61]), "{camera:?}");
+    assert!(near(camera.target, [8.25, 214.87, 90.07]), "{camera:?}");
+    assert!((camera.field_of_view - std::f32::consts::FRAC_PI_4).abs() < 1e-4);
+    assert_eq!((camera.near, camera.far), (8.0, 1000.0));
+}

@@ -59,6 +59,29 @@ fn perspective(tan_x: f32, tan_y: f32, near: f32, far: f32) -> Mat4 {
     ]
 }
 
+/// The view and projection of a camera stored in a model (a portrait's),
+/// from `position` to `target` with field of view `fov` (radians) and the
+/// clipping distances `near` and `far`, into a frame `aspect` times as
+/// wide as high.
+///
+/// PROVISIONAL: the field of view is taken across the diagonal of the
+/// frame, as for the game's camera (`Camera::tangents`); SPEC-0028 does
+/// not say along which side it lies.
+pub fn model_view_projection(
+    position: [f32; 3],
+    target: [f32; 3],
+    fov: f32,
+    near: f32,
+    far: f32,
+    aspect: f32,
+) -> Mat4 {
+    let view = look_at(position, target, [0.0, 0.0, 1.0]);
+    let t = (fov / 2.0).tan();
+    let diagonal = (aspect * aspect + 1.0).sqrt();
+    let projection = perspective(t * aspect / diagonal, t / diagonal, near, far);
+    multiply(&projection, &view)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     /// The point looked at, on the ground.

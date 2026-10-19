@@ -116,6 +116,9 @@ pub struct Text {
 pub struct Frame {
     pub quads: Vec<Quad>,
     pub texts: Vec<Text>,
+    /// How many of the first quads lie under the portrait; the others and
+    /// the texts lie over it.
+    pub under: usize,
 }
 
 /// What a draw call binds.
@@ -206,6 +209,8 @@ pub struct UiRenderer {
     vertices: wgpu::Buffer,
     capacity: usize,
     draws: Vec<(Bind, Blend, std::ops::Range<u32>)>,
+    /// The draws under the portrait.
+    under: usize,
 }
 
 fn vertex_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
@@ -318,6 +323,7 @@ impl UiRenderer {
             vertices: vertex_buffer(device, capacity),
             capacity,
             draws: Vec::new(),
+            under: 0,
         }
     }
 
@@ -375,8 +381,12 @@ impl UiRenderer {
     ) {
         let mut vertices: Vec<Vertex> = Vec::new();
         self.draws.clear();
+        self.under = 0;
         let clip = |x: f32, y: f32| [x / WIDTH * 2.0 - 1.0, y / HEIGHT * 2.0 - 1.0];
-        for quad in &frame.quads {
+        for (i, quad) in frame.quads.iter().enumerate() {
+            if i == frame.under {
+                self.under = self.draws.len();
+            }
             if !self.texture(device, queue, chain, &quad.texture) {
                 continue;
             }
@@ -401,6 +411,9 @@ impl UiRenderer {
                 quad.blend,
                 start..vertices.len() as u32,
             ));
+        }
+        if frame.under >= frame.quads.len() {
+            self.under = self.draws.len();
         }
         // Text: glyphs at whole pixel sizes, placed in pixels.
         let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
@@ -523,12 +536,19 @@ impl UiRenderer {
         );
     }
 
-    pub fn draw(&self, pass: &mut wgpu::RenderPass) {
-        if self.draws.is_empty() {
+    /// Draws the interface under the portrait (`over` false) or the rest.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass, over: bool) {
+        let split = self.under.min(self.draws.len());
+        let draws = if over {
+            &self.draws[split..]
+        } else {
+            &self.draws[..split]
+        };
+        if draws.is_empty() {
             return;
         }
         pass.set_vertex_buffer(0, self.vertices.slice(..));
-        for (bind, blend, range) in &self.draws {
+        for (bind, blend, range) in draws {
             let group = match bind {
                 Bind::Texture(path) => self.textures.get(path).and_then(Option::as_ref),
                 Bind::Glyphs => self.glyphs.as_ref().map(|(_, b)| b),

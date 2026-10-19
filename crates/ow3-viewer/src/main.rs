@@ -210,6 +210,15 @@ fn screenshot(
     if let Some(sim) = sim {
         let frame = sim.interface(options.select, None);
         renderer.prepare_ui(&device, &queue, &mut sim.chain, &frame, (w, h));
+        let portrait = options.select.and_then(|h| sim.portrait(h));
+        renderer.set_portrait(
+            &device,
+            &queue,
+            &mut sim.chain,
+            portrait.as_ref().map(|(m, t)| (m.as_str(), *t)),
+            (w, h),
+            (options.time * 1000.0) as i32,
+        );
     }
     let image = renderer::render_to_image(&device, &queue, &renderer, &camera, w, h);
     let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -635,6 +644,15 @@ impl App {
             let frame = sim.interface(gpu.renderer.selected, Some(mouse));
             gpu.renderer
                 .prepare_ui(&gpu.device, &gpu.queue, &mut sim.chain, &frame, size);
+            let portrait = gpu.renderer.selected.and_then(|h| sim.portrait(h));
+            gpu.renderer.set_portrait(
+                &gpu.device,
+                &gpu.queue,
+                &mut sim.chain,
+                portrait.as_ref().map(|(m, t)| (m.as_str(), *t)),
+                size,
+                elapsed,
+            );
         }
         match gpu.surface.get_current_texture() {
             Ok(frame) => {

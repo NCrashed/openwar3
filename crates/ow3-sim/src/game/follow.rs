@@ -273,6 +273,8 @@ struct Shared<'a> {
     paths: &'a mut BTreeMap<u32, Follow>,
     random: &'a mut Random,
     events: Vec<PathEvent>,
+    /// Only the search, no step.
+    search_only: bool,
 }
 
 /// What a unit decided at an update, for comparing with the game's
@@ -332,6 +334,16 @@ pub struct Chase {
 /// What `walker` does at this update on its way to its order point;
 /// `tick` is the current tick.
 pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
+    steer_or_search(state, walker, tick, false)
+}
+
+/// The search of `walker`'s path outside its updates, without the step
+/// and its look-ahead check (SPEC-0019, "After the swing").
+pub fn search(state: &mut State, walker: &Walker, tick: u64) {
+    steer_or_search(state, walker, tick, true);
+}
+
+fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: bool) -> Steer {
     if state.grid.is_none() {
         return Steer::Walk(walker.order);
     }
@@ -369,6 +381,7 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
         paths: &mut state.paths,
         random: &mut state.random,
         events: Vec::new(),
+        search_only,
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
@@ -479,6 +492,10 @@ fn decide(
         if passed {
             return Steer::Stand(segment_goal);
         }
+    }
+    // Only the search, outside an update (a chase after its swing).
+    if shared.search_only {
+        return Steer::Stand(segment_goal);
     }
     // Arrival at the point walked to.
     let last = follow.local.len() - 1;

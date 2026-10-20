@@ -66,19 +66,28 @@ const FIRST_UPDATE: u64 = 7;
 /// (SPEC-0018, "Order within an update tick").
 const UPDATE_STEP: u32 = 0x3CF5_C290;
 
-/// At an update tick, the time `U` of the update cycle for it (0.03 at
-/// tick 7, then 0.03 more at every update tick), else `None`.
+/// At an update tick, the time `U` of the update cycle for it, else
+/// `None`. `U` is 0.03 for the first update and 0.03 more for each next;
+/// an update runs in the tick whose queue interval holds its `U`
+/// (`clock(k) < U <= clock(k + 1)`), so as `U` moves ahead of the clock
+/// the updates fall a tick later now and then (SPEC-0018).
 pub(super) fn update_time(state: &mut State) -> Option<u32> {
-    let tick = state.ticks;
-    if tick < FIRST_UPDATE || tick % UPDATE != PHASE {
+    state.update_now = false;
+    if state.ticks < FIRST_UPDATE {
         return None;
     }
-    state.update_time = if tick == FIRST_UPDATE {
+    let next = if state.update_time == 0 {
         UPDATE_STEP
     } else {
         add(state.update_time, UPDATE_STEP)
     };
-    Some(state.update_time)
+    let end = add(state.move_clock, crate::timers::TICK);
+    if real_of(next) > real_of(end) {
+        return None;
+    }
+    state.update_time = next;
+    state.update_now = true;
+    Some(next)
 }
 
 /// The first update after `tick`: updates come before the script's timers
@@ -651,7 +660,7 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
     let mut control = BTreeMap::new();
     let mut clusters = std::mem::take(&mut state.clusters);
     for cluster in &mut clusters {
-        if tick < cluster.first || (tick - cluster.first) % UPDATE != 0 {
+        if tick < cluster.first || !state.update_now {
             continue;
         }
         cluster.keep(|h| state.unit(Some(h)).is_some_and(|u| u.alive));
@@ -1784,7 +1793,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             }
             continue;
         }
-        if m.next_update != tick {
+        // Units update at the update ticks, from the one they are due at
+        // (a tick later when the updates moved, SPEC-0018).
+        if !state.update_now || m.next_update > tick {
             still.push(h);
             continue;
         }
@@ -2398,7 +2409,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             cluster: 1,
             chase: Some(chase_of(state, target, reach)),
         };
-        follow::steer(state, &walker, tick);
+        follow::search(state, &walker, tick);
     }
 }
 
@@ -2499,6 +2510,8 @@ enum Check {
     /// An idle unit at its own schedule: when the check expired on the
     /// movement clock.
     Idle { expiry: u32 },
+    /// A unit attacking `current`, which it took on its own.
+    Attacking { current: u32 },
     /// A unit walking an attack-move.
     AttackMove,
 }
@@ -2530,13 +2543,24 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         if !u.alive {
             continue;
         }
-        // The unit's own timer runs whatever it does.
+        // The unit's own timer runs whatever it does: the check runs in the
+        // tick whose queue interval, after the clock of this tick up to that
+        // of the next, holds its expiry, and the next one comes 1.0 s later
+        // with a target, 0.5 s without.
+        let target = match (&u.attack, u.movement) {
+            // In a swing the target is the swing's.
+            (Some(a), _) => Some((a.target, a.order_id)),
+            (None, Some(m)) => match m.order {
+                Order::Attack { target } => Some((target, m.order_id)),
+                _ => None,
+            },
+            (None, None) => None,
+        };
         let mut expired = None;
-        // The check runs in the tick whose queue interval, after the clock
-        // of this tick up to that of the next, holds its expiry.
         if u.acquire_phase != super::NO_PHASE && real_of(u.next_acquire) <= real_of(next_clock) {
             expired = Some(u.next_acquire);
-            u.next_acquire = add(u.next_acquire, HALF);
+            let period = if target.is_some() { ONE } else { HALF };
+            u.next_acquire = add(u.next_acquire, period);
         }
         if u.paused {
             continue;
@@ -2552,6 +2576,12 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                     due.push((h, Check::AttackMove));
                 }
             }
+            continue;
+        }
+        // An attack the unit took on its own (order id 0) checks for a
+        // better target (SPEC-0019, "Checks while attacking").
+        if let (Some(_), Some((current, 0))) = (expired, target) {
+            due.push((h, Check::Attacking { current }));
             continue;
         }
         if u.attack.is_some() || u.movement.is_some_and(|m| m.ordered()) {
@@ -2571,6 +2601,22 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let targets = Targets::new(state);
     let mut acquired = Vec::new();
     for (h, check) in due {
+        // A better target than the one attacked: taken at once, without a
+        // reaction delay or a call for help (SPEC-0019).
+        if let Check::Attacking { current, .. } = check {
+            if let Some(better) = targets.better_than(state, h, current)
+                && let Some(at) = position_of(state, better)
+                && order(state, h, Order::Attack { target: better }, 0, at)
+            {
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                    && let Some(m) = u.movement.as_mut()
+                {
+                    m.goal_taken = true;
+                }
+                acquired.push(h);
+            }
+            continue;
+        }
         let Some(target) = targets.nearest_enemy(state, h) else {
             continue;
         };
@@ -2581,6 +2627,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let (order_id, expiry) = match check {
             Check::Idle { expiry } => (0, Some(expiry)),
             Check::AttackMove => (ORDER_ATTACK, None),
+            Check::Attacking { .. } => continue,
         };
         if order(state, h, Order::Attack { target }, order_id, at) {
             let delay = mul(
@@ -2631,6 +2678,64 @@ impl Targets {
 
     /// The enemy unit `h` takes within its acquisition range, by the rule
     /// above.
+    /// At a check while unit `h` attacks `current` (SPEC-0019, "Checks
+    /// while attacking"): the enemy it should attack instead, if any. The
+    /// enemies within half its `acquire` and both collision sizes are
+    /// rated with its target: one in range of the attack before one out of
+    /// it, the target in range before any other in range, and else the
+    /// strictly nearer; a tie keeps the target.
+    ///
+    /// PROVISIONAL: only those parts of the rating were measured (with
+    /// peasants as targets; open question 10 of SPEC-0019).
+    fn better_than(&self, state: &State, h: u32, current: u32) -> Option<u32> {
+        let u = state.unit(Some(h))?;
+        let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
+        let data = state.data.units.get(&u.type_id)?;
+        let own = real_of(data.collision);
+        let half = real_of(data.acquire) / 2.0;
+        // (in range, squared distance) of a candidate.
+        let rate = |t: u32, ox: f32, oy: f32, collision: f32| {
+            let range = super::attack::weapon_for(state, u.type_id, Some(t))
+                .map_or(0.0, |w| real_of(w.range));
+            let (dx, dy) = (ox - x, oy - y);
+            let distance = dx * dx + dy * dy;
+            let reach = range + own + collision;
+            (distance <= reach * reach, distance)
+        };
+        let t = state.unit(Some(current))?;
+        let collision = state
+            .data
+            .units
+            .get(&t.type_id)
+            .map_or(0.0, |d| real_of(d.collision));
+        let mine = rate(current, real_of(t.x), real_of(t.y), collision);
+        let mut best = (current, mine);
+        for &(ox, oy, collision, other_owner, _, other) in &self.list {
+            if other == current || !enemies(state, owner, other_owner) {
+                continue;
+            }
+            let collision = real_of(collision);
+            let limit = half + own + collision;
+            let (dx, dy) = (ox - x, oy - y);
+            if dx.abs() > limit || dy.abs() > limit || dx * dx + dy * dy > limit * limit {
+                continue;
+            }
+            let (in_range, distance) = rate(other, ox, oy, collision);
+            let (best_in, best_distance) = best.1;
+            let better = if in_range != best_in {
+                in_range
+            } else if in_range && best.0 == current {
+                false
+            } else {
+                distance < best_distance
+            };
+            if better {
+                best = (other, (in_range, distance));
+            }
+        }
+        (best.0 != current).then_some(best.0)
+    }
+
     fn nearest_enemy(&self, state: &State, h: u32) -> Option<u32> {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             return None;

@@ -583,45 +583,43 @@ the spec is silent:
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.
 
-## Crowd chase `c-RXD-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0021)
+## Crowd chase `c-RXD-1` and walks of `c-RXI-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0020, SPEC-0029)
 
-`tests/crowd.rs` plays the replay with the path decisions traced. With
-the chase search ending where it touches its target (SPEC-0019), the
-events of `c-RXD-1.events.tsv` are now the game's one for one up to
-tick 1837, in the game's order within each tick, and the positions of
-the creeps the game's up to ticks 1838 (creep 9) to 2408 (creep 8).
-Two points of the simulation were set by the data, not by a rule of
-the specs:
+`tests/crowd.rs` plays the replays with the path decisions traced. With
+the checks while attacking (the target of a swing counted as a target)
+and the updates following `U` (SPEC-0018), the events of `c-RXD-1` are
+the game's one for one up to tick 2161, and the positions of the
+peasants up to 3230 and of the creeps up to 2156 (creeps 7 and 9).
 
-- the countdown of a chase's goal renewal counts from the first update
-  after the goal was taken at the end of the reaction delay (creep 9
-  renewed at 1669, not at 1663);
-- a chase that takes a new goal drops a wait it was in (creep 9 waited
-  for kobold 6 at 1759 and looked ahead again at 1771, at its renewal,
-  not after 5 updates).
+**1. The stand at the 12th update after a swing (`c-RXD-1`, tick
+2155).** Creep 9 hit at 1967 (backswing to 2087) and creep 7 at 1955;
+here both take a new goal and stand at their update of 2155 (the 12th
+after the first update after the backswing, SPEC-0019 "After the
+swing") and walk from 2161. In the game creep 9 walks on through 2155
+(its position changes in every tick from 2090 to 2161) and creep 7
+stands up to 2155 and walks from 2156. At 2161 the game has creep 9
+blocked and making creep 7 wait 20 updates, which follows from that.
+Needed: which update of the chase after the swing is the standing one
+for each of the two (the ticks 2107, 2149, 2155, 2161 of SPEC-0021 name
+the goals at the 12th update; which creep each is), and whether a
+switch of target (creep 9 switched at 2007 and 2031, creep 7 at 1857)
+or a hit restarts the count.
 
-**1. Taking another target while attacking.** In tick 1836 creep 9,
-attacking peasant 5, acquired peasant 3 (`a` row of the log) and
-looked ahead towards it at its update of 1837. The specs give no rule
-for it (SPEC-0021 lists the new goal of such an acquisition). Needed:
-when an attacking unit looks for another target (its acquisition timer
-still running? at which checks?), which target it takes over its own
-(nearer, in range, the one that hits it), and how its reaction delay
-and goal work then; the ticks 1836, 1857, 2007, 2031 and 2207 of
-SPEC-0021 would check it. And whether the two points above are rules
-of the game.
+**2. The first walk to a near mine (`c-RXI-1`, tick 307).** The six
+peasants get `harvest` in tick 301 and in the game walk straight east
+to the mine from their first update (307; positions from 308). Here
+the last segment is a local search to the mine (1148 away), whose goal
+cell lies in the mine's footprint; the search meets that unpassable
+footprint, so by SPEC-0020 step 2 the peasant walks to the first point
+of its path (a cell centre to the south-east or north-east), turns,
+and moves from 314. Needed: how a walk to a building (a mine, a town
+hall to give gold) searches its path: its goal (the building's centre,
+the nearest free cell, a cell touching the footprint) and when it ends,
+and whether meeting the building's own footprint counts as meeting an
+obstacle for walking straight.
 
-**2. Checksums of gathering (`c-RXI-1`).** The moments of SPEC-0024
-("Gathering") are in the simulation now (and the gold of a new mine,
-`Agld` of SPEC-0029, which was 0 for mines made by a script). Up to
-turn 35 the turns of `c-RXI-1` are the game's, the draw of the script
-generator of tick 667 included. Then the simulation's workers block
-each other more on their first way to the mine: draws at turns 38, 39
-and 42 where the game has one at turn 37 (tick 715), and the first
-worker reaches the mine at turn 52 where the game's changes of turn 45
-suggest it there. Needed: a log of `c-RXI-1` like those of `c-RXD-1`
-(positions every tick and the path events: updates, waits, blocks), to
-find where the walks part.
+**3. Checksums.** `c-RXI-1` and `c-RXD-1` stay among the replays whose
+checksum turns are not followed until the walks above match.
 
 ## Construction (`game::movement`, `game`, SPEC-0026)
 

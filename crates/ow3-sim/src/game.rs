@@ -694,6 +694,8 @@ pub struct State {
     move_clock: u32,
     /// The time of the update cycle at its last update tick (SPEC-0018).
     update_time: u32,
+    /// This tick is an update tick (SPEC-0018).
+    update_now: bool,
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
@@ -793,6 +795,7 @@ impl State {
             grid: None,
             move_clock: 0,
             update_time: 0,
+            update_now: false,
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_trace: None,

@@ -67,9 +67,9 @@ struct Ours {
     at: BTreeMap<i32, BTreeMap<u64, [f32; 2]>>,
 }
 
-fn play(until: u64) -> Option<Ours> {
+fn play_replay(name: &str, until: u64) -> Option<Ours> {
     let dir = game_data().join("replays");
-    let path = dir.join("c-RXD-1.w3g");
+    let path = dir.join(format!("{name}.w3g"));
     if !path.exists() {
         return None;
     }
@@ -122,19 +122,22 @@ fn play(until: u64) -> Option<Ours> {
     Some(Ours { events, at })
 }
 
-/// The ticks played.
-const UNTIL: u64 = 9300;
+/// `c-RXD-1` played up to `until`.
+fn play(until: u64) -> Option<Ours> {
+    play_replay("c-RXD-1", until)
+}
 
-/// A report of where the simulation first leaves the game: per unit, the
-/// first logged position it misses, and the first events that differ.
-#[test]
-fn crowd_chase_report() {
-    let Some(ours) = play(UNTIL) else {
-        return;
-    };
+/// A report of where the simulation of replay `name`, played up to
+/// `until`, first leaves the game: per unit, the first logged position
+/// it misses, and the first events that differ. The tick of that event
+/// (`u64::MAX` when none differs), or `None` without the game data.
+fn report(name: &str, until: u64) -> Option<u64> {
+    let ours = play_replay(name, until)?;
     let dir = game_data().join("replays");
-    let game = events(&dir.join("c-RXD-1.events.tsv"));
-    let logged = positions(&dir.join("c-RXD-1.log.tsv"));
+    let game = events(&dir.join(format!("{name}.events.tsv")));
+    let logged = positions(&dir.join(format!("{name}.log.tsv")));
+    #[allow(non_snake_case)]
+    let UNTIL = until;
     // The tick offset: the first move of unit 0 in the log and in ours.
     let first_move = |list: &[(u64, [f32; 2])]| list.get(1).map(|p| p.0);
     let log_first = first_move(&logged[&0]).unwrap();
@@ -199,11 +202,29 @@ fn crowd_chase_report() {
             eprintln!("game {:?}\nours {:?}", game_events[k], ours_events[k]);
         }
     }
-    // PROVISIONAL: the events are the game's up to tick 1837, where a
-    // creep takes another target while attacking (reported to the
-    // analysts); the rest waits for that.
-    let first_tick = first.map_or(u64::MAX, |i| game_events[i].0);
-    assert!(first_tick >= 1837, "first difference at tick {first_tick}");
+    Some(first.map_or(u64::MAX, |i| game_events[i].0))
+}
+
+/// `c-RXD-1`: the creeps' chase follows the game.
+///
+/// PROVISIONAL: the events are the game's up to tick 2161, where two
+/// creeps stand at the 12th update after a swing where the game's walk
+/// on (reported to the analysts); the rest waits for that.
+#[test]
+fn crowd_chase_report() {
+    let Some(first) = report("c-RXD-1", 9300) else {
+        return;
+    };
+    assert!(first >= 2161, "first difference at tick {first}");
+}
+
+/// `c-RXI-1`: the workers' walks between the mine and the town hall.
+#[test]
+fn gathering_walks_report() {
+    let Some(first) = report("c-RXI-1", 11300) else {
+        return;
+    };
+    eprintln!("c-RXI-1: first difference at tick {first}");
 }
 
 /// Each creep takes its first path update in the tick of the game: the

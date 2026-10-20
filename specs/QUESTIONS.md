@@ -686,6 +686,21 @@ outline. Compared with the game the marks look much coarser. Needed:
 - what a right click on it does, and the five buttons (signal, terrain,
   ally colours, creep camps, formation).
 
+## Fog of war in the world (the viewer, SPEC-0032)
+
+The viewer changes a cell's look at once at the fog update in which its
+state changes: visible cells as they are, fogged ones at half
+brightness, masked ones black, with a linear blend across each cell
+edge. In the game the changes look animated. Needed, for each change
+(masked to visible, visible to fogged, fogged to visible):
+
+- whether it fades and over how long, and whether the fade is linear;
+- the brightness of a fogged cell and of a masked one (black?) in the
+  world, and whether the fog has a colour;
+- how wide the soft edge between cells of different states is, and its
+  shape;
+- whether the minimap follows the same fade.
+
 ## Camera (the viewer, SPEC-0023)
 
 The projection has the field of view (70 degrees) across the diagonal

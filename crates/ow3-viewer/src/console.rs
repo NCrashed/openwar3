@@ -257,8 +257,8 @@ impl Interface {
                                 last(&props, k)?.first().and_then(|p| point(p.text()))
                             });
                             let justify = match anchored.map(|p| p[0]) {
-                                Some(x) if x == 0.5 => Some("JUSTIFYCENTER"),
-                                Some(x) if x == 1.0 => Some("JUSTIFYRIGHT"),
+                                Some(0.5) => Some("JUSTIFYCENTER"),
+                                Some(1.0) => Some("JUSTIFYRIGHT"),
                                 _ => None,
                             };
                             if let Some(j) = justify {

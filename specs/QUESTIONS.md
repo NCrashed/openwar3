@@ -651,6 +651,23 @@ or other mark, where, how large, in which colour, for how long, and
 whether the target's selection circle or the unit itself flashes
 instead.
 
+## Information panel: the line under the name (the viewer, SPEC-0028)
+
+The game shows a line under the unit's name for creeps (their level),
+which the viewer does not draw: SPEC-0028 lists only the name at the top
+centre. Needed:
+
+- for which units the line appears (creeps, other neutral units, heroes,
+  the player's own units, buildings, units of other players) and what
+  it says for each: the string and its key in the string files, and
+  where the number comes from (`level` of `UnitBalance.slk`, a hero's
+  level, something else);
+- whether a hero shows its proper name, and where;
+- the line's rectangle, font, size, colour and justification, and
+  whether the name moves when the line is there;
+- whether anything else shares that place (a building's or an item's
+  description, a status such as sleeping).
+
 ## Minimap (the viewer, SPEC-0028)
 
 SPEC-0028 gives only the minimap's rectangle. The viewer shows

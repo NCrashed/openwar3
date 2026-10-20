@@ -143,9 +143,33 @@ block (test RWF) saw all 121 cells of its mask, the low ground included.
 
 ### The minimap
 
-The minimap shows the map's preview picture; in the tests with the fog
-mask on, the parts never seen were drawn darker, not black, and the
-visible parts brighter (one look, test RVY; not measured further).
+The minimap shows the map's picture `war3mapMap.blp` (256 x 256), not a
+picture made from the terrain: on a map whose terrain was replaced, the
+minimap still showed the old map's picture. It is drawn over the
+minimap frame (SPEC-0028); in a 1024 x 768 window the whole picture took
+the square from (17, 584) to (191, 758) in pixels, so the map's full
+width (the `war3map.w3e` area, not only the camera bounds) maps onto it.
+
+The fog darkens it per cell state of the local player:
+
+| State | Brightness (screen over picture, mean of all pixels) |
+|---|---|
+| visible | 0.738 |
+| fogged | 0.738, the same as visible |
+| masked, map flag `0x0010` set | 0.404 (0.55 of visible) |
+| masked, map flag `0x0010` clear | 0.003 (black) |
+
+The three channels were darkened alike (0.738 / 0.738 / 0.735 for red,
+green, blue). Flag `0x0010` is a bit of the flags field of
+`war3map.w3i` (the editor option that leaves masked areas partly visible);
+IceCrown has it set (flags `0xd472`). The visible-to-picture value 0.738
+also contains the difference between the picture as decoded for the
+test and as shown; take visible as the picture itself and masked as 0.55
+of it. Measured with the whole map in one state (`SetFogStateRect` on
+the world bounds), tests RWJ and RWK; with a footman and a walking knight
+(test RWI) the cells near units and along the knight's way were equally
+bright and the rest at the masked value, with soft edges between the
+states.
 
 ## Edge cases
 
@@ -163,12 +187,13 @@ visible parts brighter (one look, test RVY; not measured further).
    allied vision; units inside buildings or transports; dead units.
 3. Doodads that block sight, destructables other than trees, and what
    a unit on a destructable bridge sees.
-4. The minimap colours of the three states, and how the fog is drawn in
-   the world (a smooth edge, test RVY).
+4. How the fog is drawn in the world (a smooth edge, test RVY) and on
+   the minimap between cells of different states (soft edges); how often
+   the minimap's fog is redrawn.
 
 ## Sources
 
-- Test maps RVQ to RWH on 1.27b under Wine, 2026-10-20: units of 20
+- Test maps RVQ to RWK on 1.27b under Wine, 2026-10-20: units of 20
   types alone in separate parts of a flat map and of IceCrown, by day and
   at night, trees, a block raised by one cliff level; the state of every
   fog cell for player 0 read with `IsVisibleToPlayer`,

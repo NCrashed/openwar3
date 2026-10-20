@@ -108,6 +108,15 @@ fn a_farm_waits_for_its_worker_and_takes_damage() {
     }
     let grown = view(&sim, farm).life;
     assert!(grown > left, "{grown} after {left}");
+    // It works touching the farm (4 x 4 cells, so its centre at most some
+    // 64 + 16 + 32 diagonally away), facing it.
+    let (w, f) = (view(&sim, peasant), view(&sim, farm));
+    let d = ((w.x - f.x).powi(2) + (w.y - f.y).powi(2)).sqrt();
+    assert!(d < 135.0, "{d} from the farm");
+    let to = (f.y - w.y).atan2(f.x - w.x);
+    let off = (w.facing - to + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    assert!(off.abs() < 0.2, "facing {off} off the farm");
     // A hit from its own worker takes life off as it grows.
     let other = sim
         .units()

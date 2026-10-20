@@ -595,8 +595,11 @@ the spec is silent:
   the building stops growing while no worker builds it (its completion
   timer is dropped); a worker sent back to it by a right click (`smart`
   on the building, current order `repair`) takes the work up again
-  within 100 plus the building's collision size of its centre, from the
-  life it had, finishing after `(max - life) / rate`.
+  when its footprint touches a red cell of the building (the reach of
+  SPEC-0029 for a mine), turning to it, from the life it had, finishing
+  after `(max - life) / rate`. Needed also: where the workers of a power
+  build stand and which way they face (several stood far off and looked
+  elsewhere with the old reach of 100 plus the collision size).
 - **Damage under construction.** Until answered: damage is taken off
   the growing life and kept off it.
 - **Other races.** Orc workers build like Human ones here, only one at

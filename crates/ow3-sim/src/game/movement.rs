@@ -983,25 +983,22 @@ fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
     }
 }
 
-/// A worker resumes building within this distance of a building's edge
-/// (PROVISIONAL: the reach of a start, SPEC-0026, plus the building's
-/// collision size).
-fn resume_reach(state: &State, building: u32) -> f32 {
-    let size = state
-        .unit(Some(building))
-        .and_then(|b| state.data.units.get(&b.type_id))
-        .map_or(0.0, |t| real_of(t.collision));
-    BUILD_REACH_SQUARED.sqrt() + size
-}
-
 /// A worker that reached tree `target` turns to it: its heading points at
 /// the tree, which its facing follows.
 ///
 /// PROVISIONAL: SPEC-0029 does not give the facing of a worker at a tree.
 fn face_tree(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
-    if let Some(Object::Destructable(d)) = state.objects.get(&target) {
-        let tree = relative([d.x, d.y], min);
-        m.heading = angle(sub(tree[0], m.origin[0]), sub(tree[1], m.origin[1]));
+    if let Some(Object::Destructable(_)) = state.objects.get(&target) {
+        face_target(state, m, target, min);
+    }
+}
+
+/// Unit `m` turns to `target`: its heading points at its position, which
+/// its facing follows.
+fn face_target(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
+    if let Some(at) = position_of(state, target) {
+        let at = relative(at, min);
+        m.heading = angle(sub(at[0], m.origin[0]), sub(at[1], m.origin[1]));
     }
 }
 
@@ -1718,21 +1715,21 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.velocity = [0, 0];
         }
         // A worker sent back to a building under construction takes up the
-        // work once near it.
+        // work once it touches the building, and turns to it.
+        //
+        // PROVISIONAL: the reach of SPEC-0029 for a mine or a drop-off (the
+        // footprint touching a red cell); SPEC-0026 does not give one.
         if let Order::Resume { building } = m.order
             && !waiting
         {
-            let reach = resume_reach(state, building);
-            let near = position_of(state, building).is_some_and(|at| {
-                let at = relative(at, min);
-                let (dx, dy) = (sub(at[0], here[0]), sub(at[1], here[1]));
-                real_of(add(mul(dx, dx), mul(dy, dy))) <= reach * reach
-            });
             if !unfinished_of_own(state, h, building) {
                 m.arrived = true;
-            } else if near {
+            } else if super::harvest::reached(state, h, here, building) {
                 m.order = Order::Repair { building };
                 m.arrived = false;
+                m.walking = false;
+                m.velocity = [0, 0];
+                face_target(state, &mut m, building, min);
             }
         }
         // A worker building stays until the building is finished.
@@ -1983,6 +1980,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.order = Order::Work { target };
             face_tree(state, &mut m, target, min);
             m.arrived = false;
+        }
+        // So too a worker sent back to its building under construction.
+        if m.arrived
+            && let Order::Resume { building } = m.order
+            && unfinished_of_own(state, h, building)
+        {
+            m.order = Order::Repair { building };
+            m.arrived = false;
+            face_target(state, &mut m, building, min);
         }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {

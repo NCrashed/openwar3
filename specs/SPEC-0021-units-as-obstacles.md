@@ -86,20 +86,56 @@ unit may have left.
 
 ### Searches of many units in the same tick
 
-Units whose updates fall in the same tick are handled by the order
-they were last given, the most recent order first. Every `move` order
-of a single unit, and every group order (SPEC-0025), forms a cluster;
-the clusters are handled newest first, and the members of a group
-cluster one after the other in the cluster's order. A new order puts
-the unit (or the group) at the front. In the tests of this spec the
-orders were given in the order of creation, so the last created unit
-came first. Measured (test RTK): footmen `A`, `B`, `C` created in this
-order, `move` given to `B`, 0.3 s later to `A`, 0.3 s later to `C`:
-order of handling `B`, then `A B`, then `C A B`; a new `move` to `B`
-0.9 s later gave `B C A`. In test RTJ a group of four ordered with the
-mouse after two single walkers had their orders was handled before
-both, its members in cluster order, then the single walkers newest
-first.
+Units whose updates fall in the same tick are handled cluster by
+cluster, the newest cluster first, and the members of a group cluster
+one after the other in the cluster's order. A unit gets a new cluster,
+and so moves to the front, each time it **takes a new goal**:
+
+- when it is given an order: a `move` of a single unit, a group order
+  (SPEC-0025), by the player or a script, and also the orders the game
+  gives itself, such as the `move` home at the end of
+  `GuardReturnTime` (SPEC-0030);
+- when an attack after an acquisition or a call for help (SPEC-0019)
+  starts, which is at the **end of the unit's reaction delay**, not at
+  the acquisition;
+- when a unit that is already attacking acquires another target: in
+  the tick of that acquisition;
+- after each swing of a chase (SPEC-0019, "After the swing"): one tick
+  after the end of the backswing, and again at the 12th update counted
+  from the first update after it (the update at which the attacker
+  takes a new goal and stands).
+
+A new cluster made before the updates of the tick (an order, or an
+engine timer: end of the reaction delay, end of the backswing, the
+guard return, an acquisition check) counts in that tick already: the
+unit is handled first in it. A cluster made during the unit's own
+update (the goal at the 12th update) counts from the next tick. When
+several units take new goals in the same tick, the last one is first;
+engine timers that expire in the same tick fire in the order they were
+started.
+
+Measured (test RTK): footmen `A`, `B`, `C` created in this order,
+`move` given to `B`, 0.3 s later to `A`, 0.3 s later to `C`: order of
+handling `B`, then `A B`, then `C A B`; a new `move` to `B` 0.9 s later
+gave `B C A`. In test RTJ a group of four ordered with the mouse after
+two single walkers had their orders was handled before both, its
+members in cluster order, then the single walkers newest first.
+
+In `c-RXD-1` (units 6, 7, 8 `nkob`, 9 `nkot`) the four creeps acquired
+or were called in tick 1557 in the order 7, 8, 6, 9 (SPEC-0019, "Order
+of the responders"). Their reaction delays ended in ticks 1565 (9),
+1569 (8), 1581 (7) and 1607 (6), so from tick 1607 they were handled
+in the order 6, 7, 8, 9. Other new goals of that game: acquisitions of
+another target in ticks 1836, 1857, 2007, 2031 and 2207; ends of
+backswing (damage tick + 120, `backSw1` 0.6 s) in ticks 2033, 2075,
+2081, 2087, 2321, 2405 and 2693; the goal at the 12th update in ticks
+2107, 2149, 2155, 2161, 2395 and 2479 (front from the next tick). The
+guard checks of the four ran in the order they entered the fight (7, 8,
+6, 9); all four were outside at the check of tick 3557, and the `move`
+orders home of tick 4557 came in that order, so from tick 4560 they
+were handled 9, 6, 8, 7. These rules give the order of every tick in
+which two or more creeps updated from tick 1557 to their return home
+(tick 5918).
 
 Local searches share a budget of 1100 iterations (heap removals,
 SPEC-0020) per window of game ticks. A search may run only when the
@@ -166,6 +202,9 @@ tested: the check is free and nobody waits.
   obstacles; walkers with `move` orders and units of `Player(15)` or
   `Player(0)` standing or walking in the way; positions logged every
   tick.
+- Replay `c-RXD-1.w3g` (creeps chasing harvesting peasants), 2026-10-20:
+  creation of the movement clusters, the order of the updates and the
+  local paths read in the running game during playback.
 
 ## Verification
 
@@ -247,3 +286,22 @@ first hit, 8007 ticks were swings (31 swings of about 200 ticks:
 `dmgpt1` 0.38 s, then `backSw1` 0.6 s) and 6390 ticks other stands,
 mostly single updates (57 of 6 ticks) and 5-update waits (14 of 30
 ticks); the creeps hit 37 times in 45 s.
+
+**Seeing past a standing unit (`c-RXD-1`, tick 1585).** Creep 8 has
+the local path of its search at the end of its reaction delay (tick
+1569), from its start (260, 520) through (240, 496), (208, 464),
+(176, 432), (176, 400), (144, 400), (112, 400), (80, 368), ... (world
+units, start first). The search met the cells of kobold 6, which stands
+at (100, 450) until its own delay ends (tick 1607) and occupies cells
+x 386..387, y 397..398. So the target is (240, 496) (SPEC-0020, step
+2). At tick 1585 the creep is at (250.528, 507.040), within 0.49 cells
+of it, and the farthest-point rule runs: (208, 464), (176, 432),
+(176, 400) and (144, 400) can be seen; (112, 400) cannot (the fourth
+sample enters cell (388, 397) with a step to the lower left, and the
+corner rule of size class 1 needs cell (387, 397), occupied by kobold
+6). The new target is (144, 400), which lies on the same diagonal as
+(208, 464) and (176, 432), so the creep walks straight down the
+diagonal. Read in the game: the target was the first point after the
+start at tick 1573 and the fifth from tick 1585. Without kobold 6 every
+point of the path could be seen and the target would have been the
+last point of the list.

@@ -142,6 +142,31 @@ When a tree has no life left it dies; a peasant that is not full yet
 goes on at the nearest other tree (test RUJ: a tree with 3 life, then
 a tree 320 away, until it carried 10) and then returns.
 
+### Animations
+
+The peasant's model (`units\human\Peasant\Peasant.mdx`) has each of its
+`Stand`, `Stand Ready`, `Stand Work`, `Attack` and `Walk` sequences in
+three variants: plain, `Gold` and `Lumber`. The variant follows what the
+peasant carries: nothing -> plain, gold -> `Gold`, lumber (even 1) ->
+`Lumber`. Read from the running game (test RUX, the sequence played by
+each peasant's model polled every 20 ms):
+
+- **Walking** to a mine or a tree: `Walk`; back with gold or lumber:
+  `Walk Gold`, `Walk Lumber`.
+- **Waiting at a busy mine**: the ordinary standing sequences (`Stand`,
+  `Stand -2`, ...), as an idle peasant. Inside the mine the peasant is
+  hidden and its model is not drawn; as it comes out with the gold it
+  shows `Stand Gold` for a moment and then walks with `Walk Gold`.
+- **Chopping**: one attack sequence per hit, 1.0 s long, within the
+  1.1 s between hits: `Attack` for the first hit when the peasant
+  carries no lumber yet, `Attack Lumber` for the next ones. In the rest
+  of the cycle it showed `Stand Ready Lumber`, or nothing new before the
+  next hit.
+- An idle peasant plays `Stand` most of the time and from time to time
+  one of the other plain `Stand` sequences.
+
+`Stand Work` (a short loop of 0.6 s) was not seen in gathering.
+
 ## Edge cases
 
 - Two peasants on two neighbouring trees hit in their own cycles of
@@ -176,6 +201,9 @@ a tree 320 away, until it carried 10) and then returns.
 - Test map RUJ: a busy mine with three peasants, a mine with 30 gold,
   a tree with 3 life and two more trees, two town halls with and
   without a wall in between, a peasant ordered to move while carrying.
+- Test map RUX (RUF with an idle peasant added), 2026-10-20: the sequence
+  played by the model of each peasant read from the memory of the
+  running game every 20 ms for 40 and 70 s.
 - Test map RUI: eight mines with a town hall in eight directions and
   eight trees with a lumber mill, a peasant on each; positions at
   every change of order or hidden state.

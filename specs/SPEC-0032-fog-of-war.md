@@ -34,9 +34,10 @@ reveals the cells of its mask (below) placed on the cell it stands in
 at that tick. Read in the running game: the reveals ran at the movement
 clock 1.2, 1.6, 2.0, ... 16.8 s (ticks 241, 321, ..., 3361). A unit also
 reveals at once when it is created (the units of the test, created in
-tick 201, revealed in that tick). In a script that counts a 0.005 s
-periodic timer started at the game's start, these are the counts
-`n` with `n mod 80 = 41` (test RWG; the count is the tick less 200).
+tick 201, revealed in that tick). A script that reads the fog from a
+0.005 s periodic timer sees the change in the tick after the update
+(test RWG: counts `n` with `n mod 80 = 41`, the count being the tick
+less 201, checked against the movement clock).
 
 ### Radius
 

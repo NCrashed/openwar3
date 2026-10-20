@@ -130,7 +130,9 @@ When an enemy damages a unit that has no order (idle):
   whatever the distance (a glaive thrower 1000 away, beyond the
   footman's acquisition range of 562);
 - other idle units of the same player near the damaged unit acquire the
-  attacker in the same tick; units of another player do so too when the
+  attacker in the same tick; the order in which they respond (and so the order
+  of their draws of generator 9, below) is given under "Order of the
+  responders"; units of another player do so too when the
   alliances allow it (player 2 passive toward player 0 with help
   request and help response set in both directions; with help response
   alone they did not). Walking units (with a `move` order) and peasants
@@ -145,6 +147,37 @@ The reach of the call depends on `CallForHelp` of `Units\MiscGame.txt`
 all 16 directions, 776 in all directions around a victim at (16, -16),
 783 only on one side of a victim at (0, 0), 800 nowhere; with 300: 480
 yes, 485 no). The exact shape of the area is open (open question 3).
+
+**Order of the responders.** A call for help (a damaged unit, or an
+idle creep that acquires a target, SPEC-0030) visits the units around
+the caller through a grid of cells of 256 x 256 world units from the
+map's lower left corner (-12288, -12288 on the test maps): the rows of
+cells from the bottom up, in each row the cells from left to right, and
+in each cell the unit created later first. A unit lies in the cell of
+the point (x - c, y - c), its position less its collision size `c`
+(the tests used collision 31; 31 and 32 cannot be told apart). The
+caller itself is skipped, and each responder that acquires the target
+fires `EVENT_UNIT_ACQUIRED_TARGET` and draws its reaction delay in this
+order, after the caller's own draw. Each responder then calls for help
+itself in the same way (a chain), so units out of the caller's reach
+but within a responder's are reached in the same tick, after all the
+caller's responders.
+
+Measured with script damage on a kobold among eight kobolds 300 to 400
+away (test RXG, five layouts: a circle created clockwise and
+anticlockwise, a line along x and one along y created in random order,
+a 3 x 3 block in random order): the order was the same for both
+circles (not the order of creation) and matched the rule in four of
+the five layouts. In the line along x the kobold 400 west of the caller
+responded last, after the one 300 east, although by the rule it comes
+first: it was not visited by the caller's own query (seen in the
+game's enumeration, which returned it but did not pass it to the
+response) and was reached through the chain (open question 8).
+
+In `c-RXD-1` the `nkob` at (-60, 520) acquired peasant 5 in tick 1557;
+the creeps responded in the order `nkob` (260, 520), `nkob` (100, 450),
+`nkot` (100, 600): cells (row, column) (49, 47) for the caller, (49, 48)
+for the two `nkob` (the later created first), (50, 48) for the `nkot`.
 
 ### Approach to an attack target
 
@@ -412,11 +445,19 @@ An idle unit with a weapon attacks an enemy unit on its own:
   delay. Its first check is `100 * x` ticks (`0.5 * x` seconds) after
   its creation, and then every 100 ticks (0.5 s). Units without a weapon
   (a farm) draw nothing. The draws are made in the order of creation.
-  `EVENT_UNIT_ACQUIRED_TARGET` fires at the check that finds a target:
-  in the tick `floor(100 * x)` counted from the creation (60 of 60
-  footmen with seeds 7, 8 and 9); an enemy put into range at tick 300
-  or 333 was found at the next check of each unit (`floor(100 * x)` +
-  300 or + 400).
+  The checks are engine timers (SPEC-0018, "Order within an update
+  tick"): the first expires at the creation time plus `0.5 * x` s, each
+  next one 0.5 s later, and each check runs in the first tick whose
+  movement clock is at or after its expiry. In `c-RXD-1` the creeps
+  were created in tick 201 (movement clock 1.0); the `nkob` that found
+  the first target (`x` = 0.5595, expiry 1.27975 + 13 x 0.5 s) checked
+  in tick 1557, movement clock 7.779675, read in the game (not 1556,
+  which `201 + floor(100 * x) + 1300` would give).
+  `EVENT_UNIT_ACQUIRED_TARGET` fires at the check that finds a target
+  (60 of 60 footmen with seeds 7, 8 and 9 earlier; their ticks were
+  counted by a script timer and agree with this rule); an enemy put
+  into range at tick 300 or 333 was found at the next check of each
+  unit.
 - **Choice of target.** Of the enemies in range it takes the nearest
   unit, and a unit before a structure even when the structure is
   nearer (a farm 150 away lost against a footman 300 away, in both
@@ -473,9 +514,17 @@ An idle unit with a weapon attacks an enemy unit on its own:
    a follower that stands, following units of other players; when a
    standing follower checks the gap again (77 ticks after it passed
    300 in the one case seen).
+8. Why one unit inside the caller's reach is left out of its call
+   (test RXG, the line along x), and the order of the chained calls when
+   several responders reach new units.
 
 ## Sources
 
+- Test map RXG on 1.27b under Wine, 2026-10-20: five layouts of nine
+  kobolds, the middle one damaged by a script; `EVENT_UNIT_ACQUIRED_TARGET`
+  logged, the call for help and its unit query read in the running game.
+  Test maps RXE, RXF (copies of `c-RXD`): acquisitions logged, the tick
+  of the first one read from the movement clock.
 - Test maps RUO, RUP, RUQ and RUS on 1.27b under Wine, 2026-10-20:
   pairs of a footman and a footman or peasant standing still on one
   line, start distances 300 to 1500, `smart` and `move` on the leader,

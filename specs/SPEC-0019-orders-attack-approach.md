@@ -394,16 +394,17 @@ time to time:
   every swing in every test. Behind targets it could not reach (speed
   270) it stood for one update at intervals of 96 to 102 ticks.
   More precisely, the new goal with the stand comes at the first update
-  of the attacker at least 70 ticks (0.35 s) after the end of the
-  backswing (`backSw1` after the damage, a timer of the queue; it may be
-  69 ticks, the tests leave 69 and 70). In the chase tests above the
-  stands were at 598, 958, 592, 904, 634 and 946 (ends of the backswing
-  527, 888, 521, 833, 563, 876, updates in ticks `6 m + 4`), and in
-  `c-RXD-1` (kobolds, `backSw1` 0.6 s, ends 2033, 2075, 2081 and 2087
-  for creeps 6, 7, 8 and 9, updates in ticks `6 m + 1`) at 2107, 2149,
-  2155 and 2161, read in the game; "66 ticks after the first motion"
-  holds in the first tests only because there the first update after
-  the end of the backswing came 5 ticks after it. The count runs
+  of the attacker at or after the tick in which its cooldown allows the
+  next swing, `D + cool1 - dmgpt1` in ticks (`D` the tick of the
+  damage; SPEC-0016, "Timing"), which is also the earliest update at
+  which it can start a swing again. In the chase tests above (footman:
+  `cool1` 1.35 s, `dmgpt1` 0.5 s, so `D + 170`) the stands were at 598,
+  958, 592, 904, 634 and 946 (damage 427, 788, 421, 733, 463, 776,
+  updates in ticks `6 m + 4`), and in `c-RXD-1` (kobolds: 1.35 s and
+  0.38 s, `D + 194`; damage 1913, 1955, 1961 and 1967 for creeps 6, 7,
+  8 and 9, updates in ticks `6 m + 1`) at 2107, 2149, 2155 and 2161,
+  read in the game: all ten by this rule ("66 ticks after the first
+  motion" fits the footmen only through their numbers). The count runs
   whether the attacker walks or not: creep 7 ended its backswing in
   tick 2075 with its target still within the range test of the new
   goal point, stood (its cooldown had not run out), and walked only

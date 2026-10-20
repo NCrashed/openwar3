@@ -203,7 +203,25 @@ the button (same replay actions, below).
 Seen for one selected unit (the labels are texts of the game's
 string files, here of a Russian client):
 
-- the unit's name at the top centre of the panel;
+- the unit's name at the top centre of the panel; for a hero its proper
+  name. The name is a line of text from 0.10306 to 0.11406 in height,
+  centred on x = 0.403435 (its width is the width of the text);
+- below the name, for some units, a **level line**, centred on the same
+  x, from 0.08906 to 0.09756 in height:
+  - a hero: the string `INFOPANEL_LEVEL_CLASS` of the game's strings
+    (a format with the level and the hero type's name, `%u` and `%s`);
+    for the player's own hero the line lies on the **hero level bar**,
+    a bar from (0.31344, 0.08594) to (0.49344, 0.10156) with a border
+    texture 0.001 larger on each side, which shows the experience
+    towards the next level; for another player's hero (an enemy) the
+    line is shown without the bar;
+  - a unit whose type has the race `creeps` (`Units\UnitData.slk`):
+    `INFOPANEL_LEVEL` (a format with the level, `%u`), the `level`
+    field of `Units\UnitBalance.slk` (5 for `nkol`, 10 for `nmgd`),
+    without a bar, whoever owns it (a kobold of an enemy player showed
+    it);
+  - no line for units of the playable races (footman, peasant, also a
+    footman owned by the creep player) and for buildings;
 - life as `current / maximum` in green below the portrait (and mana
   below it for units with mana);
 - for a unit with a weapon: an attack icon with the attack label
@@ -458,6 +476,10 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 
 ## Sources
 
+- Test maps RWX, RWY, RWZ, RXA (the level line: a footman, a peasant, an
+  Archmage of player 0, a Blood Mage of player 1, kobolds and an ice
+  giant of the creep player and of player 1, a footman of the creep
+  player; screenshots and the text frames read from memory).
 - Test maps RWL to RWW on 1.27b under Wine, 2026-10-20 (IceCrown,
   1024 x 768 window): own, enemy and allied units and buildings, a gold
   mine, a tavern, creep camps of four levels, seen or under fog;

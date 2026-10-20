@@ -530,6 +530,15 @@ impl Sim {
                 training.map(|(_, p)| p)
             },
             constructing: u.constructing,
+            level: self
+                .game
+                .state
+                .borrow()
+                .data
+                .units
+                .get(&u.type_id)
+                .filter(|t| t.race == "creeps")
+                .map(|t| t.level),
         })
     }
 

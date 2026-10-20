@@ -115,6 +115,9 @@ pub struct UnitType {
     /// Its level (`level` of `UnitBalance.slk`, `ulev` of a map), which
     /// sums to a creep camp's strength on the minimap (SPEC-0028).
     pub level: i32,
+    /// Its race (`race` of `UnitData.slk`, `urac` of a map), lower case;
+    /// units of the race `creeps` show their level (SPEC-0028).
+    pub race: String,
 }
 
 /// The level 1 numbers of an ability (`AbilityData.slk`): the base
@@ -467,6 +470,7 @@ impl ObjectData {
                 "canSleep",
                 "prio",
                 "movetp",
+                "race",
             ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
@@ -488,6 +492,10 @@ impl ObjectData {
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
                 unit.flying = values[8].as_deref().is_some_and(|v| v.trim() == "fly");
+                unit.race = values[9]
+                    .as_deref()
+                    .map(|r| r.trim().trim_matches('"').to_ascii_lowercase())
+                    .unwrap_or_default();
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their
@@ -770,6 +778,9 @@ impl ObjectData {
             unit.night_sight = def.number(b"usin").unwrap_or(unit.night_sight);
             if let Some(level) = def.number(b"ulev") {
                 unit.level = f32::from_bits(level) as i32;
+            }
+            if let Some(race) = def.text(b"urac") {
+                unit.race = race.trim().to_ascii_lowercase();
             }
             if let Some(kind) = def.text(b"umvt") {
                 unit.flying = kind.trim() == "fly";

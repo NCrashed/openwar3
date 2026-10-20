@@ -52,6 +52,9 @@ pub struct Selected {
     pub queue: Vec<i32>,
     pub progress: Option<f32>,
     pub constructing: bool,
+    /// The level a unit of the race `creeps` shows under its name
+    /// (SPEC-0028, "Information panel content").
+    pub level: Option<i32>,
 }
 
 /// A unit of a selected group, for the information panel.
@@ -773,8 +776,16 @@ impl Hud {
         } else {
             None
         };
+        // Under the name, a creep's level (SPEC-0028). PROVISIONAL: heroes,
+        // their `INFOPANEL_LEVEL_CLASS` line and level bar wait for heroes.
+        let level = s.level.map(|l| {
+            self.interface
+                .string("INFOPANEL_LEVEL")
+                .replacen("%u", &l.to_string(), 1)
+        });
         let names = |n: &str| match n {
             "SimpleNameValue" | "SimpleBuildingNameValue" => Some(name.clone()),
+            "SimpleClassValue" => level.clone(),
             "SimpleBuildingActionLabel" => action.clone(),
             _ => None,
         };

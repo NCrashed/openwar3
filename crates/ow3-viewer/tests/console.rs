@@ -728,3 +728,36 @@ fn the_fog_hides_far_creeps() {
     let hall = first(&sim, b"htow");
     assert!(drawn.contains(&hall));
 }
+
+/// The level line (SPEC-0028): a creep shows `INFOPANEL_LEVEL` with its
+/// level under its name, from 0.08906 to 0.09756 in height and centred on
+/// x 0.403435; a peasant shows none.
+#[test]
+fn a_creep_shows_its_level() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let units = sim.units();
+    let creep = units
+        .iter()
+        .find(|u| u.owner == ow3_sim::game::CREEPS && u.alive)
+        .unwrap();
+    let selected = sim.selected(creep.handle).unwrap();
+    let level = selected.level.unwrap();
+    assert!(level > 0);
+    let mut selection = ow3_viewer::selection::Selection::default();
+    selection.click(creep.handle);
+    let frame = sim.interface(&selection, None);
+    let line = frame
+        .texts
+        .iter()
+        .find(|t| t.text.contains(&level.to_string()) && t.rect[3] < 0.1)
+        .unwrap_or_else(|| panic!("{:?}", frame.texts));
+    assert!((line.rect[3] - 0.097_56).abs() < 0.001, "{:?}", line.rect);
+    let centre = (line.rect[0] + line.rect[2]) / 2.0;
+    assert!((centre - 0.403_435).abs() < 0.002, "{:?}", line.rect);
+
+    let peasant = first(&sim, b"hpea");
+    assert_eq!(sim.selected(peasant).unwrap().level, None);
+}

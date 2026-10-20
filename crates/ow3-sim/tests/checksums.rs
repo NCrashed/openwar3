@@ -66,8 +66,9 @@ fn remainders_of_the_reference_replay() {
 /// yet, with the reason.
 const UNSPECIFIED: &[(&str, &str)] = &[(
     "c-RTW-3.w3g",
-    "a unit told to move to a friendly unit (turn 190) follows it, which no spec describes; \
-         the group order of turn 233 then meets it elsewhere",
+    "the follow of turn 190 ends as recorded (turn 207); after the group order of turn 233 the \
+         simulation draws the script generator at turns 239 to 259 (the patience of blocked units, \
+         SPEC-0025) where the game does not: not found yet",
 )];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.

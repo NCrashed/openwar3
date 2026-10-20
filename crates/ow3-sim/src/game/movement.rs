@@ -132,6 +132,14 @@ pub enum Order {
     Repair { building: u32 },
     /// Walk to a building under construction and go on building it.
     Resume { building: u32 },
+    /// Follow an allied unit (SPEC-0019): `from` is where the follower
+    /// stood when ordered (relative to the world's lower left corner) and
+    /// `start_gap` the gap between the two then, edge to edge.
+    Follow {
+        leader: u32,
+        from: [u32; 2],
+        start_gap: u32,
+    },
     /// Walk to a gold mine or tree to gather from it (SPEC-0029).
     Gather { target: u32 },
     /// Carry a load to a building that takes it.
@@ -1243,13 +1251,7 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
 
 fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> bool {
     if name == "move" {
-        // PROVISIONAL: the game takes it with the current order `move`
-        // (SPEC-0019); how a unit follows its target is not specified, so
-        // it walks to where the target is now.
-        return match position_of(state, target) {
-            Some(at) if target != h => order(state, h, Order::Point, ORDER_MOVE, at),
-            _ => false,
-        };
+        return follow_order(state, h, target, ORDER_MOVE);
     }
     if matches!(name, "smart" | "repair") && unfinished_of_own(state, h, target) {
         // PROVISIONAL (not in SPEC-0026): a worker sent to its player's
@@ -1274,13 +1276,11 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
         return super::harvest::order_deliver(state, h, target);
     }
     if name == "smart" {
-        // On an enemy an attack, on anything else a move to it.
-        let then = if hostile(state, h, target) {
-            "attack"
-        } else {
-            "move"
-        };
-        return target_order_taken(state, h, then, target);
+        // On an enemy an attack, on anything else following it.
+        if hostile(state, h, target) {
+            return target_order_taken(state, h, "attack", target);
+        }
+        return follow_order(state, h, target, ORDER_SMART);
     }
     if name != "attack" {
         return false;
@@ -1793,6 +1793,50 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                 }
             }
+            // A follower takes the leader's position as its goal as a
+            // chaser does, and stops at its first update at which it is in
+            // the follow range, or, for a start within it, at which the gap
+            // is no larger than what it walked (SPEC-0019, "Following an
+            // allied unit").
+            if let Order::Follow {
+                leader,
+                from,
+                start_gap,
+            } = m.order
+            {
+                match position_of(state, leader).filter(|_| super::attack::standing(state, leader))
+                {
+                    Some(at) => {
+                        let lead = relative(at, min);
+                        match m.chase {
+                            Some(left) if left > 0 => m.chase = Some(left - 1),
+                            _ => {
+                                m.target = at;
+                                m.chase = Some(countdown(here, lead));
+                            }
+                        }
+                        let (own, other) = (collision_of(state, h), collision_of(state, leader));
+                        let stop = if real_of(start_gap) > real_of(FOLLOW_RANGE) {
+                            let reach = mul(add(add(FOLLOW_RANGE, own), other), CELL);
+                            in_range(here, lead, reach)
+                        } else {
+                            let gap = sub(sub(distance(here, lead), own), other);
+                            real_of(gap) <= real_of(distance(from, here))
+                        };
+                        // The order ends there: c-RTW-3 counts it ended
+                        // at that update.
+                        if stop {
+                            m.arrived = true;
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                        }
+                    }
+                    None => {
+                        m.arrived = true;
+                        m.velocity = [0, 0];
+                    }
+                }
+            }
             if !m.arrived {
                 let goal = relative(m.target, min);
                 let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
@@ -1987,6 +2031,50 @@ pub(super) fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
 /// The updates until a chase renews its goal after taking the goal `b`
 /// from `a` (SPEC-0019): `round(0.33 d)` with `d` in cells, clamped to
 /// 16..132. The square root is the correctly rounded one of IEEE 754.
+/// `smart` or `move` (`order_id`) of unit `h` on unit `target`: it
+/// follows it (SPEC-0019, "Following an allied unit"). A target that is
+/// not a unit is walked to.
+///
+/// PROVISIONAL: measured with units of the same player; allies and
+/// buildings are followed the same way.
+fn follow_order(state: &mut State, h: u32, target: u32, order_id: i32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let Some(at) = position_of(state, target).filter(|_| target != h) else {
+        return false;
+    };
+    let (Some(u), Some(Object::Unit(_))) = (state.unit(Some(h)), state.objects.get(&target)) else {
+        return order(state, h, Order::Point, order_id, at);
+    };
+    let from = relative([u.x, u.y], min);
+    let gap = sub(
+        sub(distance(from, relative(at, min)), collision_of(state, h)),
+        collision_of(state, target),
+    );
+    let follow = Order::Follow {
+        leader: target,
+        from,
+        start_gap: gap,
+    };
+    order(state, h, follow, order_id, at)
+}
+
+/// The follow range of `move` or `smart` on an allied unit (SPEC-0019).
+const FOLLOW_RANGE: u32 = 0x4396_0000;
+
+/// The collision size of unit `h`, 0 for none.
+fn collision_of(state: &State, h: u32) -> u32 {
+    state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(0, |t| t.collision)
+}
+
+/// The distance between two points.
+fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
+    let (dx, dy) = (sub(b[0], a[0]), sub(b[1], a[1]));
+    sqrt(add(mul(dx, dx), mul(dy, dy)))
+}
+
 fn countdown(a: [u32; 2], b: [u32; 2]) -> u32 {
     let (dx, dy) = (mul(sub(b[0], a[0]), CELL), mul(sub(b[1], a[1]), CELL));
     let d = real_of(add(mul(dx, dx), mul(dy, dy))).sqrt();

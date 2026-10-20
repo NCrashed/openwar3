@@ -1023,3 +1023,42 @@ fn area_damage() {
         );
     }
 }
+
+/// Verification 10 of SPEC-0019 (RUS): a footman given `smart` on a
+/// standing footman of its player follows it and stops: for a start gap
+/// of 283 (centres 345 apart) after 18 updates, 145.8 from its start; for
+/// 303 (365) after one update; for 338 (400) after 5 updates, 40.5 from
+/// its start.
+#[test]
+fn following_a_standing_footman() {
+    for (apart, updates, walked) in [
+        (345.0f32, 18u64, 145.8f32),
+        (365.0, 1, -1.0),
+        (400.0, 5, 40.5),
+    ] {
+        let units = format!(
+            "set a = CreateUnit(Player(0), 'hfoo', -7000, -2000, 0)\n    set t = CreateUnit(Player(0), 'hfoo', {}, -2000, 180)\n    call PauseUnit(t, true)",
+            -7000.0 + apart
+        );
+        let Some(mut game) = game(&units, "call IssueTargetOrder(a, \"smart\", t)", |_| {}) else {
+            return;
+        };
+        let path = run(&mut game, 600);
+        // The tick it stopped: the last at which it moved.
+        let moved: Vec<u64> = path
+            .windows(2)
+            .filter(|w| w[0].1[0].x != w[1].1[0].x)
+            .map(|w| w[1].0)
+            .collect();
+        let (first, last) = (*moved.first().unwrap(), *moved.last().unwrap());
+        let taken = (last - first) / 6 + 1;
+        let x = path.last().unwrap().1[0].x;
+        assert!(taken == updates, "{apart}: {taken} updates, stopped at {x}");
+        if walked > 0.0 {
+            let from = x - -7000.0;
+            assert!((from - walked).abs() < 0.1, "{apart}: {from} walked");
+        }
+        let order = path.last().unwrap().1[0].order;
+        assert_eq!(order, 0, "{apart}: order after the stop");
+    }
+}

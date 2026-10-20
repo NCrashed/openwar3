@@ -86,34 +86,39 @@ random number is drawn there.
 
 **Gathering.** Workers harvesting gold draw no random numbers and do
 not change `G` (the gold of the player is not part of the checksum);
-they change only `C` and `D`, at these moments (ticks counted from the
-tick `s` in which the worker's walk stops; a state change in tick `e`
-shows first in the checksum of the first turn whose game time `B` is
-at least `5 * e` ms):
+they change only `C` and `D`. A change in tick `e` shows first in the
+checksum of the first turn whose game time `B` is at least `5 * e` ms.
+With `u` the update (ticks `6 m + 1`, SPEC-0018) at which a worker's
+walk ends, the ticks are:
 
 | Moment | Objects | Tick |
 |---|---|---|
-| a `harvest` order to a mine (script or player) | about 19 created per worker (cluster, path and others) | the tick of the order |
-| the worker enters the mine | 2 freed | `s + 12` |
-| the worker waits at a mine another worker is in | 1 created, 2 freed | `s + 6` to `s + 12` |
-| the worker leaves the mine with gold | 16 created (the walk to the town hall) | the tick it leaves (1 s after it entered) |
-| the worker gives the gold at the town hall | 19 created (the walk back to the mine), the old walk's objects freed | `s + 12` |
-| any walk that ended (cluster and path freed) | 2 freed | `s + 18` (`s + 12` when waiting at the mine) |
+| a `harvest` order to a mine (script or player) | about 19 created per worker | the tick of the order |
+| the worker gives the gold at the town hall | 19 created (the walk back), 1 freed; then 2 freed (the old walk) | `u + 6`; `u + 12` |
+| the worker enters a free mine (at `u + 6`) | 2 freed (its walk) | `u + 12` |
+| the worker waits at a mine another worker is in | 1 created; 2 freed (its walk) | `u + 6`; `u + 12` |
+| a worker leaves the mine with gold, 200 ticks (1 s) after it entered; a waiting worker enters in the same tick | 16 created, 15 or 16 freed | the tick it leaves |
 
-The ticks were read in the running game at the updates of the walking
-workers, so each can be late by up to 5 ticks. In the replay
+The ticks were read in the running game at each creation and freeing
+of an object. The leaving is a timer (SPEC-0018): a worker that entered
+at update `u + 6` leaves in tick `u + 206`, and one that entered when
+the worker before it left leaves 200 ticks after that. In the replay
 `c-RXI-1.w3g` (six workers harvesting a mine 1148 from their town
-hall, no other units) every turn in which the remainder of
-Verification 4 changes has one of these moments in it or a draw of the
-script generator (turns 35 and 37: workers blocked by each other on
-their first way to the mine, SPEC-0021, "Blocked by a unit"), except
-three:
-turn 2 (the start of the game, see Edge cases), turn 24 (five objects
-of the town hall, created by the script in tick 201, freed about tick
-445) and turn 195 (one object freed about tick 3880, cause unknown).
-In `c-RXD-1.w3g` the first changes are turn 10 (the script creates the
-units), turn 14 (the six `harvest` orders of tick 301) and turn 20 (the
-five objects of the town hall); from turn 64 on the creeps fight.
+hall, no other units) these ticks, the two draws of the script
+generator in ticks 667 and 715 (workers blocked by each other on their
+first way to the mine, SPEC-0021, "Blocked by a unit") and the two
+ticks below give exactly the turns in which the remainder of
+Verification 4 changes, 86 turns up to 41 s:
+
+- tick 201: the script creates the town hall, the mine and the workers;
+- tick 441: five objects of the town hall are freed by a timer of 1.2 s
+  from its creation (expiry 2.20009, the creation at queue time 1.0001);
+- tick 3871: one object is freed by a timer with expiry 19.34970 (cause
+  unknown).
+
+In `c-RXD-1.w3g` the first changes are turn 10 (tick 201), turn 14 (the
+six `harvest` orders of tick 301) and turn 20 (tick 441); from turn 64
+on the creeps fight.
 
 ### Turn checksum
 

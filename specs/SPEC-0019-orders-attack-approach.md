@@ -307,12 +307,30 @@ time to time:
   attacker's position to the goal, and the attacker's own path to the
   current waypoint of that high-level path (chosen by the look-ahead of
   SPEC-0020, step 1), followed as in SPEC-0020 and SPEC-0021. When the
-  current waypoint is the goal itself, the attacker's local search
-  differs in two points: its goal point is the target's position at the
-  time of that local search, and it ends at the first cell removed from
-  the heap whose centre is within the attack range `rangeN1 / 32`
-  (cells, not counting the collision sizes) of that point; that cell's
-  centre is the end of the path. Whether the attacker starts with the
+  current waypoint is the goal itself, the attacker's local search goes
+  to the goal point (the target's position when the goal was taken; a
+  search again after a block keeps it) and ends early when it **touches
+  the target**: when a cell is expanded, the steps to its eight
+  neighbours test the cells of SPEC-0020 for the attacker's size class,
+  and if one of the tested cells is occupied by the target (its
+  footprint at its position at its own last update, SPEC-0021), the
+  search stops at once and the expanded cell is the end of the path
+  (its centre; the neighbours of that cell are not added). For two
+  units of size class 1 this happens at the first expanded cell
+  `(x, y)` whose square `x - 2 .. x + 1`, `y - 2 .. y + 1` shares a
+  cell with the target's 2 x 2 footprint. A cell that is not passable
+  for a static reason is not looked at for units, so the target is not
+  touched through it. The attack range plays no part in the search.
+  Measured in `c-RXD-1` (the 59 local searches of the creeps between
+  7.8 s and 16 s, read in the running game): 58 ended by touching their
+  target, each at the expanded cell this rule gives with the target's
+  footprint at its position 6 ticks earlier (its last update); a stop
+  at the first removed cell within `rangeN1 / 32` would have given
+  another end in 21 of the 59. The other search (tick 3049, a search
+  again after a block, towards a goal taken 66 ticks earlier) ended
+  after 20 expansions without touching and short of its goal cell
+  (open question 9). The expansions of creep 8's search
+  in tick 1573 are in `c-RXD-1.search-1573.tsv`. Whether the attacker starts with the
   first point of the path or walks straight to its end is decided as
   usual (SPEC-0020, step 2: straight only if the search met no
   unpassable cell). The target is moving, so it is not an obstacle for
@@ -536,6 +554,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
 8. Why one unit inside the caller's reach is left out of its call
    (test RXG, the line along x), and the order of the chained calls when
    several responders reach new units.
+9. How the chase search of `c-RXD-1` in tick 3049 (creep 9) ended:
+   without touching its target and before its goal cell.
 
 ## Sources
 

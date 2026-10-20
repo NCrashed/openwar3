@@ -115,6 +115,9 @@ struct Animated {
     /// Walk Gold and Walk Lumber, if any (SPEC-0029).
     walk_gold: Option<usize>,
     walk_lumber: Option<usize>,
+    /// Stand Gold and Stand Lumber, if any (SPEC-0029).
+    stand_gold: Option<usize>,
+    stand_lumber: Option<usize>,
     /// The first sequence with Portrait and without Talk in its name.
     portrait: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
@@ -133,6 +136,15 @@ impl Animated {
             _ => None,
         }
         .or(self.walk)
+    }
+
+    /// Standing with a load: Stand Gold (1) or Stand Lumber (2).
+    fn load_stand(&self, load: u8) -> Option<usize> {
+        match load {
+            1 => self.stand_gold,
+            2 => self.stand_lumber,
+            _ => None,
+        }
     }
 }
 
@@ -162,6 +174,9 @@ pub enum UnitPose {
     /// Milliseconds since it started walking with a load: 1 gold, 2
     /// lumber; Walk Gold or Walk Lumber loops.
     Carry(i32, u8),
+    /// Milliseconds into standing with a load: Stand Gold or Stand Lumber
+    /// loops.
+    LoadStand(i32, u8),
     /// Milliseconds since it was hit: Stand Hit played once.
     Hit(i32),
     /// Milliseconds into its Portrait sequence, which loops (SPEC-0028).
@@ -231,6 +246,7 @@ impl Animation {
                         .position(|s| s.name.trim().eq_ignore_ascii_case(name))
                 };
                 let (walk_gold, walk_lumber) = (named("walk gold"), named("walk lumber"));
+                let (stand_gold, stand_lumber) = (named("stand gold"), named("stand lumber"));
                 let hit = named("stand hit");
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
@@ -251,6 +267,8 @@ impl Animation {
                     hit,
                     walk_gold,
                     walk_lumber,
+                    stand_gold,
+                    stand_lumber,
                     top,
                     palette,
                     bone_base,
@@ -314,10 +332,14 @@ impl Animation {
                 }
                 None => stand(),
             },
-            UnitPose::Work(elapsed) | UnitPose::Portrait(elapsed) | UnitPose::Carry(elapsed, _) => {
+            UnitPose::Work(elapsed)
+            | UnitPose::Portrait(elapsed)
+            | UnitPose::Carry(elapsed, _)
+            | UnitPose::LoadStand(elapsed, _) => {
                 let sequence = match pose {
                     UnitPose::Work(_) => animated.work,
                     UnitPose::Carry(_, load) => animated.carry(load),
+                    UnitPose::LoadStand(_, load) => animated.load_stand(load),
                     _ => animated.portrait,
                 };
                 match sequence {
@@ -379,6 +401,7 @@ impl Animation {
             UnitPose::Work(elapsed) => (animated.work?, elapsed),
             UnitPose::Portrait(elapsed) => (animated.portrait?, elapsed),
             UnitPose::Carry(elapsed, load) => (animated.carry(load)?, elapsed),
+            UnitPose::LoadStand(elapsed, load) => (animated.load_stand(load)?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
             UnitPose::Once(elapsed) => (animated.sequence, elapsed),
         };
@@ -395,6 +418,7 @@ impl Animation {
                 | UnitPose::Work(_)
                 | UnitPose::Portrait(_)
                 | UnitPose::Carry(..)
+                | UnitPose::LoadStand(..)
                 | UnitPose::Halt { .. }
         );
         let at = |frame: i32| {
@@ -565,6 +589,9 @@ impl Animation {
             } => self.sequence_alphas(index, animated.walk?, elapsed, true),
             UnitPose::Carry(elapsed, load) => {
                 self.sequence_alphas(index, animated.carry(load)?, elapsed, true)
+            }
+            UnitPose::LoadStand(elapsed, load) => {
+                self.sequence_alphas(index, animated.load_stand(load)?, elapsed, true)
             }
             UnitPose::Work(elapsed) => self.sequence_alphas(index, animated.work?, elapsed, true),
             UnitPose::Portrait(elapsed) => {

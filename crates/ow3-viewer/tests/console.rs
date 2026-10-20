@@ -390,6 +390,15 @@ fn a_load_shows_on_the_peasant() {
             walk.iter().zip(&carry).any(|(w, c)| *w < 0.5 && *c > 0.5),
             "load {load}: {walk:?} {carry:?}"
         );
+        // Standing with it, it still shows.
+        let stand = animation
+            .pose_alphas(peasant, UnitPose::LoadStand(300, load))
+            .unwrap()
+            .0;
+        assert!(
+            walk.iter().zip(&stand).any(|(w, s)| *w < 0.5 && *s > 0.5),
+            "load {load} standing: {walk:?} {stand:?}"
+        );
     }
 }
 

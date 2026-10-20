@@ -682,6 +682,10 @@ impl Sim {
             self.halts.insert(u.handle, (now, now - since));
         }
         let pose = pose(u, now);
+        // Standing with a load: Stand Gold or Stand Lumber (SPEC-0029).
+        if let (UnitPose::Stand, Some((load, _))) = (pose, u.carrying) {
+            return UnitPose::LoadStand(millis(now), load);
+        }
         match (pose, self.halts.get(&u.handle)) {
             (UnitPose::Stand, Some(&(stopped, walked))) => UnitPose::Halt {
                 walked: millis(walked),

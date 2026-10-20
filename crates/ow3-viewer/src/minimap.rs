@@ -10,14 +10,16 @@
 //! outline. Units under fog are not shown. A left click moves the camera
 //! there, a right click orders the selection there.
 //!
-//! PROVISIONAL: the icons are `UI\MiniMap\MiniMapIcon\MinimapIconGold.blp`,
-//! `MinimapIconNeutralBuilding.blp` and `UI\Minimap\MinimapIconCreepLoc.blp`
-//! and the colours those of `ReplaceableTextures\TeamColor`, which the
-//! spec does not name, the camp icon tinted green; all buildings are 5 pixels square (the town hall
-//! was 5 x 5, a farm 6 x 5); a camp is the creeps within 512 of one
-//! another; the camera outline is a rectangle as wide as the view half way
-//! up and as deep as it; the edges between fog states are hard (SPEC-0032
-//! open question 4).
+//! The icons of gold mines and neutral buildings come from the skins, the
+//! creep camp circle is `UI\Minimap\MinimapIconCreepLoc.blp` tinted by the
+//! camp's strength (SPEC-0028, "Creep camps").
+//!
+//! PROVISIONAL: the colours are those of `ReplaceableTextures\TeamColor`,
+//! which the spec does not name; all buildings are 5 pixels square (the
+//! town hall was 5 x 5, a farm 6 x 5); a camp joins creeps within 840 of
+//! its first one, of the measured 820 to 860; the camera outline is a
+//! rectangle as wide as the view half way up and as deep as it; the edges
+//! between fog states are hard (SPEC-0032 open question 4).
 
 use crate::console::Rect;
 use crate::ui::{Blend, Quad};
@@ -49,8 +51,100 @@ const LINE: f32 = 1.0;
 const GOLD: &str = "UI\\MiniMap\\MiniMapIcon\\MinimapIconGold.blp";
 const NEUTRAL_BUILDING: &str = "UI\\MiniMap\\MiniMapIcon\\MinimapIconNeutralBuilding.blp";
 const CREEP_CAMP: &str = "UI\\Minimap\\MinimapIconCreepLoc.blp";
-/// The white circle of the camp icon tinted green.
-const CAMP_GREEN: [f32; 4] = [0.2, 0.9, 0.2, 1.0];
+
+/// The icons of the minimap (skins `MinimapResourceTexture` and
+/// `MinimapNeutralTexture`; the camp circle is
+/// `UI\Minimap\MinimapIconCreepLoc.blp`, as the skin entry
+/// `MinimapCreepCampTexture` names a file the archives lack) and the look
+/// of creep camps by the sum of their levels (`[Minimap]` of
+/// `UI\MiscData.txt`), SPEC-0028 "Creep camps".
+#[derive(Clone, Debug, PartialEq)]
+pub struct Look {
+    pub gold: String,
+    pub neutral: String,
+    pub camp: String,
+    /// `MinimapMiddleCampThreshold`, `MinimapToughCampThreshold`.
+    pub thresholds: [i32; 2],
+    /// Weak, middle and tough camp colours.
+    pub colours: [[f32; 4]; 3],
+    /// `MinimapMiddleCampScale`, for middle and tough camps.
+    pub scale: f32,
+}
+
+impl Default for Look {
+    fn default() -> Look {
+        Look {
+            gold: GOLD.to_owned(),
+            neutral: NEUTRAL_BUILDING.to_owned(),
+            camp: CREEP_CAMP.to_owned(),
+            thresholds: [10, 20],
+            colours: [
+                [0.0, 200.0 / 255.0, 0.0, 1.0],
+                [1.0, 128.0 / 255.0, 0.0, 1.0],
+                [220.0 / 255.0, 0.0, 0.0, 1.0],
+            ],
+            scale: 1.3,
+        }
+    }
+}
+
+impl Look {
+    /// The look the game files give: `skin` finds a skin entry, `misc`
+    /// is the text of `UI\MiscData.txt`. What is missing keeps its
+    /// default.
+    pub fn load(skin: impl Fn(&str) -> Option<String>, misc: &str) -> Look {
+        let mut look = Look::default();
+        if let Some(t) = skin("MinimapResourceTexture") {
+            look.gold = t;
+        }
+        if let Some(t) = skin("MinimapNeutralTexture") {
+            look.neutral = t;
+        }
+        let mut inside = false;
+        for line in misc.lines().map(str::trim) {
+            if line.starts_with('[') {
+                inside = line.eq_ignore_ascii_case("[Minimap]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| inside) else {
+                continue;
+            };
+            let numbers: Vec<f32> = value
+                .split(',')
+                .filter_map(|v| v.trim().parse().ok())
+                .collect();
+            // Colours are alpha, red, green, blue of 255.
+            let colour = || {
+                (numbers.len() == 4)
+                    .then(|| [numbers[1], numbers[2], numbers[3], numbers[0]].map(|c| c / 255.0))
+            };
+            match key.trim() {
+                "MinimapMiddleCampThreshold" => {
+                    look.thresholds[0] = numbers.first().map_or(10, |&v| v as i32);
+                }
+                "MinimapToughCampThreshold" => {
+                    look.thresholds[1] = numbers.first().map_or(20, |&v| v as i32);
+                }
+                "MinimapMiddleCampScale" => look.scale = numbers.first().copied().unwrap_or(1.3),
+                "MinimapWeakCampColor" => look.colours[0] = colour().unwrap_or(look.colours[0]),
+                "MinimapMiddleCampColor" => look.colours[1] = colour().unwrap_or(look.colours[1]),
+                "MinimapToughCampColor" => look.colours[2] = colour().unwrap_or(look.colours[2]),
+                _ => {}
+            }
+        }
+        look
+    }
+
+    /// The colour and scale of a camp whose levels sum to `levels`; a
+    /// creep made later by a script (`None`) shows as a weak camp.
+    fn camp(&self, levels: Option<i32>) -> ([f32; 4], f32) {
+        match levels {
+            Some(l) if l >= self.thresholds[1] => (self.colours[2], self.scale),
+            Some(l) if l >= self.thresholds[0] => (self.colours[1], self.scale),
+            _ => (self.colours[0], 1.0),
+        }
+    }
+}
 
 /// What a mark on the minimap stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,8 +162,11 @@ pub enum Mark {
     },
     Mine,
     NeutralBuilding,
-    /// A camp of creeps under fog.
-    Camp,
+    /// A camp of creeps under fog: the sum of its levels, `None` for a
+    /// creep made later by a script.
+    Camp {
+        levels: Option<i32>,
+    },
 }
 
 /// The five buttons beside the minimap, from the top (SPEC-0028).
@@ -191,6 +288,8 @@ pub struct Minimap {
     terrain: [f32; 3],
     /// What is left of the picture where the player never looked.
     masked: f32,
+    /// Its icons and camp colours.
+    pub look: Look,
     /// What its buttons set.
     pub toggles: Toggles,
 }
@@ -213,6 +312,7 @@ impl Minimap {
             terrain: [b.min_x, b.min_y, ((b.max_x - b.min_x) / 128.0).round()],
             masked: if partly { MASKED_PARTLY } else { 0.0 },
             toggles: Toggles::default(),
+            look: Look::default(),
         }
     }
 
@@ -374,11 +474,14 @@ impl Minimap {
                     };
                     square(p, side(building), &team(colour), [1.0; 4])
                 }
-                Mark::Mine => square(p, size(ICON), GOLD, [1.0; 4]),
-                Mark::NeutralBuilding => square(p, size(ICON), NEUTRAL_BUILDING, [1.0; 4]),
-                Mark::Camp if !toggles.creep_camps => continue,
+                Mark::Mine => square(p, size(ICON), &self.look.gold, [1.0; 4]),
+                Mark::NeutralBuilding => square(p, size(ICON), &self.look.neutral, [1.0; 4]),
+                Mark::Camp { .. } if !toggles.creep_camps => continue,
                 // The icon draws its circle over the middle half.
-                Mark::Camp => square(p, size(2.0 * ICON), CREEP_CAMP, CAMP_GREEN),
+                Mark::Camp { levels } => {
+                    let (colour, scale) = self.look.camp(levels);
+                    square(p, size(2.0 * ICON * scale), &self.look.camp, colour)
+                }
             });
         }
         // Signals blink at their points.
@@ -437,36 +540,26 @@ impl Minimap {
     }
 }
 
-/// The camps of creeps at `creeps`: the creeps within 512 of one another
-/// chained together, each camp at the middle of its creeps.
-pub fn camps(creeps: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    let mut camp: Vec<usize> = (0..creeps.len()).collect();
-    fn root(camp: &mut [usize], mut i: usize) -> usize {
-        while camp[i] != i {
-            camp[i] = camp[camp[i]];
-            i = camp[i];
-        }
-        i
-    }
-    for i in 0..creeps.len() {
-        for j in i + 1..creeps.len() {
-            let (a, b) = (creeps[i], creeps[j]);
-            if (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) <= 512.0 * 512.0 {
-                let (ri, rj) = (root(&mut camp, i), root(&mut camp, j));
-                camp[ri.max(rj)] = ri.min(rj);
-            }
-        }
-    }
-    let mut sums: std::collections::BTreeMap<usize, ([f32; 2], f32)> = Default::default();
-    for (i, p) in creeps.iter().enumerate() {
-        let r = root(&mut camp, i);
-        let s = sums.entry(r).or_default();
-        s.0[0] += p[0];
-        s.0[1] += p[1];
-        s.1 += 1.0;
-    }
-    sums.into_values()
-        .map(|(sum, n)| [sum[0] / n, sum[1] / n])
+/// How near a creep stands to the first creep of a camp to join it
+/// (SPEC-0028, "Creep camps": 820 joined, 860 did not).
+const CAMP_REACH: f32 = 840.0;
+
+/// The camps of the creeps at `creeps`, in the order they were made: the
+/// index of each creep's camp. A creep joins the first camp whose first
+/// creep is within about 840 of it, else starts a camp.
+pub fn camps(creeps: &[[f32; 2]]) -> Vec<usize> {
+    let mut firsts: Vec<[f32; 2]> = Vec::new();
+    creeps
+        .iter()
+        .map(|p| {
+            let near = |f: &[f32; 2]| {
+                (p[0] - f[0]).powi(2) + (p[1] - f[1]).powi(2) < CAMP_REACH * CAMP_REACH
+            };
+            firsts.iter().position(near).unwrap_or_else(|| {
+                firsts.push(*p);
+                firsts.len() - 1
+            })
+        })
         .collect()
 }
 
@@ -480,6 +573,7 @@ mod tests {
             terrain: [0.0, 0.0, 4.0],
             masked,
             toggles: Toggles::default(),
+            look: Look::default(),
         }
     }
 
@@ -514,6 +608,7 @@ mod tests {
             terrain: [-12288.0, -12288.0, 192.0],
             masked: 0.0,
             toggles: Toggles::default(),
+            look: Look::default(),
         };
         for (px, py) in [(30.0f32, 600.0f32), (180.0, 740.0), (104.41, 669.2)] {
             let p = [px * PIXEL, (768.0 - py) * PIXEL];
@@ -548,7 +643,7 @@ mod tests {
         let marks = [
             ([100.0, 100.0], enemy),
             ([200.0, 100.0], ally),
-            ([300.0, 100.0], Mark::Camp),
+            ([300.0, 100.0], Mark::Camp { levels: Some(3) }),
         ];
         let textures = |m: &Minimap| -> Vec<String> {
             m.quads(&marks, None, None, 0.0)
@@ -561,6 +656,8 @@ mod tests {
         assert_eq!(plain[0], "war3mapMap.blp");
         assert!(plain[1].ends_with("TeamColor01.blp") && plain[2].ends_with("TeamColor03.blp"));
         assert_eq!(plain[3], CREEP_CAMP);
+        let camp = &m.quads(&marks, None, None, 0.0)[3];
+        assert_eq!(camp.colour, Look::default().colours[0]);
         m.toggles.press(Button::Terrain);
         m.toggles.press(Button::AllyColours);
         m.toggles.press(Button::CreepCamps);
@@ -574,10 +671,38 @@ mod tests {
         assert_eq!(m.toggles.ally_colours, 0);
     }
 
+    /// Camp colours and sizes by the sum of levels, as `[Minimap]` of
+    /// `UI\MiscData.txt` gives them (SPEC-0028): one creep of level 10
+    /// and two of 5 make a middle camp, four of 5 and two of 10 a tough
+    /// one; a creep made later is weak whatever its level.
+    #[test]
+    fn camp_looks() {
+        let misc = "[Other]\nMinimapToughCampThreshold=99\n[Minimap]\n\
+            MinimapMiddleCampThreshold=10\nMinimapToughCampThreshold=20\n\
+            MinimapMiddleCampScale=1.3\nMinimapWeakCampColor=255,0,200,0\n\
+            MinimapMiddleCampColor=255,255,128,0\nMinimapToughCampColor=255,220,0,0\n";
+        let look = Look::load(
+            |k| (k == "MinimapResourceTexture").then(|| "gold.blp".into()),
+            misc,
+        );
+        assert_eq!(look.gold, "gold.blp");
+        assert_eq!(look.camp, CREEP_CAMP);
+        assert_eq!(look.thresholds, [10, 20]);
+        assert_eq!(look.camp(Some(9)), ([0.0, 200.0 / 255.0, 0.0, 1.0], 1.0));
+        assert_eq!(look.camp(Some(10)), ([1.0, 128.0 / 255.0, 0.0, 1.0], 1.3));
+        assert_eq!(look.camp(Some(20)).0, [220.0 / 255.0, 0.0, 0.0, 1.0]);
+        assert_eq!(look.camp(None), look.camp(Some(0)));
+    }
+
     #[test]
     fn camps_of_creeps() {
-        let camps = camps(&[[0.0, 0.0], [300.0, 0.0], [600.0, 0.0], [5000.0, 0.0]]);
-        assert_eq!(camps, [[300.0, 0.0], [5000.0, 0.0]]);
+        // Pairs 820 apart join, 860 apart do not; of three in a row 600
+        // apart the third is a camp of its own.
+        assert_eq!(
+            camps(&[[0.0, 0.0], [820.0, 0.0], [5000.0, 0.0], [5860.0, 0.0]]),
+            [0, 0, 1, 2]
+        );
+        assert_eq!(camps(&[[0.0, 0.0], [600.0, 0.0], [1200.0, 0.0]]), [0, 0, 1]);
     }
 
     #[test]
@@ -587,6 +712,7 @@ mod tests {
             terrain: [-1024.0, -2048.0, 16.0],
             masked: 0.0,
             toggles: Toggles::default(),
+            look: Look::default(),
         };
         let centre = [
             (PICTURE[0] + PICTURE[2]) / 2.0,

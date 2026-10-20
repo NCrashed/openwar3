@@ -112,6 +112,9 @@ pub struct UnitType {
     /// The unit flies (`movetp` of `UnitData.slk` is `fly`; `umvt` of a
     /// map) and so reveals its whole circle (SPEC-0032).
     pub flying: bool,
+    /// Its level (`level` of `UnitBalance.slk`, `ulev` of a map), which
+    /// sums to a creep camp's strength on the minimap (SPEC-0028).
+    pub level: i32,
 }
 
 /// The level 1 numbers of an ability (`AbilityData.slk`): the base
@@ -595,6 +598,7 @@ impl ObjectData {
                 "fused",
                 "sight",
                 "nsight",
+                "level",
             ],
         )? {
             let b = Balance {
@@ -625,6 +629,7 @@ impl ObjectData {
                 unit.food_used = cost(values[20].as_ref());
                 unit.sight = real(values[21].as_ref());
                 unit.night_sight = real(values[22].as_ref());
+                unit.level = cost(values[23].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -763,6 +768,9 @@ impl ObjectData {
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
             unit.sight = def.number(b"usid").unwrap_or(unit.sight);
             unit.night_sight = def.number(b"usin").unwrap_or(unit.night_sight);
+            if let Some(level) = def.number(b"ulev") {
+                unit.level = f32::from_bits(level) as i32;
+            }
             if let Some(kind) = def.text(b"umvt") {
                 unit.flying = kind.trim() == "fly";
             }

@@ -57,6 +57,16 @@ pub struct UnitDraw {
 /// The player whose view the viewer shows.
 const LOCAL_PLAYER: i32 = 0;
 
+/// A camp of the creeps there are when the map starts (SPEC-0028,
+/// "Creep camps"): where its first creep stood, its creeps and the sum of
+/// their levels.
+#[derive(Clone, Debug, PartialEq)]
+struct Camp {
+    at: [f32; 2],
+    creeps: Vec<u32>,
+    levels: i32,
+}
+
 /// A map running in the simulation.
 pub struct Sim {
     game: Game<'static>,
@@ -69,6 +79,8 @@ pub struct Sim {
     /// drawn while their place is under fog (SPEC-0032, "Buildings under
     /// fog"): how they were drawn and their minimap mark.
     remembered: BTreeMap<u32, (UnitDraw, [f32; 2], u8)>,
+    /// The creep camps of the start, in the order of their first creeps.
+    camps: Vec<Camp>,
     /// Confirmations of orders being shown.
     effects: Vec<Effect>,
     /// The models of `TargetPointConfirm` and `TargetUnitConfirm`, with the
@@ -170,7 +182,7 @@ impl Sim {
         game.start().map_err(|e| e.to_string())?;
         let mut chain = ArchiveChain::open(game_data, map).map_err(|e| e.to_string())?;
         let models = crate::objects::unit_models(&mut chain);
-        Ok(Sim {
+        let mut sim = Sim {
             game,
             models,
             walks: BTreeMap::new(),
@@ -188,7 +200,37 @@ impl Sim {
             minimap: crate::minimap::Minimap::new(loaded),
             placed: loaded.destructables.iter().map(|d| [d.x, d.y]).collect(),
             chain,
-        })
+            camps: Vec::new(),
+        };
+        // The minimap's icons and camp colours, and the camps of the
+        // creeps there are at the start (SPEC-0028, "Creep camps").
+        let misc: String = sim
+            .chain
+            .read_all("UI\\MiscData.txt")
+            .iter()
+            .map(|d| String::from_utf8_lossy(d).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        sim.minimap.look = crate::minimap::Look::load(|k| sim.hud.skin(k), &misc);
+        let creeps: Vec<UnitView> = sim
+            .game
+            .units()
+            .into_iter()
+            .filter(|u| u.owner == ow3_sim::game::CREEPS && u.alive)
+            .collect();
+        let at: Vec<[f32; 2]> = creeps.iter().map(|u| [u.x, u.y]).collect();
+        for (u, camp) in creeps.iter().zip(crate::minimap::camps(&at)) {
+            if camp == sim.camps.len() {
+                sim.camps.push(Camp {
+                    at: [u.x, u.y],
+                    creeps: Vec::new(),
+                    levels: 0,
+                });
+            }
+            sim.camps[camp].creeps.push(u.handle);
+            sim.camps[camp].levels += sim.level(u.type_id);
+        }
+        Ok(sim)
     }
 
     /// A line about unit `handle`: type, owner, life, mana and attack.
@@ -383,15 +425,15 @@ impl Sim {
             .filter(|u| u.alive && !u.hidden)
             .collect();
         let mut marks: Vec<([f32; 2], Mark)> = Vec::new();
-        let mut unseen_creeps = Vec::new();
+        let in_camp = |h: u32| self.camps.iter().any(|c| c.creeps.contains(&h));
         for u in &units {
             let building = self.game.unit_stats(u.handle).is_some_and(|s| s.building);
-            // PROVISIONAL: gold mines and neutral buildings show under the
-            // fog too; the spec says nothing of them there.
+            // Gold mines and neutral buildings show under fog too.
             let landmark = u.type_id == ngol || (u.owner == NEUTRAL && building);
             if !landmark && !self.shown(u) {
-                if u.owner == ow3_sim::game::CREEPS {
-                    unseen_creeps.push([u.x, u.y]);
+                // A creep made later by a script: a weak camp of its own.
+                if u.owner == ow3_sim::game::CREEPS && !in_camp(u.handle) {
+                    marks.push(([u.x, u.y], Mark::Camp { levels: None }));
                 }
                 continue;
             }
@@ -426,14 +468,37 @@ impl Sim {
                 ));
             }
         }
-        marks.extend(
-            crate::minimap::camps(&unseen_creeps)
-                .into_iter()
-                .map(|at| (at, Mark::Camp)),
-        );
+        // The camps of the start whose creeps are not seen, at their first
+        // creeps. PROVISIONAL: a camp whose creeps all died shows no more,
+        // seen or not (SPEC-0028 does not say when the circle goes).
+        for camp in &self.camps {
+            let living: Vec<&UnitView> = units
+                .iter()
+                .filter(|u| camp.creeps.contains(&u.handle))
+                .collect();
+            if !living.is_empty() && !living.iter().any(|u| self.shown(u)) {
+                marks.push((
+                    camp.at,
+                    Mark::Camp {
+                        levels: Some(camp.levels),
+                    },
+                ));
+            }
+        }
         let now = self.game_seconds();
         self.minimap
             .quads(&marks, view, self.vision().as_deref(), now)
+    }
+
+    /// The level of unit type `type_id`.
+    fn level(&self, type_id: i32) -> i32 {
+        self.game
+            .state
+            .borrow()
+            .data
+            .units
+            .get(&type_id)
+            .map_or(0, |t| t.level)
     }
 
     /// Unit `handle` as the console shows it.

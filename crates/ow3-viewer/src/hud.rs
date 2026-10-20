@@ -194,6 +194,12 @@ fn raw(code: &str) -> Option<i32> {
 }
 
 impl Hud {
+    /// The file of skin entry `key` (`UI\war3skins.txt`), for the race of
+    /// the console or by default; `None` without one.
+    pub fn skin(&self, key: &str) -> Option<String> {
+        Some(self.interface.skin(key)).filter(|s| s != key)
+    }
+
     /// The console of race `race` (`Human`, `Orc`, `NightElf`, `Undead`).
     pub fn load(chain: &mut ArchiveChain, race: &str) -> Hud {
         let mut units = Profile::default();

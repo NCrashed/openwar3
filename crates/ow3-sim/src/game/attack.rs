@@ -38,7 +38,7 @@ pub struct Attacking {
     /// The attacker swings again, or takes a new goal and stands, at its
     /// first update from this tick on: the cooldown less the damage point
     /// after the last hit (SPEC-0019, "After the swing").
-    renew_at: Option<u64>,
+    pub(super) renew_at: Option<u64>,
 }
 
 impl Attacking {

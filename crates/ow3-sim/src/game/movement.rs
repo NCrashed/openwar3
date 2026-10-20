@@ -2661,6 +2661,12 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         // A better target than the one attacked: taken at once, without a
         // reaction delay or a call for help (SPEC-0019).
         if let Check::Attacking { current, .. } = check {
+            // The new goal after a swing still waits for the cooldown.
+            let renew = state.unit(Some(h)).and_then(|u| {
+                u.attack
+                    .and_then(|a| a.renew_at)
+                    .or(u.movement.and_then(|m| m.renew_at))
+            });
             if let Some(better) = targets.better_than(state, h, current)
                 && let Some(at) = position_of(state, better)
                 && order(state, h, Order::Attack { target: better }, 0, at)
@@ -2669,6 +2675,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                     && let Some(m) = u.movement.as_mut()
                 {
                     m.goal_taken = true;
+                    if let Some(r) = renew {
+                        m.renew_at = Some(r);
+                        m.renew_stands = true;
+                    }
                 }
                 acquired.push(h);
             }

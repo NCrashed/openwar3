@@ -25,6 +25,8 @@ pub struct Heights {
     width: u32,
     height: u32,
     points: Vec<u32>,
+    /// The cliff level of each point (SPEC-0032).
+    layers: Vec<u8>,
 }
 
 fn lerp(a: u32, b: u32, t: u32) -> u32 {
@@ -47,6 +49,7 @@ impl Heights {
             width: terrain.width,
             height: terrain.height,
             points,
+            layers: terrain.points.iter().map(|p| p.layer_height()).collect(),
         }
     }
 
@@ -80,6 +83,30 @@ impl Heights {
         let bottom = lerp(self.point(tx, ty), self.point(tx + 1, ty), u);
         let top = lerp(self.point(tx, ty + 1), self.point(tx + 1, ty + 1), u);
         lerp(bottom, top, v)
+    }
+
+    /// The tiles across and up, the fog cells of SPEC-0032.
+    pub fn cells(&self) -> (u32, u32) {
+        (self.width.saturating_sub(1), self.height.saturating_sub(1))
+    }
+
+    /// The highest cliff level of the four corners of tile (`i`, `j`).
+    pub fn cell_layer(&self, i: u32, j: u32) -> u8 {
+        [(0, 0), (1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .map(|(a, b)| self.layers[((j + b) * self.width + i + a) as usize])
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The tile that (`x`, `y`) lies in, outside the map `None`.
+    pub fn cell_of(&self, x: u32, y: u32) -> Option<(u32, u32)> {
+        let (w, h) = self.cells();
+        let index = |v: u32, origin: u32, count: u32| {
+            let i = r2i(floor(mul(sub(v, origin), PER_TILE)));
+            u32::try_from(i).ok().filter(|&i| i < count)
+        };
+        Some((index(x, self.origin[0], w)?, index(y, self.origin[1], h)?))
     }
 }
 

@@ -50,6 +50,7 @@ mod attack;
 mod creeps;
 mod enumerate;
 mod facing;
+pub mod fog;
 mod follow;
 mod formation;
 mod harvest;
@@ -724,6 +725,8 @@ pub struct State {
     harvest_reached: Vec<(u32, u32, bool)>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
+    /// The fog of war of each player (SPEC-0032).
+    fog: fog::Fog,
     /// The terrain and unit models of `SetDayNightModels` (SPEC-0017), as
     /// the script names them.
     pub day_night_models: Option<(String, String)>,
@@ -794,6 +797,7 @@ impl State {
             mines: BTreeMap::new(),
             harvest_reached: Vec::new(),
             heights: crate::heights::Heights::default(),
+            fog: fog::Fog::default(),
             combat: crate::combat::Combat::default(),
             day_night_models: None,
             terrain_fog: None,
@@ -994,6 +998,7 @@ impl<'a> Game<'a> {
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
         state.heights = map.heights.clone();
+        state.fog = fog::Fog::new(state.heights.cells());
         state.grid = map.pathing.clone();
         state.combat = map.combat.clone();
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
@@ -1281,6 +1286,8 @@ impl<'a> Game<'a> {
         attack::hits(&mut self.vm, &self.state);
         // Creeps waking, giving up their chases and home again (SPEC-0030).
         creeps::tick(&mut self.state.borrow_mut());
+        // What the units see (SPEC-0032).
+        fog::tick(&mut self.state.borrow_mut());
         self.park();
         self.state.borrow_mut().in_tick = false;
     }
@@ -1593,6 +1600,30 @@ impl<'a> Game<'a> {
     /// they did, so that a viewer sees each move once.
     pub fn camera_target(&self) -> Option<([f32; 2], u32)> {
         self.state.borrow().camera_target
+    }
+
+    /// The fog of war of `player` (SPEC-0032): the cells across and up and
+    /// their states row by row from the bottom ([`fog::MASKED`] and the
+    /// others); `None` before its units first revealed anything.
+    pub fn fog(&self, player: i32) -> Option<((u32, u32), Vec<u8>)> {
+        let state = self.state.borrow();
+        let grid = state.fog.grid(player)?.to_vec();
+        Some((state.fog.size(), grid))
+    }
+
+    /// The fog state of point (`x`, `y`) for `player`.
+    pub fn fog_at(&self, player: i32, x: f32, y: f32) -> u8 {
+        let state = self.state.borrow();
+        state
+            .heights
+            .cell_of(x.to_bits(), y.to_bits())
+            .map_or(fog::MASKED, |(i, j)| state.fog.state(player, i, j))
+    }
+
+    /// `FogEnable` and `FogMaskEnable` as the script left them.
+    pub fn fog_enabled(&self) -> (bool, bool) {
+        let state = self.state.borrow();
+        (state.fog.enabled, state.fog.mask_enabled)
     }
 
     /// The camera bounds (`GetCameraBoundMinX` and the rest): the least x
@@ -2744,6 +2775,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     widgets::register(&mut add, state);
 
     movement::register(&mut add, state);
+    fog::register(&mut add, state);
     boards::register(&mut add, state);
 
     // PROVISIONAL: natives that make an object the simulation does not

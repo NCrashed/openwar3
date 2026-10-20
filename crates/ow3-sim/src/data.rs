@@ -105,6 +105,13 @@ pub struct UnitType {
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
     /// SPEC-0022), as a key of [`ObjectData::path_textures`].
     pub path_texture: Option<String>,
+    /// Sight by day and at night (`sight`, `nsight` of `UnitBalance.slk`;
+    /// `usid`, `usin` of a map), as reals (SPEC-0032).
+    pub sight: u32,
+    pub night_sight: u32,
+    /// The unit flies (`movetp` of `UnitData.slk` is `fly`; `umvt` of a
+    /// map) and so reveals its whole circle (SPEC-0032).
+    pub flying: bool,
 }
 
 /// The level 1 numbers of an ability (`AbilityData.slk`): the base
@@ -302,6 +309,9 @@ pub struct ObjectData {
     pub path_textures: BTreeMap<String, PathTexture>,
     /// Destructable types that are trees (`targType` has `tree`).
     pub trees: BTreeSet<i32>,
+    /// The height by which destructables block sight (`occH`), as reals
+    /// (SPEC-0032); types without it are left out.
+    pub occlusion: BTreeMap<i32, u32>,
     /// Abilities by id (SPEC-0029).
     pub abilities: BTreeMap<i32, Ability>,
     unit_names: BTreeMap<String, i32>,
@@ -453,6 +463,7 @@ impl ObjectData {
                 "formation",
                 "canSleep",
                 "prio",
+                "movetp",
             ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
@@ -473,6 +484,7 @@ impl ObjectData {
                     .as_deref()
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
+                unit.flying = values[8].as_deref().is_some_and(|v| v.trim() == "fly");
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their
@@ -581,6 +593,8 @@ impl ObjectData {
                 "bldtm",
                 "fmade",
                 "fused",
+                "sight",
+                "nsight",
             ],
         )? {
             let b = Balance {
@@ -609,6 +623,8 @@ impl ObjectData {
                 unit.build_time = real(values[18].as_ref());
                 unit.food_made = cost(values[19].as_ref());
                 unit.food_used = cost(values[20].as_ref());
+                unit.sight = real(values[21].as_ref());
+                unit.night_sight = real(values[22].as_ref());
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -630,11 +646,16 @@ impl ObjectData {
                 "pathTexDeath",
                 "fixedRot",
                 "targType",
+                "occH",
             ],
         )? {
             data.destructables.insert(id, real(values[0].as_ref()));
             if classes(values[5].as_deref()).iter().any(|c| c == "tree") {
                 data.trees.insert(id);
+            }
+            let occlusion = real(values[6].as_ref());
+            if f32::from_bits(occlusion) > 0.0 {
+                data.occlusion.insert(id, occlusion);
             }
             data.destructable_paths.insert(
                 id,
@@ -740,6 +761,11 @@ impl ObjectData {
             }
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
+            unit.sight = def.number(b"usid").unwrap_or(unit.sight);
+            unit.night_sight = def.number(b"usin").unwrap_or(unit.night_sight);
+            if let Some(kind) = def.text(b"umvt") {
+                unit.flying = kind.trim() == "fly";
+            }
             unit.acquire = def.number(b"uacq").unwrap_or(unit.acquire);
             if let Some(name) = def.text(b"upat") {
                 unit.path_texture = path_texture_name(Some(name));

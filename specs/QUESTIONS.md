@@ -670,21 +670,31 @@ centre. Needed:
 
 ## Minimap (the viewer, SPEC-0028)
 
-SPEC-0028 gives only the minimap's rectangle. The viewer shows
-`war3mapMap.blp` over the playable area (the terrain less the camera
-bound complements of `war3map.w3i`), every unit as a plain square (own
-green, allies yellow, enemies red; buildings larger), gold mines as
-gold squares, no creeps, and the ground the camera sees as a dotted
-outline. Compared with the game the marks look much coarser. Needed:
+The creep camp marks of SPEC-0028 ("creeps in the fog: a green circle,
+one per camp"). The viewer takes a camp to be the living creeps within
+512 of one another, recomputed every frame from where they stand, and
+draws a circle for each camp whose creeps the player does not see; so a
+camp's circle goes as soon as its last creep dies, seen or not, and a
+creep chasing far from home makes a circle of its own. Needed:
 
-- the world area the image spans;
-- how units, buildings, gold mines (`war3map.mmp` icons?), start
-  locations and creep camps are drawn: shapes, sizes in pixels or
-  interface units, colours, borders, and which units show at all
-  (fog of war and visibility, hidden units);
-- how the camera's view is outlined;
-- what a right click on it does, and the five buttons (signal, terrain,
-  ally colours, creep camps, formation).
+- what makes a camp: the creeps placed together in `war3mapUnits.doo`,
+  a distance, something else; whether it is fixed at the start;
+- when a camp's circle goes away: when all its creeps die, when the
+  player sees the place empty, when the player's units kill them; and
+  whether a camp killed by another player under fog keeps its circle
+  until the player looks there;
+- whether a camp partly killed keeps its circle, and whether the circle
+  shows while some of its creeps are seen;
+- where the circle stands (the creeps' homes, their middle, the
+  strongest creep) and whether it moves with them;
+- whether the icon depends on the camp's level (the files include
+  `MiniMap-CreepLoc-Small.mdx` and `-Large.mdx`; camps of total level 1
+  to 15 looked the same in the tests) and which texture and colour the
+  game uses;
+- the icons and textures of gold mines and neutral buildings (the
+  viewer takes `MinimapIconGold.blp` and
+  `MinimapIconNeutralBuilding.blp`), and whether they show under fog
+  and where never seen.
 
 ## Fog of war in the world (the viewer, SPEC-0032)
 

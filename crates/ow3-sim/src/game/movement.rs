@@ -2431,11 +2431,9 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     if !enemies(state, owner, a.owner) {
         return;
     }
-    // A sleeping creep wakes with its camp a little later; one going home
-    // does not answer (SPEC-0030).
-    if super::creeps::hit_while_asleep(state, victim, attacker) {
-        return;
-    }
+    // A sleeping creep wakes in this tick with the sleeping creeps near it,
+    // and answers; one going home does not answer (SPEC-0030).
+    super::creeps::wake_on_hit(state, victim, attacker);
     let answers = |h: u32| match state.objects.get(&h) {
         Some(Object::Unit(u)) => {
             u.alive
@@ -2479,6 +2477,8 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 state.combat.reaction_delay,
             );
             react(state, h, tick, delay, tick);
+            // A creep that answers enters the fight (SPEC-0030).
+            super::creeps::enter_fight(state, h);
         }
     }
 }

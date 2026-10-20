@@ -1062,3 +1062,53 @@ fn following_a_standing_footman() {
         assert_eq!(order, 0, "{apart}: order after the stop");
     }
 }
+
+/// SPEC-0030, the guard check: a kobold hit by a knight that then runs
+/// away chases it; its checks come when it enters the fight (here it
+/// acquires the knight standing near) and every 400 ticks, and it
+/// turns home 1000 ticks after the first that finds it outside its zone
+/// (600 plus its collision size), then stands at home again.
+#[test]
+fn a_creep_turns_home_after_its_guard_check() {
+    let units = "set a = CreateUnit(Player(0), 'hkni', -1800, -2000, 180)\n    set t = CreateUnit(Player(12), 'nkob', -2000, -2000, 0)";
+    let orders = "call IssueTargetOrder(a, \"attack\", t)\n    call TimerStart(CreateTimer(), 2.0, false, function Flee)\n---\nfunction Flee takes nothing returns nothing\n    call IssuePointOrder(a, \"move\", 6000, -2000)\nendfunction";
+    let Some(mut game) = game(units, orders, |d| {
+        let t = d.units.get_mut(&code(b"nkob")).unwrap();
+        t.hp = 100_000f32.to_bits();
+    }) else {
+        return;
+    };
+    let path = run(&mut game, 5000);
+    let kobold = |v: &[UnitView]| v.iter().find(|u| u.owner == 12).cloned().unwrap();
+    let entered = path
+        .iter()
+        .find(|(_, v)| kobold(v).target.is_some() || kobold(v).attack.is_some())
+        .unwrap()
+        .0;
+    let turn = path
+        .iter()
+        .find(|(_, v)| kobold(v).order == 851_986)
+        .unwrap()
+        .0;
+    // The kobold's collision size, from the data.
+    let zone = 600.0 + 31.0;
+    let (passed, _) = path
+        .iter()
+        .find(|(_, v)| (kobold(v).x + 2000.0).abs() > zone)
+        .unwrap();
+    assert!(turn >= entered + 1000, "entered {entered}, turned {turn}");
+    // The check that found it outside came at the entry plus a multiple of
+    // 400 ticks, at or after it left the zone (the record's tick is one
+    // later than the check's).
+    let check = turn - 1000;
+    assert!(
+        (check - entered) % 400 <= 1 && check + 1 >= *passed && check <= passed + 401,
+        "entered {entered}, out {passed}, check {check}"
+    );
+    let end = kobold(&path.last().unwrap().1);
+    assert!(
+        (end.x + 2000.0).abs() < 13.0 && (end.y + 2000.0).abs() < 13.0,
+        "{end:?}"
+    );
+    assert_eq!(end.order, 0);
+}

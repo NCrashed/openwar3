@@ -545,6 +545,10 @@ impl App {
     /// A command button pressed for the selected unit: an order that takes
     /// a point waits for it, the others are carried out.
     fn press(&mut self, button: ow3_viewer::hud::Button) {
+        // A dark button (its requirements not met) does nothing.
+        if !button.enabled {
+            return;
+        }
         let (all, active) = self.selected_units();
         let Some(sim) = &mut self.sim else {
             return;

@@ -29,7 +29,7 @@ pub struct Resources {
 }
 
 /// The selected unit as the console shows it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Selected {
     pub handle: u32,
     pub type_id: i32,
@@ -42,6 +42,16 @@ pub struct Selected {
     pub stats: Option<UnitStats>,
     /// A worker carrying gold or lumber (SPEC-0029).
     pub carrying: bool,
+    /// Its current order id, 0 for none.
+    pub order: i32,
+    /// The types of which its player has a finished unit, for the
+    /// requirements of the buttons.
+    pub have: std::collections::BTreeSet<i32>,
+    /// What a building trains (the head first) and the share of the
+    /// head done, or of its own construction.
+    pub queue: Vec<i32>,
+    pub progress: Option<f32>,
+    pub constructing: bool,
 }
 
 /// A unit of a selected group, for the information panel.
@@ -101,6 +111,10 @@ pub struct Button {
     pub extended: String,
     pub hotkey: Option<char>,
     pub command: Command,
+    /// Whether its requirements are met (else its icon is dark, SPEC-0028)
+    /// and whether it is the unit's current order (a green border).
+    pub enabled: bool,
+    pub active: bool,
 }
 
 /// The console's state: which list the command card shows and the order
@@ -151,6 +165,8 @@ const INFO: Rect = [0.309_375, 0.0, 0.4975, 0.114_063];
 const RESOURCES: Rect = [0.461_719, 0.5782, 0.8, 0.6];
 const UPPER: Rect = [0.0, 0.578, 0.34, 0.6];
 pub const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
+/// The progress bar of training and construction (SPEC-0028).
+const PROGRESS: Rect = [0.370_625, 0.065_938, 0.475_625, 0.075_938];
 /// The portrait (SPEC-0028).
 pub const PORTRAIT: Rect = [0.2075, 0.030_625, 0.2975, 0.116_23];
 /// The life and mana texts under the portrait.
@@ -222,6 +238,8 @@ impl Hud {
                 .get(section, "Hotkey")
                 .and_then(|h| h.chars().next()),
             command,
+            enabled: true,
+            active: false,
         })
     }
 
@@ -256,6 +274,8 @@ impl Hud {
             } else {
                 Command::Gather
             },
+            enabled: true,
+            active: false,
         })
     }
 
@@ -284,6 +304,8 @@ impl Hud {
                 .get(&section, "Hotkey")
                 .and_then(|h| h.chars().next()),
             command,
+            enabled: true,
+            active: false,
         })
     }
 
@@ -292,6 +314,11 @@ impl Hud {
         let Some(s) = selected.filter(|s| s.own) else {
             return Vec::new();
         };
+        // PROVISIONAL: a building under construction shows only cancel in
+        // the game (SPEC-0028), which is not done yet: nothing here.
+        if s.constructing {
+            return Vec::new();
+        }
         let section = code(s.type_id);
         let building = s.stats.is_some_and(|t| t.building);
         let mut out = Vec::new();
@@ -316,7 +343,10 @@ impl Hud {
                 }
                 if !out.is_empty() {
                     out.extend(self.command_button("CmdRally", Command::Rally));
-                    out.extend(self.command_button("CmdCancelTrain", Command::CancelTrain));
+                    // Cancel only while it trains (SPEC-0028).
+                    if !s.queue.is_empty() {
+                        out.extend(self.command_button("CmdCancelTrain", Command::CancelTrain));
+                    }
                 }
             }
             Card::Main => {
@@ -338,7 +368,64 @@ impl Hud {
                 }
             }
         }
+        // Units and buildings whose requirements are not met stay in their
+        // places, dark; the button of the current order has a green border
+        // (SPEC-0028).
+        for b in &mut out {
+            if let Command::Train(t) | Command::Build(t) = b.command {
+                b.enabled = self.requirements_met(t, &s.have);
+            }
+            b.active = Self::current(b.command, s.order);
+        }
         out
+    }
+
+    /// Whether the order with id `order` is the one of `command`: stop for
+    /// an idle unit (SPEC-0028).
+    fn current(command: Command, order: i32) -> bool {
+        match command {
+            Command::Stop => order == 0 || order == 851_972,
+            Command::Move => order == 851_986 || order == 851_971,
+            Command::Hold => order == 851_993,
+            Command::Attack => order == 851_983,
+            Command::Patrol => order == 851_990,
+            Command::Gather => order == 852_018 || order == 852_017,
+            _ => false,
+        }
+    }
+
+    /// Whether the player who has finished units of the types `have` meets
+    /// the requirements (`Requires` of the profiles) of unit type
+    /// `type_id`. A required type is met by a unit of it, of a type it is
+    /// upgraded to (`Upgrade`, so a keep for a town hall) or of a type of
+    /// its `DependencyOr`.
+    ///
+    /// PROVISIONAL: SPEC-0028 gives only that such buttons are dark; the
+    /// hero levels (`Requires1` and on) are not read and a research
+    /// (`R...`) is never met, there being no researches yet.
+    fn requirements_met(&self, type_id: i32, have: &std::collections::BTreeSet<i32>) -> bool {
+        self.units
+            .list(&code(type_id), "Requires")
+            .iter()
+            .filter_map(|r| raw(r))
+            .all(|r| self.met(r, have, 0))
+    }
+
+    fn met(&self, required: i32, have: &std::collections::BTreeSet<i32>, depth: u32) -> bool {
+        if have.contains(&required) {
+            return true;
+        }
+        if depth > 8 {
+            return false;
+        }
+        let section = code(required);
+        ["Upgrade", "DependencyOr"].iter().any(|key| {
+            self.units
+                .list(&section, key)
+                .iter()
+                .filter_map(|t| raw(t))
+                .any(|t| self.met(t, have, depth + 1))
+        })
     }
 
     /// The model of the time of day indicator of the race
@@ -442,19 +529,89 @@ impl Hud {
             self.info(s, &mut out);
         }
         let buttons = self.buttons(selected);
+        let highlight = self.interface.skin("CommandButtonActiveHighlight");
         for b in &buttons {
+            // PROVISIONAL: a dark icon as the plain one darkened; the game
+            // may use the `DISBTN` icons.
+            let shade = if b.enabled { 1.0 } else { 0.35 };
             out.quads.push(Quad {
                 rect: Self::button_rect(b.place),
                 uv: [0.0, 1.0, 0.0, 1.0],
                 texture: b.icon.clone(),
-                colour: [1.0; 4],
+                colour: [shade, shade, shade, 1.0],
                 blend: Blend::Alpha,
             });
+            if b.active {
+                out.quads.push(Quad {
+                    rect: Self::button_rect(b.place),
+                    uv: [0.0, 1.0, 0.0, 1.0],
+                    texture: highlight.clone(),
+                    colour: [1.0; 4],
+                    blend: Blend::Add,
+                });
+            }
         }
         if let Some(b) = mouse.and_then(|m| self.button_at(selected, m)) {
             self.tooltip(&b, &mut out);
         }
         out
+    }
+
+    /// The progress bar of a building that trains or is built (SPEC-0028,
+    /// "Grids built by the game"), the icon of what it makes left of it
+    /// and, for a training, the slots 2 to 7 of the queue below.
+    ///
+    /// PROVISIONAL: the places of the icons are not specified; the bar's
+    /// fill and border are the skins' `SimpleBuildTimeIndicator` and
+    /// `SimpleBuildTimeIndicatorBorder`.
+    fn progress(&self, s: &Selected, out: &mut Frame) {
+        let progress = s.progress.unwrap_or(0.0).clamp(0.0, 1.0);
+        let [x0, y0, x1, y1] = PROGRESS;
+        let quad = |rect: Rect, uv: [f32; 4], texture: String| Quad {
+            rect,
+            uv,
+            texture,
+            colour: [1.0; 4],
+            blend: Blend::Alpha,
+        };
+        out.quads.push(quad(
+            [x0, y0, x0 + (x1 - x0) * progress, y1],
+            [0.0, progress, 0.0, 1.0],
+            self.interface.skin("SimpleBuildTimeIndicator"),
+        ));
+        out.quads.push(quad(
+            PROGRESS,
+            [0.0, 1.0, 0.0, 1.0],
+            self.interface.skin("SimpleBuildTimeIndicatorBorder"),
+        ));
+        let head = if s.constructing {
+            Some(s.type_id)
+        } else {
+            s.queue.first().copied()
+        };
+        let icon = |t: i32| self.units.get(&code(t), "Art").map(str::to_owned);
+        if let Some(art) = head.and_then(icon) {
+            let size = 0.036;
+            let left = x0 - 0.008 - size;
+            out.quads.push(quad(
+                [left, y1 - size + 0.008, left + size, y1 + 0.008],
+                [0.0, 1.0, 0.0, 1.0],
+                art,
+            ));
+        }
+        // The rest of the queue in a row below.
+        let size = 0.024;
+        for (i, &t) in s.queue.iter().skip(1).take(6).enumerate() {
+            let Some(art) = icon(t) else {
+                continue;
+            };
+            let left = INFO[0] + 0.03 + (size + 0.004) * i as f32;
+            out.quads.push(quad(
+                [left, 0.012, left + size, 0.012 + size],
+                [0.0, 1.0, 0.0, 1.0],
+                art,
+            ));
+        }
     }
 
     /// The units of a group in the information panel: 12 buttons in 6
@@ -525,8 +682,18 @@ impl Hud {
         } else {
             "SimpleInfoPanelUnitDetail"
         };
+        // A building that trains or is under construction shows what it
+        // does over its progress bar (SPEC-0028).
+        let action = if s.constructing {
+            Some(self.interface.string("CONSTRUCTING"))
+        } else if !s.queue.is_empty() {
+            Some(self.interface.string("TRAINING"))
+        } else {
+            None
+        };
         let names = |n: &str| match n {
             "SimpleNameValue" | "SimpleBuildingNameValue" => Some(name.clone()),
+            "SimpleBuildingActionLabel" => action.clone(),
             _ => None,
         };
         self.interface.lay_out(
@@ -538,6 +705,10 @@ impl Hud {
             },
             out,
         );
+        if action.is_some() {
+            self.progress(s, out);
+            return;
+        }
         let Some(stats) = s.stats else {
             return;
         };

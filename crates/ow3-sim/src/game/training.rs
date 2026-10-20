@@ -54,6 +54,27 @@ pub struct Queue {
     training: Option<u32>,
 }
 
+impl Queue {
+    /// The unit types queued, the head first.
+    pub fn types(&self) -> &[i32] {
+        &self.types
+    }
+
+    /// The share of the head's training done at `clock`, given its build
+    /// time: 0 before it starts.
+    pub fn progress(&self, clock: u32, build_time: u32) -> f32 {
+        let Some(expiry) = self.training else {
+            return 0.0;
+        };
+        let total = f32::from_bits(build_time);
+        if total <= 0.0 {
+            return 1.0;
+        }
+        let left = f32::from_bits(expiry) - f32::from_bits(clock);
+        (1.0 - left / total).clamp(0.0, 1.0)
+    }
+}
+
 /// Starts a timer of the engine that expires at `expiry` on the movement
 /// clock.
 pub(super) fn start_timer(state: &mut State, expiry: u32, timer: EngineTimer) {

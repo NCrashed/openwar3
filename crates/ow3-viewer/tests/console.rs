@@ -601,3 +601,71 @@ fn one_of_a_group_leaves_to_build() {
     }
     assert!(peasants[1..].iter().all(|&p| !view(&sim, p).walking));
 }
+
+/// The card follows the requirements and the current order (SPEC-0028):
+/// with a town hall only, a farm and barracks can be built and some
+/// buildings are dark; an idle peasant has stop as its order; the town
+/// hall shows cancel only while it trains, and its progress grows.
+#[test]
+fn requirements_orders_and_training_progress() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let hall = first(&sim, b"htow");
+    let s = sim.selected(peasant).unwrap();
+    let stop = sim
+        .hud
+        .buttons(Some(&s))
+        .into_iter()
+        .find(|b| b.command == Command::Stop)
+        .unwrap();
+    assert!(stop.active);
+    sim.run(peasant, Command::BuildMenu, None);
+    let menu = sim.hud.buttons(Some(&s));
+    let enabled = |t: &[u8; 4]| {
+        let t = i32::from_be_bytes(*t);
+        menu.iter()
+            .find(|b| b.command == Command::Build(t))
+            .map(|b| b.enabled)
+    };
+    assert_eq!(enabled(b"hhou"), Some(true));
+    assert_eq!(enabled(b"hbar"), Some(true));
+    assert!(menu.iter().any(|b| !b.enabled), "no dark building");
+    sim.run(peasant, Command::Back, None);
+    // The town hall: no cancel while idle.
+    let h = sim.selected(hall).unwrap();
+    assert!(
+        !sim.hud
+            .buttons(Some(&h))
+            .iter()
+            .any(|b| b.command == Command::CancelTrain)
+    );
+    let hpea = i32::from_be_bytes(*b"hpea");
+    sim.run(hall, Command::Train(hpea), None).unwrap();
+    sim.run(hall, Command::Train(hpea), None).unwrap();
+    sim.advance(2_000_000);
+    let h = sim.selected(hall).unwrap();
+    assert_eq!(h.queue, [hpea, hpea]);
+    let early = h.progress.unwrap();
+    assert!(early > 0.0 && early < 0.5, "{early}");
+    assert!(
+        sim.hud
+            .buttons(Some(&h))
+            .iter()
+            .any(|b| b.command == Command::CancelTrain)
+    );
+    sim.advance(3_000_000);
+    let later = sim.selected(hall).unwrap().progress.unwrap();
+    assert!(later > early, "{later} after {early}");
+    // The information panel shows the bar's fill, as wide as the share.
+    let mut selection = ow3_viewer::selection::Selection::default();
+    selection.click(hall);
+    let frame = sim.interface(&selection, None);
+    let width = 0.475_625 - 0.370_625;
+    assert!(frame.quads.iter().any(|q| {
+        (q.rect[1] - 0.065_938).abs() < 1e-4
+            && ((q.rect[2] - q.rect[0]) / width - later).abs() < 0.02
+    }));
+}

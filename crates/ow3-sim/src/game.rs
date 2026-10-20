@@ -1478,6 +1478,49 @@ impl<'a> Game<'a> {
         (f32::from_bits(x), f32::from_bits(y))
     }
 
+    /// The types of which `player` has a living unit that is not under
+    /// construction, for the requirements of the command card.
+    pub fn finished_types(&self, player: i32) -> std::collections::BTreeSet<i32> {
+        let state = self.state.borrow();
+        state
+            .units
+            .iter()
+            .filter_map(|&h| state.unit(Some(h)))
+            .filter(|u| u.alive && u.owner == player && u.construction.is_none())
+            .map(|u| u.type_id)
+            .collect()
+    }
+
+    /// What building `h` trains, the head first, and the share of the
+    /// head's training done (SPEC-0027); `None` for an empty queue.
+    pub fn training(&self, h: u32) -> Option<(Vec<i32>, f32)> {
+        let state = self.state.borrow();
+        let queue = state.unit(Some(h))?.queue.as_ref()?;
+        let head = *queue.types().first()?;
+        let build_time = state.data.units.get(&head).map_or(0, |t| t.build_time);
+        Some((
+            queue.types().to_vec(),
+            queue.progress(state.move_clock, build_time),
+        ))
+    }
+
+    /// The share of building `h`'s construction done, by its life grown
+    /// from a tenth to all (SPEC-0026); `None` for a finished one.
+    pub fn construction_progress(&self, h: u32) -> Option<f32> {
+        let state = self.state.borrow();
+        let c = state.unit(Some(h))?.construction.as_ref()?;
+        let grown = f32::from_bits(c.grown(state.move_clock));
+        let (max, tenth) = (
+            f32::from_bits(c.max),
+            f32::from_bits(mul(c.max, 0x3DCC_CCCD)),
+        );
+        Some(if max > tenth {
+            ((grown - tenth) / (max - tenth)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        })
+    }
+
     /// The `prio` of unit type `type_id`, which orders the subgroups of a
     /// selection (SPEC-0028).
     pub fn type_prio(&self, type_id: i32) -> i32 {

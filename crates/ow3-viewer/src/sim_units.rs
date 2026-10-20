@@ -404,6 +404,7 @@ impl Sim {
         if !u.alive {
             return None;
         }
+        let training = self.game.training(handle);
         Some(crate::hud::Selected {
             handle,
             type_id: u.type_id,
@@ -414,6 +415,18 @@ impl Sim {
             max_mana: u.max_mana,
             stats: self.game.unit_stats(handle),
             carrying: u.carrying.is_some(),
+            order: u.order,
+            have: self.game.finished_types(u.owner),
+            queue: training
+                .as_ref()
+                .map(|(q, _)| q.clone())
+                .unwrap_or_default(),
+            progress: if u.constructing {
+                self.game.construction_progress(handle)
+            } else {
+                training.map(|(_, p)| p)
+            },
+            constructing: u.constructing,
         })
     }
 

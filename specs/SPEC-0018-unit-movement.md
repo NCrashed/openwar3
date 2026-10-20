@@ -77,7 +77,14 @@ different amounts to truncation, so `U` moves ahead of the clock of
 its tick: `U - clock(k)` is +0.0000005 in tick 307 (1.53 s), +0.0000935
 in tick 943 (4.71 s), +0.0001259 in tick 1045 (5.22 s), +0.0005331 in
 tick 1891 (9.45 s), +0.0005474 in tick 1909 and +0.0012770 in tick 2827
-(14.13 s).
+(14.13 s). When `U` has moved a whole tick ahead, the updates fall one tick
+later: an update runs in the tick `k` with `clock(k) < U(m) <=
+clock(k + 1)` (the rule of every timer of the queue, SPEC-0019,
+"Acquisition by idle units"), which is tick `6 m + 1` up to `m` = 1157,
+`6 m + 2` from `m` = 1158 (34.74 s, tick 6950), `6 m + 3` from `m` =
+1486 (44.58 s, tick 8919) and `6 m + 4` from `m` = 1813 (54.39 s, tick
+10882); the updates of `c-RXI-1.events.tsv`, read in the game, fall in
+exactly these ticks.
 
 A timer with timeout 0 started inside a timer callback expires 0.0001
 later (the minimum timeout of SPEC-0002), so a 0.005 s periodic timer

@@ -359,6 +359,17 @@ time to time:
   out, so for distances below 48 units of 32 (1536) a new goal comes
   every 17 updates, 102 ticks. (Static analysis: 165 is added to the
   countdown in one mode of the mover that was not seen in the tests.)
+  A goal taken outside the attacker's updates (at the end of a reaction
+  delay, below) starts the countdown at the attacker's first update
+  after it, the update of its search, which does not count: in
+  `c-RXD-1` the creeps searched at 1567, 1573, 1585 and 1609 and took
+  their next goals 102 ticks later (1669, 1675, 1687, 1711) and again
+  102 ticks after that.
+- **A new goal ends a wait.** A wait of SPEC-0021 belongs to the path
+  that a new goal replaces, so the attacker walks on at the update of
+  its new goal: in `c-RXD-1` creep 9 began a 5-update wait for kobold 6
+  in tick 1759 and moved again at its new goal in tick 1771, the third
+  update of the wait.
 - **Start of the attack.** At each update, before moving, the attacker
   stops and starts its swing if the target or the goal point is within
   the range test above (`rangeN1 + c_a + c_t`). In 15 swings against a
@@ -513,6 +524,35 @@ An idle unit with a weapon attacks an enemy unit on its own:
   -351.890 and -391.784), read in the game.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
+- **Checks while attacking.** The checks go on while the unit attacks
+  a target it acquired (or was called to), but less often: at each
+  check the next one is set 1.0 s after this one's expiry if the unit
+  has a target at that moment, and 0.5 s after it if not (so the first
+  check after an acquisition is still 0.5 s later). At a check with a
+  target the unit compares its target with the enemies whose centres
+  are within half its `acquire` plus both collision sizes (250 + 31 +
+  16 = 297 for a kobold and a peasant; in `c-RXD-1` enemies at 295.7
+  were looked at, none at 300.8 or more) and takes the best of them:
+  - an enemy within the range test of the attack (`rangeN1 + c_a +
+    c_t`, above) is better than one out of it;
+  - the current target within that range is better than any other
+    enemy within it, so the unit keeps a target it can hit;
+  - between enemies equal by these rules the strictly nearer one is
+    better, measured from the unit's centre (a tie keeps the one found
+    first, the current target before the others).
+  If the best is another enemy, the unit attacks it at once:
+  `EVENT_UNIT_ACQUIRED_TARGET` fires, there is no reaction delay and no
+  call for help, and the unit takes the new target as its goal in that
+  tick and gets a new cluster (SPEC-0021); it searches at its next
+  update. Measured in `c-RXD-1` over all 61 checks of the four creeps
+  up to 22 s (enemies looked at and the order of their rating read in
+  the game): the switches in ticks 1836, 1857, 2007, 2031, 2207, 4236,
+  4257, 4407, 4431, 4436 and 4457 and no switch at the other checks,
+  for example creep 6 in tick 1831 kept peasant 5 at 139 (in range)
+  against peasant 3 at 172, and creep 9 in tick 1836 left peasant 5 at
+  239 for peasant 3 at 214 (both out of range). Only peasants were
+  rated in these tests; the rating has further parts (kinds of units,
+  units attacking, life) that were not measured (open question 10).
 
 ## Edge cases
 
@@ -556,6 +596,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
    several responders reach new units.
 9. How the chase search of `c-RXD-1` in tick 3049 (creep 9) ended:
    without touching its target and before its goal cell.
+10. The other parts of the rating of targets at a check while attacking
+   (heroes, structures, units that attack the unit or its allies, the
+   life of the candidates) and their order.
 
 ## Sources
 

@@ -84,6 +84,37 @@ again: `C` and `D` change in one turn and `C` in the next, or only `D`
 when the objects were created and freed between two checksums. No
 random number is drawn there.
 
+**Gathering.** Workers harvesting gold draw no random numbers and do
+not change `G` (the gold of the player is not part of the checksum);
+they change only `C` and `D`, at these moments (ticks counted from the
+tick `s` in which the worker's walk stops; a state change in tick `e`
+shows first in the checksum of the first turn whose game time `B` is
+at least `5 * e` ms):
+
+| Moment | Objects | Tick |
+|---|---|---|
+| a `harvest` order to a mine (script or player) | about 19 created per worker (cluster, path and others) | the tick of the order |
+| the worker enters the mine | 2 freed | `s + 12` |
+| the worker waits at a mine another worker is in | 1 created, 2 freed | `s + 6` to `s + 12` |
+| the worker leaves the mine with gold | 16 created (the walk to the town hall) | the tick it leaves (1 s after it entered) |
+| the worker gives the gold at the town hall | 19 created (the walk back to the mine), the old walk's objects freed | `s + 12` |
+| any walk that ended (cluster and path freed) | 2 freed | `s + 18` (`s + 12` when waiting at the mine) |
+
+The ticks were read in the running game at the updates of the walking
+workers, so each can be late by up to 5 ticks. In the replay
+`c-RXI-1.w3g` (six workers harvesting a mine 1148 from their town
+hall, no other units) every turn in which the remainder of
+Verification 4 changes has one of these moments in it or a draw of the
+script generator (turns 35 and 37: workers blocked by each other on
+their first way to the mine, SPEC-0021, "Blocked by a unit"), except
+three:
+turn 2 (the start of the game, see Edge cases), turn 24 (five objects
+of the town hall, created by the script in tick 201, freed about tick
+445) and turn 195 (one object freed about tick 3880, cause unknown).
+In `c-RXD-1.w3g` the first changes are turn 10 (the script creates the
+units), turn 14 (the six `harvest` orders of tick 301) and turn 20 (the
+five objects of the town hall); from turn 64 on the creeps fight.
+
 ### Turn checksum
 
     v = rol3(S XOR 6059)

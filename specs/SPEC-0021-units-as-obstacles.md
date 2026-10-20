@@ -288,8 +288,9 @@ mostly single updates (57 of 6 ticks) and 5-update waits (14 of 30
 ticks); the creeps hit 37 times in 45 s.
 
 **Seeing past a standing unit (`c-RXD-1`, tick 1585).** Creep 8 has
-the local path of its search at the end of its reaction delay (tick
-1569), from its start (260, 520) through (240, 496), (208, 464),
+the local path of its search at its first update (tick 1573), made
+towards the position peasant 5 had when the creep's reaction delay
+ended (tick 1569, SPEC-0019), from its start (260, 520) through (240, 496), (208, 464),
 (176, 432), (176, 400), (144, 400), (112, 400), (80, 368), ... (world
 units, start first). The search met the cells of kobold 6, which stands
 at (100, 450) until its own delay ends (tick 1607) and occupies cells

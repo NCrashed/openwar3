@@ -445,14 +445,22 @@ An idle unit with a weapon attacks an enemy unit on its own:
   delay. Its first check is `100 * x` ticks (`0.5 * x` seconds) after
   its creation, and then every 100 ticks (0.5 s). Units without a weapon
   (a farm) draw nothing. The draws are made in the order of creation.
-  The checks are engine timers (SPEC-0018, "Order within an update
-  tick"): the first expires at the creation time plus `0.5 * x` s, each
-  next one 0.5 s later, and each check runs in the first tick whose
-  movement clock is at or after its expiry. In `c-RXD-1` the creeps
-  were created in tick 201 (movement clock 1.0); the `nkob` that found
-  the first target (`x` = 0.5595, expiry 1.27975 + 13 x 0.5 s) checked
-  in tick 1557, movement clock 7.779675, read in the game (not 1556,
-  which `201 + floor(100 * x) + 1300` would give).
+  The checks are timers of the game's timer queue (SPEC-0018, "Order
+  within an update tick"; SPEC-0002). The first expires at the queue's
+  time at the creation plus `0.5 * x` s, each next one 0.5 s later, and
+  a check runs in the tick `k` whose queue interval holds its expiry
+  `e`: `clock(k) < e <= clock(k + 1)` (in tick `k` the queue moves from
+  `clock(k)` to `clock(k + 1)` and fires every timer it passes, at its
+  expiry). The queue's time at the creation is the expiry of the timer
+  whose callback creates the unit, not the movement clock: units
+  created by the actions of the test maps (a 0 s timer started in the
+  callback of a 1.0 s timer) have 1.0001, while the movement clock of
+  their tick 201 reads 0.999999. In `c-RXD-1` the `nkob` that found the
+  first target (`x` = 0.55945) had its 14th check expire at 7.779825
+  (`0x40F8F453`, `1.0001 + 0.5 * x + 13 * 0.5`, read in the game), which
+  lies between `clock(1557)` = 7.7796745 (`0x40F8F318`) and
+  `clock(1558)` = 7.7846742, so it checked in tick 1557 (with the
+  movement clock compared with the expiry it would have been 1558).
   `EVENT_UNIT_ACQUIRED_TARGET` fires at the check that finds a target
   (60 of 60 footmen with seeds 7, 8 and 9 earlier; their ticks were
   counted by a script timer and agree with this rule); an enemy put
@@ -470,10 +478,21 @@ An idle unit with a weapon attacks an enemy unit on its own:
   the order of creation).
 - **Reaction delay.** After acquiring, the unit waits the reaction delay
   of attack orders (generator 9, `ReactionDelay`, see above), counted
-  from the exact time of the check (`100 * x` ticks after creation, not
-  the whole tick), with the draws of generator 9 in the order of the
-  acquisitions. It starts to act (turn, walk) at its first update at or
-  after the end of the delay: 60 of 60 footmen.
+  from the expiry of the check (the queue's time during the check, also
+  for the units that answer its call for help), with the draws of
+  generator 9 in the order of the acquisitions. The end of the delay is
+  again a timer: in the tick whose queue interval holds it (as for the
+  checks) the unit takes the target as its goal, with the target's
+  position read in that tick, and gets a new cluster (SPEC-0021,
+  "Searches of many units in the same tick"). At its first update after
+  that it searches its path to that position and starts to act (turn,
+  walk): 60 of 60 footmen. In `c-RXD-1` the delays of creeps 7, 8, 6
+  and 9 were 0.1221, 0.0626, 0.2499 and 0.0406 s from 7.779825, so they
+  ended at 7.901925, 7.842425, 8.029725 and 7.820425, in ticks 1581,
+  1569, 1607 and 1565; the creeps searched at their updates of ticks
+  1585, 1573, 1609 and 1567, each towards the position of its target
+  (peasant 5) in the tick its delay ended (x = -376.586, -387.984,
+  -351.890 and -391.784), read in the game.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
 

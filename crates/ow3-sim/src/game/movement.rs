@@ -451,7 +451,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     state.orders_given = given;
     // A new order takes the unit out of its group.
     for cluster in &mut state.clusters {
-        cluster.members.retain(|&m| m != h);
+        cluster.keep(|m| m != h);
     }
     // A new path is searched at the next update (SPEC-0020).
     state.paths.remove(&h);
@@ -490,6 +490,20 @@ pub struct Cluster {
     /// (SPEC-0025, "Members in each other's searches").
     updates: u32,
     walked: std::collections::BTreeSet<u32>,
+}
+
+impl Cluster {
+    /// Keeps the members `keep` says, each with its offset (the offsets,
+    /// once laid out, go by the members' places in the list).
+    fn keep(&mut self, keep: impl Fn(u32) -> bool) {
+        let kept: Vec<bool> = self.members.iter().map(|&m| keep(m)).collect();
+        if self.offsets.len() == kept.len() {
+            let mut flags = kept.iter();
+            self.offsets.retain(|_| *flags.next().unwrap_or(&true));
+        }
+        let mut flags = kept.iter();
+        self.members.retain(|_| *flags.next().unwrap_or(&true));
+    }
 }
 
 /// What a cluster tells a member at an update: whether it waits, the
@@ -614,9 +628,7 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
         if tick < cluster.first || (tick - cluster.first) % UPDATE != 0 {
             continue;
         }
-        cluster
-            .members
-            .retain(|&h| state.unit(Some(h)).is_some_and(|u| u.alive));
+        cluster.keep(|h| state.unit(Some(h)).is_some_and(|u| u.alive));
         let (members, ordered) = cluster_members(state, &cluster.members, min);
         if members.len() < 2 {
             cluster.members.clear();
@@ -723,16 +735,14 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
         }
         // At the last waypoint the arrived members leave.
         if last {
-            let mut i = 0;
-            cluster.members.retain(|_| {
-                i += 1;
-                !arrived[i - 1]
-            });
-            let mut i = 0;
-            cluster.offsets.retain(|_| {
-                i += 1;
-                !arrived[i - 1]
-            });
+            let leaving: std::collections::BTreeSet<u32> = cluster
+                .members
+                .iter()
+                .zip(&arrived)
+                .filter(|(_, a)| **a)
+                .map(|(&m, _)| m)
+                .collect();
+            cluster.keep(|m| !leaving.contains(&m));
         }
     }
     clusters.retain(|c| c.members.len() > 1);

@@ -563,3 +563,41 @@ fn a_group_of_peasants() {
         assert!(v.x > b.0 + 100.0, "#{p} from {b:?} to {}, {}", v.x, v.y);
     }
 }
+
+/// A group walks, one of it is sent to build a farm at once, and the rest
+/// walks on to the end of its path (the formation lost track of who is in
+/// it and the game stopped).
+#[test]
+fn one_of_a_group_leaves_to_build() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let hpea = i32::from_be_bytes(*b"hpea");
+    let peasants: Vec<u32> = sim
+        .units()
+        .iter()
+        .filter(|u| u.type_id == hpea && u.owner == 0)
+        .map(|u| u.handle)
+        .collect();
+    let hall = view(&sim, first(&sim, b"htow"));
+    sim.command_group(
+        &peasants,
+        None,
+        Some([hall.x - 200.0, hall.y - 300.0, 0.0]),
+        false,
+    )
+    .unwrap();
+    // It leaves once the group has its formation.
+    sim.advance(1_000_000);
+    let east = east_of_hall(&sim);
+    let hhou = i32::from_be_bytes(*b"hhou");
+    let line = sim
+        .run(peasants[0], Command::Build(hhou), Some([east.0, east.1]))
+        .unwrap();
+    assert!(line.ends_with("taken"), "{line}");
+    for _ in 0..150 {
+        sim.advance(100_000);
+    }
+    assert!(peasants[1..].iter().all(|&p| !view(&sim, p).walking));
+}

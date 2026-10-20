@@ -219,12 +219,15 @@ fn crowd_chase_report() {
 }
 
 /// `c-RXI-1`: the workers' walks between the mine and the town hall.
+///
+/// PROVISIONAL: the events are the game's up to tick 859, where a worker
+/// at the mine still looks ahead in the game and is blocked at 865.
 #[test]
 fn gathering_walks_report() {
     let Some(first) = report("c-RXI-1", 11300) else {
         return;
     };
-    eprintln!("c-RXI-1: first difference at tick {first}");
+    assert!(first >= 859, "first difference at tick {first}");
 }
 
 /// Each creep takes its first path update in the tick of the game: the

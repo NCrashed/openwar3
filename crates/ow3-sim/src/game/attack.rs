@@ -23,6 +23,11 @@ use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::{Area, Weapon, is_hero};
 use crate::random::ATTACK_DICE;
 
+/// The new goal after a swing comes at the first update at least this
+/// many ticks after the end of the backswing (SPEC-0019, "After the
+/// swing"; 69 or 70 fit the tests).
+const RENEW_AFTER_SWING: u64 = 70;
+
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attacking {
@@ -35,6 +40,10 @@ pub struct Attacking {
     /// The tick after the end of the last swing, when a target out of
     /// reach is chased again (SPEC-0019).
     resume: Option<u64>,
+    /// The attacker takes a new goal and stands at its first update from
+    /// this tick on, 70 ticks after the end of its last backswing
+    /// (SPEC-0019, "After the swing").
+    renew_at: Option<u64>,
 }
 
 impl Attacking {
@@ -82,6 +91,7 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
             next: (tick + damage_point).max(u.weapon_ready),
             order_id,
             resume: None,
+            renew_at: None,
         });
     }
     if !state.attacking.contains(&h) {
@@ -110,15 +120,19 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 }
                 _ => None,
             };
+            // A target out of reach when the next swing would start, or at
+            // the new goal after the swing: chased from the new goal on,
+            // the attacker standing until then (SPEC-0019).
             if let Some((a, start)) = next_swing
-                && start == tick
+                && (start == tick || (s.update_now && a.renew_at.is_some_and(|r| tick >= r)))
+                && a.renew_at.is_none_or(|r| tick >= r)
                 && standing(s, a.target)
                 && !super::movement::reaches(s, h, a.target)
             {
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                     u.attack = None;
                 }
-                super::movement::chase(s, h, a.target, a.order_id);
+                super::movement::chase(s, h, a.target, a.order_id, None);
                 continue;
             }
         }
@@ -139,8 +153,15 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         let next = a.next + ticks(weapon.cooldown);
-                        let resume = Some(tick + ticks(weapon.backswing) + 1);
-                        u.attack = Some(Attacking { next, resume, ..a });
+                        let end = tick + ticks(weapon.backswing);
+                        let resume = Some(end + 1);
+                        let renew_at = Some(end + RENEW_AFTER_SWING);
+                        u.attack = Some(Attacking {
+                            next,
+                            resume,
+                            renew_at,
+                            ..a
+                        });
                         u.weapon_ready = next;
                     }
                     Some((a.target, amount, weapon.attack_type, weapon.area))
@@ -211,7 +232,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             && standing(&s, a.target)
             && !super::movement::reaches(&s, h, a.target)
         {
-            super::movement::chase(&mut s, h, a.target, a.order_id);
+            super::movement::chase(&mut s, h, a.target, a.order_id, a.renew_at);
         }
     }
     let mut s = state.borrow_mut();

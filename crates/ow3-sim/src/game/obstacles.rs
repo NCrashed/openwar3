@@ -31,6 +31,11 @@ impl Footprint {
         &self.red
     }
 
+    /// The green cells, which block building and flying.
+    pub(super) fn green(&self) -> &[(i32, i32)] {
+        &self.green
+    }
+
     /// Whether one of `cells` is a red cell or a neighbour of one, also
     /// diagonally (SPEC-0029, "Reaching a building").
     pub(super) fn touches(&self, cells: &[(i32, i32)]) -> bool {

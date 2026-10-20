@@ -556,7 +556,21 @@ pub fn local_touching(
     limit: u32,
     target: &[(i32, i32)],
 ) -> Found {
-    search(grid, s, g, class, limit, Some(target))
+    search(grid, s, g, class, limit, Some((target, false)))
+}
+
+/// The local search of a walk to a building (SPEC-0029): as a chase's, the
+/// target the red cells `target` of the building's footprint, which are
+/// touched although the pathing map blocks them.
+pub fn local_to_building(
+    grid: &impl Cells,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+    target: &[(i32, i32)],
+) -> Found {
+    search(grid, s, g, class, limit, Some((target, true)))
 }
 
 fn search(
@@ -565,14 +579,14 @@ fn search(
     g: [u32; 2],
     class: u8,
     limit: u32,
-    target: Option<&[(i32, i32)]>,
+    target: Option<(&[(i32, i32)], bool)>,
 ) -> Found {
     // Whether a step from `c` to `n` tests a cell of the target.
     let touches = |c: (i32, i32), n: (i32, i32)| {
-        target.is_some_and(|t| {
+        target.is_some_and(|(t, blocked_too)| {
             step_cells(c, n, class)
                 .into_iter()
-                .any(|(x, y)| grid.passable_alone(x, y) && t.contains(&(x, y)))
+                .any(|(x, y)| (blocked_too || grid.passable_alone(x, y)) && t.contains(&(x, y)))
         })
     };
     let (start, goal) = (cell_of(s), cell_of(g));
@@ -627,7 +641,7 @@ fn search(
                 }
                 if !grid.step(c, n, class) {
                     // The target's own cells are not an obstacle met.
-                    let only_target = target.is_some_and(|t| {
+                    let only_target = target.is_some_and(|(t, _)| {
                         step_cells(c, n, class)
                             .into_iter()
                             .all(|(x, y)| grid.free(x, y) || t.contains(&(x, y)))

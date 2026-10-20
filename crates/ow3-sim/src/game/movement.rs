@@ -208,6 +208,9 @@ pub struct Moving {
     /// The goal was taken at the end of the reaction delay: the first
     /// update keeps it and starts the countdown of its renewal from there.
     goal_taken: bool,
+    /// The new goal after a swing comes at the first update from this tick
+    /// on (SPEC-0019).
+    renew_at: Option<u64>,
     /// An attack ordered by a script: the update at which the unit acts
     /// cannot start its swing yet (SPEC-0019, "When it starts").
     swing_waits: bool,
@@ -449,6 +452,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
+            renew_at: None,
             chase: None,
             renew_stands: false,
             given,
@@ -473,6 +477,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
+            renew_at: None,
             chase: None,
             renew_stands: false,
             given,
@@ -1902,7 +1907,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
                         let target_now = relative(at, min);
+                        let renew_now = m.renew_at.is_some_and(|r| tick >= r);
                         match m.chase {
+                            // The new goal after a swing (SPEC-0019).
+                            _ if renew_now => {
+                                m.renew_at = None;
+                                m.target = at;
+                                m.chase = Some(countdown(here, relative(at, min)));
+                                renewed = true;
+                            }
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             // The goal taken at the end of the reaction
                             // delay; its renewal counts from here.
@@ -2043,7 +2056,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             squared_speed: follow::squared_speed(m.velocity),
                             cluster: 1,
                             chase: Some(chase_of(state, target, full_reach)),
-                            building: Vec::new(),
+                            building: None,
                         };
                         let steer = follow::steer(state, &walker, tick);
                         // The goal taken 66 ticks after a chase resumes
@@ -2079,10 +2092,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     let building = match m.order {
                         Order::Gather { target } | Order::Return { building: target } => state
                             .unit(Some(target))
-                            .and_then(|b| b.footprint.as_ref())
-                            .map(|f| f.red().to_vec())
-                            .unwrap_or_default(),
-                        _ => Vec::new(),
+                            .filter(|b| b.footprint.is_some())
+                            .map(|_| target),
+                        _ => None,
                     };
                     let walker = |order| follow::Walker {
                         handle: h,
@@ -2092,7 +2104,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         squared_speed,
                         cluster,
                         chase: None,
-                        building: building.clone(),
+                        building,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -2381,7 +2393,7 @@ fn chase_of(state: &State, target: u32, reach: u32) -> follow::Chase {
 /// (SPEC-0019): the goal is where the target is now, its path is searched
 /// at once, the unit moves from its next update on, and at its 12th
 /// update it takes a new goal with an update standing.
-pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
+pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew_at: Option<u64>) {
     let Some(at) = position_of(state, target) else {
         return;
     };
@@ -2398,8 +2410,18 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
     };
     let here = relative([u.x, u.y], min);
     if let Some(m) = u.movement.as_mut() {
-        m.chase = Some(11);
-        m.renew_stands = true;
+        match renew_at {
+            // Right after the swing: a new goal with an update standing at
+            // `renew_at`.
+            Some(r) => {
+                m.chase = Some(u32::MAX);
+                m.renew_at = Some(r);
+                m.renew_stands = true;
+            }
+            // At the new goal itself: this goal, searched at the next
+            // update.
+            None => m.goal_taken = true,
+        }
     }
     let data = state.data.units.get(&u.type_id);
     let own = data.map_or(0, |t| t.collision);
@@ -2419,7 +2441,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             squared_speed: 0,
             cluster: 1,
             chase: Some(chase_of(state, target, reach)),
-            building: Vec::new(),
+            building: None,
         };
         follow::search(state, &walker, tick);
     }

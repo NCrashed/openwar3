@@ -275,6 +275,8 @@ struct Shared<'a> {
     events: Vec<PathEvent>,
     /// Only the search, no step.
     search_only: bool,
+    /// The red cells of the building walked to, if any.
+    building: Vec<(i32, i32)>,
 }
 
 /// What a unit decided at an update, for comparing with the game's
@@ -317,10 +319,10 @@ pub struct Walker {
     pub cluster: usize,
     /// For an attacker, how it chases (SPEC-0019).
     pub chase: Option<Chase>,
-    /// For a walk to a building, the red cells of its footprint: the
-    /// search ends touching them, and they are not obstacles it met
-    /// (SPEC-0029).
-    pub building: Vec<(i32, i32)>,
+    /// For a walk to a building, the building: the high-level search
+    /// takes its footprint as free, and the last local search ends
+    /// touching its red cells, which are not obstacles it met (SPEC-0029).
+    pub building: Option<u32>,
 }
 
 /// What a chase needs at an update.
@@ -351,16 +353,31 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     if state.grid.is_none() {
         return Steer::Walk(walker.order);
     }
+    let (at, order_cells) = (to_cells(walker.here), to_cells(walker.order));
+    // The high-level search ignores units, and the footprint of the
+    // building walked to (SPEC-0029).
+    let footprint = walker
+        .building
+        .and_then(|b| state.unit(Some(b)))
+        .and_then(|b| b.footprint.as_ref())
+        .map(|f| (f.red().to_vec(), f.green().to_vec()));
+    let fresh = !state.paths.contains_key(&walker.handle);
+    let lifted = footprint.as_ref().filter(|_| fresh);
+    if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
+        grid.stamp(red, green, false);
+    }
+    let high = fresh
+        .then(|| path::high_level(state.grid.as_ref().unwrap(), at, order_cells, walker.class));
+    if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
+        grid.stamp(red, green, true);
+    }
     let others = others(state, walker.handle);
     let grid = state.grid.as_ref().unwrap();
-    let (at, order_cells) = (to_cells(walker.here), to_cells(walker.order));
     let mut follow = state.paths.remove(&walker.handle).unwrap_or_else(|| {
-        // The high-level search ignores units.
-        let (waypoints, reached) = path::high_level(grid, at, order_cells, walker.class)
-            .map_or_else(
-                || (Vec::new(), false),
-                |found| (found.points, found.reached),
-            );
+        let (waypoints, reached) = high.flatten().map_or_else(
+            || (Vec::new(), false),
+            |found| (found.points, found.reached),
+        );
         let mut follow = Follow {
             waypoints,
             reached,
@@ -386,6 +403,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         random: &mut state.random,
         events: Vec::new(),
         search_only,
+        building: footprint.map(|f| f.0).unwrap_or_default(),
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
@@ -480,9 +498,14 @@ fn decide(
             ),
             // A walk to a building: the same, touching its footprint
             // (SPEC-0029).
-            None if follow.final_goal && !walker.building.is_empty() => {
-                path::local_touching(&seen, at, follow.goal, class, LOCAL_LIMIT, &walker.building)
-            }
+            None if follow.final_goal && !shared.building.is_empty() => path::local_to_building(
+                &seen,
+                at,
+                follow.goal,
+                class,
+                LOCAL_LIMIT,
+                &shared.building,
+            ),
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
         shared.budget.used += found.iterations;

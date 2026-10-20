@@ -591,33 +591,29 @@ and the updates following `U` (SPEC-0018), the events of `c-RXD-1` are
 the game's one for one up to tick 2161, and the positions of the
 peasants up to 3230 and of the creeps up to 2156 (creeps 7 and 9).
 
-**1. The new goal after a swing: `c-RXD-1` against `c-CH1` (open
-question 11 of SPEC-0019).** The rule "new goal and stand 72 ticks after
-the first update not before the end of the backswing" was tried (the
-patch is kept aside): it gives creep 9 of `c-RXD-1` the game's walk
-through 2155 (its positions then follow the game up to 2174), but it
-breaks verification 5 (`c-CH1`, row 1). There the damage is at 427 in
-the game (428 here), the footman's backswing is 100 ticks, so the
-backswing ends at 527 (528 here); the updates of that map fall in
-ticks `6 m + 4` (322, 598), so the first update not before the end is
-532 (here 532 too, first motion 533) and the rule gives the stand at
-604/605, where the game stood at 598 (and at 958, the rule giving
-971). 598 is 66 ticks after 532, as the older rule says. So with these
-numbers the two tests cannot both follow either rule. Needed: what
-else decides the update of the new goal (the end of the backswing as
-the game holds it, or another count), with the numbers of `c-CH1` row
-1 if they can be read again.
+**1. An attacker waiting for its cooldown (`c-RXD-1`, creep 7, ticks
+2075 to 2155).** With the rule of 70 ticks the new goals come in the
+game's ticks (the chase tests of SPEC-0019 pass too). Creep 7 ends its
+backswing at 2075 with its target in range; here it keeps its swing
+state and faces 193.5 degrees until its new goal of 2149, then turns
+about 11 degrees an update and has not moved by 2161. In the game it
+walks from 2156 already facing 304.1 degrees, so it turned towards its
+target while it waited. Taking a goal at the end of every backswing
+(also with the target in range, as "After the swing" reads) and
+standing in range turned the facing but moved other creeps away from
+the game, so it is not in. Needed: what an attacker does between the
+end of its backswing and its next swing or goal while its target is in
+range: whether it turns to the target (at its updates, at which rate),
+and whether it has a goal and path meanwhile.
 
-**2. The high-level path of a walk to a building (`c-RXI-1`, tick
-307).** The touch rule of SPEC-0029 is in. But here the high-level
-search (SPEC-0020) to the mine at (-896, 0), whose cell lies in the
-mine's footprint, gives 4 waypoints going round the mine to the north
-(the first segment ends at (-976, 176) or (-848, 176)), so the first
-local search is not the final one and does not touch the mine. In the
-game the first local searches went to the mine itself. Needed: how the
-high-level path of a walk to a building is made (is its own footprint
-passable to it, is the goal block moved, is the high-level search left
-out within some distance).
+**2. A worker at the mine (`c-RXI-1`, ticks 859 and 865).** The walks
+to the mine now follow the game (the high-level search with the mine
+free, the last local search ending touching it) up to tick 859. There
+peasant 5 at (-1055.87, 48.45) looks ahead once more in the game, and
+peasants 4 and 5 are blocked at 865; here peasant 5 has reached the
+mine at 859. Needed: when a worker walking to a mine counts as having
+reached it (SPEC-0029, "Reaching a building") relative to its path's
+end, and what blocks workers there while another one is inside.
 
 **3. Checksums.** `c-RXI-1` and `c-RXD-1` stay among the replays whose
 checksum turns are not followed until the walks above match.

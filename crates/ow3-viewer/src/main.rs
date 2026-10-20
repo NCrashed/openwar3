@@ -205,7 +205,7 @@ fn screenshot(
         sim_hour = sim.time_of_day();
         sim_seconds = sim.game_seconds();
         sim_fog = sim.terrain_fog();
-        renderer.set_vision(&queue, sim.vision().as_deref());
+        renderer.set_vision(&queue, sim.vision().as_deref(), sim.vision_masked());
         let mut units = sim.draws();
         let (posed, hidden) = scene.posed(&sim.destructable_poses());
         units.extend(posed);
@@ -853,7 +853,8 @@ impl App {
             // The fog of war, when its update changed it.
             let vision = sim.vision();
             if vision != self.vision {
-                gpu.renderer.set_vision(&gpu.queue, vision.as_deref());
+                gpu.renderer
+                    .set_vision(&gpu.queue, vision.as_deref(), sim.vision_masked());
                 self.vision = vision;
             }
             let mut units = sim.draws();

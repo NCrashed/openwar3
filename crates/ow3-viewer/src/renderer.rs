@@ -53,24 +53,36 @@ fn fogged(colour: vec3<f32>, depth: f32) -> vec3<f32> {
 }
 "#;
 
-/// The fog of war (SPEC-0032) for the shaders that declare
-/// `globals.vision_area`, `vision_map` and `shadow_sampler`: `seen`
-/// darkens a colour by the state of the fog cells round a world point,
-/// one texel a cell at its centre, filtered linearly between cells.
+/// The fog of war (SPEC-0032, "The world under fog") for the shaders that
+/// declare `globals.vision_area`, `globals.vision_shades`, `vision_map`
+/// and `shadow_sampler`: `seen` turns a colour into that of the state of
+/// the fog cells round a world point. Fogged: `0.34 v` plus a little,
+/// more in blue; masked: `vision_shades.x` of it (0.098 with the map flag
+/// `0x0010`, else 0). The map holds one texel a cell at its centre (0
+/// masked, 0.5 fogged, 1 visible), filtered linearly between cells, and
+/// the colour is blended between the states' colours by it.
 ///
-/// PROVISIONAL: how the game draws the fog in the world is open
-/// (SPEC-0032 open question 4); here fogged cells at half brightness and
-/// masked ones black, with a smooth edge.
+/// PROVISIONAL: the blend across cell edges is open (SPEC-0032 open
+/// question 4).
 pub(crate) const VISION_WGSL: &str = r#"
 fn seen(colour: vec3<f32>, world: vec2<f32>) -> vec3<f32> {
     let uv = (world - globals.vision_area.xy) / (128.0 * globals.vision_area.zw);
-    return colour * textureSampleLevel(vision_map, shadow_sampler, uv, 0.0).r;
+    let s = textureSampleLevel(vision_map, shadow_sampler, uv, 0.0).r;
+    let fogged = vec3<f32>(0.340, 0.337, 0.338) * colour
+        + vec3<f32>(9.3, 9.2, 18.9) / 255.0;
+    let masked = globals.vision_shades.x * colour;
+    if s < 0.5 {
+        return mix(masked, fogged, s * 2.0);
+    }
+    return mix(fogged, colour, s * 2.0 - 1.0);
 }
 "#;
 
-/// The brightness of the three fog states in the vision map: masked,
-/// fogged, visible.
+/// The values of the three fog states in the vision map: masked, fogged,
+/// visible.
 pub const VISION_LEVELS: [u8; 3] = [0, 128, 255];
+/// What the fog leaves of cells never seen with the map flag `0x0010`.
+pub const MASKED_PARTLY: f32 = 0.098;
 
 pub(crate) const SHADOW_WGSL: &str = r#"
 const SHADOW_COLOUR: vec3<f32> = vec3<f32>(0.048, 0.048, 0.095);
@@ -109,6 +121,8 @@ struct Globals {
     // The fog of war: the lower left corner of the map and the cells
     // across and up (SPEC-0032).
     vision_area: vec4<f32>,
+    // What the fog leaves of cells never seen, in x.
+    vision_shades: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
@@ -188,6 +202,7 @@ struct Globals {
     fog_params: [f32; 4],
     fog_color: [f32; 4],
     vision_area: [f32; 4],
+    vision_shades: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -254,6 +269,8 @@ pub struct Renderer {
     /// left corner of the map and the cells across and up.
     vision: wgpu::Texture,
     vision_area: [f32; 4],
+    /// What the fog leaves of cells never seen (SPEC-0032).
+    vision_masked: f32,
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -495,6 +512,7 @@ impl ModelView {
             fog_params: [0.0; 4],
             fog_color: [0.0; 4],
             vision_area: [0.0, 0.0, 1.0, 1.0],
+            vision_shades: [0.0; 4],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.rect = Some(rect);
@@ -970,6 +988,7 @@ impl Renderer {
             shadow_area,
             vision,
             vision_area,
+            vision_masked: 0.0,
         }
     }
 
@@ -1290,8 +1309,10 @@ impl Renderer {
     }
 
     /// Shows the fog of war: the state of each cell (masked 0, fogged 1,
-    /// visible 2, rows from the bottom), or with `None` all seen.
-    pub fn set_vision(&self, queue: &wgpu::Queue, cells: Option<&[u8]>) {
+    /// visible 2, rows from the bottom), or with `None` all seen; cells
+    /// never seen keep `masked` of their colour.
+    pub fn set_vision(&mut self, queue: &wgpu::Queue, cells: Option<&[u8]>, masked: f32) {
+        self.vision_masked = masked;
         let size = self.vision.size();
         let n = (size.width * size.height) as usize;
         let texels: Vec<u8> = match cells {
@@ -1335,6 +1356,7 @@ impl Renderer {
             fog_params: self.fog.0,
             fog_color: self.fog.1,
             vision_area: self.vision_area,
+            vision_shades: [self.vision_masked, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -158,6 +158,12 @@ impl Minimap {
         Some([lb[0], lb[1], rt[0], rt[1]])
     }
 
+    /// Whether the map leaves cells never seen partly visible (its flag
+    /// `0x0010`).
+    pub fn masked_partly(&self) -> bool {
+        self.masked > 0.0
+    }
+
     /// The world point under interface point `p`, if it is on the minimap.
     pub fn to_world(&self, p: [f32; 2]) -> Option<[f32; 2]> {
         let [x0, y0, x1, y1] = PICTURE;

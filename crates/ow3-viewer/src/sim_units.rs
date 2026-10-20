@@ -65,6 +65,10 @@ pub struct Sim {
     /// of each unit that stopped ended, in ticks.
     walks: BTreeMap<u32, u64>,
     halts: BTreeMap<u32, (u64, u64)>,
+    /// Buildings of other players as the local player last saw them,
+    /// drawn while their place is under fog (SPEC-0032, "Buildings under
+    /// fog"): how they were drawn and their minimap mark.
+    remembered: BTreeMap<u32, (UnitDraw, [f32; 2], u8)>,
     /// Confirmations of orders being shown.
     effects: Vec<Effect>,
     /// The models of `TargetPointConfirm` and `TargetUnitConfirm`, with the
@@ -171,6 +175,7 @@ impl Sim {
             models,
             walks: BTreeMap::new(),
             halts: BTreeMap::new(),
+            remembered: BTreeMap::new(),
             effects: Vec::new(),
             point_confirm: skin_model(&mut chain, "TargetPointConfirm"),
             unit_confirm: skin_model(&mut chain, "TargetUnitConfirm"),
@@ -403,6 +408,18 @@ impl Sim {
                 Mark::Player { player, building }
             };
             marks.push(([u.x, u.y], mark));
+        }
+        // Buildings under fog keep their marks as last seen.
+        for &(_, at, player) in self.remembered.values() {
+            if !self.sees(at[0], at[1]) {
+                marks.push((
+                    at,
+                    Mark::Player {
+                        player,
+                        building: true,
+                    },
+                ));
+            }
         }
         marks.extend(
             crate::minimap::camps(&unseen_creeps)
@@ -829,6 +846,16 @@ impl Sim {
     /// bottom); `None` when all is seen: the fog is off, or the first
     /// update has not come yet. Without `FogMaskEnable` cells never seen
     /// look fogged.
+    /// What the fog leaves in the world of cells never seen: some with
+    /// the map's flag `0x0010`, else nothing (SPEC-0032).
+    pub fn vision_masked(&self) -> f32 {
+        if self.minimap.masked_partly() {
+            crate::renderer::MASKED_PARTLY
+        } else {
+            0.0
+        }
+    }
+
     pub fn vision(&self) -> Option<Vec<u8>> {
         use ow3_sim::game::fog;
         let (enabled, mask) = self.game.fog_enabled();
@@ -844,37 +871,40 @@ impl Sim {
         Some(cells)
     }
 
-    /// Whether the local player sees unit `u`: its own and its allies'
-    /// (of the players 0 to 11) always, others in visible cells, buildings
-    /// also in fogged ones.
-    ///
-    /// PROVISIONAL: allied vision and what the fog shows of buildings are
-    /// open (SPEC-0032 open question 2); a building in the fog is shown as
-    /// it is now, not as it was last seen.
-    fn shown(&self, u: &ow3_sim::game::UnitView) -> bool {
-        use ow3_sim::game::fog;
-        let ally = u.owner < ow3_sim::game::CREEPS
-            && self.game.relation(LOCAL_PLAYER, u.handle) == Some(Relation::Friend);
-        if u.owner == LOCAL_PLAYER
-            || ally
-            || !self.game.fog_enabled().0
+    /// Whether the local player sees the point (`x`, `y`): it is visible
+    /// to it, or the fog is off.
+    fn sees(&self, x: f32, y: f32) -> bool {
+        !self.game.fog_enabled().0
             || !self.game.fog_started(LOCAL_PLAYER)
-        {
-            return true;
-        }
-        match self.game.fog_at(LOCAL_PLAYER, u.x, u.y) {
-            fog::VISIBLE => true,
-            fog::FOGGED => self.game.unit_stats(u.handle).is_some_and(|s| s.building),
-            _ => false,
-        }
+            || self.game.fog_at(LOCAL_PLAYER, x, y) == ow3_sim::game::fog::VISIBLE
+    }
+
+    /// Whether the local player sees unit `u` as it is now: its own
+    /// always, others in visible cells (SPEC-0032). Other players'
+    /// buildings under fog show as they were last seen instead.
+    fn shown(&self, u: &ow3_sim::game::UnitView) -> bool {
+        u.owner == LOCAL_PLAYER || self.sees(u.x, u.y)
     }
 
     pub fn draws(&mut self) -> Vec<UnitDraw> {
         let now = self.game.ticks();
         let mut draws = Vec::new();
-        for u in self.game.units() {
-            let pose = self.pose(&u, now);
-            if u.hidden || !self.shown(&u) {
+        let units = self.game.units();
+        for u in &units {
+            let pose = self.pose(u, now);
+            let building = self.game.unit_stats(u.handle).is_some_and(|s| s.building);
+            let remember = building && u.owner != LOCAL_PLAYER;
+            if !self.shown(u) {
+                // Under fog: a building as last seen, if it was.
+                if let Some((draw, _, _)) = self.remembered.get(&u.handle) {
+                    draws.push(draw.clone());
+                }
+                continue;
+            }
+            if remember && !u.alive {
+                self.remembered.remove(&u.handle);
+            }
+            if u.hidden {
                 continue;
             }
             let Some(look) = self.models.get(&u.type_id) else {
@@ -901,7 +931,7 @@ impl Sim {
                 angle: u.facing,
                 scale: [look.scale; 3],
             };
-            draws.push(UnitDraw {
+            let draw = UnitDraw {
                 replaceable: None,
                 matrix: crate::models::placement_matrix(&placement),
                 model: placement.model,
@@ -912,7 +942,28 @@ impl Sim {
                 selection: look.selection,
                 relation: self.game.relation(LOCAL_PLAYER, u.handle),
                 tint: [1.0; 3],
-            });
+            };
+            if remember && u.alive {
+                self.remembered
+                    .insert(u.handle, (draw.clone(), [u.x, u.y], placement.team));
+            }
+            draws.push(draw);
+        }
+        // Remembered buildings that are gone: drawn until their place is
+        // seen again.
+        let gone: Vec<u32> = self
+            .remembered
+            .keys()
+            .copied()
+            .filter(|h| !units.iter().any(|u| u.handle == *h))
+            .collect();
+        for h in gone {
+            let [x, y] = self.remembered[&h].1;
+            if self.sees(x, y) {
+                self.remembered.remove(&h);
+            } else {
+                draws.push(self.remembered[&h].0.clone());
+            }
         }
         // A building waiting for its place, on its grid under the mouse:
         // green where it may stand, red where not (SPEC-0026).

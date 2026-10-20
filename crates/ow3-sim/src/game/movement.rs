@@ -1120,6 +1120,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
         b.life.set(base);
         b.construction = Some(Box::new(construction));
     }
+    state.object_timers.retain(|&(_, of)| of != building);
     if let Some(end) = end {
         super::training::start_timer(
             state,

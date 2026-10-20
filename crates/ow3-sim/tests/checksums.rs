@@ -79,8 +79,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXI-1.w3g",
-        "the objects of the gathering (SPEC-0024, \"Gathering\") are known to 5 ticks, and turns \
-         24 and 195 have changes of unknown cause",
+        "the workers block each other more on their first way to the mine than in the game (draws \
+         of the script generator at turns 38, 39 and 42 for the game's 37) and reach it later; \
+         turn 195 is a timer of unknown cause (SPEC-0024)",
     ),
 ];
 

@@ -76,6 +76,9 @@ pub struct Marks {
     pub e: u32,
     pub r: u32,
     pub handles: u32,
+    /// The changes of the internal objects (SPEC-0024, gathering and
+    /// buildings).
+    pub objects: u32,
     pub units: u32,
     pub walking: u32,
     pub constructing: u32,
@@ -89,6 +92,7 @@ impl Marks {
             ("E", self.e != other.e),
             ("R", self.r != other.r),
             ("handles", self.handles != other.handles),
+            ("objects", self.objects != other.objects),
             ("units", self.units != other.units),
             ("walking", self.walking != other.walking),
             ("constructing", self.constructing != other.constructing),
@@ -175,6 +179,7 @@ impl<'a> Playback<'a> {
             e,
             r,
             handles: self.game.handles_made(),
+            objects: self.game.objects_changed(),
             ..Marks::default()
         };
         let mut walking = std::collections::BTreeSet::new();

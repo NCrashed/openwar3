@@ -727,6 +727,12 @@ pub struct State {
     /// (SPEC-0029).
     mines: BTreeMap<u32, harvest::Mine>,
     harvest_reached: Vec<(u32, u32, bool)>,
+    /// How many times the game's internal objects that the turn
+    /// checksums count (`C` and `D` of SPEC-0024) changed, and the ticks
+    /// and the queue times of the changes to come.
+    pub objects_changed: u32,
+    object_ticks: Vec<u64>,
+    object_timers: Vec<(u32, u32)>,
     /// Ground heights for `GetLocationZ` (SPEC-0014).
     heights: crate::heights::Heights,
     /// The fog of war of each player (SPEC-0032).
@@ -801,6 +807,9 @@ impl State {
             constructions: Vec::new(),
             mines: BTreeMap::new(),
             harvest_reached: Vec::new(),
+            objects_changed: 0,
+            object_ticks: Vec::new(),
+            object_timers: Vec::new(),
             heights: crate::heights::Heights::default(),
             fog: fog::Fog::default(),
             combat: crate::combat::Combat::default(),
@@ -840,6 +849,34 @@ impl State {
         let handle = self.create(Object::Player(id));
         self.players.insert(id, handle);
         handle
+    }
+
+    /// The internal objects of the checksum change now, in tick `tick`
+    /// (later in this game), or by a timer expiring at queue time
+    /// `expiry` (SPEC-0024).
+    fn objects_change(&mut self) {
+        self.objects_changed += 1;
+    }
+
+    fn objects_change_in(&mut self, tick: u64) {
+        self.object_ticks.push(tick);
+    }
+
+    fn objects_change_at(&mut self, expiry: u32, of: u32) {
+        self.object_timers.push((expiry, of));
+    }
+
+    /// The changes due in this tick: those of its number, and the timers
+    /// its queue interval holds.
+    fn objects_due(&mut self) {
+        let tick = self.ticks;
+        let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
+        let before = self.object_ticks.len() + self.object_timers.len();
+        self.object_ticks.retain(|&t| t != tick);
+        self.object_timers
+            .retain(|&(e, _)| f32::from_bits(e) > next);
+        let due = before - self.object_ticks.len() - self.object_timers.len();
+        self.objects_changed += due as u32;
     }
 
     fn player_id(&self, handle: Option<u32>) -> Option<i32> {
@@ -1299,6 +1336,8 @@ impl<'a> Game<'a> {
         creeps::tick(&mut self.state.borrow_mut());
         // What the units see (SPEC-0032).
         fog::tick(&mut self.state.borrow_mut());
+        // Internal objects of the checksum freed or made now (SPEC-0024).
+        self.state.borrow_mut().objects_due();
         self.park();
         self.state.borrow_mut().in_tick = false;
     }
@@ -1767,6 +1806,12 @@ impl<'a> Game<'a> {
 
     /// The number of handles given out so far: grows with every object
     /// the game makes (units, timers, triggers and the like).
+    /// How many times the internal objects the turn checksums count
+    /// changed so far (SPEC-0024).
+    pub fn objects_changed(&self) -> u32 {
+        self.state.borrow().objects_changed
+    }
+
     pub fn handles_made(&self) -> u32 {
         self.state.borrow().next_handle
     }

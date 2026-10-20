@@ -611,9 +611,17 @@ and goal work then; the ticks 1836, 1857, 2007, 2031 and 2207 of
 SPEC-0021 would check it. And whether the two points above are rules
 of the game.
 
-**2. Checksums of gathering.** With the exact ticks now in SPEC-0024
-this is implementation work; `c-RXI-1` and `c-RXD-1` stay among the
-replays whose checksum turns are not followed until it is done.
+**2. Checksums of gathering (`c-RXI-1`).** The moments of SPEC-0024
+("Gathering") are in the simulation now (and the gold of a new mine,
+`Agld` of SPEC-0029, which was 0 for mines made by a script). Up to
+turn 35 the turns of `c-RXI-1` are the game's, the draw of the script
+generator of tick 667 included. Then the simulation's workers block
+each other more on their first way to the mine: draws at turns 38, 39
+and 42 where the game has one at turn 37 (tick 715), and the first
+worker reaches the mine at turn 52 where the game's changes of turn 45
+suggest it there. Needed: a log of `c-RXI-1` like those of `c-RXD-1`
+(positions every tick and the path events: updates, waits, blocks), to
+find where the walks part.
 
 ## Construction (`game::movement`, `game`, SPEC-0026)
 

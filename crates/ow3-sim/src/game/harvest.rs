@@ -36,6 +36,8 @@ const LUMBER: i32 = 2;
 
 /// Ticks a worker stays inside a mine (1.0 s).
 const IN_MINE: u64 = 200;
+/// Ticks between two updates of a unit (SPEC-0018).
+const UPDATE: u64 = 6;
 /// Ticks from reaching a tree to the first hit, and from the hit that
 /// fills the load to the walk back (measured in test RUF).
 const FIRST_HIT: u64 = 99;
@@ -170,7 +172,12 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
     g.next_hit = None;
     g.back_at = None;
     set(state, h, Some(g));
-    walk_to_work(state, h)
+    let taken = walk_to_work(state, h);
+    // The order makes the objects of the walk (SPEC-0024).
+    if taken && is_mine(state, target) {
+        state.objects_change();
+    }
+    taken
 }
 
 /// Worker `h` with a load takes it to `building`.
@@ -361,6 +368,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     for (h, target, delivering) in reached {
         let mut s = state.borrow_mut();
         if delivering {
+            // The walk back is made, then the old one freed (SPEC-0024).
+            let gold = get(&s, h).is_some_and(|g| matches!(g.carry, Some((Resource::Gold, _))));
+            if gold {
+                let tick = s.ticks;
+                s.objects_change_in(tick + UPDATE);
+                s.objects_change_in(tick + 2 * UPDATE);
+            }
             deliver(&mut s, h);
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target);
@@ -414,10 +428,14 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
     let tick = state.ticks;
     let entry = state.mines.entry(mine).or_default();
     if entry.inside.is_none() {
-        entry.inside = Some((h, tick + IN_MINE));
-        hide(state, h, true);
+        // It goes in at the next update, freeing its walk an update
+        // later (SPEC-0024).
+        entry.inside = Some((h, tick + UPDATE + IN_MINE));
+        state.objects_change_in(tick + 2 * UPDATE);
     } else if !entry.waiting.contains(&h) {
         entry.waiting.push(h);
+        state.objects_change_in(tick + UPDATE);
+        state.objects_change_in(tick + 2 * UPDATE);
     }
 }
 
@@ -431,6 +449,23 @@ fn hide(state: &mut State, h: u32, hidden: bool) {
 /// next waiting one goes in in the same tick. A mine without gold left
 /// dies.
 fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    // Those whose time to go in has come are hidden.
+    {
+        let mut s = state.borrow_mut();
+        let tick = s.ticks;
+        let entering: Vec<u32> = s
+            .mines
+            .values()
+            .filter_map(|m| {
+                m.inside
+                    .filter(|&(_, t)| t == tick + IN_MINE)
+                    .map(|(w, _)| w)
+            })
+            .collect();
+        for w in entering {
+            hide(&mut s, w, true);
+        }
+    }
     let due: Vec<(u32, u32)> = {
         let s = state.borrow();
         s.mines
@@ -461,6 +496,8 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 _ => 0,
             };
             walk_back(s, worker);
+            // The walk to the drop-off is made (SPEC-0024).
+            s.objects_change();
             let tick = s.ticks;
             let entry = s.mines.entry(mine).or_default();
             entry.inside = None;

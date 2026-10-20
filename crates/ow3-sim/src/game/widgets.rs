@@ -39,6 +39,9 @@ const FOOD_USED: i32 = 5;
 const ALARM: usize = 21;
 /// 0.5 as a bit pattern of a real.
 const HALF_SECOND: u32 = 0x3F00_0000;
+/// 1.2 as a bit pattern of a real: the timer of the objects a building
+/// frees after its creation (SPEC-0024).
+const BUILDING_OBJECTS: u32 = 0x3F99_999A;
 const EVENT_UNIT_DAMAGED: i32 = 52;
 const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
 const EVENT_UNIT_DEATH: i32 = 53;
@@ -284,7 +287,13 @@ pub(super) fn create_unit(
         died_at: None,
         hidden: false,
         user_data: 0,
-        resources: 0,
+        // A gold mine holds `DataA` of its ability `Agld` (SPEC-0029).
+        resources: data
+            .abilities
+            .iter()
+            .filter_map(|a| state.data.abilities.get(a))
+            .find(|a| a.code == i32::from_be_bytes(*b"Agld"))
+            .map_or(0, |a| f32::from_bits(a.data[0]) as i32),
         harvest: None,
         home: [x, y],
         creep: super::creeps::born(state, owner, type_id),
@@ -308,6 +317,14 @@ pub(super) fn create_unit(
     };
     if food != 0 {
         *state.setup.player_states.entry((owner, key)).or_default() += food;
+    }
+    // A building frees objects of its own by a timer of 1.2 s from its
+    // creation (SPEC-0024, measured for a town hall made by a script).
+    // PROVISIONAL: only town halls (barracks and farms of c-RTP-1 change
+    // nothing then), and not one a worker starts (c-RSN-1).
+    if data.building && data.classes.iter().any(|c| c == "townhall") {
+        let expiry = add(state.timers.time(), BUILDING_OBJECTS);
+        state.objects_change_at(expiry, h);
     }
     // It sees at once (SPEC-0032).
     super::fog::born(state, h);

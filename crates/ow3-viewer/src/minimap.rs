@@ -379,6 +379,14 @@ impl Minimap {
         self.masked > 0.0
     }
 
+    /// The world point under interface point `p`, or under the nearest
+    /// point of the minimap when `p` is off it.
+    pub fn to_world_clamped(&self, p: [f32; 2]) -> [f32; 2] {
+        let [x0, y0, x1, y1] = PICTURE;
+        let inside = [p[0].clamp(x0, x1), p[1].clamp(y0, y1)];
+        self.to_world(inside).unwrap_or([0.0; 2])
+    }
+
     /// The world point under interface point `p`, if it is on the minimap.
     pub fn to_world(&self, p: [f32; 2]) -> Option<[f32; 2]> {
         let [x0, y0, x1, y1] = PICTURE;
@@ -724,5 +732,8 @@ mod tests {
         let again = m.to_world(back).unwrap();
         assert!((again[0] - 500.0).abs() < 0.1 && (again[1] + 1000.0).abs() < 0.1);
         assert!(m.to_world([0.5, 0.5]).is_none());
+        // Off the minimap, the nearest point of it: here its upper right
+        // corner.
+        assert_eq!(m.to_world_clamped([0.5, 0.5]), [1000.0, 2000.0]);
     }
 }

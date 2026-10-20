@@ -304,6 +304,9 @@ struct App {
     selection: ow3_viewer::selection::Selection,
     /// Where the left button went down over the world, for a rectangle.
     drag: Option<(f32, f32)>,
+    /// The left button went down on the minimap and is held: the camera
+    /// follows the mouse over it.
+    minimap_drag: bool,
     /// The last click on a unit and the last recall of a group, for double
     /// clicks and double presses.
     last_click: Option<(std::time::Instant, u32)>,
@@ -472,6 +475,15 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+                // Dragging over the minimap, the camera goes with the
+                // mouse, to the minimap's edge when it leaves it.
+                if self.minimap_drag
+                    && let (Some(p), Some(sim)) = (self.ui_point(), &self.sim)
+                {
+                    let [x, y] = sim.minimap.to_world_clamped(p);
+                    self.controls.goal.target[0] = x;
+                    self.controls.goal.target[1] = y;
+                }
                 if let Some(gpu) = &self.gpu {
                     let size = (gpu.config.width as f32, gpu.config.height as f32);
                     self.controls.cursor(Some(self.cursor), size);
@@ -612,6 +624,7 @@ impl App {
     /// its type on the screen), a drag the units in its rectangle (with
     /// Shift added) (SPEC-0028, "Selection").
     fn left_release(&mut self) {
+        self.minimap_drag = false;
         let Some(start) = self.drag.take() else {
             return;
         };
@@ -741,12 +754,14 @@ impl App {
             }
             return;
         }
-        // A click on the minimap moves the camera there.
+        // A click on the minimap moves the camera there, and while the
+        // button is held the camera follows the mouse.
         if let (Some(p), Some(sim)) = (point, &self.sim)
             && let Some([x, y]) = sim.minimap.to_world(p)
         {
             self.controls.goal.target[0] = x;
             self.controls.goal.target[1] = y;
+            self.minimap_drag = true;
             return;
         }
         if let (Some(p), Some(sim)) = (point, &self.sim)
@@ -1054,6 +1069,7 @@ fn main() -> ExitCode {
         shift: false,
         selection: ow3_viewer::selection::Selection::default(),
         drag: None,
+        minimap_drag: false,
         last_click: None,
         last_recall: None,
         alt: false,

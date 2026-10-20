@@ -248,6 +248,26 @@ impl Interface {
                         self.strings.get(&key).cloned()
                     });
                     if let Some(text) = text {
+                        // A string as wide as its text grows from its
+                        // anchor point: centred on a TOP, CENTER or BOTTOM
+                        // anchor, to the left of a right one.
+                        let mut props = props.clone();
+                        if !has(&props, "Width") && !has(&props, "FontJustificationH") {
+                            let anchored = ["SetPoint", "Anchor"].iter().find_map(|k| {
+                                last(&props, k)?.first().and_then(|p| point(p.text()))
+                            });
+                            let justify = match anchored.map(|p| p[0]) {
+                                Some(x) if x == 0.5 => Some("JUSTIFYCENTER"),
+                                Some(x) if x == 1.0 => Some("JUSTIFYRIGHT"),
+                                _ => None,
+                            };
+                            if let Some(j) = justify {
+                                props.push((
+                                    "FontJustificationH".to_owned(),
+                                    vec![Value::Word(j.to_owned())],
+                                ));
+                            }
+                        }
                         out.texts.push(self.text(&props, r, &text, decorate));
                     }
                 }

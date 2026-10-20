@@ -763,6 +763,15 @@ fn a_creep_shows_its_level() {
     assert!((line.rect[3] - 0.097_56).abs() < 0.001, "{:?}", line.rect);
     let centre = (line.rect[0] + line.rect[2]) / 2.0;
     assert!((centre - 0.403_435).abs() < 0.002, "{:?}", line.rect);
+    // The name above it is centred on the same x (SPEC-0028).
+    let name = frame
+        .texts
+        .iter()
+        .find(|t| (t.rect[3] - 0.114_06).abs() < 0.002)
+        .unwrap_or_else(|| panic!("{:?}", frame.texts));
+    assert_eq!(name.justify, ow3_viewer::ui::Justify::Centre);
+    let centre = (name.rect[0] + name.rect[2]) / 2.0;
+    assert!((centre - 0.403_435).abs() < 0.002, "{:?}", name.rect);
 
     let peasant = first(&sim, b"hpea");
     assert_eq!(sim.selected(peasant).unwrap().level, None);

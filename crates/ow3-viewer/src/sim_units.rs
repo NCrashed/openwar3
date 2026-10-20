@@ -405,18 +405,23 @@ impl Sim {
                 let Ok(player) = u8::try_from(u.owner) else {
                     continue;
                 };
-                Mark::Player { player, building }
+                Mark::Player {
+                    player,
+                    building,
+                    relation: self.game.relation(LOCAL_PLAYER, u.handle),
+                }
             };
             marks.push(([u.x, u.y], mark));
         }
         // Buildings under fog keep their marks as last seen.
-        for &(_, at, player) in self.remembered.values() {
+        for (draw, at, player) in self.remembered.values() {
             if !self.sees(at[0], at[1]) {
                 marks.push((
-                    at,
+                    *at,
                     Mark::Player {
-                        player,
+                        player: *player,
                         building: true,
+                        relation: draw.relation,
                     },
                 ));
             }
@@ -426,7 +431,9 @@ impl Sim {
                 .into_iter()
                 .map(|at| (at, Mark::Camp)),
         );
-        self.minimap.quads(&marks, view, self.vision().as_deref())
+        let now = self.game_seconds();
+        self.minimap
+            .quads(&marks, view, self.vision().as_deref(), now)
     }
 
     /// Unit `handle` as the console shows it.

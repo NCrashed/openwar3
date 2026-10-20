@@ -720,6 +720,27 @@ impl App {
     fn left_click(&mut self) {
         let point = self.ui_point();
         let selected = self.gpu.as_ref().and_then(|g| g.renderer.selected);
+        // The buttons beside the minimap (SPEC-0028).
+        if let (Some(p), Some(sim)) = (point, &mut self.sim)
+            && let Some(button) = ow3_viewer::minimap::button_at(p)
+        {
+            sim.minimap.toggles.press(button);
+            return;
+        }
+        // A signal waiting for its point: on the minimap or the ground.
+        if self.sim.as_ref().is_some_and(|s| s.minimap.toggles.signal) {
+            let on_minimap = point.and_then(|p| self.sim.as_ref()?.minimap.to_world(p));
+            let at = on_minimap.or_else(|| {
+                point
+                    .filter(|&p| !ow3_viewer::hud::Hud::covers(p))
+                    .and_then(|_| self.ground_point())
+            });
+            if let (Some(at), Some(sim)) = (at, &mut self.sim) {
+                let now = sim.game_seconds();
+                sim.minimap.toggles.signal_at(at, now);
+            }
+            return;
+        }
         // A click on the minimap moves the camera there.
         if let (Some(p), Some(sim)) = (point, &self.sim)
             && let Some([x, y]) = sim.minimap.to_world(p)
@@ -809,6 +830,11 @@ impl App {
             return false;
         };
         if sim.hud.pending.take().is_some() {
+            return true;
+        }
+        // A signal waiting for its point (SPEC-0028).
+        if sim.minimap.toggles.signal {
+            sim.minimap.toggles.signal = false;
             return true;
         }
         if sim.hud.card != ow3_viewer::hud::Card::Main {

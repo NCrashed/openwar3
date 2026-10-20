@@ -59,15 +59,127 @@ pub enum Mark {
     Own {
         building: bool,
     },
-    /// A unit or building of player `player`, in its colour.
+    /// A unit or building of player `player`, in its colour, or with the
+    /// ally colours by how the local player sees it.
     Player {
         player: u8,
         building: bool,
+        relation: Option<ow3_sim::game::Relation>,
     },
     Mine,
     NeutralBuilding,
     /// A camp of creeps under fog.
     Camp,
+}
+
+/// The five buttons beside the minimap, from the top (SPEC-0028).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Button {
+    Signal,
+    Terrain,
+    AllyColours,
+    CreepCamps,
+    Formation,
+}
+
+/// The buttons' rectangles, in the order of [`Button`] (SPEC-0028, "Main
+/// frames").
+pub const BUTTONS: [(Button, Rect); 5] = [
+    (Button::Signal, [0.154_375, 0.123_125, 0.1775, 0.143_75]),
+    (Button::Terrain, [0.154_375, 0.101_25, 0.1775, 0.121_875]),
+    (Button::AllyColours, [0.154_375, 0.079_375, 0.1775, 0.1]),
+    (Button::CreepCamps, [0.154_375, 0.056_875, 0.1775, 0.0775]),
+    (Button::Formation, [0.155, 0.029_375, 0.178_125, 0.05]),
+];
+
+/// Seconds a signal shows on the minimap.
+const SIGNAL_SECONDS: f32 = 3.0;
+/// The ally colours: enemies red, allies teal (`TeamColor00` and `02`).
+const ENEMY_COLOUR: u8 = 0;
+const ALLY_COLOUR: u8 = 2;
+
+/// What the buttons set (SPEC-0028, "Minimap"): none of it is an action
+/// of the game.
+///
+/// PROVISIONAL: the textures of the buttons in each state are not
+/// specified (here those of `UI\Widgets\Console\Human`); ally colours has
+/// three modes, the second and third alike on the minimap (the third was
+/// not studied); creep camps hides the camp marks when off, which the
+/// spec could not see with the creeps visible; formation is only shown,
+/// as orders keep their formation; a signal is a blinking square at its
+/// point for 3 seconds, its look and sound not specified.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Toggles {
+    pub terrain: bool,
+    pub ally_colours: u8,
+    pub creep_camps: bool,
+    pub formation: bool,
+    /// The signal button waits for its point.
+    pub signal: bool,
+    /// Signals given, with the game time they were given at.
+    signals: Vec<([f32; 2], f32)>,
+}
+
+impl Default for Toggles {
+    fn default() -> Toggles {
+        Toggles {
+            terrain: true,
+            ally_colours: 0,
+            creep_camps: true,
+            formation: true,
+            signal: false,
+            signals: Vec::new(),
+        }
+    }
+}
+
+impl Toggles {
+    /// A click on `button`.
+    pub fn press(&mut self, button: Button) {
+        match button {
+            Button::Signal => self.signal = !self.signal,
+            Button::Terrain => self.terrain = !self.terrain,
+            Button::AllyColours => self.ally_colours = (self.ally_colours + 1) % 3,
+            Button::CreepCamps => self.creep_camps = !self.creep_camps,
+            Button::Formation => self.formation = !self.formation,
+        }
+    }
+
+    /// A signal at world point `at`, game time `now`; the button no longer
+    /// waits.
+    pub fn signal_at(&mut self, at: [f32; 2], now: f32) {
+        self.signal = false;
+        self.signals.retain(|&(_, t)| now - t < SIGNAL_SECONDS);
+        self.signals.push((at, now));
+    }
+
+    /// The texture of `button` in its state.
+    fn texture(&self, button: Button) -> String {
+        let state = match button {
+            Button::Signal if self.signal => "minimap-ping-active-down",
+            Button::Signal => "minimap-ping-active",
+            Button::Terrain if self.terrain => "minimap-terrain-active",
+            Button::Terrain => "minimap-terrain-inactive",
+            Button::AllyColours => match self.ally_colours {
+                0 => "minimap-ally-off",
+                1 => "minimap-ally-active",
+                _ => "minimap-ally-inactive",
+            },
+            Button::CreepCamps if self.creep_camps => "minimap-creep-active",
+            Button::CreepCamps => "minimap-creep-inactive",
+            Button::Formation if self.formation => "formation-on",
+            Button::Formation => "formation-off",
+        };
+        format!("UI\\Widgets\\Console\\Human\\human-{state}.blp")
+    }
+}
+
+/// The minimap button at interface point `p`.
+pub fn button_at(p: [f32; 2]) -> Option<Button> {
+    BUTTONS
+        .iter()
+        .find(|(_, r)| p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3])
+        .map(|&(b, _)| b)
 }
 
 /// The minimap of a map.
@@ -79,6 +191,8 @@ pub struct Minimap {
     terrain: [f32; 3],
     /// What is left of the picture where the player never looked.
     masked: f32,
+    /// What its buttons set.
+    pub toggles: Toggles,
 }
 
 impl Minimap {
@@ -98,6 +212,7 @@ impl Minimap {
             ],
             terrain: [b.min_x, b.min_y, ((b.max_x - b.min_x) / 128.0).round()],
             masked: if partly { MASKED_PARTLY } else { 0.0 },
+            toggles: Toggles::default(),
         }
     }
 
@@ -200,7 +315,9 @@ impl Minimap {
         marks: &[([f32; 2], Mark)],
         view: Option<[[f32; 2]; 4]>,
         vision: Option<&[u8]>,
+        now: f32,
     ) -> Vec<Quad> {
+        use ow3_sim::game::Relation;
         let square = |at: [f32; 2], size: [f32; 2], texture: &str, colour: [f32; 4]| Quad {
             rect: [
                 at[0] - size[0] / 2.0,
@@ -213,11 +330,21 @@ impl Minimap {
             colour,
             blend: Blend::Alpha,
         };
+        let toggles = &self.toggles;
+        // Without terrain, black instead of the picture.
         let mut out = vec![Quad {
             rect: PICTURE,
             uv: [0.0, 1.0, 0.0, 1.0],
-            texture: "war3mapMap.blp".to_owned(),
-            colour: [1.0; 4],
+            texture: if toggles.terrain {
+                "war3mapMap.blp".to_owned()
+            } else {
+                String::new()
+            },
+            colour: if toggles.terrain {
+                [1.0; 4]
+            } else {
+                [0.0, 0.0, 0.0, 1.0]
+            },
             blend: Blend::Alpha,
         }];
         if let Some(cells) = vision {
@@ -229,18 +356,50 @@ impl Minimap {
             };
             let size = |s: f32| [s * PIXEL, s * PIXEL];
             let side = |building: bool| size(if building { BUILDING } else { UNIT });
+            let team =
+                |player: u8| format!("ReplaceableTextures\\TeamColor\\TeamColor{player:02}.blp");
             out.push(match mark {
                 Mark::Own { building } => square(p, side(building), "", [1.0; 4]),
-                Mark::Player { player, building } => square(
-                    p,
-                    side(building),
-                    &format!("ReplaceableTextures\\TeamColor\\TeamColor{player:02}.blp"),
-                    [1.0; 4],
-                ),
+                Mark::Player {
+                    player,
+                    building,
+                    relation,
+                } => {
+                    let colour = match relation {
+                        _ if toggles.ally_colours == 0 => player,
+                        // The neutral players keep their colours.
+                        _ if i32::from(player) >= ow3_sim::game::CREEPS => player,
+                        Some(Relation::Friend) => ALLY_COLOUR,
+                        _ => ENEMY_COLOUR,
+                    };
+                    square(p, side(building), &team(colour), [1.0; 4])
+                }
                 Mark::Mine => square(p, size(ICON), GOLD, [1.0; 4]),
                 Mark::NeutralBuilding => square(p, size(ICON), NEUTRAL_BUILDING, [1.0; 4]),
+                Mark::Camp if !toggles.creep_camps => continue,
                 // The icon draws its circle over the middle half.
                 Mark::Camp => square(p, size(2.0 * ICON), CREEP_CAMP, CAMP_GREEN),
+            });
+        }
+        // Signals blink at their points.
+        for &(at, t) in &toggles.signals {
+            let age = now - t;
+            if (0.0..SIGNAL_SECONDS).contains(&age)
+                && (age * 4.0) as i32 % 2 == 0
+                && let Some(p) = self.to_interface(at)
+            {
+                let s = ICON * PIXEL;
+                out.push(square(p, [s, s], "", [1.0, 1.0, 0.0, 1.0]));
+            }
+        }
+        // The buttons.
+        for &(button, rect) in &BUTTONS {
+            out.push(Quad {
+                rect,
+                uv: [0.0, 1.0, 0.0, 1.0],
+                texture: toggles.texture(button),
+                colour: [1.0; 4],
+                blend: Blend::Alpha,
             });
         }
         if let Some(c) = view {
@@ -320,6 +479,7 @@ mod tests {
             area: [0.0, 0.0, 512.0, 256.0],
             terrain: [0.0, 0.0, 4.0],
             masked,
+            toggles: Toggles::default(),
         }
     }
 
@@ -331,15 +491,16 @@ mod tests {
         // Four cells across, two rows: masked, fogged, masked, masked;
         // then visible, masked, visible, visible.
         let cells = [0, 1, 0, 0, 2, 0, 2, 2];
-        let quads = minimap(MASKED_PARTLY).quads(&[], None, Some(&cells));
-        let fog: Vec<&Quad> = quads.iter().skip(1).collect();
+        let quads = minimap(MASKED_PARTLY).quads(&[], None, Some(&cells), 0.0);
+        // The fog comes after the picture; the five buttons last.
+        let fog: Vec<&Quad> = quads.iter().skip(1).take(quads.len() - 6).collect();
         assert_eq!(fog.len(), 4);
         let w = (PICTURE[2] - PICTURE[0]) / 4.0;
         assert!((fog[2].rect[0] - (PICTURE[0] + 2.0 * w)).abs() < 1e-6);
         assert!((fog[2].rect[2] - PICTURE[2]).abs() < 1e-6);
         assert!((fog[0].colour[3] - 0.60).abs() < 1e-6);
         assert!((fog[1].colour[3] - 0.26).abs() < 1e-6);
-        let black = minimap(0.0).quads(&[], None, Some(&cells));
+        let black = minimap(0.0).quads(&[], None, Some(&cells), 0.0);
         assert_eq!(black[1].colour, [0.0, 0.0, 0.0, 1.0]);
     }
 
@@ -352,6 +513,7 @@ mod tests {
             area: [-11520.0, -11776.0, 11520.0, 11264.0],
             terrain: [-12288.0, -12288.0, 192.0],
             masked: 0.0,
+            toggles: Toggles::default(),
         };
         for (px, py) in [(30.0f32, 600.0f32), (180.0, 740.0), (104.41, 669.2)] {
             let p = [px * PIXEL, (768.0 - py) * PIXEL];
@@ -359,6 +521,57 @@ mod tests {
             assert!((x - 130.16 * (px - 104.41)).abs() < 20.0, "{px}: {x}");
             assert!((y + 136.35 * (py - 669.2)).abs() < 20.0, "{py}: {y}");
         }
+    }
+
+    /// The buttons (SPEC-0028): terrain turns the picture black, ally
+    /// colours paint enemies red and allies teal, creep camps hides the
+    /// camps; each button sits in its rectangle.
+    #[test]
+    fn the_buttons() {
+        use ow3_sim::game::Relation;
+        for &(button, r) in &BUTTONS {
+            let centre = [(r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0];
+            assert_eq!(button_at(centre), Some(button));
+        }
+        assert_eq!(button_at([0.5, 0.5]), None);
+        let mut m = minimap(0.0);
+        let enemy = Mark::Player {
+            player: 1,
+            building: false,
+            relation: Some(Relation::Enemy),
+        };
+        let ally = Mark::Player {
+            player: 3,
+            building: false,
+            relation: Some(Relation::Friend),
+        };
+        let marks = [
+            ([100.0, 100.0], enemy),
+            ([200.0, 100.0], ally),
+            ([300.0, 100.0], Mark::Camp),
+        ];
+        let textures = |m: &Minimap| -> Vec<String> {
+            m.quads(&marks, None, None, 0.0)
+                .into_iter()
+                .take(4)
+                .map(|q| q.texture)
+                .collect()
+        };
+        let plain = textures(&m);
+        assert_eq!(plain[0], "war3mapMap.blp");
+        assert!(plain[1].ends_with("TeamColor01.blp") && plain[2].ends_with("TeamColor03.blp"));
+        assert_eq!(plain[3], CREEP_CAMP);
+        m.toggles.press(Button::Terrain);
+        m.toggles.press(Button::AllyColours);
+        m.toggles.press(Button::CreepCamps);
+        let pressed = textures(&m);
+        assert_eq!(pressed[0], "");
+        assert!(pressed[1].ends_with("TeamColor00.blp") && pressed[2].ends_with("TeamColor02.blp"));
+        assert_ne!(pressed[3], CREEP_CAMP);
+        // Three modes of ally colours, then the first again.
+        m.toggles.press(Button::AllyColours);
+        m.toggles.press(Button::AllyColours);
+        assert_eq!(m.toggles.ally_colours, 0);
     }
 
     #[test]
@@ -373,6 +586,7 @@ mod tests {
             area: [-1000.0, -2000.0, 1000.0, 2000.0],
             terrain: [-1024.0, -2048.0, 16.0],
             masked: 0.0,
+            toggles: Toggles::default(),
         };
         let centre = [
             (PICTURE[0] + PICTURE[2]) / 2.0,

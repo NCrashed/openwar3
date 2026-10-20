@@ -696,6 +696,20 @@ creep chasing far from home makes a circle of its own. Needed:
   `MinimapIconNeutralBuilding.blp`), and whether they show under fog
   and where never seen.
 
+The minimap buttons. The viewer draws them with the textures
+`UI\Widgets\Console\Human\human-minimap-ping-active`, `-terrain-active`
+or `-inactive`, `-ally-off`, `-active` or `-inactive`, `-creep-active`
+or `-inactive` and `human-formation-on` or `-off`. Needed:
+
+- the textures of each button in each state, and for the other races;
+- the third mode of ally colours, and which texture each mode shows;
+- what creep camps changes when it is off (the camp circles under
+  fog?);
+- what formation movement changes: the orders it affects, and how the
+  game knows it without a replay action (a flag of the order actions?);
+- how a signal looks and sounds on the minimap and in the world, how
+  long it lasts, and whether allies see it.
+
 ## Fog of war in the world (the viewer, SPEC-0032)
 
 The viewer changes a cell's look at once at the fog update in which its

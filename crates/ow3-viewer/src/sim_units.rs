@@ -392,7 +392,7 @@ impl Sim {
                 Some(([u.x, u.y], building, mark))
             })
             .collect();
-        self.minimap.quads(&marks, view)
+        self.minimap.quads(&marks, view, self.vision().as_deref())
     }
 
     /// Unit `handle` as the console shows it.

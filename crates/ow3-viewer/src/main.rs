@@ -505,6 +505,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 let all = self.selection.units().to_vec();
+                let point = self.ui_point();
                 if let (Some(gpu), Some(sim)) = (&mut self.gpu, &mut self.sim)
                     && !all.is_empty()
                 {
@@ -512,11 +513,18 @@ impl ApplicationHandler for App {
                     let own = sim.selectable(&all);
                     let size = (gpu.config.width, gpu.config.height);
                     let (x, y) = self.cursor;
-                    let on = gpu.renderer.pick(x, y, &self.camera, size);
                     let terrain = &self.scene.terrain;
-                    let at = self.camera.ground_point(x, y, size, |x, y| {
-                        ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
-                    });
+                    let ground = |x, y| ow3_viewer::terrain_mesh::ground_z(terrain, x, y);
+                    // On the minimap: `smart` to its point, no target
+                    // (SPEC-0028, "Minimap").
+                    let minimap = point.and_then(|p| sim.minimap.to_world(p));
+                    let (on, at) = match minimap {
+                        Some([wx, wy]) => (None, Some([wx, wy, ground(wx, wy)])),
+                        None => (
+                            gpu.renderer.pick(x, y, &self.camera, size),
+                            self.camera.ground_point(x, y, size, ground),
+                        ),
+                    };
                     if let Some(line) = sim.command_group(&own, on, at, self.ctrl, self.shift) {
                         println!("{line}");
                     }

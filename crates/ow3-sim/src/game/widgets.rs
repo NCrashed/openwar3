@@ -305,6 +305,8 @@ pub(super) fn create_unit(
     if food != 0 {
         *state.setup.player_states.entry((owner, key)).or_default() += food;
     }
+    // It sees at once (SPEC-0032).
+    super::fog::born(state, h);
     Some(h)
 }
 

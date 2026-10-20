@@ -2,13 +2,13 @@
 //!
 //! Every player has a grid of fog cells, the 128 x 128 tiles of the
 //! terrain, each masked (never seen), fogged (seen before) or visible.
-//! Every 80 ticks the visible cells become fogged and each unit reveals
-//! the cells around the cell it stands in: a flying unit the whole circle
-//! of its radius, a ground unit the cells of its mask that higher ground
-//! and trees do not hide.
+//! Every 80 ticks (ticks 81, 161, ...) the visible cells become fogged and
+//! each unit reveals the cells around the cell it stands in: a flying unit
+//! the whole circle of its radius, a ground unit the cells of its mask
+//! that higher ground and trees do not hide. A unit made reveals at once.
 //!
-//! PROVISIONAL: the updates come at the ticks 41 modulo 80, the residue of
-//! the ticks seen in the tests (SPEC-0032 open question 2); the clock of
+//! PROVISIONAL: a unit made between updates sees past the trees and
+//! cliffs of the last update; the clock of
 //! day and night is that of the `night` regeneration type; dead and hidden
 //! units reveal nothing; a destructable blocks sight while it is alive;
 //! each player sees with its own units only. `FogEnable` and
@@ -32,7 +32,7 @@ pub const VISIBLE: u8 = 2;
 /// Ticks between two updates of the fog (0.4 s), and the residue of the
 /// ticks they come at.
 const UPDATE_TICKS: u64 = 80;
-const PHASE: u64 = 41;
+const PHASE: u64 = 1;
 /// The largest radius in cells.
 const MOST: i32 = 14;
 /// 1 / 128 and 0.5 as bit patterns of reals.
@@ -49,6 +49,8 @@ pub struct Fog {
     /// The masks of ground units and the circles of flying ones, by radius.
     masks: Vec<Vec<(i32, i32)>>,
     circles: Vec<Vec<(i32, i32)>>,
+    /// The height of each cell at the last update.
+    height: Vec<i32>,
     /// `FogEnable` and `FogMaskEnable`.
     pub enabled: bool,
     pub mask_enabled: bool,
@@ -61,6 +63,7 @@ impl Default for Fog {
             grids: BTreeMap::new(),
             masks: (0..=MOST).map(mask).collect(),
             circles: (0..=MOST).map(circle).collect(),
+            height: Vec::new(),
             enabled: true,
             mask_enabled: true,
         }
@@ -192,17 +195,10 @@ pub fn radius(sight: u32) -> i32 {
     r2i(floor(add(mul(sight, PER_CELL), HALF))).clamp(0, MOST)
 }
 
-/// The fog update of this tick, if there is one.
-pub(super) fn tick(state: &mut State) {
-    if state.ticks % UPDATE_TICKS != PHASE {
-        return;
-    }
+/// The height of each cell: 128 per cliff level, and the occlusion of a
+/// destructable standing in it.
+fn heights(state: &State) -> Vec<i32> {
     let (w, h) = state.fog.size;
-    if w == 0 || h == 0 {
-        return;
-    }
-    // The height of each cell: 128 per cliff level, and the occlusion of
-    // a destructable standing in it.
     let mut height = vec![0i32; (w * h) as usize];
     for j in 0..h {
         for i in 0..w {
@@ -225,7 +221,20 @@ pub(super) fn tick(state: &mut State) {
     for (h, o) in height.iter_mut().zip(&occlusion) {
         *h += o;
     }
+    height
+}
 
+/// The fog update of this tick, if there is one: in the ticks `k` with
+/// `k - 1` a multiple of 80.
+pub(super) fn tick(state: &mut State) {
+    if state.ticks % UPDATE_TICKS != PHASE {
+        return;
+    }
+    let (w, h) = state.fog.size;
+    if w == 0 || h == 0 {
+        return;
+    }
+    state.fog.height = heights(state);
     for grid in state.fog.grids.values_mut() {
         for c in grid.iter_mut() {
             if *c == VISIBLE {
@@ -233,60 +242,84 @@ pub(super) fn tick(state: &mut State) {
             }
         }
     }
-    let night = state.night;
+    for i in 0..state.units.len() {
+        let u = state.units[i];
+        reveal(state, u);
+    }
+}
+
+/// A unit made reveals at once (SPEC-0032, "Updates").
+pub(super) fn born(state: &mut State, unit: u32) {
+    let (w, h) = state.fog.size;
+    if w == 0 || h == 0 {
+        return;
+    }
+    if state.fog.height.is_empty() {
+        state.fog.height = heights(state);
+    }
+    reveal(state, unit);
+}
+
+/// The cells `unit` reveals to its owner, with the cell heights of the
+/// last update.
+fn reveal(state: &mut State, unit: u32) {
+    let (w, h) = state.fog.size;
+    let Some(Object::Unit(unit)) = state.objects.get(&unit) else {
+        return;
+    };
+    if !unit.alive || unit.hidden {
+        return;
+    }
+    let Some(data) = state.data.units.get(&unit.type_id) else {
+        return;
+    };
+    let Some((ci, cj)) = state.heights.cell_of(unit.x, unit.y) else {
+        return;
+    };
+    let r = radius(if state.night {
+        data.night_sight
+    } else {
+        data.sight
+    });
     let fog = &mut state.fog;
-    for u in &state.units {
-        let Some(Object::Unit(unit)) = state.objects.get(u) else {
-            continue;
-        };
-        if !unit.alive || unit.hidden {
-            continue;
-        }
-        let Some(data) = state.data.units.get(&unit.type_id) else {
-            continue;
-        };
-        let Some((ci, cj)) = state.heights.cell_of(unit.x, unit.y) else {
-            continue;
-        };
-        let r = radius(if night { data.night_sight } else { data.sight });
-        let grid = fog
-            .grids
-            .entry(unit.owner)
-            .or_insert_with(|| vec![MASKED; (w * h) as usize]);
-        let at = |dx: i32, dy: i32| {
-            let (i, j) = (ci as i32 + dx, cj as i32 + dy);
-            (i >= 0 && j >= 0 && i < w as i32 && j < h as i32)
-                .then(|| (j as u32 * w + i as u32) as usize)
-        };
-        if data.flying {
-            for &(dx, dy) in &fog.circles[r as usize] {
-                if let Some(c) = at(dx, dy) {
-                    grid[c] = VISIBLE;
-                }
+    let height = &fog.height;
+    let grid = fog
+        .grids
+        .entry(unit.owner)
+        .or_insert_with(|| vec![MASKED; (w * h) as usize]);
+    let at = |dx: i32, dy: i32| {
+        let (i, j) = (ci as i32 + dx, cj as i32 + dy);
+        (i >= 0 && j >= 0 && i < w as i32 && j < h as i32)
+            .then(|| (j as u32 * w + i as u32) as usize)
+    };
+    if data.flying {
+        for &(dx, dy) in &fog.circles[r as usize] {
+            if let Some(c) = at(dx, dy) {
+                grid[c] = VISIBLE;
             }
-            continue;
         }
-        let eye = height[(cj * w + ci) as usize];
-        let side = 2 * r + 3;
-        let index = |(dx, dy): (i32, i32)| ((dy + r + 1) * side + dx + r + 1) as usize;
-        let mut hidden = vec![false; (side * side) as usize];
-        for &(dx, dy) in &fog.masks[r as usize] {
-            let Some(c) = at(dx, dy) else {
-                // Off the map: skipped, and so are the cells behind it.
+        return;
+    }
+    let eye = height[(cj * w + ci) as usize];
+    let side = 2 * r + 3;
+    let index = |(dx, dy): (i32, i32)| ((dy + r + 1) * side + dx + r + 1) as usize;
+    let mut hidden = vec![false; (side * side) as usize];
+    for &(dx, dy) in &fog.masks[r as usize] {
+        let Some(c) = at(dx, dy) else {
+            // Off the map: skipped, and so are the cells behind it.
+            hidden[index((dx, dy))] = true;
+            continue;
+        };
+        if ring((dx, dy)) > 1 {
+            let blocked = parents((dx, dy))
+                .into_iter()
+                .any(|p| hidden[index(p)] || at(p.0, p.1).is_some_and(|pc| height[pc] > eye));
+            if blocked {
                 hidden[index((dx, dy))] = true;
                 continue;
-            };
-            if ring((dx, dy)) > 1 {
-                let blocked = parents((dx, dy))
-                    .into_iter()
-                    .any(|p| hidden[index(p)] || at(p.0, p.1).is_some_and(|pc| height[pc] > eye));
-                if blocked {
-                    hidden[index((dx, dy))] = true;
-                    continue;
-                }
             }
-            grid[c] = VISIBLE;
         }
+        grid[c] = VISIBLE;
     }
 }
 
@@ -546,10 +579,11 @@ mod tests {
     fn a_peasant_on_flat_ground() {
         let mut state = world(|_, _| 2);
         unit(&mut state, PEASANT, 16, 16);
-        // Nothing before the first update.
-        assert!(cells(&state, VISIBLE, (16, 16)).is_empty());
+        // It sees as soon as it is made, and the same at the update.
+        let made = cells(&state, VISIBLE, (16, 16));
         update(&mut state);
         let seen = cells(&state, VISIBLE, (16, 16));
+        assert_eq!(made, seen);
         assert_eq!(seen, mask(6).into_iter().collect());
         assert_eq!(seen.len(), 121);
     }

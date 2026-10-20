@@ -369,29 +369,46 @@ impl Sim {
     pub fn minimap_quads(&self, view: Option<[[f32; 2]; 4]>) -> Vec<crate::ui::Quad> {
         use crate::minimap::Mark;
         let ngol = i32::from_be_bytes(*b"ngol");
-        let marks: Vec<([f32; 2], bool, Mark)> = self
+        // Neutral passive.
+        const NEUTRAL: i32 = 15;
+        let units: Vec<_> = self
             .game
             .units()
             .into_iter()
-            .filter(|u| u.alive && !u.hidden && self.shown(u))
-            .filter_map(|u| {
-                let mark = if u.type_id == ngol {
-                    Mark::Mine
-                } else if u.owner == LOCAL_PLAYER {
-                    Mark::Own
-                } else if u.owner == ow3_sim::game::CREEPS {
-                    return None;
-                } else {
-                    match self.game.relation(LOCAL_PLAYER, u.handle)? {
-                        Relation::Friend => Mark::Ally,
-                        Relation::Enemy => Mark::Enemy,
-                        Relation::Neutral => return None,
-                    }
-                };
-                let building = self.game.unit_stats(u.handle).is_some_and(|s| s.building);
-                Some(([u.x, u.y], building, mark))
-            })
+            .filter(|u| u.alive && !u.hidden)
             .collect();
+        let mut marks: Vec<([f32; 2], Mark)> = Vec::new();
+        let mut unseen_creeps = Vec::new();
+        for u in &units {
+            let building = self.game.unit_stats(u.handle).is_some_and(|s| s.building);
+            // PROVISIONAL: gold mines and neutral buildings show under the
+            // fog too; the spec says nothing of them there.
+            let landmark = u.type_id == ngol || (u.owner == NEUTRAL && building);
+            if !landmark && !self.shown(u) {
+                if u.owner == ow3_sim::game::CREEPS {
+                    unseen_creeps.push([u.x, u.y]);
+                }
+                continue;
+            }
+            let mark = if u.type_id == ngol {
+                Mark::Mine
+            } else if u.owner == LOCAL_PLAYER {
+                Mark::Own { building }
+            } else if u.owner == NEUTRAL && building {
+                Mark::NeutralBuilding
+            } else {
+                let Ok(player) = u8::try_from(u.owner) else {
+                    continue;
+                };
+                Mark::Player { player, building }
+            };
+            marks.push(([u.x, u.y], mark));
+        }
+        marks.extend(
+            crate::minimap::camps(&unseen_creeps)
+                .into_iter()
+                .map(|at| (at, Mark::Camp)),
+        );
         self.minimap.quads(&marks, view, self.vision().as_deref())
     }
 
@@ -828,17 +845,20 @@ impl Sim {
     }
 
     /// Whether the local player sees unit `u`: its own and its allies'
-    /// always, others in visible cells, buildings also in fogged ones.
+    /// (of the players 0 to 11) always, others in visible cells, buildings
+    /// also in fogged ones.
     ///
     /// PROVISIONAL: allied vision and what the fog shows of buildings are
     /// open (SPEC-0032 open question 2); a building in the fog is shown as
     /// it is now, not as it was last seen.
     fn shown(&self, u: &ow3_sim::game::UnitView) -> bool {
         use ow3_sim::game::fog;
+        let ally = u.owner < ow3_sim::game::CREEPS
+            && self.game.relation(LOCAL_PLAYER, u.handle) == Some(Relation::Friend);
         if u.owner == LOCAL_PLAYER
+            || ally
             || !self.game.fog_enabled().0
             || !self.game.fog_started(LOCAL_PLAYER)
-            || self.game.relation(LOCAL_PLAYER, u.handle) == Some(Relation::Friend)
         {
             return true;
         }

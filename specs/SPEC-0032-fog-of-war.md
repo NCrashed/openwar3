@@ -145,6 +145,71 @@ peasant west of a block raised by one cliff level (test RWE) saw the
 block's edge cells and nothing behind them (111 cells); one on top of the
 block (test RWF) saw all 121 cells of its mask, the low ground included.
 
+### Fog modifiers and fog states from scripts
+
+`CreateFogModifierRadius` (started with `FogModifierStart`) and
+`SetFogStateRadius` set the cells around a point without masks,
+heights or parents. With `(i, j)` the fog cell that contains the point
+and `r = floor(radius / 128)` (no rounding: 192 gives 1, 1100 gives 8):
+
+- `r = 0`: no cell;
+- `r = 1`: the 2 x 2 cells `i - 1 .. i`, `j - 1 .. j`;
+- `r = 2`: those 2 x 2 cells and the four cells `(i - 2, j)`, `(i + 2, j)`,
+  `(i, j - 2)`, `(i, j + 2)`;
+- `r >= 3`: the rows `j + dy` for `dy = -r .. r - 1` (the top row of the
+  circle, `dy = r`, is left out), each from `i - S(|dy|)` to
+  `i + S(|dy|)` with `S` of the circle above.
+
+So a modifier is not centred on its point: for a radius of 800 the
+cells are 6 rows below the point's cell and 5 above it. Measured with
+30 modifiers of radius 64 to 1536 at cell centres (test RVV): every one
+gave exactly these cells. A modifier that is running keeps its cells
+visible at every update; `SetFogStateRadius` and `SetFogStateRect` set
+the state once, and at the next update cells that no unit or modifier
+keeps visible become fogged.
+
+### Allied vision
+
+A player sees with the units of another player only when that player
+gives him `ALLIANCE_SHARED_VISION`: with it, a peasant of player 1 made
+121 cells visible for player 0, its full mask; a peasant of an ally
+(both players `ALLIANCE_PASSIVE`) without shared vision made no cell
+visible for player 0, and `IsUnitVisible` of that peasant for player 0
+was false, as for an enemy (test RWQ).
+
+### Buildings under fog
+
+Another player's building that the player has seen stays drawn, as it
+was last seen, while its cells are fogged (test RWR, an enemy town hall
+and farm seen by a footman that then walked away):
+
+- a farm killed while under fog was still drawn, whole;
+- the town hall, brought to 300 life under fog, was drawn without the
+  fire of a damaged building;
+- a farm created under fog was not drawn;
+- when the footman came back (the cells visible again), the killed farm
+  was gone (its rubble shown), the town hall burned and the new farm
+  appeared.
+
+The minimap kept the mark of the fogged building as well. Units under
+fog were not drawn on the minimap (test RWM); in the world not tested.
+
+### The world under fog
+
+In the 3D view the terrain and the models under fog are darker and
+slightly blue, and the masked parts darker still or black. Per colour
+channel, the pixel values of the same view with the whole map in each
+state (IceCrown at 12:00, tests RWJ, RWK, RWN) fit:
+
+| State | Red | Green | Blue |
+|---|---|---|---|
+| fogged | 0.340 v + 9.3 | 0.337 v + 9.2 | 0.338 v + 18.9 |
+| masked, map flag `0x0010` set | 0.098 v | 0.097 v | 0.096 v |
+| masked, flag clear | 0 | 0 | 0 |
+
+with `v` the value of the same pixel when visible (0 to 255). The edges
+between states are smooth (test RVY).
+
 ### The minimap
 
 The minimap shows the map's picture `war3mapMap.blp` (256 x 256), not a
@@ -179,23 +244,23 @@ until the next update: the cells no unit sees become fogged again.
 - Near the map's edge, mask cells outside the map are skipped, and so
   are the cells behind them (their parents chain through the skipped
   cell); read from the code, not measured.
-- Fog modifiers created by scripts (`CreateFogModifierRadius`) do not use
-  the masks above (open question 1).
 
 ## Open questions
 
-1. The cells revealed by `CreateFogModifierRadius` (irregular in the
-   tests, with holes for a radius of 256) and by the other fog natives.
-2. Allied vision; units inside buildings or transports; dead units.
+1. The cells of `CreateFogModifierRect` and `SetFogStateRect` for a
+   rectangle smaller than the map; the fogged and masked kinds of
+   modifiers.
+2. Units inside buildings or transports; dead units; what of a building
+   under fog is kept (its upgrades, the construction progress).
 3. Doodads that block sight, destructables other than trees, and what
    a unit on a destructable bridge sees.
-4. How the fog is drawn in the world (a smooth edge, test RVY) and on
-   the minimap between cells of different states (soft edges); how often
-   the minimap's fog is redrawn.
+4. The exact blending of the fog edges in the world and on the minimap
+   (soft edges), whether the fog colour depends on the time of day or the
+   map's settings; how often the minimap's fog is redrawn.
 
 ## Sources
 
-- Test maps RVQ to RWN on 1.27b under Wine, 2026-10-20: units of 20
+- Test maps RVQ to RWR on 1.27b under Wine, 2026-10-20: units of 20
   types alone in separate parts of a flat map and of IceCrown, by day and
   at night, trees, a block raised by one cliff level; the state of every
   fog cell for player 0 read with `IsVisibleToPlayer`,

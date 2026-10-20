@@ -591,29 +591,27 @@ and the updates following `U` (SPEC-0018), the events of `c-RXD-1` are
 the game's one for one up to tick 2161, and the positions of the
 peasants up to 3230 and of the creeps up to 2156 (creeps 7 and 9).
 
-**1. An attacker waiting for its cooldown (`c-RXD-1`, creep 7, ticks
-2075 to 2155).** With the rule of 70 ticks the new goals come in the
-game's ticks (the chase tests of SPEC-0019 pass too). Creep 7 ends its
-backswing at 2075 with its target in range; here it keeps its swing
-state and faces 193.5 degrees until its new goal of 2149, then turns
-about 11 degrees an update and has not moved by 2161. In the game it
-walks from 2156 already facing 304.1 degrees, so it turned towards its
-target while it waited. Taking a goal at the end of every backswing
-(also with the target in range, as "After the swing" reads) and
-standing in range turned the facing but moved other creeps away from
-the game, so it is not in. Needed: what an attacker does between the
-end of its backswing and its next swing or goal while its target is in
-range: whether it turns to the target (at its updates, at which rate),
-and whether it has a goal and path meanwhile.
+**1. The swing of an attacker waiting for its cooldown.** Taking a goal
+after every backswing, also with the target in range, is in a patch
+kept aside. With it alone creep 7 still stands at 2155: in range of its
+goal point the simulation starts the swing at once (its damage then set
+to the end of the cooldown), so the creep has no path and stands until
+2225. Holding the start of the swing until `tick + dmgpt >=` the end of
+the cooldown makes creep 7 walk from 2156 as in the game (at
+-199.205 against the game's -199.323), but it moves other tests away:
+the second weapon of SPEC-0016 (mortar team against a farm every 3.5 s,
+gargoyle against a footman and a gryphon rider), the checksum turns of
+the test replays, and `c-RXD-1` before 2161. Needed: when the swing of
+a unit whose target is in range starts relative to its cooldown (at
+once with the damage held to the cooldown's end, or only once the
+cooldown allows `dmgpt` before it), and whether that differs between
+the first swing on a target and the next ones.
 
-**2. A worker at the mine (`c-RXI-1`, ticks 859 and 865).** The walks
-to the mine now follow the game (the high-level search with the mine
-free, the last local search ending touching it) up to tick 859. There
-peasant 5 at (-1055.87, 48.45) looks ahead once more in the game, and
-peasants 4 and 5 are blocked at 865; here peasant 5 has reached the
-mine at 859. Needed: when a worker walking to a mine counts as having
-reached it (SPEC-0029, "Reaching a building") relative to its path's
-end, and what blocks workers there while another one is inside.
+**2. Next point in `c-RXI-1`.** With the arrival rule of SPEC-0029
+(stand at the path's end, go in at the next update) the path events of
+`c-RXI-1` follow the game up to event 651 (tick about 1070, the second
+worker going in when the first leaves); the positions of the workers
+part between ticks 1076 and 1694. That will be looked at next.
 
 **3. Checksums.** `c-RXI-1` and `c-RXD-1` stay among the replays whose
 checksum turns are not followed until the walks above match.

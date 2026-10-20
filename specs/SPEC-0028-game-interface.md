@@ -95,7 +95,36 @@ top one from 0.53575 to 0.57375, each further one 0.051181 lower (tops
 12 buttons in 6 columns and 2 rows, each 0.03125 wide and 0.046 high:
 left edges `0.308906 + 0.030990 c` (0.30891, 0.33990, 0.37089, 0.40187,
 0.43286, 0.46385), bottom edges 0.055556 (upper row) and 0.004781
-(lower row).
+(lower row). The cells overlap by 0.00026 (the step is smaller than the
+width); the visible gaps come from the parts inside a cell, which are
+inset. The selected units take the cells in order, the upper row from
+the left first, then the lower row: the subgroups in the order of the
+subgroups (below, "Subgroups"), the units of a subgroup one after the
+other (in the tests in the order of creation). Cells without a unit
+show nothing. The cells do not move with the number of units: three
+footmen, two riflemen and two peasants took the six upper cells and the
+first lower one.
+
+Inside a cell with left edge `l` and bottom edge `b` (read from memory,
+test RVO and RVP), the parts depend on whether the unit belongs to the
+**active subgroup**:
+
+| Part | Active subgroup: left, bottom, width x height | Other units |
+|---|---|---|
+| icon (the unit's `Art`) | `l + 0.00162`, `b + 0.01513`, 0.028 x 0.028 | `l + 0.00468`, `b + 0.01819`, 0.02188 x 0.02188 |
+| life bar (fill area) | `l + 0.00162`, `b + 0.00888`, 0.028 x 0.00375 | `l + 0.00468`, `b + 0.01319`, 0.02188 x 0.0025 |
+| mana bar (fill area) | `l + 0.00468`, `b + 0.00388`, 0.02188 x 0.0025 | `l + 0.00468`, `b + 0.00819`, 0.02188 x 0.0025 |
+| background | `l - 0.00313`, `b + 0.00219`, 0.0375 x 0.04663 | `l - 0.00313`, `b - 0.00312`, 0.0375 x 0.05225 |
+
+- The background of the active subgroup's cells is a yellow glow
+  around the icon and the bars; around the other cells nothing was
+  seen.
+- The bars of the active subgroup have a dark border: for the life bar
+  `l + 0.00062`, `b + 0.00788`, 0.03 x 0.00575 (0.001 around the fill),
+  for the mana bar `l + 0.00368`, `b + 0.00288`, 0.02388 x 0.0045. The
+  other cells' bars showed no border.
+- The life bar is green (footmen, riflemen, knights, peasants at full
+  life); the mana bar is not shown for units without mana.
 
 **Training and construction progress bar** (information panel of a
 building that trains or is built): (0.370625, 0.065938, 0.475625,
@@ -261,6 +290,20 @@ Inputs and what they write (all measured with mouse clicks and keys):
   than the clicked one, `0x16` add with the added ones. Ctrl-click
   wrote the same set as a double click.
 - **Tab**: `0x1A` and `0x19` with the next subgroup (below).
+- **Clicks on the group cells of the information panel** (test RVO, a
+  click at the middle of a cell):
+  - a click on a unit of the active subgroup selects that unit alone:
+    `0x16` remove with the others, then `0x1A`, `0x19` with its type
+    and id;
+  - a click on a unit of another subgroup makes that subgroup active
+    and changes nothing else: `0x1A`, `0x19` with its type and the
+    subgroup's first unit (as Tab);
+  - **Shift-click** on a cell removes that unit: `0x16` remove with it,
+    nothing else;
+  - **Ctrl-click** on a cell keeps only the selected units of that
+    unit's type: `0x16` remove with all the others (in the test their
+    ids came in neither cell nor id order), then `0x1A`, `0x19` with the
+    type and the clicked unit.
 - **Ctrl + digit** (1 to 9, 0): `0x17` with the group 0 to 9 (key 1 is
   group 0, key 0 is group 9) and all selected units. **Shift + digit**
   also writes `0x17` for that group (with the selected units added to
@@ -333,11 +376,17 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 3. Full screen with another aspect ratio was not tested (only windows).
 4. Which 12 units a rectangle over more than 12 units takes.
 5. The meaning of the byte 3 in `0x18` and of flag bits 0x0002, 0x0004
-   and 0x0040; clicks on the group buttons of the information panel and
-   on the portrait.
+   and 0x0040; clicks on the portrait; right clicks and double clicks on
+   the group cells; the area of a cell that takes a click.
 
 ## Sources
 
+- Test maps RVO (six footmen, three riflemen, two knights, a peasant)
+  and RVP (three footmen, two riflemen, two peasants) on 1.27b under
+  Wine, 2026-10-20, 1024 x 768 window: the units selected by the script,
+  the group cells and their parts read from the memory of the game,
+  screenshots, then clicks, Shift-, Ctrl-clicks on the cells and the
+  replay actions they wrote.
 - Test map RUT on 1.27b under Wine, 2026-10-20: a selected footman;
   the portrait camera (field of view, near, far) and the frame it is
   drawn for read from the memory of the running game.

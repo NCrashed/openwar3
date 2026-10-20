@@ -231,3 +231,19 @@ world units at every tick (the knight exactly). In the other pairs the
 decision between "wait" and "make wait" came down to one unit of the
 last place of the squared speeds, which needs the occasional extra
 position commits of SPEC-0018 (open there) to be reproduced.
+
+**Crowd chase (`c-RXD-1`).** Six peasants harvesting a mine 4096 from
+their town hall, four creeps (three `nkob`, one `nkot`, all speed 270,
+collision 31) attacking them; no input, 45 s. `c-RXD-1.events.tsv`
+lists, by game tick, every update of every unit with its position and
+every wait, made-to-wait and block that the game decided; a model of
+this spec, SPEC-0019 and SPEC-0029 run on the replay should give the
+same events at the same ticks. Counts up to tick 9200: 59 waits of 5
+updates, 17 made-to-wait of 20 updates, 54 blocks. Most of them are
+between the creeps themselves (41 of the 5-update waits and 13 of the
+20-update waits are a creep waiting for another creep); a creep waited
+for a peasant only twice. Of the creeps' time standing after their
+first hit, 8007 ticks were swings (31 swings of about 200 ticks:
+`dmgpt1` 0.38 s, then `backSw1` 0.6 s) and 6390 ticks other stands,
+mostly single updates (57 of 6 ticks) and 5-update waits (14 of 30
+ticks); the creeps hit 37 times in 45 s.

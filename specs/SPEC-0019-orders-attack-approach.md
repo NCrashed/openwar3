@@ -393,6 +393,22 @@ time to time:
   that update; then the 17-update schedule goes on. This was seen after
   every swing in every test. Behind targets it could not reach (speed
   270) it stood for one update at intervals of 96 to 102 ticks.
+  In `c-RXD-1` (kobolds, `backSw1` 0.6 s) the end of the backswing is a
+  timer of the queue and falls in the damage tick + 120 (ticks 2033,
+  2075, 2081 and 2087 for creeps 6, 7, 8 and 9); the attacker takes its
+  goal and a new cluster in that tick, and its next goal, with the stand
+  for one update, comes 72 ticks after its first update at or after
+  that tick: 2107, 2149, 2155 and 2161 (read in the game; the counts of
+  the tests above, 66 ticks from the first update at which the attacker
+  moved, would give 2155 for creep 9, which walked through 2155; open
+  question 11). The count runs whether the attacker walks or not:
+  creep 7 ended its backswing in tick 2075 with its target still within
+  the range test of the new goal point, stood (its cooldown had not
+  run out), and walked only after its next goal in tick 2149, from its
+  update of 2155, although the target had left its range at about tick
+  2125. A switch of target during the backswing (creep 8 in tick 2007,
+  creep 6 in tick 2031) did not change these ticks: the goal at the end
+  of the backswing is taken for the new target.
 - A target moved with `SetUnitPosition` by 40 or more while the attacker
   walked made the attacker go straight to the new place (it took a new
   goal at once); moved by 20 it did not, the attacker stopped near the
@@ -599,6 +615,12 @@ An idle unit with a weapon attacks an enemy unit on its own:
 10. The other parts of the rating of targets at a check while attacking
    (heroes, structures, units that attack the unit or its allies, the
    life of the candidates) and their order.
+11. The goal after a swing: in the chase tests of this spec the next
+   goal came 66 ticks after the first update at which the attacker
+   moved, in `c-RXD-1` 72 ticks after the first update at or after the
+   end of the backswing (both measured); which rule holds in which
+   case (the phase of the end of the backswing against the updates,
+   the attack range, the kind of unit) is open.
 
 ## Sources
 

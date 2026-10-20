@@ -65,6 +65,24 @@ left in it.
   north-east and about 218 from the other diagonals; it delivered at a
   town hall at 218.8 / 219.3 coming from the west / south and 252.9 /
   253.3 from the east / north.
+- **The path to a building.** The worker's walk to a mine or a town
+  hall searches its path as a chase searches towards its target
+  (SPEC-0019, "touches the target"): the goal is the building's
+  (snapped) position, and the local search stops at the first expanded
+  cell whose neighbour steps test a cell of the building's red
+  footprint (for the class-1 worker: the square `x - 2 .. x + 1`,
+  `y - 2 .. y + 1` around the expanded cell `(x, y)` shares a cell with
+  the red cells). That cell's centre ends the path. The building's own
+  red cells do not count as an unpassable cell met by the search, so
+  with nothing else in the way the worker walks straight to the end of
+  the path from its first update (SPEC-0020, step 2). Measured in
+  `c-RXI-1` (mine at (-896, 0), red cells x 352..359, y 380..387; read
+  in the running game): the six first searches in tick 307 stopped at
+  the expanded cells (351, 385) or (351, 383), world (-1040, 48) and
+  (-1040, -16); five met no unpassable cell and their workers walked
+  straight east from their updates of tick 307; the sixth (peasant 3)
+  met the cells of the standing peasant beside it at the start and
+  walked to the first point of its path.
 - **A tree** is reached at the first update at which the distance
   between the peasant's position and the tree's is at most
   `Rng + 16` = 132 (the reach of `Ahar` plus the peasant's collision

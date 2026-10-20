@@ -370,6 +370,13 @@ footman, 16 for the peasant).
   goal point and takes a new one from time to time as in a chase (about
   every 102 ticks, see "Chasing a moving target"); when the leader
   stopped, the follower stopped at a gap of 295.5, by the follow range.
+- **A standing follower** does not start again as soon as the gap grows
+  past 300. In `c-RTW-3` footman 825 followed footman 915 and stood at
+  a gap of 295.6 (from tick 4279); 915 then walked past it with a group (gap
+  down to 20.5) and away; the gap passed 300 at about tick 5397 and 825
+  started walking in tick 5474, at a gap of 374 (positions in
+  `c-RTW-3.positions.tsv`). It then stopped at gaps of 341.5, 290.7 and
+  293.5 within the next 200 ticks, near the other footmen.
 
 Measured stops (footman following a footman, start gaps 300 and less;
 the same numbers with a peasant as the leader when the start gap is the
@@ -463,7 +470,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
    the gap with the distance walked or with half the start gap (the
    same thing on a straight way), where the boundary between the two
    rules lies for start gaps between 298 and 303, the current order of
-   a follower that stands, following units of other players.
+   a follower that stands, following units of other players; when a
+   standing follower checks the gap again (77 ticks after it passed
+   300 in the one case seen).
 
 ## Sources
 

@@ -30,6 +30,8 @@ const ORDER_REPAIR: i32 = 852_024;
 const TREE_PICK: f32 = 64.0;
 /// Ticks a destructable shows its hit (a tree's Stand Hit is 300 ms).
 const HIT_TICKS: u64 = 60;
+/// Milliseconds of a worker's swing at a tree (SPEC-0029).
+const CHOP_SWING_MS: i32 = 1000;
 
 /// One unit to draw.
 #[derive(Clone, Debug, PartialEq)]
@@ -715,8 +717,10 @@ fn pose(u: &UnitView, now: u64) -> UnitPose {
     if u.order == ORDER_REPAIR && !u.walking {
         return UnitPose::Work(millis(now));
     }
-    // A worker hitting a tree swings so that each hit lands at its damage
-    // point (PROVISIONAL: SPEC-0029 does not name the sequence; Attack).
+    // A worker hitting a tree swings once a hit, 1.0 s of its 1.1 s:
+    // Attack while it carries no lumber, then Attack Lumber; it stands with
+    // its load in the rest (SPEC-0029, "Animations"). PROVISIONAL: each
+    // hit lands at the weapon's damage point of the swing.
     if let Some((next, period, point)) = u.chopping {
         let swing = next.saturating_sub(point);
         let start = if now >= swing {
@@ -724,7 +728,12 @@ fn pose(u: &UnitView, now: u64) -> UnitPose {
         } else {
             swing.saturating_sub(period)
         };
-        return UnitPose::Attack(millis(now.saturating_sub(start)));
+        let elapsed = millis(now.saturating_sub(start));
+        return match u.carrying {
+            Some((load, _)) if elapsed >= CHOP_SWING_MS => UnitPose::LoadStand(elapsed, load),
+            Some((load, _)) => UnitPose::LoadAttack(elapsed, load),
+            None => UnitPose::Attack(elapsed),
+        };
     }
     let Some(attack) = u.attack else {
         return UnitPose::Stand;

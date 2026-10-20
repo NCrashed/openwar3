@@ -287,6 +287,7 @@ fn a_peasant_gathers_lumber() {
     let mut swung = false;
     let mut faced = false;
     let mut shook = false;
+    let mut swung_loaded = false;
     // Steps of 50 ms, to see the swings.
     for _ in 0..1800 {
         sim.advance(50_000);
@@ -302,6 +303,11 @@ fn a_peasant_gathers_lumber() {
             swung |= sim.draws().iter().any(|d| {
                 d.handle == peasant && matches!(d.pose, ow3_viewer::models::UnitPose::Attack(_))
             });
+            // After the first hit it swings with its lumber (SPEC-0029).
+            swung_loaded |= sim.draws().iter().any(|d| {
+                d.handle == peasant
+                    && matches!(d.pose, ow3_viewer::models::UnitPose::LoadAttack(_, 2))
+            });
         }
         // The tree shakes after each hit.
         shook |= sim
@@ -313,7 +319,7 @@ fn a_peasant_gathers_lumber() {
         }
     }
     assert!(
-        full && chopped && faced && swung && shook,
+        full && chopped && faced && swung && swung_loaded && shook,
         "{full} {chopped} {faced} {swung} {shook}"
     );
     assert_eq!(sim.resources().lumber, lumber + 10);

@@ -118,6 +118,9 @@ struct Animated {
     /// Stand Gold and Stand Lumber, if any (SPEC-0029).
     stand_gold: Option<usize>,
     stand_lumber: Option<usize>,
+    /// Attack Gold and Attack Lumber, if any (SPEC-0029).
+    attack_gold: Option<usize>,
+    attack_lumber: Option<usize>,
     /// The first sequence with Portrait and without Talk in its name.
     portrait: Option<usize>,
     /// The object ids of the bones, in the order of their matrices.
@@ -136,6 +139,17 @@ impl Animated {
             _ => None,
         }
         .or(self.walk)
+    }
+
+    /// A swing with a load: Attack Gold (1) or Attack Lumber (2), else
+    /// Attack.
+    fn load_attack(&self, load: u8) -> Option<usize> {
+        match load {
+            1 => self.attack_gold,
+            2 => self.attack_lumber,
+            _ => None,
+        }
+        .or(self.attack)
     }
 
     /// Standing with a load: Stand Gold (1) or Stand Lumber (2).
@@ -177,6 +191,9 @@ pub enum UnitPose {
     /// Milliseconds into standing with a load: Stand Gold or Stand Lumber
     /// loops.
     LoadStand(i32, u8),
+    /// Milliseconds into a swing with a load: Attack Gold or Attack Lumber,
+    /// played once.
+    LoadAttack(i32, u8),
     /// Milliseconds since it was hit: Stand Hit played once.
     Hit(i32),
     /// Milliseconds into its Portrait sequence, which loops (SPEC-0028).
@@ -247,6 +264,7 @@ impl Animation {
                 };
                 let (walk_gold, walk_lumber) = (named("walk gold"), named("walk lumber"));
                 let (stand_gold, stand_lumber) = (named("stand gold"), named("stand lumber"));
+                let (attack_gold, attack_lumber) = (named("attack gold"), named("attack lumber"));
                 let hit = named("stand hit");
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
@@ -269,6 +287,8 @@ impl Animation {
                     walk_lumber,
                     stand_gold,
                     stand_lumber,
+                    attack_gold,
+                    attack_lumber,
                     top,
                     palette,
                     bone_base,
@@ -317,6 +337,10 @@ impl Animation {
                 None => stand(),
             },
             UnitPose::Once(elapsed) => held(animated.sequence, elapsed),
+            UnitPose::LoadAttack(elapsed, load) => match animated.load_attack(load) {
+                Some(attack) => held(attack, elapsed),
+                None => stand(),
+            },
             UnitPose::Attack(elapsed) => match animated.attack {
                 Some(attack) => held(attack, elapsed),
                 None => stand(),
@@ -397,6 +421,7 @@ impl Animation {
             UnitPose::Death(elapsed) => (animated.death, elapsed),
             UnitPose::Hit(elapsed) => (animated.hit?, elapsed),
             UnitPose::Attack(elapsed) => (animated.attack?, elapsed),
+            UnitPose::LoadAttack(elapsed, load) => (animated.load_attack(load)?, elapsed),
             UnitPose::Walk(elapsed) => (animated.walk?, elapsed),
             UnitPose::Work(elapsed) => (animated.work?, elapsed),
             UnitPose::Portrait(elapsed) => (animated.portrait?, elapsed),
@@ -446,7 +471,7 @@ impl Animation {
             }
             return Some(mix(&at(walked), &stand(), since as f32 / blend as f32));
         }
-        if matches!(pose, UnitPose::Attack(_)) && elapsed > length {
+        if matches!(pose, UnitPose::Attack(_) | UnitPose::LoadAttack(..)) && elapsed > length {
             // Back to Stand from the last frame of the swing.
             let after = elapsed - length;
             if after >= blend {
@@ -580,6 +605,9 @@ impl Animation {
             UnitPose::Once(elapsed) => self.once_alphas(index, elapsed),
             UnitPose::Death(elapsed) => self.sequence_alphas(index, animated.death, elapsed, false),
             UnitPose::Hit(elapsed) => self.sequence_alphas(index, animated.hit?, elapsed, false),
+            UnitPose::LoadAttack(elapsed, load) => {
+                self.sequence_alphas(index, animated.load_attack(load)?, elapsed, false)
+            }
             UnitPose::Attack(elapsed) => {
                 self.sequence_alphas(index, animated.attack?, elapsed, false)
             }

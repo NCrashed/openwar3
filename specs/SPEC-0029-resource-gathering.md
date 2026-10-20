@@ -82,7 +82,17 @@ left in it.
   (-1040, -16); five met no unpassable cell and their workers walked
   straight east from their updates of tick 307; the sixth (peasant 3)
   met the cells of the standing peasant beside it at the start and
-  walked to the first point of its path.
+  walked to the first point of its path. The high-level search of such a walk
+  (SPEC-0020) does not see the building it goes to either: its
+  footprint is free for that search, so on open ground the high-level
+  path runs straight to the building's centre and the first local
+  search is already the one that touches the building (`c-RXI-1`: the
+  high-level paths of the six were the start, a point 1.4 to 3.4 blocks
+  from it and the mine's centre). For every other walk the building is
+  an obstacle of both searches (SPEC-0022): a footman ordered to `move`
+  from (-1500, 0) to (-300, 0) through the same mine (test RXK) got a
+  high-level path to the north side of the mine and a local path along
+  it that met the red cells.
 - **A tree** is reached at the first update at which the distance
   between the peasant's position and the tree's is at most
   `Rng + 16` = 132 (the reach of `Ahar` plus the peasant's collision

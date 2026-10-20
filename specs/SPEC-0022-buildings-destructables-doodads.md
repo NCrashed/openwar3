@@ -94,7 +94,11 @@ search, seeing a point and the look-ahead check treat them like
 unwalkable `.wpm` cells (blocks containing them are not free in the
 quadtree). Footmen walking past buildings followed the same paths as a
 model in which the red cells of the buildings were written into the
-`.wpm`.
+`.wpm`. The exception is the walk whose target is the building itself
+(a worker going to a mine or town hall, SPEC-0029; attacks on
+buildings were not tested): for its
+searches the building's cells are not obstacles, and the local search
+ends when it touches them.
 
 ## Edge cases
 

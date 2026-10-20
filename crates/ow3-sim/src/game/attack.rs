@@ -23,11 +23,6 @@ use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::{Area, Weapon, is_hero};
 use crate::random::ATTACK_DICE;
 
-/// The new goal after a swing comes at the first update at least this
-/// many ticks after the end of the backswing (SPEC-0019, "After the
-/// swing"; 69 or 70 fit the tests).
-const RENEW_AFTER_SWING: u64 = 70;
-
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attacking {
@@ -40,9 +35,9 @@ pub struct Attacking {
     /// The tick after the end of the last swing, when a target out of
     /// reach is chased again (SPEC-0019).
     resume: Option<u64>,
-    /// The attacker takes a new goal and stands at its first update from
-    /// this tick on, 70 ticks after the end of its last backswing
-    /// (SPEC-0019, "After the swing").
+    /// The attacker swings again, or takes a new goal and stands, at its
+    /// first update from this tick on: the cooldown less the damage point
+    /// after the last hit (SPEC-0019, "After the swing").
     renew_at: Option<u64>,
 }
 
@@ -60,7 +55,7 @@ impl Attacking {
 }
 
 /// Seconds as a whole number of ticks of 0.005 s, at least one.
-fn ticks(seconds: u32) -> u64 {
+pub(super) fn ticks(seconds: u32) -> u64 {
     (f64::from(f32::from_bits(seconds)) * 200.0)
         .round()
         .max(1.0) as u64
@@ -155,7 +150,13 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         let next = a.next + ticks(weapon.cooldown);
                         let end = tick + ticks(weapon.backswing);
                         let resume = Some(end + 1);
-                        let renew_at = Some(end + RENEW_AFTER_SWING);
+                        // The next swing, and with it the new goal of a
+                        // chase, at the first update from `D + cool -
+                        // dmgpt` on (SPEC-0019).
+                        let renew_at = Some(
+                            (tick + ticks(weapon.cooldown))
+                                .saturating_sub(ticks(weapon.damage_point)),
+                        );
                         u.attack = Some(Attacking {
                             next,
                             resume,
@@ -220,8 +221,9 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 super::movement::killed(&mut s, h, tick, backswing);
             }
         }
-        // One tick after the swing a target that has left the attacker's
-        // reach is chased.
+        // One tick after the swing the attacker takes a goal again, also
+        // with its target in reach, where it stands and turns to its path
+        // until its cooldown is over (SPEC-0019, "After the swing").
         let mut s = state.borrow_mut();
         let tick = s.ticks;
         let resumed = match s.objects.get(&h) {
@@ -230,9 +232,13 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         };
         if let Some(a) = resumed
             && standing(&s, a.target)
-            && !super::movement::reaches(&s, h, a.target)
         {
+            // A target in reach keeps the swing timed by the cooldown.
+            let in_reach = super::movement::reaches(&s, h, a.target);
             super::movement::chase(&mut s, h, a.target, a.order_id, a.renew_at);
+            if in_reach && let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                u.attack = Some(a);
+            }
         }
     }
     let mut s = state.borrow_mut();

@@ -2038,9 +2038,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 if let Order::Attack { target } = m.order {
                     if in_reach {
                         // In range: stand, turn to the target and strike
-                        // once the turn left is below 0.2 radians.
+                        // once the turn left is below 0.2 radians and the
+                        // cooldown lets the swing hit in time (SPEC-0019,
+                        // "an attacker waiting for its cooldown").
+                        let cooled = state.unit(Some(h)).is_none_or(|u| {
+                            let point = super::attack::weapon_for(state, u.type_id, Some(target))
+                                .map_or(0, |w| super::attack::ticks(w.damage_point));
+                            // A swing already timed by the cooldown on this
+                            // target goes on by its timer (`attack::hits`).
+                            let timed = u.attack.is_some_and(|a| a.target == target);
+                            !timed && tick + point >= u.weapon_ready
+                        });
                         let (h, d) = heading_and_turn(&m, goal);
-                        let gate_open = m.swing_gate.is_none_or(|from| tick >= from);
+                        let gate_open = cooled && m.swing_gate.is_none_or(|from| tick >= from);
                         if real_of(d).abs() < ATTACK_ANGLE {
                             m.heading = h;
                             m.walking = false;
@@ -2070,17 +2080,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             chase: Some(chase_of(state, target, full_reach)),
                             building: None,
                         };
-                        let steer = follow::steer(state, &walker, tick);
-                        // The goal taken 66 ticks after a chase resumes
-                        // comes with an update standing (SPEC-0019).
+                        // The new goal after a swing comes with an update
+                        // standing, its path searched without a step or a
+                        // look ahead (SPEC-0019).
                         let steer = if renewed && std::mem::take(&mut m.renew_stands) {
+                            follow::search(state, &walker, tick);
                             // A new goal, first among the units handled
                             // from the next tick (SPEC-0021).
                             state.orders_given += 1;
                             m.given = state.orders_given;
                             follow::Steer::Stand(goal)
                         } else {
-                            steer
+                            follow::steer(state, &walker, tick)
                         };
                         match steer {
                             follow::Steer::Walk(to) => {

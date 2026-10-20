@@ -530,14 +530,18 @@ fn a_group_of_peasants() {
     assert_eq!(same[0], peasants[2]);
     let mut selection = ow3_viewer::selection::Selection::default();
     selection.set(&peasants);
-    // The panel shows the group: one icon a peasant.
+    // The panel shows the group: one icon a peasant, all of the active
+    // subgroup (SPEC-0028).
     let frame = sim.interface(&selection, None);
     let icon = sim.hud.buttons(sim.selected(peasants[0]).as_ref()).len();
     assert!(icon > 0);
     let grid = frame
         .quads
         .iter()
-        .filter(|q| (q.rect[2] - q.rect[0] - 0.031_25).abs() < 1e-4 && !q.texture.is_empty())
+        .filter(|q| {
+            let (w, h) = (q.rect[2] - q.rect[0], q.rect[3] - q.rect[1]);
+            (w - 0.028).abs() < 1e-4 && (h - 0.028).abs() < 1e-4 && !q.texture.is_empty()
+        })
         .count();
     assert_eq!(grid, peasants.len());
     // A group order moves them all.
@@ -548,6 +552,7 @@ fn a_group_of_peasants() {
             &peasants,
             Command::Move,
             Some([h.x + 600.0, h.y]),
+            false,
         )
         .unwrap();
     assert!(line.ends_with("taken"), "{line}");
@@ -585,6 +590,7 @@ fn one_of_a_group_leaves_to_build() {
         &peasants,
         None,
         Some([hall.x - 200.0, hall.y - 300.0, 0.0]),
+        false,
         false,
     )
     .unwrap();
@@ -668,4 +674,34 @@ fn requirements_orders_and_training_progress() {
         (q.rect[1] - 0.065_938).abs() < 1e-4
             && ((q.rect[2] - q.rect[0]) / width - later).abs() < 0.02
     }));
+}
+
+/// Shift queues (SPEC-0031): a peasant sent east and then, with Shift,
+/// north goes to both points in turn.
+#[test]
+fn shift_queues_an_order() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let hall = view(&sim, first(&sim, b"htow"));
+    let east = [hall.x + 600.0, hall.y - 300.0];
+    let north = [hall.x + 600.0, hall.y + 200.0];
+    sim.run_group(&[peasant], &[peasant], Command::Move, Some(east), false)
+        .unwrap();
+    sim.run_group(&[peasant], &[peasant], Command::Move, Some(north), true)
+        .unwrap();
+    let mut passed_east = false;
+    for _ in 0..200 {
+        sim.advance(100_000);
+        let p = view(&sim, peasant);
+        passed_east |= (p.x - east[0]).abs() < 40.0 && (p.y - east[1]).abs() < 40.0;
+    }
+    let p = view(&sim, peasant);
+    assert!(passed_east);
+    assert!(
+        (p.x - north[0]).abs() < 40.0 && (p.y - north[1]).abs() < 40.0,
+        "{p:?}"
+    );
 }

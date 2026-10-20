@@ -62,6 +62,8 @@ pub struct Member {
     pub life: f32,
     /// Whether it is in the active subgroup.
     pub active: bool,
+    /// Its share of its maximum mana, for a unit with mana.
+    pub mana: Option<f32>,
 }
 
 /// What a command button does.
@@ -165,6 +167,12 @@ const INFO: Rect = [0.309_375, 0.0, 0.4975, 0.114_063];
 const RESOURCES: Rect = [0.461_719, 0.5782, 0.8, 0.6];
 const UPPER: Rect = [0.0, 0.578, 0.34, 0.6];
 pub const WORLD: Rect = [0.0, 0.13, 0.8, 0.58];
+/// The group cells of the information panel (SPEC-0028): the left edge of
+/// the first, the step, the bottom edges of the two rows.
+const GROUP_LEFT: f32 = 0.308_906;
+const GROUP_STEP: f32 = 0.030_99;
+const GROUP_UPPER: f32 = 0.055_556;
+const GROUP_LOWER: f32 = 0.004_781;
 /// The progress bar of training and construction (SPEC-0028).
 const PROGRESS: Rect = [0.370_625, 0.065_938, 0.475_625, 0.075_938];
 /// The portrait (SPEC-0028).
@@ -614,39 +622,107 @@ impl Hud {
         }
     }
 
-    /// The units of a group in the information panel: 12 buttons in 6
-    /// columns and 2 rows (SPEC-0028, "Group in the information panel"),
-    /// each the unit's icon.
-    ///
-    /// PROVISIONAL: the life under each icon as a green bar, and the units
-    /// outside the active subgroup darker; the game's look is not
-    /// specified.
+    /// The units of a group in the information panel (SPEC-0028, "Group in
+    /// the information panel"): 12 cells in 6 columns and 2 rows taken in
+    /// order, each with the unit's icon, its life and its mana; those of
+    /// the active subgroup larger, on the skin's subgroup glow, their bars
+    /// framed dark.
     fn group(&self, group: &[Member], out: &mut Frame) {
+        let quad = |rect: Rect, texture: String, colour: [f32; 4]| Quad {
+            rect,
+            uv: [0.0, 1.0, 0.0, 1.0],
+            texture,
+            colour,
+            blend: Blend::Alpha,
+        };
+        let at = |l: f32, b: f32, w: f32, h: f32| [l, b, l + w, b + h];
+        let glow = self.interface.skin("SelectedSubgroupHighlight");
+        let dark = [0.0, 0.0, 0.0, 1.0];
+        let green = [0.0, 0.85, 0.0, 1.0];
+        let blue = [0.2, 0.4, 1.0, 1.0];
         for (i, m) in group.iter().take(12).enumerate() {
             let (column, row) = (i % 6, i / 6);
-            let left = 0.308_906 + 0.030_99 * column as f32;
-            let bottom = if row == 0 { 0.055_556 } else { 0.004_781 };
-            let rect = [left, bottom + 0.006, left + 0.031_25, bottom + 0.046];
-            let Some(icon) = self.units.get(&code(m.type_id), "Art") else {
-                continue;
+            let l = GROUP_LEFT + GROUP_STEP * column as f32;
+            let b = if row == 0 { GROUP_UPPER } else { GROUP_LOWER };
+            let icon = self.units.get(&code(m.type_id), "Art").map(str::to_owned);
+            let bar = |rect: Rect, share: f32, colour| {
+                let w = (rect[2] - rect[0]) * share.clamp(0.0, 1.0);
+                quad(
+                    [rect[0], rect[1], rect[0] + w, rect[3]],
+                    String::new(),
+                    colour,
+                )
             };
-            let shade = if m.active { 1.0 } else { 0.55 };
-            out.quads.push(Quad {
-                rect,
-                uv: [0.0, 1.0, 0.0, 1.0],
-                texture: icon.to_owned(),
-                colour: [shade, shade, shade, 1.0],
-                blend: Blend::Alpha,
-            });
-            let share = m.life.clamp(0.0, 1.0);
-            out.quads.push(Quad {
-                rect: [left, bottom, left + 0.031_25 * share, bottom + 0.004],
-                uv: [0.0, 1.0, 0.0, 1.0],
-                texture: String::new(),
-                colour: [0.0, 0.85, 0.0, 1.0],
-                blend: Blend::Alpha,
-            });
+            if m.active {
+                out.quads.push(quad(
+                    at(l - 0.003_13, b + 0.002_19, 0.0375, 0.046_63),
+                    glow.clone(),
+                    [1.0; 4],
+                ));
+                if let Some(icon) = icon {
+                    out.quads.push(quad(
+                        at(l + 0.001_62, b + 0.015_13, 0.028, 0.028),
+                        icon,
+                        [1.0; 4],
+                    ));
+                }
+                out.quads.push(quad(
+                    at(l + 0.000_62, b + 0.007_88, 0.03, 0.005_75),
+                    String::new(),
+                    dark,
+                ));
+                out.quads.push(bar(
+                    at(l + 0.001_62, b + 0.008_88, 0.028, 0.003_75),
+                    m.life,
+                    green,
+                ));
+                if let Some(mana) = m.mana {
+                    out.quads.push(quad(
+                        at(l + 0.003_68, b + 0.002_88, 0.023_88, 0.0045),
+                        String::new(),
+                        dark,
+                    ));
+                    out.quads.push(bar(
+                        at(l + 0.004_68, b + 0.003_88, 0.021_88, 0.0025),
+                        mana,
+                        blue,
+                    ));
+                }
+            } else {
+                if let Some(icon) = icon {
+                    out.quads.push(quad(
+                        at(l + 0.004_68, b + 0.018_19, 0.021_88, 0.021_88),
+                        icon,
+                        [1.0; 4],
+                    ));
+                }
+                out.quads.push(bar(
+                    at(l + 0.004_68, b + 0.013_19, 0.021_88, 0.0025),
+                    m.life,
+                    green,
+                ));
+                if let Some(mana) = m.mana {
+                    out.quads.push(bar(
+                        at(l + 0.004_68, b + 0.008_19, 0.021_88, 0.0025),
+                        mana,
+                        blue,
+                    ));
+                }
+            }
         }
+    }
+
+    /// The group cell at `point` (interface coordinates), as an index in
+    /// the order of the cells.
+    ///
+    /// PROVISIONAL: the whole cell takes the click (SPEC-0028 open
+    /// question 5); of two overlapping cells the later.
+    pub fn group_cell_at(point: [f32; 2]) -> Option<usize> {
+        (0..12).rev().find(|&i| {
+            let l = GROUP_LEFT + GROUP_STEP * (i % 6) as f32;
+            let b = if i < 6 { GROUP_UPPER } else { GROUP_LOWER };
+            point[0] >= l && point[0] <= l + 0.031_25 && point[1] >= b && point[1] <= b + 0.046
+        })
     }
 
     /// The name, life, mana, damage and armor of `s`.
@@ -835,4 +911,22 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_cells_take_clicks() {
+        let centre = |i: usize| {
+            let l = GROUP_LEFT + GROUP_STEP * (i % 6) as f32;
+            let b = if i < 6 { GROUP_UPPER } else { GROUP_LOWER };
+            [l + 0.015, b + 0.02]
+        };
+        for i in 0..12 {
+            assert_eq!(Hud::group_cell_at(centre(i)), Some(i));
+        }
+        assert_eq!(Hud::group_cell_at([0.2, 0.05]), None);
+    }
 }

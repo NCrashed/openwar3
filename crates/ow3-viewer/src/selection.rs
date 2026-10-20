@@ -123,6 +123,51 @@ impl Selection {
         self.active_units(kind).first().copied()
     }
 
+    /// The units in the order of the group cells of the information panel
+    /// (SPEC-0028): the subgroups in their order, the units of each by
+    /// creation (handles grow with it); with whether each is of the active
+    /// subgroup.
+    pub fn cells(&self, kind: impl Fn(u32) -> Option<Kind>) -> Vec<(u32, bool)> {
+        let groups = self.subgroups(kind);
+        let active = self.active.min(groups.len().saturating_sub(1));
+        groups
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, (_, mut units))| {
+                units.sort_unstable();
+                units.into_iter().map(move |u| (u, i == active))
+            })
+            .collect()
+    }
+
+    /// A click on the group cell of unit `h` (SPEC-0028): of the active
+    /// subgroup it selects `h` alone, of another it makes that subgroup
+    /// active.
+    pub fn click_cell(&mut self, h: u32, kind: impl Fn(u32) -> Option<Kind> + Copy) {
+        let groups = self.subgroups(kind);
+        let Some(i) = groups.iter().position(|(_, units)| units.contains(&h)) else {
+            return;
+        };
+        if i == self.active.min(groups.len().saturating_sub(1)) {
+            self.click(h);
+        } else {
+            self.active = i;
+        }
+    }
+
+    /// Ctrl and a click on the group cell of unit `h`: only the units of
+    /// its type stay, `h` leading.
+    pub fn keep_type_of(&mut self, h: u32, kind: impl Fn(u32) -> Option<Kind>) {
+        let Some(k) = kind(h) else {
+            return;
+        };
+        self.units
+            .retain(|&u| kind(u).is_some_and(|o| o.type_id == k.type_id));
+        self.units.retain(|&u| u != h);
+        self.units.insert(0, h);
+        self.active = 0;
+    }
+
     /// Tab: the next subgroup, after the last the first.
     pub fn next_subgroup(&mut self, kind: impl Fn(u32) -> Option<Kind>) {
         let n = self.subgroups(kind).len();
@@ -218,6 +263,29 @@ mod tests {
         assert!(!s.contains(3));
         s.shift_click(3);
         assert!(s.contains(3));
+    }
+
+    #[test]
+    fn group_cells_and_their_clicks() {
+        let mut s = Selection::default();
+        s.set(&[4, 3, 5, 1]);
+        // Footmen by creation, then the knight, then the rifleman.
+        assert_eq!(
+            s.cells(kinds),
+            [(1, true), (3, true), (5, false), (4, false)]
+        );
+        // Another subgroup's cell makes it active.
+        s.click_cell(4, kinds);
+        assert_eq!(s.lead(kinds), Some(4));
+        assert_eq!(s.units().len(), 4);
+        // A cell of the active subgroup selects its unit alone.
+        s.click_cell(4, kinds);
+        assert_eq!(s.units(), [4]);
+        // Ctrl keeps the clicked unit's type, it leading.
+        s.set(&[4, 3, 5, 1]);
+        s.keep_type_of(3, kinds);
+        assert_eq!(s.units(), [3, 1]);
+        assert_eq!(s.lead(kinds), Some(3));
     }
 
     #[test]

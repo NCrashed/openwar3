@@ -323,21 +323,18 @@ impl Sim {
     ) -> crate::ui::Frame {
         let kind = |h| self.kind(h);
         let lead = selection.lead(kind);
-        let active = selection.active_units(kind);
         let s = lead.and_then(|h| self.selected(h));
         let views = self.game.units();
+        let share = |v: f32, max: f32| if max > 0.0 { v / max } else { 0.0 };
         let group: Vec<crate::hud::Member> = selection
-            .units()
-            .iter()
-            .filter_map(|&h| views.iter().find(|u| u.handle == h))
-            .map(|u| crate::hud::Member {
+            .cells(kind)
+            .into_iter()
+            .filter_map(|(h, active)| views.iter().find(|u| u.handle == h).map(|u| (u, active)))
+            .map(|(u, active)| crate::hud::Member {
                 type_id: u.type_id,
-                life: if u.max_life > 0.0 {
-                    u.life / u.max_life
-                } else {
-                    0.0
-                },
-                active: active.contains(&u.handle),
+                life: share(u.life, u.max_life),
+                active,
+                mana: (u.max_mana > 0.0).then(|| share(u.mana, u.max_mana)),
             })
             .collect();
         self.hud.frame(self.resources(), s.as_ref(), &group, mouse)
@@ -565,8 +562,37 @@ impl Sim {
         on: Option<u32>,
         at: Option<[f32; 3]>,
         force: bool,
+        queued: bool,
     ) -> Option<String> {
         let (&first, rest) = units.split_first()?;
+        // With Shift: queued behind the current orders (SPEC-0031).
+        if queued {
+            if let Some(target) = on {
+                let name = if force || self.game.hostile(first, target) {
+                    "attack"
+                } else {
+                    "smart"
+                };
+                for &u in units.iter().filter(|&&u| u != target) {
+                    self.game.queue_target_order(u, name, target);
+                }
+                self.confirm_unit(target);
+                return Some(format!("{} units: {name} on #{target} queued", units.len()));
+            }
+            let [x, y, z] = at?;
+            if rest.is_empty() {
+                self.game.queue_point_order(first, "smart", x, y);
+            } else {
+                self.game.queue_group_point_order(units, "smart", x, y);
+            }
+            self.confirm(
+                self.point_confirm.clone(),
+                [x, y, z],
+                1.0,
+                self.colours.friend,
+            );
+            return Some(format!("{} units: to ({x:.0}, {y:.0}) queued", units.len()));
+        }
         if rest.is_empty() || on.is_some() {
             let mut line = None;
             for &u in units {
@@ -607,6 +633,7 @@ impl Sim {
         active: &[u32],
         command: crate::hud::Command,
         point: Option<[f32; 2]>,
+        queued: bool,
     ) -> Option<String> {
         use crate::hud::Command;
         let name = match command {
@@ -615,6 +642,34 @@ impl Sim {
             Command::Patrol => Some("patrol"),
             _ => None,
         };
+        // With Shift moves, attacks, patrols, stops and holds are queued
+        // (SPEC-0031).
+        if queued {
+            let immediate = match command {
+                Command::Stop => Some("stop"),
+                Command::Hold => Some("holdposition"),
+                _ => None,
+            };
+            match (name, point, immediate) {
+                (Some(name), Some([x, y]), _) => {
+                    if all.len() > 1 {
+                        self.game.queue_group_point_order(all, name, x, y);
+                    } else {
+                        for &u in all {
+                            self.game.queue_point_order(u, name, x, y);
+                        }
+                    }
+                    return Some(format!("{} units: {command:?} queued", all.len()));
+                }
+                (_, _, Some(name)) => {
+                    for &u in all {
+                        self.game.queue_immediate_order(u, name);
+                    }
+                    return Some(format!("{} units: {command:?} queued", all.len()));
+                }
+                _ => {}
+            }
+        }
         if let (Some(name), Some([x, y]), true) = (name, point, all.len() > 1) {
             let done = self.game.issue_group_point_order(all, name, x, y);
             return Some(format!(

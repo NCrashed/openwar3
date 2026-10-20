@@ -504,7 +504,7 @@ impl ApplicationHandler for App {
                     let at = self.camera.ground_point(x, y, size, |x, y| {
                         ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
                     });
-                    if let Some(line) = sim.command_group(&own, on, at, self.ctrl) {
+                    if let Some(line) = sim.command_group(&own, on, at, self.ctrl, self.shift) {
                         println!("{line}");
                     }
                 }
@@ -558,7 +558,7 @@ impl App {
         }
         if button.command.targets() {
             sim.hud.pending = Some(button.command);
-        } else if let Some(line) = sim.run_group(&all, &active, button.command, None) {
+        } else if let Some(line) = sim.run_group(&all, &active, button.command, None, self.shift) {
             println!("{line}");
         }
         self.sync_selection();
@@ -710,6 +710,24 @@ impl App {
         if let (Some(p), Some(sim)) = (point, &self.sim)
             && ow3_viewer::hud::Hud::covers(p)
         {
+            // A group cell (SPEC-0028): a click selects that unit or makes
+            // its subgroup active, Shift takes it out, Ctrl keeps its type.
+            let cells = self.selection.cells(|h| sim.kind(h));
+            if cells.len() > 1
+                && let Some(&(h, _)) =
+                    ow3_viewer::hud::Hud::group_cell_at(p).and_then(|i| cells.get(i))
+            {
+                if self.shift {
+                    self.selection.shift_click(h);
+                } else if self.ctrl {
+                    self.selection.keep_type_of(h, |h| sim.kind(h));
+                } else {
+                    self.selection.click_cell(h, |h| sim.kind(h));
+                }
+                sim_card_main(&mut self.sim);
+                self.sync_selection();
+                return;
+            }
             let s = selected.and_then(|h| sim.selected(h));
             if let Some(button) = sim.hud.button_at(s.as_ref(), p) {
                 self.press(button);
@@ -736,7 +754,7 @@ impl App {
             // On a unit: the order with it as the target, if it takes one.
             let line = on
                 .and_then(|t| sim.run_on_group(units, command, t))
-                .or_else(|| sim.run_group(&all, &active, command, ground));
+                .or_else(|| sim.run_group(&all, &active, command, ground, self.shift));
             if let Some(line) = line {
                 println!("{line}");
             }

@@ -72,6 +72,51 @@ ground raised by 128 (and by 256), where `GetLocationZ` is 128 (256), the
 eye was 1036 (1087) above the low ground for `d` = 1000, i.e. the target
 was at about 36 (87). On flat ground the eye is at height `d` above it.
 
+### The game camera and the player's controls
+
+Without camera calls from the script, the game camera starts with its
+target on the player's start location (`DefineStartLocation` of the
+player's slot; in test RVN (6080, 8320)) and at **zoom level 0** of the
+`[Camera]` section of `UI\MiscData.txt`:
+
+| Field | Level 0 | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| `AOA` (angle of attack, degrees) | 304 | 311 | 318 | 325 | 332 | 339 |
+| `Distance` | 1650 | 1600 | 1500 | 1400 | 1275 | 1100 |
+| `FOV` (degrees) | 70 | 70 | 70 | 70 | 70 | 70 |
+| `FarZ` | 5000 | 5000 | 5000 | 5000 | 5000 | 5000 |
+| `NearZ` | 100 | 100 | 100 | 100 | 100 | 100 |
+| `Rotation` (degrees) | 90 | 90 | 90 | 90 | 90 | 90 |
+
+`GetCameraField` read at the start: angle of attack 5.306 rad (304
+degrees), distance 1650, rotation 1.571 (90 degrees), field of view
+1.222 (70 degrees), far plane 5000, z offset 0; the near plane of the
+world camera read from memory was 100.
+
+- **Zoom.** One notch of the mouse wheel forward, or one press of
+  Page Up, moves one level up (closer); the wheel backwards or Page Down
+  one level down. Holding the key repeats. Below level 0 and above the
+  last level nothing changes. Levels 0 to 4 are those of the table; the
+  last level reached was angle 335 and distance 1200 (the table's level
+  5 has 339 and 1100; test RVN, twice). The change from one level to
+  the next is linear in time and takes about 1.0 s, angle and distance
+  together (1650 -> 1600: about 2.5 per 0.05 s all the way).
+- **Rotation.** While Insert is held, the rotation goes to 20 degrees;
+  while Delete is held, to 160 degrees (the second and third groups of
+  six values of `Rotation`); when the key is released it goes back to
+  90. Each change took about 0.5 s.
+- **Scrolling.** The arrow keys move the target at about 3000 per second
+  (`Forward` and `Strafe` of `[CameraRates]`): Up moved it from y 8320 to
+  11008 in about 0.9 s. It stops at the camera bounds of the map
+  (`SetCameraBounds` in the map script, the playable area less the
+  margins of `[CameraMargins]`, 4 cells of 128 at the left and right and
+  2 at the top and bottom: here the top bound 11264 - 256 = 11008).
+- **Height of the target.** `GetCameraTargetPositionZ` is not the
+  ground height at the target: 245.57 where `GetLocationZ` gave 244.38,
+  125.90 where it gave 103.01, -66.7 where it gave 38.4 (near water).
+  The eye is at the target plus the distance along the angle of attack
+  (with distance 1000 straight down, the eye at target z + 1000).
+
 ### Where models are drawn
 
 - **Doodads** of `war3map.doo` are drawn at the scale
@@ -139,7 +184,11 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 
 1. How the height of the camera's target point is taken from the ground
    (smoothing, area, timing), and the role of `CAMERA_FIELD_ZOFFSET`.
-2. The near and far planes (`CAMERA_FIELD_FARZ`) and fog.
+2. Fog; the near and far planes after a script changes `FARZ` (the game
+   camera starts with 100 and 5000); why the last zoom level gives 335
+   and 1200; the camera smoothing fields of `[Camera]`; the rotation
+   rate (about 140 degrees per second measured, `[CameraRates]` gives
+   30).
 3. Whether the field of view applies the same way in full-screen modes
    and with the `fixedaspect` video setting.
 4. How a flying unit's height changes while it flies over a slope or a
@@ -148,6 +197,11 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
 
 ## Sources
 
+- Test map RVN on 1.27b under Wine, 2026-10-20 (IceCrown terrain, no
+  camera calls in the script): the camera fields, the target position and
+  height and `GetLocationZ` at the target logged every 0.05 s while the
+  mouse wheel, Page Up, Page Down, Insert, Delete and the arrow keys were
+  used (one input every 2.5 s, and holds of 0.1, 1 and 3 s).
 - Test maps RUV and RUW on 1.27b under Wine, 2026-10-20 (window 1024 x
   768): paused footmen in a row 100 apart, camera straight down at
   distance 1000, field of view 70 and then 120 degrees; positions of
@@ -187,3 +241,9 @@ was at about 36 (87). On flat ground the eye is at height `d` above it.
    markers are where points at heights 240, 496, 240, 496, 90 and 346
    above zero, shifted by 16 west and south for the collision 31 copies,
    project (within about 8 units in height).
+5. **Game camera** (RVN): at the start angle of attack 304, distance
+   1650, rotation 90, field of view 70, target at the start location
+   (6080, 8320). Five wheel notches forward, 2.5 s apart: 311/1600,
+   318/1500, 325/1400, 332/1275, 335/1200; a sixth changes nothing; back
+   the same way to 304/1650. Insert held: rotation 20 while held, 90 again
+   0.5 s after the release.

@@ -245,7 +245,7 @@ fn walk_back(state: &mut State, h: u32) -> bool {
         let Some(at) = position(state, b) else {
             continue;
         };
-        let d = squared(from, at);
+        let d = path_length(state, h, from, at);
         if best.is_none_or(|(_, e)| d < e) {
             best = Some((b, d));
         }
@@ -262,6 +262,49 @@ fn walk_back(state: &mut State, h: u32) -> bool {
         ORDER_RESUME_HARVESTING,
         at,
     )
+}
+
+/// How far worker `h` walks from `from` to `to` (world points): the legs
+/// of the high-level path (SPEC-0020) and the straight rest from its end,
+/// the goal being inside a building; the straight distance without a
+/// grid or a path.
+///
+/// PROVISIONAL: SPEC-0029 gives "nearest along the path" (a wall made the
+/// gold go to the farther town hall) but not how it is measured (open
+/// question 3).
+fn path_length(state: &State, h: u32, from: [u32; 2], to: [u32; 2]) -> f32 {
+    let straight = |a: [u32; 2], b: [u32; 2]| squared(a, b).sqrt();
+    let Some(grid) = state.grid.as_ref() else {
+        return straight(from, to);
+    };
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cells = |p: [u32; 2]| {
+        let r = relative(p, min);
+        [mul(r[0], CELL), mul(r[1], CELL)]
+    };
+    let class = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(0, |t| crate::path::size_class(t.collision));
+    let Some(found) = crate::path::high_level(grid, cells(from), cells(to), class) else {
+        return straight(from, to);
+    };
+    // Blocks of 64 world units.
+    let world = |p: [u32; 2]| {
+        [
+            f32::from_bits(min[0]) + f32::from_bits(p[0]) * 64.0,
+            f32::from_bits(min[1]) + f32::from_bits(p[1]) * 64.0,
+        ]
+    };
+    let mut length = 0.0;
+    let mut last = [f32::from_bits(from[0]), f32::from_bits(from[1])];
+    for &p in &found.points {
+        let w = world(p);
+        length += ((w[0] - last[0]).powi(2) + (w[1] - last[1]).powi(2)).sqrt();
+        last = w;
+    }
+    let goal = [f32::from_bits(to[0]), f32::from_bits(to[1])];
+    length + ((goal[0] - last[0]).powi(2) + (goal[1] - last[1]).powi(2)).sqrt()
 }
 
 fn position(state: &State, h: u32) -> Option<[u32; 2]> {

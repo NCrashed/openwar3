@@ -274,8 +274,33 @@ player's colours in the default mode):
 | gold mine | yellow round icon, about 9 pixels across |
 | neutral building (tavern) | yellow outline of a house |
 | creeps that the player sees | squares in their player's colour (dark) |
-| creeps in the fog | a green circle with a dark rim, about 9 pixels, one per camp; camps of total level 1, 3, 7 and 15 all looked the same |
+| creeps in the fog | a circle per creep camp (below) |
 | the camera | white rectangle outline around the view (about 12 x 8 pixels at the default zoom) |
+
+**Creep camps.** The neutral hostile units that exist when the map
+starts (created by the map's units file or by `main`) are grouped into
+camps; a camp is shown as one circle at the position of its first creep
+while its creeps are not visible. Grouping: a creep joins the camp of an
+earlier creep when it is within about 840 of that creep (pairs 740 to
+820 apart were one camp, 860 and 900 apart two; three creeps 600 apart
+in a row made one camp of the first two and a camp of the third). The
+colour and size come from the sum of the camp's levels and `[Minimap]`
+of `UI\MiscData.txt`:
+
+| Sum of levels | Colour | Size |
+|---|---|---|
+| below `MinimapMiddleCampThreshold` (10) | `MinimapWeakCampColor` (0, 200, 0) | 1 |
+| 10 up to below `MinimapToughCampThreshold` (20) | `MinimapMiddleCampColor` (255, 128, 0) | `MinimapMiddleCampScale` 1.3 |
+| 20 and more | `MinimapToughCampColor` (220, 0, 0) | 1.3 |
+
+(Measured: one creep of level 10 or 11 and two of level 5 orange; four
+of level 5 and two of level 10 red; two of level 5 farther than 860
+apart two green circles.) Creeps created later by a script are not put
+into camps: each showed a green circle of size 1 whatever its level.
+The icons are textures named in `UI\war3skins.txt` (`MinimapResourceTexture`
+for gold mines, `MinimapNeutralTexture` for neutral buildings); gold
+mines and neutral buildings are shown also under fog and where the map
+is masked. `MinimapCampPulseScale` (0.5) was not seen in use.
 
 Units and buildings under fog are not shown (an enemy under fog
 disappeared); the icons of `war3map.mmp` (start locations, gold mines,
@@ -433,7 +458,7 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 
 ## Sources
 
-- Test maps RWL, RWM, RWO, RWP on 1.27b under Wine, 2026-10-20 (IceCrown,
+- Test maps RWL to RWW on 1.27b under Wine, 2026-10-20 (IceCrown,
   1024 x 768 window): own, enemy and allied units and buildings, a gold
   mine, a tavern, creep camps of four levels, seen or under fog;
   screenshots of the minimap, clicks on its buttons and on the minimap,

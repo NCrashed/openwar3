@@ -1595,6 +1595,12 @@ impl<'a> Game<'a> {
         self.state.borrow().camera_target
     }
 
+    /// The camera bounds (`GetCameraBoundMinX` and the rest): the least x
+    /// and y, then the greatest.
+    pub fn camera_bounds(&self) -> [f32; 4] {
+        self.state.borrow().camera_bounds.map(f32::from_bits)
+    }
+
     /// The destructables that were damaged or died, for the viewer: the
     /// index of each in the order they were made (the map's placed ones
     /// first, in the order of `Map::destructables`), and the ticks of its

@@ -141,12 +141,16 @@ fn options() -> Result<Options, String> {
     Ok(options)
 }
 
-fn camera(scene: &Scene, values: Option<&[f32]>, start: Option<[f32; 2]>) -> Camera {
+fn camera(scene: &Scene, values: Option<&[f32]>, start: Option<[f32; 2]>, game: bool) -> Camera {
     // Where the script put the camera (the melee start: the workers), else
     // the centre of the map.
     let centre = ow3_viewer::terrain_mesh::centre(&scene.terrain);
     let target = start.map_or(centre, |[x, y]| [x, y, 0.0]);
-    let mut camera = Camera::new(target);
+    let mut camera = if game {
+        ow3_viewer::controls::Game::camera(target)
+    } else {
+        Camera::new(target)
+    };
     if let Some(v) = values {
         let get = |i: usize, default: f32| v.get(i).copied().unwrap_or(default);
         camera.target[0] = get(0, camera.target[0]);
@@ -174,7 +178,7 @@ fn screenshot(
         .as_deref()
         .and_then(Sim::camera_target)
         .map(|(at, _)| at);
-    let camera = camera(scene, options.camera.as_deref(), start);
+    let camera = camera(scene, options.camera.as_deref(), start, sim.is_some());
     let (w, h) = options.size;
     let mut sim_hour = 12.0;
     let mut sim_seconds = options.time;
@@ -440,6 +444,12 @@ impl ApplicationHandler for App {
                         "--camera {:.0},{:.0},{:.0},{:.1},{:.1}",
                         c.target[0], c.target[1], c.distance, c.yaw, c.pitch
                     );
+                }
+                // Page Up and Page Down: the game camera's zoom levels,
+                // one a press, repeated while held (SPEC-0023).
+                if state == ElementState::Pressed && matches!(name.as_str(), "PageUp" | "PageDown")
+                {
+                    self.controls.step_zoom(name == "PageUp");
                 }
                 if let Some(action) = Action::of_key(&name) {
                     self.controls.key(action, state == ElementState::Pressed);
@@ -972,7 +982,17 @@ fn main() -> ExitCode {
         };
     }
     let start = sim.as_ref().and_then(Sim::camera_target);
-    let camera = camera(&scene, options.camera.as_deref(), start.map(|(at, _)| at));
+    let camera = camera(
+        &scene,
+        options.camera.as_deref(),
+        start.map(|(at, _)| at),
+        sim.is_some(),
+    );
+    // A game has the game's camera, unless `--camera` set another.
+    let controls = match &sim {
+        Some(sim) if options.camera.is_none() => Controls::game(camera, Some(sim.camera_bounds())),
+        _ => Controls::new(camera),
+    };
     let mut app = App {
         scene,
         camera,
@@ -983,7 +1003,7 @@ fn main() -> ExitCode {
         started: std::time::Instant::now(),
         sim,
         last_frame: std::time::Instant::now(),
-        controls: Controls::new(camera),
+        controls,
         cursor: (0.0, 0.0),
         ctrl: false,
         shift: false,

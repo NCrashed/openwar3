@@ -776,6 +776,11 @@ impl Sim {
         self.game.camera_target()
     }
 
+    /// The camera bounds: least x and y, greatest x and y.
+    pub fn camera_bounds(&self) -> [f32; 4] {
+        self.game.camera_bounds()
+    }
+
     /// The time of day in hours.
     pub fn time_of_day(&self) -> f32 {
         self.game.time_of_day()

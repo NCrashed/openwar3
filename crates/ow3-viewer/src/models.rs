@@ -557,46 +557,57 @@ impl Animation {
     }
 
     /// Every alpha `elapsed` milliseconds in, by the phase of variant 0.
-    pub fn alphas(&self, elapsed: i32) -> Vec<f32> {
+    pub fn alphas(&self, elapsed: i32) -> Vec<[f32; 4]> {
         let moments: Vec<Moment> = self
             .models
             .iter()
             .map(|a| Moment::at(&a.model, a.sequence, elapsed))
             .collect();
         let mut out = Vec::with_capacity(self.alphas.len() + 1);
-        out.push(1.0);
+        out.push([1.0; 4]);
         for source in &self.alphas {
             out.push(self.alpha(source, moments[source.model]));
         }
         out
     }
 
-    /// The alpha of `source` at `moment` of its model.
-    fn alpha(&self, source: &AlphaSource, moment: Moment) -> f32 {
+    /// The colour and alpha of `source` at `moment` of its model: the
+    /// geoset animation's colour (`KGAC`, stored blue, green, red) and the
+    /// product of its alpha (`KGAO`) and the layer's (`KMTA`).
+    fn alpha(&self, source: &AlphaSource, moment: Moment) -> [f32; 4] {
         let model = &self.models[source.model].model;
-        let geoset = model
+        let animation = model
             .geoset_animations
             .iter()
-            .find(|a| a.geoset_id as usize == source.geoset)
-            .map_or(1.0, |a| {
-                track_or(model, &a.tracks, b"KGAO", &[a.alpha], moment)[0]
-            });
+            .find(|a| a.geoset_id as usize == source.geoset);
+        let geoset = animation.map_or(1.0, |a| {
+            track_or(model, &a.tracks, b"KGAO", &[a.alpha], moment)[0]
+        });
+        let colour = animation.map_or([1.0; 3], |a| {
+            let c = track_or(model, &a.tracks, b"KGAC", &a.color, moment);
+            [c[2], c[1], c[0]].map(|v| v.clamp(0.0, 1.0))
+        });
         let layer = &model.materials[source.material].layers[source.layer];
         let layer = track_or(model, &layer.tracks, b"KMTA", &[layer.alpha], moment)[0];
-        (geoset * layer).clamp(0.0, 1.0)
+        [
+            colour[0],
+            colour[1],
+            colour[2],
+            (geoset * layer).clamp(0.0, 1.0),
+        ]
     }
 
     /// For a model played once (`UnitPose::Once`) `elapsed` milliseconds
     /// in: the alphas of its slots at that moment and the first of those
     /// slots, so that each instance fades on its own.
-    pub fn once_alphas(&self, index: usize, elapsed: i32) -> Option<(Vec<f32>, u32)> {
+    pub fn once_alphas(&self, index: usize, elapsed: i32) -> Option<(Vec<[f32; 4]>, u32)> {
         self.sequence_alphas(index, self.models[index].sequence, elapsed, false)
     }
 
     /// The alphas of a unit in `pose` when they are its own: a dying unit
     /// fades by its Death sequence (and stays as its last frame shows it),
     /// an effect by its sequence; other poses share those of Stand.
-    pub fn pose_alphas(&self, index: usize, pose: UnitPose) -> Option<(Vec<f32>, u32)> {
+    pub fn pose_alphas(&self, index: usize, pose: UnitPose) -> Option<(Vec<[f32; 4]>, u32)> {
         let animated = &self.models[index];
         // The geosets shown follow the sequence played: the sack of gold
         // and the bundle of lumber of a worker show in Walk Gold and Walk
@@ -637,7 +648,7 @@ impl Animation {
         sequence: usize,
         elapsed: i32,
         looping: bool,
-    ) -> Option<(Vec<f32>, u32)> {
+    ) -> Option<(Vec<[f32; 4]>, u32)> {
         let animated = &self.models[index];
         let first = self.alphas.iter().position(|s| s.model == index)?;
         let start = Moment::start(&animated.model, sequence);
@@ -1007,8 +1018,8 @@ mod tests {
         let (start, slot) = animation.once_alphas(index, 0).unwrap();
         let (late, same) = animation.once_alphas(index, 1200).unwrap();
         assert_eq!(slot, same);
-        assert!(start.iter().all(|&a| a > 0.99), "{start:?}");
-        assert!(late.iter().all(|&a| a < 0.2), "{late:?}");
+        assert!(start.iter().all(|a| a[3] > 0.99), "{start:?}");
+        assert!(late.iter().all(|a| a[3] < 0.2), "{late:?}");
     }
 
     /// A dying unit fades by its Death sequence and stays as its end shows
@@ -1031,8 +1042,8 @@ mod tests {
         let (late, _) = animation
             .pose_alphas(index, UnitPose::Death(60_000))
             .unwrap();
-        assert!(start.iter().any(|&a| a > 0.99), "{start:?}");
-        assert!(late.iter().all(|&a| a < 0.01), "{late:?}");
+        assert!(start.iter().any(|a| a[3] > 0.99), "{start:?}");
+        assert!(late.iter().all(|a| a[3] < 0.01), "{late:?}");
         assert!(animation.pose_alphas(index, UnitPose::Stand).is_none());
     }
 

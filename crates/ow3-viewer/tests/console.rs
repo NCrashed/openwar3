@@ -404,7 +404,9 @@ fn a_load_shows_on_the_peasant() {
             .unwrap()
             .0;
         assert!(
-            walk.iter().zip(&carry).any(|(w, c)| *w < 0.5 && *c > 0.5),
+            walk.iter()
+                .zip(&carry)
+                .any(|(w, c)| w[3] < 0.5 && c[3] > 0.5),
             "load {load}: {walk:?} {carry:?}"
         );
         // Standing with it, it still shows.
@@ -413,7 +415,9 @@ fn a_load_shows_on_the_peasant() {
             .unwrap()
             .0;
         assert!(
-            walk.iter().zip(&stand).any(|(w, s)| *w < 0.5 && *s > 0.5),
+            walk.iter()
+                .zip(&stand)
+                .any(|(w, s)| w[3] < 0.5 && s[3] > 0.5),
             "load {load} standing: {walk:?} {stand:?}"
         );
     }
@@ -484,7 +488,7 @@ fn a_tree_drawn_on_its_own_stays_visible() {
         .animation
         .pose_alphas(index, UnitPose::Hit(100))
         .unwrap();
-    assert!(values.iter().any(|&a| a > 0.5), "{values:?}");
+    assert!(values.iter().any(|a| a[3] > 0.5), "{values:?}");
 }
 
 /// The melee start puts the camera on the workers of the local player's

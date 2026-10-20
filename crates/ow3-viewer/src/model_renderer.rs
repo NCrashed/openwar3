@@ -38,7 +38,7 @@ struct Globals {
 @group(1) @binding(0) var skin: texture_2d<f32>;
 @group(1) @binding(1) var skin_sampler: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
-@group(2) @binding(1) var<storage, read> alphas: array<f32>;
+@group(2) @binding(1) var<storage, read> alphas: array<vec4<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -88,8 +88,10 @@ fn vs(v: VertexIn) -> VertexOut {
     out.clip = globals.view_projection * model * skinned * vec4<f32>(v.position, 1.0);
     out.normal = (model * skinned * vec4<f32>(v.normal, 0.0)).xyz;
     out.uv = v.uv;
-    out.alpha = alphas[v.alpha + v.alpha_shift];
-    out.tint = v.tint;
+    // The colour of the geoset animation and the alpha of the slot.
+    let slot = alphas[v.alpha + v.alpha_shift];
+    out.alpha = slot.w;
+    out.tint = v.tint * slot.rgb;
     out.terrain_light = v.terrain_light;
     out.world = (model * skinned * vec4<f32>(v.position, 1.0)).xy;
     out.depth = out.clip.w;
@@ -210,8 +212,9 @@ pub struct ModelRenderer {
     /// The matrices of units in a pose of their own (dying, swinging),
     /// after those of the variants.
     unit_bones: Vec<crate::camera::Mat4>,
-    /// The alphas of effects played once, after the shared ones.
-    unit_alphas: Vec<f32>,
+    /// The colours and alphas of effects played once and of units with
+    /// their own, after the shared ones.
+    unit_alphas: Vec<[f32; 4]>,
     bone_capacity: u32,
     alpha_capacity: u32,
 }
@@ -344,7 +347,7 @@ impl ModelRenderer {
         });
         let alphas = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("alphas"),
-            size: u64::from(animation.alpha_count()) * 4,
+            size: u64::from(animation.alpha_count()) * 16,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -692,7 +695,7 @@ impl ModelRenderer {
             self.bone_capacity = self.bone_capacity.max(bone_count * 2);
             self.alpha_capacity = self.alpha_capacity.max(alpha_count * 2);
             self.bones = storage_buffer(device, "bones", u64::from(self.bone_capacity) * 64);
-            self.alphas = storage_buffer(device, "alphas", u64::from(self.alpha_capacity) * 4);
+            self.alphas = storage_buffer(device, "alphas", u64::from(self.alpha_capacity) * 16);
             self.animation_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("animation"),
                 layout: &self.animation_layout,

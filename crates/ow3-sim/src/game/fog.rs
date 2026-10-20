@@ -6,12 +6,14 @@
 //! each unit reveals the cells around the cell it stands in: a flying unit
 //! the whole circle of its radius, a ground unit the cells of its mask
 //! that higher ground and trees do not hide. A unit made reveals at once.
+//! A unit's cells are revealed to its owner and to the players its owner
+//! gives shared vision. Scripts set cells with fog modifiers and
+//! `SetFogState...`.
 //!
 //! PROVISIONAL: a unit made between updates sees past the trees and
-//! cliffs of the last update; the clock of
-//! day and night is that of the `night` regeneration type; dead and hidden
-//! units reveal nothing; a destructable blocks sight while it is alive;
-//! each player sees with its own units only. `FogEnable` and
+//! cliffs of the last update; the clock of day and night is that of the
+//! `night` regeneration type; dead and hidden units reveal nothing; a
+//! destructable blocks sight while it is alive. `FogEnable` and
 //! `FogMaskEnable` are kept for the viewer and do not change the grid.
 
 use std::cell::RefCell;
@@ -51,6 +53,8 @@ pub struct Fog {
     circles: Vec<Vec<(i32, i32)>>,
     /// The height of each cell at the last update.
     height: Vec<i32>,
+    /// Fog modifiers in the order they were made.
+    modifiers: Vec<u32>,
     /// `FogEnable` and `FogMaskEnable`.
     pub enabled: bool,
     pub mask_enabled: bool,
@@ -64,10 +68,39 @@ impl Default for Fog {
             masks: (0..=MOST).map(mask).collect(),
             circles: (0..=MOST).map(circle).collect(),
             height: Vec::new(),
+            modifiers: Vec::new(),
             enabled: true,
             mask_enabled: true,
         }
     }
+}
+
+/// The cells a fog modifier or `SetFogState...` covers: round a point
+/// with a radius, or a rectangle (min x, min y, max x, max y), reals as
+/// bit patterns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Area {
+    Radius { x: u32, y: u32, radius: u32 },
+    Rect([u32; 4]),
+}
+
+/// A fog modifier of a script (SPEC-0032, "Fog modifiers and fog states
+/// from scripts").
+///
+/// PROVISIONAL: a running modifier sets its cells to its state at every
+/// update, before the units' reveals or, with `afterUnits`, after them,
+/// and at once when it starts; with `useSharedVision` it acts for the
+/// players its player shares vision with as well; a rectangle covers the
+/// cells from that of its lower left corner to that of its upper right
+/// one (SPEC-0032 open question 1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Modifier {
+    player: i32,
+    state: u8,
+    area: Area,
+    shared: bool,
+    after_units: bool,
+    running: bool,
 }
 
 impl Fog {
@@ -225,7 +258,8 @@ fn heights(state: &State) -> Vec<i32> {
 }
 
 /// The fog update of this tick, if there is one: in the ticks `k` with
-/// `k - 1` a multiple of 80.
+/// `k - 1` a multiple of 80. Visible cells turn fogged, then the running
+/// modifiers set their cells, before and after the units' reveals.
 pub(super) fn tick(state: &mut State) {
     if state.ticks % UPDATE_TICKS != PHASE {
         return;
@@ -242,9 +276,22 @@ pub(super) fn tick(state: &mut State) {
             }
         }
     }
+    apply_modifiers(state, false);
     for i in 0..state.units.len() {
         let u = state.units[i];
         reveal(state, u);
+    }
+    apply_modifiers(state, true);
+}
+
+/// The running modifiers that come before the units' reveals, or after.
+fn apply_modifiers(state: &mut State, after_units: bool) {
+    for i in 0..state.fog.modifiers.len() {
+        let m = match state.objects.get(&state.fog.modifiers[i]) {
+            Some(Object::FogModifier(m)) if m.running && m.after_units == after_units => m.clone(),
+            _ => continue,
+        };
+        set_area(state, m.player, m.shared, m.state, m.area);
     }
 }
 
@@ -260,8 +307,23 @@ pub(super) fn born(state: &mut State, unit: u32) {
     reveal(state, unit);
 }
 
-/// The cells `unit` reveals to its owner, with the cell heights of the
-/// last update.
+/// Sets `cells` to `value` for `players`.
+fn set_cells(state: &mut State, players: &[i32], cells: &[usize], value: u8) {
+    let (w, h) = state.fog.size;
+    for &p in players {
+        let grid = state
+            .fog
+            .grids
+            .entry(p)
+            .or_insert_with(|| vec![MASKED; (w * h) as usize]);
+        for &c in cells {
+            grid[c] = value;
+        }
+    }
+}
+
+/// The cells `unit` reveals to its owner and those it shares vision
+/// with, with the cell heights of the last update.
 fn reveal(state: &mut State, unit: u32) {
     let (w, h) = state.fog.size;
     let Some(Object::Unit(unit)) = state.objects.get(&unit) else {
@@ -276,50 +338,138 @@ fn reveal(state: &mut State, unit: u32) {
     let Some((ci, cj)) = state.heights.cell_of(unit.x, unit.y) else {
         return;
     };
+    let owner = unit.owner;
     let r = radius(if state.night {
         data.night_sight
     } else {
         data.sight
     });
-    let fog = &mut state.fog;
+    let fog = &state.fog;
     let height = &fog.height;
-    let grid = fog
-        .grids
-        .entry(unit.owner)
-        .or_insert_with(|| vec![MASKED; (w * h) as usize]);
     let at = |dx: i32, dy: i32| {
         let (i, j) = (ci as i32 + dx, cj as i32 + dy);
         (i >= 0 && j >= 0 && i < w as i32 && j < h as i32)
             .then(|| (j as u32 * w + i as u32) as usize)
     };
+    let mut seen = Vec::new();
     if data.flying {
-        for &(dx, dy) in &fog.circles[r as usize] {
-            if let Some(c) = at(dx, dy) {
-                grid[c] = VISIBLE;
-            }
-        }
-        return;
-    }
-    let eye = height[(cj * w + ci) as usize];
-    let side = 2 * r + 3;
-    let index = |(dx, dy): (i32, i32)| ((dy + r + 1) * side + dx + r + 1) as usize;
-    let mut hidden = vec![false; (side * side) as usize];
-    for &(dx, dy) in &fog.masks[r as usize] {
-        let Some(c) = at(dx, dy) else {
-            // Off the map: skipped, and so are the cells behind it.
-            hidden[index((dx, dy))] = true;
-            continue;
-        };
-        if ring((dx, dy)) > 1 {
-            let blocked = parents((dx, dy))
-                .into_iter()
-                .any(|p| hidden[index(p)] || at(p.0, p.1).is_some_and(|pc| height[pc] > eye));
-            if blocked {
+        seen.extend(
+            fog.circles[r as usize]
+                .iter()
+                .filter_map(|&(dx, dy)| at(dx, dy)),
+        );
+    } else {
+        let eye = height[(cj * w + ci) as usize];
+        let side = 2 * r + 3;
+        let index = |(dx, dy): (i32, i32)| ((dy + r + 1) * side + dx + r + 1) as usize;
+        let mut hidden = vec![false; (side * side) as usize];
+        for &(dx, dy) in &fog.masks[r as usize] {
+            let Some(c) = at(dx, dy) else {
+                // Off the map: skipped, and so are the cells behind it.
                 hidden[index((dx, dy))] = true;
                 continue;
+            };
+            if ring((dx, dy)) > 1 {
+                let blocked = parents((dx, dy))
+                    .into_iter()
+                    .any(|p| hidden[index(p)] || at(p.0, p.1).is_some_and(|pc| height[pc] > eye));
+                if blocked {
+                    hidden[index((dx, dy))] = true;
+                    continue;
+                }
+            }
+            seen.push(c);
+        }
+    }
+    let players = state.setup.vision_receivers(owner);
+    set_cells(state, &players, &seen, VISIBLE);
+}
+
+/// The cells of `area` (SPEC-0032, "Fog modifiers and fog states from
+/// scripts"): round a point, `r = floor(radius / 128)`: none for 0, the
+/// 2 x 2 cells below and left of the point's cell for 1, those and four
+/// cells two away on the axes for 2, else the rows `-r .. r - 1` of the
+/// circle; or the cells of a rectangle.
+pub fn area_cells(heights: &crate::heights::Heights, size: (u32, u32), area: Area) -> Vec<usize> {
+    let (w, h) = (size.0 as i32, size.1 as i32);
+    let mut cells = Vec::new();
+    let mut add = |i: i32, j: i32| {
+        if i >= 0 && j >= 0 && i < w && j < h {
+            cells.push((j * w + i) as usize);
+        }
+    };
+    match area {
+        Area::Radius { x, y, radius } => {
+            let (ci, cj) = heights.cell_index(x, y);
+            let r = r2i(floor(mul(radius, PER_CELL))).min(MOST);
+            match r {
+                ..=0 => {}
+                1 | 2 => {
+                    for (i, j) in [(-1, -1), (0, -1), (-1, 0), (0, 0)] {
+                        add(ci + i, cj + j);
+                    }
+                    if r == 2 {
+                        for (i, j) in [(-2, 0), (2, 0), (0, -2), (0, 2)] {
+                            add(ci + i, cj + j);
+                        }
+                    }
+                }
+                _ => {
+                    let s = half_widths(r);
+                    for dy in -r..r {
+                        let half = s[dy.unsigned_abs() as usize];
+                        for dx in -half..=half {
+                            add(ci + dx, cj + dy);
+                        }
+                    }
+                }
             }
         }
-        grid[c] = VISIBLE;
+        Area::Rect([x0, y0, x1, y1]) => {
+            let (i0, j0) = heights.cell_index(x0, y0);
+            let (i1, j1) = heights.cell_index(x1, y1);
+            for j in j0.max(0)..=j1.min(h - 1) {
+                for i in i0.max(0)..=i1.min(w - 1) {
+                    add(i, j);
+                }
+            }
+        }
+    }
+    cells
+}
+
+/// Sets the cells of `area` to `value` for `player`, and with `shared`
+/// for those it shares vision with.
+fn set_area(state: &mut State, player: i32, shared: bool, value: u8, area: Area) {
+    let cells = area_cells(&state.heights, state.fog.size, area);
+    let players = if shared {
+        state.setup.vision_receivers(player)
+    } else {
+        vec![player]
+    };
+    set_cells(state, &players, &cells, value);
+}
+
+/// The state of a `fogstate` (`FOG_OF_WAR_MASKED` 1, `FOGGED` 2,
+/// `VISIBLE` 4).
+fn fog_state(value: &Value) -> Option<u8> {
+    match handle(value)? {
+        1 => Some(MASKED),
+        2 => Some(FOGGED),
+        4 => Some(VISIBLE),
+        _ => None,
+    }
+}
+
+fn rect(state: &State, value: &Value) -> Option<[u32; 4]> {
+    match state.objects.get(&handle(value)?)? {
+        Object::Rect {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        } => Some([*min_x, *min_y, *max_x, *max_y]),
+        _ => None,
     }
 }
 
@@ -411,6 +561,112 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native IsFogMaskEnabled takes nothing returns boolean",
         |vm, state, args| { Ok(Some(Value::Boolean(state.borrow().fog.mask_enabled))) }
+    );
+
+    // Fog states set once, and fog modifiers (SPEC-0032).
+    // `SetFogStateRect` and `SetFogStateRadius(Loc)`: the area's
+    // arguments start at index 2, the last argument is `useSharedVision`.
+    type AreaOf = fn(&State, &[Value]) -> Option<Area>;
+    let radius_at = |_: &State, args: &[Value]| -> Option<Area> {
+        Some(Area::Radius {
+            x: real(&args[2]),
+            y: real(&args[3]),
+            radius: real(&args[4]),
+        })
+    };
+    let radius_loc = |state: &State, args: &[Value]| -> Option<Area> {
+        let (x, y) = location(state, &args[2])?;
+        Some(Area::Radius {
+            x,
+            y,
+            radius: real(&args[3]),
+        })
+    };
+    let rect_area =
+        |state: &State, args: &[Value]| -> Option<Area> { rect(state, &args[2]).map(Area::Rect) };
+    let kinds: [(&str, &str, usize, AreaOf); 3] = [
+        ("Rect", "rect where", 3, rect_area),
+        (
+            "Radius",
+            "real centerx, real centerY, real radius",
+            5,
+            radius_at,
+        ),
+        ("RadiusLoc", "location center, real radius", 4, radius_loc),
+    ];
+    for (suffix, params, shared_at, area_of) in kinds {
+        let declaration = format!(
+            "native SetFogState{suffix} takes player forWhichPlayer, fogstate whichState, {params}, boolean useSharedVision returns nothing"
+        );
+        native!(add, state, &declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let (Some(p), Some(value), Some(area)) = (
+                player(&state, &args[0]),
+                fog_state(&args[1]),
+                area_of(&state, args),
+            ) else {
+                return Ok(None);
+            };
+            let shared = args[shared_at] == Value::Boolean(true);
+            set_area(&mut state, p, shared, value, area);
+            Ok(None)
+        });
+        let declaration = format!(
+            "native CreateFogModifier{suffix} takes player forWhichPlayer, fogstate whichState, {params}, boolean useSharedVision, boolean afterUnits returns fogmodifier"
+        );
+        native!(add, state, &declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let (Some(p), Some(value), Some(area)) = (
+                player(&state, &args[0]),
+                fog_state(&args[1]),
+                area_of(&state, args),
+            ) else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let h = state.create(Object::FogModifier(Modifier {
+                player: p,
+                state: value,
+                area,
+                shared: args[shared_at] == Value::Boolean(true),
+                after_units: args[shared_at + 1] == Value::Boolean(true),
+                running: false,
+            }));
+            state.fog.modifiers.push(h);
+            Ok(Some(Value::Handle(Some(h))))
+        });
+    }
+    for (name, running) in [("FogModifierStart", true), ("FogModifierStop", false)] {
+        let declaration =
+            format!("native {name} takes fogmodifier whichFogModifier returns nothing");
+        native!(add, state, &declaration, |vm, state, args| {
+            let mut state = state.borrow_mut();
+            let Some(Object::FogModifier(m)) =
+                handle(&args[0]).and_then(|h| state.objects.get_mut(&h))
+            else {
+                return Ok(None);
+            };
+            m.running = running;
+            let m = m.clone();
+            if running {
+                set_area(&mut state, m.player, m.shared, m.state, m.area);
+            }
+            Ok(None)
+        });
+    }
+    native!(
+        add,
+        state,
+        "native DestroyFogModifier takes fogmodifier whichFogModifier returns nothing",
+        |vm, state, args| {
+            let mut state = state.borrow_mut();
+            if let Some(h) = handle(&args[0])
+                && matches!(state.objects.get(&h), Some(Object::FogModifier(_)))
+            {
+                state.objects.remove(&h);
+                state.fog.modifiers.retain(|&m| m != h);
+            }
+            Ok(None)
+        }
     );
 }
 
@@ -662,6 +918,88 @@ mod tests {
         update(&mut state);
         let seen = cells(&state, VISIBLE, (16, 16));
         assert_eq!(seen, circle(6).into_iter().collect());
+    }
+
+    /// The cells of a modifier round a point: none below 128, 2 x 2 below
+    /// and left of the point's cell, the axes two away for 2, and for a
+    /// radius of 800 the rows 6 below to 5 above (SPEC-0032).
+    #[test]
+    fn modifier_cells() {
+        let state = world(|_, _| 2);
+        let size = state.fog.size();
+        let cells = |radius: f32| -> BTreeSet<(i32, i32)> {
+            let [x, y, _] = inside(16, 16);
+            let area = Area::Radius {
+                x,
+                y,
+                radius: radius.to_bits(),
+            };
+            area_cells(&state.heights, size, area)
+                .into_iter()
+                .map(|c| {
+                    (
+                        (c as u32 % size.0) as i32 - 16,
+                        (c as u32 / size.0) as i32 - 16,
+                    )
+                })
+                .collect()
+        };
+        assert!(cells(127.0).is_empty());
+        let two: BTreeSet<_> = [(-1, -1), (0, -1), (-1, 0), (0, 0)].into();
+        assert_eq!(cells(192.0), two);
+        assert_eq!(cells(300.0).len(), 8);
+        let c = cells(800.0);
+        let rows: BTreeSet<i32> = c.iter().map(|p| p.1).collect();
+        assert_eq!(rows, (-6..=5).collect());
+        let s = half_widths(6);
+        for dy in -6..=5 {
+            let n = c.iter().filter(|p| p.1 == dy).count() as i32;
+            assert_eq!(n, 2 * s[dy.unsigned_abs() as usize] + 1);
+        }
+    }
+
+    /// A running modifier keeps its cells visible at each update; a state
+    /// set once fades at the next one.
+    #[test]
+    fn modifiers_and_states() {
+        let mut state = world(|_, _| 2);
+        let [x, y, _] = inside(10, 10);
+        let area = Area::Radius {
+            x,
+            y,
+            radius: 800f32.to_bits(),
+        };
+        set_area(&mut state, 0, false, VISIBLE, area);
+        assert_eq!(state.fog.state(0, 10, 10), VISIBLE);
+        update(&mut state);
+        assert_eq!(state.fog.state(0, 10, 10), FOGGED);
+        let h = state.create(Object::FogModifier(Modifier {
+            player: 0,
+            state: VISIBLE,
+            area,
+            shared: false,
+            after_units: true,
+            running: true,
+        }));
+        state.fog.modifiers.push(h);
+        update(&mut state);
+        update(&mut state);
+        assert_eq!(state.fog.state(0, 10, 10), VISIBLE);
+        assert_eq!(state.fog.state(0, 10, 15), VISIBLE);
+        // The top row is not the modifier's, and was never seen.
+        assert_eq!(state.fog.state(0, 10, 16), MASKED);
+    }
+
+    /// A player sees with another's units only with its shared vision.
+    #[test]
+    fn shared_vision() {
+        let mut state = world(|_, _| 2);
+        super::super::widgets::create_unit(&mut state, 1, PEASANT, inside(16, 16)).unwrap();
+        update(&mut state);
+        assert_eq!(state.fog.state(0, 16, 16), MASKED);
+        state.setup.alliances.insert((1, 0, 5));
+        update(&mut state);
+        assert_eq!(cells(&state, VISIBLE, (16, 16)).len(), 121);
     }
 
     /// Parents are one ring closer, and lie in the mask.

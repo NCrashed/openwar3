@@ -339,6 +339,23 @@ impl Setup {
         self.slots.get_mut(usize::try_from(id?).ok()?)
     }
 
+    /// The players that see with the units of `giver` (SPEC-0032,
+    /// "Allied vision"): itself and those it gives shared vision, in
+    /// increasing order.
+    pub fn vision_receivers(&self, giver: i32) -> Vec<i32> {
+        let mut out: Vec<i32> = self
+            .alliances
+            .range((giver, i32::MIN, i32::MIN)..=(giver, i32::MAX, i32::MAX))
+            .filter(|&&(_, _, kind)| kind == ALLIANCE_SHARED_VISION)
+            .map(|&(_, b, _)| b)
+            .collect();
+        if !out.contains(&giver) {
+            out.push(giver);
+            out.sort_unstable();
+        }
+        out
+    }
+
     /// `IsPlayerAlly(a, b)`: the passive alliance flag from `a` to `b`.
     pub fn is_ally(&self, a: i32, b: i32) -> bool {
         self.alliances.contains(&(a, b, ALLIANCE_PASSIVE))

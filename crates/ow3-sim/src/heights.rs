@@ -99,6 +99,12 @@ impl Heights {
             .unwrap_or(0)
     }
 
+    /// The tile that (`x`, `y`) lies in, also outside the map.
+    pub fn cell_index(&self, x: u32, y: u32) -> (i32, i32) {
+        let index = |v: u32, origin: u32| r2i(floor(mul(sub(v, origin), PER_TILE)));
+        (index(x, self.origin[0]), index(y, self.origin[1]))
+    }
+
     /// The tile that (`x`, `y`) lies in, outside the map `None`.
     pub fn cell_of(&self, x: u32, y: u32) -> Option<(u32, u32)> {
         let (w, h) = self.cells();

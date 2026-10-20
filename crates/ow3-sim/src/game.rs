@@ -110,6 +110,7 @@ pub enum Object {
         max_x: u32,
         max_y: u32,
     },
+    FogModifier(fog::Modifier),
 }
 
 /// A `boolexpr`: a function made by `Condition` or `Filter`, or `And`,

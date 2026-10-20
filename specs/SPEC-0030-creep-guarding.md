@@ -48,10 +48,11 @@ A creep's home is the point where it was created; a `move` order from
 a script does not change it (a kobold moved 600 away by a script, then
 drawn into a chase, went back to the point of its creation).
 
-A creep that has gone farther than `GuardDistance` (600) from its home
-gives up the chase about `GuardReturnTime` (5 s) later: it gets a
-`move` order (851986) to its home, walks back and stands there with
-order 0 (within 8 to 12 of the home point in the tests). Attacks on it
+A creep that has gone too far from its home gives up the chase
+`GuardReturnTime` (5 s) after a **guard check** finds it outside its
+zone (below): it gets a `move` order (851986) to its home, walks back
+and stands there with order 0 (within 8 to 12 of the home point in the
+tests). Attacks on it
 did not delay this in any test: hits by a rifleman 3 s after it passed
 600, hits every 1.5 s from the moment it passed 1000, and a hit by the
 very knight it chased (which turned back and attacked it 2.5 s after
@@ -74,18 +75,64 @@ the test, game tick = count + 202):
 So the creeps turned back 1052 to 1080 ticks (5.3 to 5.4 s) after
 passing 600 from home, attacked or not, and passing 1000 did not make
 them turn back at once. The two kobolds of one fight turned back in the
-same tick.
+same tick. The rule behind these times is the guard check below.
+
+### The guard check
+
+Each creep has its own check, made at fixed times:
+
+- **When it starts.** When the creep enters a fight (it acquires a
+  target, or it is called to help, SPEC-0019), it is checked at once and
+  then every 2.0 s (400 ticks) from that moment. A creep called to help
+  enters the fight in the same tick as the creep that called it, so the
+  creeps of one camp are checked in the same ticks.
+- **The zone** is the circle of radius `GuardDistance` (600) plus the
+  creep's collision size around its home: the creep is outside when
+  the distance between its position and the home is larger than that
+  (kobold, collision 31: inside at 626.0, outside at 637.1, measured
+  over 12 kobolds of speeds 270 to 303; at 621 inside, at 651 outside).
+- **At a check that finds the creep outside**, the checks stop and a
+  timer of `GuardReturnTime` (5.0 s, 1000 ticks) starts; when it
+  expires the creep gets the `move` order home. Attacks on the creep or
+  by it in the meantime do not change the timer.
+
+So the time from the passing of 600 to the turn is 1000 ticks plus the
+wait for the next check (0 to 400 ticks) plus the time the creep needs to
+cover its collision size; in the tests 1040 to 1415 ticks. Creeps of
+one camp turn in the same tick when they are outside at the same check;
+one that is still inside at that check (a kobold slowed to 150 behind
+one at 270) turns 400 ticks later, at the check that finds it outside.
+Measured (tick of the passing of 600 by the creep's distance from home
+logged every tick, and of the `move` order home; times of the checks
+read in the running game):
+
+| Case | Passed 600 | Check that found it outside | Turned |
+|---|---|---|---|
+| two kobolds 128 apart, chasing one knight | 773, 779 | 818 | 1818, 1818 |
+| a kobold and a kobold slowed to 200, 128 apart | 797, 873 | 1211 | 2211, 2211 |
+| a kobold alone | 870 | 1265 | 2265 |
+| a kobold and a kobold slowed to 150 | 743, 931 | 811, 1211 | 1811, 2211 |
 
 ### Sleeping
 
-Creeps whose type has `canSleep` 1 (the kobold) sleep at night
-(`UnitIsSleeping` true from the start of a test at 0:00). A sleeping
-creep does not acquire: a footman walking past two sleeping kobolds at
-300 was not attacked. A hit wakes the creep that is hit and the other
-creeps of its camp: a footman's first hit on one kobold woke it and a
-kobold 400 away in the same tick, 7 ticks after the hit, and both
-fought; a kobold far away slept on. When the time of day was set to
-6:30, all sleeping creeps woke in the same tick.
+Creeps whose type has `canSleep` 1 (the kobold) sleep at night: they
+fall asleep at `Dusk` (18:00) and wake up at `Dawn` (6:00) of
+`Units\MiscData.txt`, all in the same tick (test RVC, time of day
+running at 4 times the normal speed from 17:30: asleep from the tick at
+which the time of day was 18.011, awake from 6.0106). `UnitIsSleeping`
+is true from the start of a test at 0:00, and setting the time of day to
+6:30 woke all sleeping creeps in the same tick.
+
+A sleeping creep does not acquire: a footman walking past two sleeping
+kobolds at 300 was not attacked. A hit wakes the creep that is hit and,
+in the same tick, every sleeping creep within about 832 of it (all
+creeps of the tests were of `Player(12)`) (tests RVB, RVG, RVH: kobolds at 828, 829.5, 830.5 and 831.5
+from the one hit woke up, at 833, 836, 840, 846 and more they slept on).
+The radius is the same for creeps with another night sight or collision
+size: with `nsra` (night sight 900, collision 16) as the creep hit, the
+other one or both, those at 810 to 831.5 woke up, those at 840 and 920
+to 945 did not (tests RVI, RVJ). They woke up in the tick of the damage event
+of the footman's first hit.
 
 ## Edge cases
 
@@ -98,19 +145,33 @@ fought; a kobold far away slept on. When the time of day was set to
 1. What `MaxGuardDistance` and the attacks mentioned in the data's
    description change (in the tests neither changed the time of the
    return).
-2. Why two creeps of one fight turn back in the same tick (one timer for
-   the group, or a check at fixed times; the turn came 20 ticks apart
-   for creeps of two separate fights).
+2. Whether a creep that changes its target, or is attacked by another
+   unit, restarts its guard checks; what the 0.3 in the other branch of
+   the zone test is about (a creep with a target of some kind, not met
+   in the tests).
 3. Whether a creep going back home can be made to fight again on the
    way, its regeneration, and how creeps that went home choose their
    facing.
-4. The radius of waking a camp, sleeping creeps that are only
-   approached (spells, `BuildingPlacementNotifyRadius`), and the hour at
-   which creeps fall asleep and wake up when the day runs by itself.
+4. Whether woken creeps wake others in turn (a chain), sleeping creeps
+   that are only approached (spells, `BuildingPlacementNotifyRadius`),
+   and creeps in a fight at dusk.
 5. The home of creeps placed in the map (`war3mapUnits.doo`).
 
 ## Sources
 
+- Test maps RVA, RVD, RVE, RVF on 1.27b under Wine, 2026-10-20 (day):
+  kobolds alone and in pairs 128, 400 and 800 apart, some slowed with
+  `SetUnitMoveSpeed`, attacked by knights that ran away; positions of
+  the kobolds every 2 or 4 ticks, orders and damage events at every
+  change. In RVE the guard checks and the start of the return timer were
+  logged in the running game, with the centre and radius they use.
+- Test maps RVB, RVG, RVH, RVI, RVJ (time of day fixed at 0:00): eight
+  pairs of sleeping creeps, the second of each pair 200 to 1100 north of
+  the first, a footman attacking the first; `UnitIsSleeping` of every
+  creep at every tick.
+- Test map RVC: six sleeping-capable kobolds, time of day from 17:30 at 4
+  times the normal speed, `UnitIsSleeping` and `GetTimeOfDay` at every
+  change.
 - Test map RUK on 1.27b under Wine, 2026-10-20, time of day fixed at
   12:00: (A) a kobold and a knight that attacks it and then runs away
   east, (B) two kobolds 128 apart and a footman walking past them at
@@ -131,3 +192,11 @@ fought; a kobold far away slept on. When the time of day was set to
    it stands at home again (order 0) from tick 3371.
 2. (C) Both kobolds get order 851986 in tick 1831 and are home again by
    tick 3355 and 3343.
+3. **Guard check** (RVE): a kobold alone, attacked by a knight that runs
+   away west: passes 600 from home in test tick 870, is still inside at
+   the check of tick 865 (595.7 from home), outside at the check of tick
+   1265, gets order 851986 in tick 2265.
+4. **Waking** (RVH): kobolds 828 and 831.5 from the kobold that a footman
+   hits wake up in the tick of the damage; one 833 away sleeps on.
+5. **Dusk and dawn** (RVC): all six kobolds fall asleep in one tick at
+   18:00 and wake up in one tick at 6:00.

@@ -626,7 +626,15 @@ fn search(
                     break;
                 }
                 if !grid.step(c, n, class) {
-                    clear = false;
+                    // The target's own cells are not an obstacle met.
+                    let only_target = target.is_some_and(|t| {
+                        step_cells(c, n, class)
+                            .into_iter()
+                            .all(|(x, y)| grid.free(x, y) || t.contains(&(x, y)))
+                    });
+                    if !only_target {
+                        clear = false;
+                    }
                     continue;
                 }
                 let cost = node.g + if dx != 0 && dy != 0 { 21 } else { 15 };

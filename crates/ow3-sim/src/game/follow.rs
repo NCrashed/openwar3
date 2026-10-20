@@ -317,6 +317,10 @@ pub struct Walker {
     pub cluster: usize,
     /// For an attacker, how it chases (SPEC-0019).
     pub chase: Option<Chase>,
+    /// For a walk to a building, the red cells of its footprint: the
+    /// search ends touching them, and they are not obstacles it met
+    /// (SPEC-0029).
+    pub building: Vec<(i32, i32)>,
 }
 
 /// What a chase needs at an update.
@@ -474,6 +478,11 @@ fn decide(
                 LOCAL_LIMIT,
                 &path::occupied_cells(to_cells(chase.target), chase.target_class),
             ),
+            // A walk to a building: the same, touching its footprint
+            // (SPEC-0029).
+            None if follow.final_goal && !walker.building.is_empty() => {
+                path::local_touching(&seen, at, follow.goal, class, LOCAL_LIMIT, &walker.building)
+            }
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
         shared.budget.used += found.iterations;

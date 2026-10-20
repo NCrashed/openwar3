@@ -26,6 +26,11 @@ pub struct Footprint {
 }
 
 impl Footprint {
+    /// The red cells, which block walkers.
+    pub(super) fn red(&self) -> &[(i32, i32)] {
+        &self.red
+    }
+
     /// Whether one of `cells` is a red cell or a neighbour of one, also
     /// diagonally (SPEC-0029, "Reaching a building").
     pub(super) fn touches(&self, cells: &[(i32, i32)]) -> bool {

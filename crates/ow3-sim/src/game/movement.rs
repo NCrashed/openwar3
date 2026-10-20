@@ -2043,6 +2043,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             squared_speed: follow::squared_speed(m.velocity),
                             cluster: 1,
                             chase: Some(chase_of(state, target, full_reach)),
+                            building: Vec::new(),
                         };
                         let steer = follow::steer(state, &walker, tick);
                         // The goal taken 66 ticks after a chase resumes
@@ -2074,6 +2075,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                 } else {
                     let squared_speed = follow::squared_speed(m.velocity);
+                    // A walk to a building ends touching it (SPEC-0029).
+                    let building = match m.order {
+                        Order::Gather { target } | Order::Return { building: target } => state
+                            .unit(Some(target))
+                            .and_then(|b| b.footprint.as_ref())
+                            .map(|f| f.red().to_vec())
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
                     let walker = |order| follow::Walker {
                         handle: h,
                         here,
@@ -2082,6 +2092,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         squared_speed,
                         cluster,
                         chase: None,
+                        building: building.clone(),
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -2408,6 +2419,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             squared_speed: 0,
             cluster: 1,
             chase: Some(chase_of(state, target, reach)),
+            building: Vec::new(),
         };
         follow::search(state, &walker, tick);
     }

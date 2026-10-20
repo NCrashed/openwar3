@@ -591,32 +591,33 @@ and the updates following `U` (SPEC-0018), the events of `c-RXD-1` are
 the game's one for one up to tick 2161, and the positions of the
 peasants up to 3230 and of the creeps up to 2156 (creeps 7 and 9).
 
-**1. The stand at the 12th update after a swing (`c-RXD-1`, tick
-2155).** Creep 9 hit at 1967 (backswing to 2087) and creep 7 at 1955;
-here both take a new goal and stand at their update of 2155 (the 12th
-after the first update after the backswing, SPEC-0019 "After the
-swing") and walk from 2161. In the game creep 9 walks on through 2155
-(its position changes in every tick from 2090 to 2161) and creep 7
-stands up to 2155 and walks from 2156. At 2161 the game has creep 9
-blocked and making creep 7 wait 20 updates, which follows from that.
-Needed: which update of the chase after the swing is the standing one
-for each of the two (the ticks 2107, 2149, 2155, 2161 of SPEC-0021 name
-the goals at the 12th update; which creep each is), and whether a
-switch of target (creep 9 switched at 2007 and 2031, creep 7 at 1857)
-or a hit restarts the count.
+**1. The new goal after a swing: `c-RXD-1` against `c-CH1` (open
+question 11 of SPEC-0019).** The rule "new goal and stand 72 ticks after
+the first update not before the end of the backswing" was tried (the
+patch is kept aside): it gives creep 9 of `c-RXD-1` the game's walk
+through 2155 (its positions then follow the game up to 2174), but it
+breaks verification 5 (`c-CH1`, row 1). There the damage is at 427 in
+the game (428 here), the footman's backswing is 100 ticks, so the
+backswing ends at 527 (528 here); the updates of that map fall in
+ticks `6 m + 4` (322, 598), so the first update not before the end is
+532 (here 532 too, first motion 533) and the rule gives the stand at
+604/605, where the game stood at 598 (and at 958, the rule giving
+971). 598 is 66 ticks after 532, as the older rule says. So with these
+numbers the two tests cannot both follow either rule. Needed: what
+else decides the update of the new goal (the end of the backswing as
+the game holds it, or another count), with the numbers of `c-CH1` row
+1 if they can be read again.
 
-**2. The first walk to a near mine (`c-RXI-1`, tick 307).** The six
-peasants get `harvest` in tick 301 and in the game walk straight east
-to the mine from their first update (307; positions from 308). Here
-the last segment is a local search to the mine (1148 away), whose goal
-cell lies in the mine's footprint; the search meets that unpassable
-footprint, so by SPEC-0020 step 2 the peasant walks to the first point
-of its path (a cell centre to the south-east or north-east), turns,
-and moves from 314. Needed: how a walk to a building (a mine, a town
-hall to give gold) searches its path: its goal (the building's centre,
-the nearest free cell, a cell touching the footprint) and when it ends,
-and whether meeting the building's own footprint counts as meeting an
-obstacle for walking straight.
+**2. The high-level path of a walk to a building (`c-RXI-1`, tick
+307).** The touch rule of SPEC-0029 is in. But here the high-level
+search (SPEC-0020) to the mine at (-896, 0), whose cell lies in the
+mine's footprint, gives 4 waypoints going round the mine to the north
+(the first segment ends at (-976, 176) or (-848, 176)), so the first
+local search is not the final one and does not touch the mine. In the
+game the first local searches went to the mine itself. Needed: how the
+high-level path of a walk to a building is made (is its own footprint
+passable to it, is the goal block moved, is the high-level search left
+out within some distance).
 
 **3. Checksums.** `c-RXI-1` and `c-RXD-1` stay among the replays whose
 checksum turns are not followed until the walks above match.

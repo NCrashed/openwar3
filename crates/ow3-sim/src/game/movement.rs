@@ -1846,9 +1846,21 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         }
         // A worker reaching its mine, tree or drop-off stands there; what it
         // does is up to `harvest::tick` after the updates.
+        // A building is reached at the update after the one at which the
+        // walk came to the end of its path, touching it (SPEC-0029); a
+        // tree by the distance.
+        let building_target = |target: u32| {
+            state
+                .unit(Some(target))
+                .is_some_and(|b| b.footprint.is_some())
+        };
         if let Order::Gather { target } | Order::Return { building: target } = m.order
             && !waiting
-            && super::harvest::reached(state, h, here, target)
+            && if building_target(target) {
+                m.arrived
+            } else {
+                super::harvest::reached(state, h, here, target)
+            }
         {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));

@@ -553,6 +553,17 @@ fn decide(
             return Steer::Stand(segment_goal);
         }
         if follow.final_goal {
+            // A walk to a building stands at the end of its path, where it
+            // touched the building, before it goes in (SPEC-0029).
+            if !shared.building.is_empty() {
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+            }
             return Steer::Arrived;
         }
         follow.next = Next::Segment;

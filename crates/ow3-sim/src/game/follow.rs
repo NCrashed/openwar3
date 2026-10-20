@@ -71,6 +71,9 @@ pub struct Follow {
     /// point walked to.
     local: Vec<[u32; 2]>,
     partial: bool,
+    /// A search again found no way closer: the order ends at the next
+    /// update.
+    stuck: bool,
     target: usize,
     /// What the next update must do first.
     next: Next,
@@ -322,6 +325,7 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
             final_goal: true,
             local: Vec::new(),
             partial: false,
+            stuck: false,
             target: 0,
             next: Next::Search,
             hold_until: 0,
@@ -449,6 +453,20 @@ fn decide(
     if follow.target == last && (last == 0 || close(at, follow.local[last])) {
         let reached = follow.local[last];
         if follow.partial {
+            // A search again that cannot get the unit any closer to the
+            // order point (its closest node is where it stands) ends the
+            // order.
+            //
+            // PROVISIONAL: SPEC-0020 says only that the unit searches
+            // again; in c-RVL-1 a footman whose order point another one
+            // stood on stopped and its order ended two updates later.
+            if last == 0 && follow.final_goal {
+                if follow.stuck {
+                    return Steer::Arrived;
+                }
+                follow.stuck = true;
+                return Steer::Stand(segment_goal);
+            }
             // The end of a path that did not get there: search again.
             follow.next = Next::Search;
             return Steer::Stand(segment_goal);

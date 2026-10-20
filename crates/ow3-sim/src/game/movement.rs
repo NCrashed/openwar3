@@ -139,6 +139,8 @@ pub enum Order {
         leader: u32,
         from: [u32; 2],
         start_gap: u32,
+        /// It stands in the follow range (its order goes on).
+        standing: bool,
     },
     /// Walk to a gold mine or tree to gather from it (SPEC-0029).
     Gather { target: u32 },
@@ -233,6 +235,16 @@ impl Moving {
     }
 
     /// The id of the order while it is on.
+    /// Whether it follows a unit standing in the follow range (SPEC-0019).
+    pub fn follower_stands(&self) -> bool {
+        !self.arrived && matches!(self.order, Order::Follow { standing: true, .. })
+    }
+
+    /// The id of its order, also once it ended.
+    pub(super) fn last_order_id(&self) -> i32 {
+        self.order_id
+    }
+
     pub fn order_id(&self) -> i32 {
         if self.arrived { 0 } else { self.order_id }
     }
@@ -536,6 +548,9 @@ pub(super) fn group_point_order(
     name: &str,
     target: [u32; 2],
 ) -> bool {
+    for &h in units {
+        super::queue::clear(state, h);
+    }
     let taken: Vec<u32> = units
         .iter()
         .copied()
@@ -816,6 +831,36 @@ fn cluster_path(state: &State, from: [u32; 2], goal: [u32; 2], class: u8) -> Vec
     }
 }
 
+/// The places (cells) of `members` at the end of a group order to `goal`
+/// (cells), laid out as a cluster lays them out at its first update
+/// (SPEC-0025): the leader is the member nearest the goal, the formation
+/// faces from it along its path, and the places are the path's last
+/// waypoint plus the offsets.
+pub(super) fn group_places(
+    state: &State,
+    members: &[super::formation::Member],
+    goal: [u32; 2],
+) -> Vec<[u32; 2]> {
+    let leader = nearest(members, goal);
+    let class = crate::path::size_class(mul(members[leader].radius, 0x4200_0000));
+    let waypoints = cluster_path(state, members[leader].position, goal, class);
+    let (first, last) = match (waypoints.first(), waypoints.last()) {
+        (Some(&f), Some(&l)) => (f, l),
+        _ => (goal, goal),
+    };
+    let lead = members[leader].position;
+    let angle = angle(sub(first[0], lead[0]), sub(first[1], lead[1]));
+    super::formation::offsets(members, angle)
+        .into_iter()
+        .map(|o| [add(last[0], o[0]), add(last[1], o[1])])
+        .collect()
+}
+
+/// A point in cells as a world point.
+pub(super) fn cells_to_world(p: [u32; 2], min: [u32; 2]) -> [u32; 2] {
+    absolute(mul_both(p, CELLS_TO_WORLD), min)
+}
+
 /// Sends each member of `cluster` to its place: the current waypoint plus
 /// its offset.
 fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
@@ -852,6 +897,7 @@ const LUMBER: i32 = 2;
 /// (open question 3); an order the player cannot pay for, to a type that
 /// is not a building or to a unit that is not a worker is not taken.
 pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32; 2]) -> bool {
+    super::queue::clear(state, h);
     let Some(owner) = state.unit(Some(h)).filter(|u| u.alive).map(|u| u.owner) else {
         return false;
     };
@@ -1192,6 +1238,8 @@ fn is_building(state: &State, h: u32) -> bool {
 
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
+    // An order without Shift empties the queue (SPEC-0031).
+    super::queue::clear(state, h);
     point_order_taken(state, h, name, target).1
 }
 
@@ -1239,6 +1287,7 @@ fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) ->
 /// `IssueTargetOrder(h, name, target)`: `attack` and `move`. A new order
 /// ends an attack-move.
 pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    super::queue::clear(state, h);
     let done = target_order_taken(state, h, name, target);
     if done {
         set_attack_move(state, h, None);
@@ -1249,6 +1298,7 @@ pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -
 /// `IssueImmediateOrder(h, name)`: `stop`, `holdposition` and `move`. A
 /// new order ends an attack-move.
 pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
+    super::queue::clear(state, h);
     let done = immediate_order_taken(state, h, name);
     if done {
         set_attack_move(state, h, None);
@@ -1375,6 +1425,12 @@ fn order_id(name: &str) -> i32 {
         .iter()
         .find(|(n, _)| n.eq_ignore_ascii_case(name))
         .map_or(0, |&(_, id)| id)
+}
+
+/// The name of the orders as the game knows it, for an order given by
+/// name.
+pub(super) fn known_order(name: &str) -> Option<&'static str> {
+    order_name(order_id(name))
 }
 
 /// `OrderId2String`: the name of `id`, none for 0 and unknown ids.
@@ -1805,37 +1861,61 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // the follow range, or, for a start within it, at which the gap
             // is no larger than what it walked (SPEC-0019, "Following an
             // allied unit").
+            let mut follower_stands = false;
             if let Order::Follow {
                 leader,
                 from,
                 start_gap,
+                standing,
             } = m.order
             {
                 match position_of(state, leader).filter(|_| super::attack::standing(state, leader))
                 {
                     Some(at) => {
                         let lead = relative(at, min);
+                        let mut renewed = false;
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             _ => {
                                 m.target = at;
                                 m.chase = Some(countdown(here, lead));
+                                renewed = true;
                             }
                         }
                         let (own, other) = (collision_of(state, h), collision_of(state, leader));
-                        let stop = if real_of(start_gap) > real_of(FOLLOW_RANGE) {
-                            let reach = mul(add(add(FOLLOW_RANGE, own), other), CELL);
+                        let reach = mul(add(add(FOLLOW_RANGE, own), other), CELL);
+                        // A standing follower keeps its order and walks
+                        // again when, at the renewal of its goal, the
+                        // leader is out of the follow range (SPEC-0019: 77
+                        // ticks after the gap passed 300 in the one case
+                        // seen). PROVISIONAL: the renewal of the chase.
+                        let stands = if standing {
+                            !(renewed && !in_range(here, lead, reach))
+                        } else if real_of(start_gap) > real_of(FOLLOW_RANGE) {
                             in_range(here, lead, reach)
                         } else {
                             let gap = sub(sub(distance(here, lead), own), other);
                             real_of(gap) <= real_of(distance(from, here))
                         };
-                        // The order ends there: c-RTW-3 counts it ended
-                        // at that update.
-                        if stop {
-                            m.arrived = true;
+                        if stands {
+                            follower_stands = true;
                             m.walking = false;
                             m.velocity = [0, 0];
+                            // From now on by the follow range.
+                            m.order = Order::Follow {
+                                leader,
+                                from,
+                                start_gap: add(FOLLOW_RANGE, 0x3F80_0000),
+                                standing: true,
+                            };
+                        } else if standing {
+                            m.order = Order::Follow {
+                                leader,
+                                from,
+                                start_gap,
+                                standing: false,
+                            };
+                            m.restart = true;
                         }
                     }
                     None => {
@@ -1844,7 +1924,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                 }
             }
-            if !m.arrived {
+            if !m.arrived && !follower_stands {
                 let goal = relative(m.target, min);
                 let (dx, dy) = (sub(goal[0], here[0]), sub(goal[1], here[1]));
                 // The squared distance in cells.
@@ -2070,6 +2150,7 @@ fn follow_order(state: &mut State, h: u32, target: u32, order_id: i32) -> bool {
         leader: target,
         from,
         start_gap: gap,
+        standing: false,
     };
     order(state, h, follow, order_id, at)
 }

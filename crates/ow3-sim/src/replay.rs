@@ -32,6 +32,8 @@ const TICK_MS: u64 = 5;
 const NONE: [u32; 2] = [u32::MAX; 2];
 /// The flag of an order given to a group of units (SPEC-0024, SPEC-0025).
 const GROUP_ORDER: u16 = 0x0008;
+/// The flag of an order given with Shift: queued (SPEC-0031).
+const QUEUED: u16 = 0x0001;
 
 /// A replay being played.
 pub struct Playback<'a> {
@@ -183,9 +185,11 @@ impl<'a> Playback<'a> {
             }
             // An order that ends frees its objects, the path of a walk
             // among them (SPEC-0024); a unit standing an update on its way
-            // or starting to walk changes nothing beyond the order. A group
+            // or starting to walk changes nothing beyond the order; a
+            // follower that stops frees its path (c-RTW-3, turn 207). A group
             // member has no path of its own (the cluster keeps it).
-            if u.order != 0 && !u.constructing && !self.game.grouped(u.handle) {
+            if u.order != 0 && !u.constructing && !u.follower_stands && !self.game.grouped(u.handle)
+            {
                 walking.insert(u.handle);
             }
         }
@@ -388,7 +392,7 @@ impl<'a> Playback<'a> {
                     .unwrap_or_default();
                 self.selections.insert(player, units);
             }
-            Action::Order { order, .. } => {
+            Action::Order { flags, order, .. } => {
                 // An order with a unit type trains it (SPEC-0027).
                 // PROVISIONAL: with several buildings selected the first
                 // that takes it trains.
@@ -405,7 +409,11 @@ impl<'a> Playback<'a> {
                     return;
                 };
                 for unit in selected {
-                    self.game.issue_immediate_order(unit, name);
+                    if flags & QUEUED != 0 {
+                        self.game.queue_immediate_order(unit, name);
+                    } else {
+                        self.game.issue_immediate_order(unit, name);
+                    }
                 }
             }
             Action::PointOrder {
@@ -444,7 +452,11 @@ impl<'a> Playback<'a> {
                     return;
                 };
                 for unit in selected {
-                    self.game.issue_target_order(unit, name, target);
+                    if flags & QUEUED != 0 {
+                        self.game.queue_target_order(unit, name, target);
+                    } else {
+                        self.game.issue_target_order(unit, name, target);
+                    }
                 }
             }
             // Speed, pauses, saving, the interface and the like change
@@ -467,11 +479,20 @@ impl<'a> Playback<'a> {
     /// A point order to the units `selected`: with the group flag of the
     /// action they walk in formation (SPEC-0025).
     fn point_order(&mut self, selected: &[u32], flags: u16, name: &str, x: f32, y: f32) {
-        if flags & GROUP_ORDER != 0 {
-            self.game.issue_group_point_order(selected, name, x, y);
-        } else {
-            for &unit in selected {
-                self.game.issue_point_order(unit, name, x, y);
+        let queued = flags & QUEUED != 0;
+        match (flags & GROUP_ORDER != 0, queued) {
+            (true, false) => {
+                self.game.issue_group_point_order(selected, name, x, y);
+            }
+            (true, true) => self.game.queue_group_point_order(selected, name, x, y),
+            (false, _) => {
+                for &unit in selected {
+                    if queued {
+                        self.game.queue_point_order(unit, name, x, y);
+                    } else {
+                        self.game.issue_point_order(unit, name, x, y);
+                    }
+                }
             }
         }
     }

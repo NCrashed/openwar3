@@ -974,6 +974,7 @@ mod tests {
             carrying: None,
             resources: 0,
             chopping: None,
+            follower_stands: false,
         }
     }
 

@@ -1059,7 +1059,8 @@ fn following_a_standing_footman() {
             assert!((from - walked).abs() < 0.1, "{apart}: {from} walked");
         }
         let order = path.last().unwrap().1[0].order;
-        assert_eq!(order, 0, "{apart}: order after the stop");
+        // The follower keeps its order standing (SPEC-0019).
+        assert_eq!(order, 851_971, "{apart}: order after the stop");
     }
 }
 

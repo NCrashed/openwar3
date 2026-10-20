@@ -56,6 +56,7 @@ mod harvest;
 mod movement;
 mod obstacles;
 pub mod players;
+mod queue;
 mod training;
 mod widgets;
 
@@ -207,6 +208,8 @@ pub struct Unit {
     /// Where it was created, and what a creep keeps (SPEC-0030).
     home: [u32; 2],
     creep: creeps::Creep,
+    /// Its queued orders (SPEC-0031).
+    orders: queue::Queue,
     /// A building's pathing texture in the grid (SPEC-0022).
     footprint: Option<Box<obstacles::Footprint>>,
     /// A building under construction (SPEC-0026).
@@ -443,6 +446,9 @@ pub struct UnitView {
     /// its damage point in ticks.
     pub chopping: Option<(u64, u64, u64)>,
     pub resources: i32,
+    /// A follower standing in its follow range, its order going on
+    /// (SPEC-0019).
+    pub follower_stands: bool,
 }
 
 /// An attack in progress, in ticks.
@@ -1254,6 +1260,8 @@ impl<'a> Game<'a> {
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::start_buildings(&mut self.state.borrow_mut());
+        // Units whose order ended start their next queued one (SPEC-0031).
+        queue::pass(&mut self.state.borrow_mut());
         widgets::constructions(&mut self.vm, &self.state);
         // Workers gathering (SPEC-0029): what those that reached their
         // mines, trees and drop-offs at the updates do, mines and trees.
@@ -1367,13 +1375,15 @@ impl<'a> Game<'a> {
                     max_mana: f32::from_bits(u.mana.max),
                     walking: u.movement.is_some_and(|m| m.walking()),
                     target: u.movement.and_then(|m| m.target()),
-                    order: u.movement.map_or(0, |m| m.order_id()),
+                    order: queue::shown_order(&state, handle)
+                        .unwrap_or_else(|| u.movement.map_or(0, |m| m.order_id())),
                     constructing: u.construction.is_some(),
                     carrying: harvest::carried(&state, handle).map(|(r, n)| match r {
                         harvest::Resource::Gold => (1, n),
                         harvest::Resource::Lumber => (2, n),
                     }),
                     resources: u.resources,
+                    follower_stands: u.movement.is_some_and(|m| m.follower_stands()),
                     chopping: harvest::chopping(&state, handle),
                 }),
                 _ => None,
@@ -1467,6 +1477,53 @@ impl<'a> Game<'a> {
     pub fn issue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) -> bool {
         let target = [x.to_bits(), y.to_bits()];
         movement::group_point_order(&mut self.state.borrow_mut(), units, order, target)
+    }
+
+    /// Orders given with Shift (SPEC-0031): queued behind the unit's
+    /// current order, or carried out at once by a unit without one.
+    /// Whether the unit took it.
+    pub fn queue_point_order(&mut self, unit: u32, order: &str, x: f32, y: f32) -> bool {
+        let Some(name) = movement::known_order(order) else {
+            return false;
+        };
+        let target = [x.to_bits(), y.to_bits()];
+        queue::push(
+            &mut self.state.borrow_mut(),
+            unit,
+            queue::Queued::Point { name, target },
+        )
+    }
+
+    pub fn queue_target_order(&mut self, unit: u32, order: &str, target: u32) -> bool {
+        let Some(name) = movement::known_order(order) else {
+            return false;
+        };
+        queue::push(
+            &mut self.state.borrow_mut(),
+            unit,
+            queue::Queued::Target { name, target },
+        )
+    }
+
+    pub fn queue_immediate_order(&mut self, unit: u32, order: &str) -> bool {
+        let Some(name) = movement::known_order(order) else {
+            return false;
+        };
+        queue::push(
+            &mut self.state.borrow_mut(),
+            unit,
+            queue::Queued::Immediate { name },
+        )
+    }
+
+    /// A group order given with Shift: each of `units` queues a walk to
+    /// its place, laid out from their places of the order before
+    /// (SPEC-0031, "Groups").
+    pub fn queue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) {
+        if let Some(name) = movement::known_order(order) {
+            let target = [x.to_bits(), y.to_bits()];
+            queue::push_group(&mut self.state.borrow_mut(), units, name, target);
+        }
     }
 
     /// Where a building of `type_id` ordered at (`x`, `y`) stands: on the

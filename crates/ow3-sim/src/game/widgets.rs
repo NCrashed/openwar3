@@ -284,6 +284,7 @@ pub(super) fn create_unit(
         harvest: None,
         home: [x, y],
         creep: super::creeps::born(state, owner, type_id),
+        orders: super::queue::Queue::default(),
         footprint: footprint.map(Box::new),
         construction: None,
         queue: None,

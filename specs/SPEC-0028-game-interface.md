@@ -286,14 +286,14 @@ player's colours in the default mode):
 
 | Object | Drawn as |
 |---|---|
-| own unit | white square of 3 x 3 pixels (1024 x 768) |
-| own building | larger white square (town hall 5 x 5, farm 6 x 5 pixels) |
+| own unit | white square of 3 x 3 pixels (1024 x 768), the same for all units and heroes (footman, knight, peasant, Archmage, gyrocopter, mortar team, rifleman, sorceress) |
+| own building | white square of about 5.5 x 6 pixels (5 or 6 wide by the pixel grid), the same for all buildings whatever their footprint (4 x 4 to 16 x 16: farm, scout tower, town hall, keep, barracks, altar, lumber mill, blacksmith, workshop, aviary, sanctum, vault); about 8/256 of the picture's width, a unit about 4/256 |
 | unit or building of another player | square of the same size in that player's colour (an enemy of player 1 blue, an ally of player 2 teal) |
 | gold mine | yellow round icon, about 9 pixels across |
 | neutral building (tavern) | yellow outline of a house |
 | creeps that the player sees | squares in their player's colour (dark) |
 | creeps in the fog | a circle per creep camp (below) |
-| the camera | white rectangle outline around the view (about 12 x 8 pixels at the default zoom) |
+| the camera | white rectangle outline, 1 pixel wide (below) |
 
 **Creep camps.** The neutral hostile units that exist when the map
 starts (created by the map's units file or by `main`) are grouped into
@@ -319,6 +319,32 @@ The icons are textures named in `UI\war3skins.txt` (`MinimapResourceTexture`
 for gold mines, `MinimapNeutralTexture` for neutral buildings); gold
 mines and neutral buildings are shown also under fog and where the map
 is masked. `MinimapCampPulseScale` (0.5) was not seen in use.
+
+**Camera rectangle.** The rectangle is the axis-aligned bounding box
+of the ground area seen in the world frame: the rays through the four
+corners of the world frame (SPEC-0023, "Field of view") meet the plane
+of the camera target's height, and the smallest rectangle around the
+four points is drawn. Measured in a 1024 x 768 window with the target
+at (0, 0), against this rule (in pixels of the minimap mapping above):
+
+| Camera | Rule (x, y) | Seen (x, y) |
+|---|---|---|
+| angle 304, distance 1650 | 95.6 to 113.2, 663.5 to 672.9 | 96 to 112, 664 to 673 |
+| angle 304, distance 3000 | 88.4 to 120.4, 658.8 to 676.0 | 89 to 119, 661 to 677 |
+| angle 270, distance 1650 | 97.5 to 111.4, 665.5 to 672.9 | 98 to 110, 665 to 672 |
+| angle 304, rotation 45 | 97.6 to 114.8, 659.2 to 675.7 | 96 to 112, 661 to 676 |
+
+(The last one is 2 pixels off; that screenshot may have caught the
+camera while it changed.) So at the default camera the rectangle is
+wider than the area near the bottom of the view: it is as wide as the
+far edge of the seen area.
+
+**Creep camp circles over time.** A camp keeps the colour and size it
+got when the map started: a camp of two level 5 creeps stayed orange
+after one of them was killed. A camp whose creeps all died while the
+player did not see it kept its circle; the circle went away when the
+player saw the camp's place (a fog modifier over it) and did not come
+back when the place was fogged again (test RXB).
 
 Units and buildings under fog are not shown (an enemy under fog
 disappeared); the icons of `war3map.mmp` (start locations, gold mines,
@@ -480,7 +506,7 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
   Archmage of player 0, a Blood Mage of player 1, kobolds and an ice
   giant of the creep player and of player 1, a footman of the creep
   player; screenshots and the text frames read from memory).
-- Test maps RWL to RWW on 1.27b under Wine, 2026-10-20 (IceCrown,
+- Test maps RWL to RWW and RXB on 1.27b under Wine, 2026-10-20 (IceCrown,
   1024 x 768 window): own, enemy and allied units and buildings, a gold
   mine, a tavern, creep camps of four levels, seen or under fog;
   screenshots of the minimap, clicks on its buttons and on the minimap,

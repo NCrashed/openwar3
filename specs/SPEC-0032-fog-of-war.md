@@ -27,12 +27,16 @@ A cell is in one of three states for a player:
 
 ### Updates
 
-The fog is recomputed every **80 ticks** (0.4 s), at the same ticks for
-all units: a peasant walking east revealed the cells ahead of it, and
-the cells behind it became fogged, only at ticks 80 apart (test RWG:
-script ticks 921, 1081, 1161, 1321, ..., all equal modulo 80). At each
-update, each unit reveals the cells of its mask (below) placed on the
-cell it stands in at that tick.
+The fog is recomputed every **80 ticks** (0.4 s), in the ticks `k` with
+`k - 1` a multiple of 80 (ticks 81, 161, 241, ...: the game time a
+multiple of 0.4 s), for all units at once; at each update each unit
+reveals the cells of its mask (below) placed on the cell it stands in
+at that tick. Read in the running game: the reveals ran at the movement
+clock 1.2, 1.6, 2.0, ... 16.8 s (ticks 241, 321, ..., 3361). A unit also
+reveals at once when it is created (the units of the test, created in
+tick 201, revealed in that tick). In a script that counts a 0.005 s
+periodic timer started at the game's start, these are the counts
+`n` with `n mod 80 = 41` (test RWG; the count is the tick less 200).
 
 ### Radius
 
@@ -145,31 +149,30 @@ block (test RWF) saw all 121 cells of its mask, the low ground included.
 
 The minimap shows the map's picture `war3mapMap.blp` (256 x 256), not a
 picture made from the terrain: on a map whose terrain was replaced, the
-minimap still showed the old map's picture. It is drawn over the
-minimap frame (SPEC-0028); in a 1024 x 768 window the whole picture took
-the square from (17, 584) to (191, 758) in pixels, so the map's full
-width (the `war3map.w3e` area, not only the camera bounds) maps onto it.
+minimap still showed the old map's picture. The picture covers the
+playable area (SPEC-0028, "Minimap").
 
-The fog darkens it per cell state of the local player:
+The fog darkens it per cell state of the local player (screen over
+picture, mean of all pixels, the whole map in one state):
 
-| State | Brightness (screen over picture, mean of all pixels) |
+| State | Brightness |
 |---|---|
-| visible | 0.738 |
-| fogged | 0.738, the same as visible |
-| masked, map flag `0x0010` set | 0.404 (0.55 of visible) |
+| visible | 1.006, the picture itself |
+| fogged | 0.738 |
+| masked, map flag `0x0010` set | 0.404 |
 | masked, map flag `0x0010` clear | 0.003 (black) |
 
-The three channels were darkened alike (0.738 / 0.738 / 0.735 for red,
-green, blue). Flag `0x0010` is a bit of the flags field of
-`war3map.w3i` (the editor option that leaves masked areas partly visible);
-IceCrown has it set (flags `0xd472`). The visible-to-picture value 0.738
-also contains the difference between the picture as decoded for the
-test and as shown; take visible as the picture itself and masked as 0.55
-of it. Measured with the whole map in one state (`SetFogStateRect` on
-the world bounds), tests RWJ and RWK; with a footman and a walking knight
-(test RWI) the cells near units and along the knight's way were equally
-bright and the rest at the masked value, with soft edges between the
-states.
+The three channels were darkened alike (fogged 0.738 / 0.738 / 0.735,
+masked 0.404 / 0.404 / 0.402 for red, green, blue). Flag `0x0010` is a
+bit of the flags field of `war3map.w3i` (the editor option that leaves
+masked areas partly visible); IceCrown has it set (flags `0xd472`).
+Between cells of different states the edges are soft.
+
+The states were set for the whole map: masked at the start (no units),
+fogged by `SetFogStateRect(..., FOG_OF_WAR_FOGGED, GetWorldBounds(), ...)`,
+visible by a started `CreateFogModifierRect` of the world bounds (tests
+RWJ, RWK, RWN). `SetFogStateRect` with `FOG_OF_WAR_VISIBLE` lasts only
+until the next update: the cells no unit sees become fogged again.
 
 ## Edge cases
 
@@ -183,8 +186,7 @@ states.
 
 1. The cells revealed by `CreateFogModifierRadius` (irregular in the
    tests, with holes for a radius of 256) and by the other fog natives.
-2. The phase of the 80-tick update relative to the start of the game;
-   allied vision; units inside buildings or transports; dead units.
+2. Allied vision; units inside buildings or transports; dead units.
 3. Doodads that block sight, destructables other than trees, and what
    a unit on a destructable bridge sees.
 4. How the fog is drawn in the world (a smooth edge, test RVY) and on
@@ -193,7 +195,7 @@ states.
 
 ## Sources
 
-- Test maps RVQ to RWK on 1.27b under Wine, 2026-10-20: units of 20
+- Test maps RVQ to RWN on 1.27b under Wine, 2026-10-20: units of 20
   types alone in separate parts of a flat map and of IceCrown, by day and
   at night, trees, a block raised by one cliff level; the state of every
   fog cell for player 0 read with `IsVisibleToPlayer`,

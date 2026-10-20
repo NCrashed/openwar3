@@ -250,6 +250,58 @@ How one of several `Portrait` sequences is picked, and the timing of
 the talk sequences (`UI\SoundInfo\PortraitAnims.slk`), were not
 studied.
 
+### Minimap
+
+**Area.** The minimap frame (above) shows the **playable area** of the
+map: the camera bounds of `war3map.w3i` extended by the camera margins
+(the rectangle of `SetCameraBounds` without `GetCameraMargin`), on
+IceCrown x from -11520 to 11520 and y from -11776 to 11264. The picture
+`war3mapMap.blp` (SPEC-0032) is stretched over it, and units, icons and
+clicks use the same linear mapping. In a 1024 x 768 window: a left click
+at pixel `(px, py)` put the camera target at world
+`x = 130.16 (px - 104.41)`, `y = -136.35 (py - 669.2)` (four clicks over
+the whole minimap, within 0.5); the picture lay over about x 16 to 193,
+y 585.5 to 756.5.
+
+**What it shows** (fog of SPEC-0032 over the picture; the local
+player's colours in the default mode):
+
+| Object | Drawn as |
+|---|---|
+| own unit | white square of 3 x 3 pixels (1024 x 768) |
+| own building | larger white square (town hall 5 x 5, farm 6 x 5 pixels) |
+| unit or building of another player | square of the same size in that player's colour (an enemy of player 1 blue, an ally of player 2 teal) |
+| gold mine | yellow round icon, about 9 pixels across |
+| neutral building (tavern) | yellow outline of a house |
+| creeps that the player sees | squares in their player's colour (dark) |
+| creeps in the fog | a green circle with a dark rim, about 9 pixels, one per camp; camps of total level 1, 3, 7 and 15 all looked the same |
+| the camera | white rectangle outline around the view (about 12 x 8 pixels at the default zoom) |
+
+Units and buildings under fog are not shown (an enemy under fog
+disappeared); the icons of `war3map.mmp` (start locations, gold mines,
+neutral buildings of the map's own layout) are not drawn in the game,
+only the objects that exist.
+
+**Buttons** (the five minimap buttons, top to bottom, clicked once
+each, test RWO):
+
+1. signal: the cursor waits for a point (Escape cancels and writes
+   `0x61`);
+2. terrain: the picture is replaced by black, only the units and icons
+   stay; a second click brings it back;
+3. ally colours: enemies red, allies teal, own units white on the
+   minimap; a second click changed nothing on the minimap (the third
+   mode was not studied);
+4. creeps: no change seen with the creeps visible;
+5. formation movement: no change on the minimap.
+
+None of them wrote a replay action.
+
+**Clicks.** A left click on the minimap moves the camera target to the
+point (above). A right click with a unit selected gives it `smart`
+(851971) to the point: replay action `0x12` with flags 0, the point
+mapped as above (in the test (5934.3, 6712.1)), no target.
+
 ### Selection
 
 The player's selection holds at most 12 units. Units are named in
@@ -381,6 +433,11 @@ ground (SPEC-0023); a right click on a unit uses the unit's position.
 
 ## Sources
 
+- Test maps RWL, RWM, RWO, RWP on 1.27b under Wine, 2026-10-20 (IceCrown,
+  1024 x 768 window): own, enemy and allied units and buildings, a gold
+  mine, a tavern, creep camps of four levels, seen or under fog;
+  screenshots of the minimap, clicks on its buttons and on the minimap,
+  the camera target and the orders logged.
 - Test maps RVO (six footmen, three riflemen, two knights, a peasant)
   and RVP (three footmen, two riflemen, two peasants) on 1.27b under
   Wine, 2026-10-20, 1024 x 768 window: the units selected by the script,

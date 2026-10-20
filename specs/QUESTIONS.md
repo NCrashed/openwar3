@@ -585,46 +585,36 @@ the spec is silent:
 
 ## Crowd chase `c-RXD-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0021)
 
-`tests/crowd.rs` plays the replay with the path decisions traced. Up
-to tick 1591 the events of `c-RXD-1.events.tsv` are the game's one for
-one, in the game's order within each tick (new goals and clusters of
-SPEC-0021), and the four creeps take their first updates in the
-game's ticks (1567, 1573, 1585, 1609). Two things do not follow yet.
+`tests/crowd.rs` plays the replay with the path decisions traced. With
+the checks and the ends of the reaction delays as queue timers, the
+delays of the four creeps end in the game's ticks (1565, 1569, 1581,
+1607), each taking as its goal peasant 5 where it stands then
+(x -391.784, -387.984, -376.586, -351.890, as read in the game), and up
+to tick 1591 the events are the game's one for one, in the game's order
+within each tick.
 
-**1. The tick of the acquisition check and the ends of the reaction
-delays.** By the rule of SPEC-0019 (a check runs in the first tick
-whose movement clock is at or after its expiry, the first expiry at
-the creation plus `0.5 x` s) creep 7 (`x` = 0.55945015, created in tick
-201 with the movement clock at 1.0 here) has its 14th expiry at
-1.0 + 0.279725 + 13 x 0.5 = 7.779725. The movement clock, 0.005 added
-each tick in single precision, is 7.779674 in tick 1557 here (7.779675
-read in the game), short of the expiry, so the check runs in tick 1558
-here. The game ran it in tick 1557. The draws of generator 9 here, in
-the order of SPEC-0019 (7, then 8, 6, 9), times `ReactionDelay`:
-0.122052, 0.062619, 0.249910, 0.040617 s. The delays end here in ticks
-1582 (7), 1571 (8), 1608 (6), 1567 (9), against the game's 1581, 1569,
-1607, 1565. Needed: the expiry of the check and the movement clock at
-the creation of the creeps as the game holds them, the four delays
-drawn in the game, and the clock the reaction delays count from for
-the acquirer and for the units that answer its call.
+**1. Creep 8's local path.** At its first update, tick 1573, creep 8
+searches from (260, 520) towards peasant 5 at (-387.984, 111.852) here.
+Its path is the game's up to (176, 400) and then parts:
 
-**2. The path search at the end of the reaction delay.** SPEC-0021
-reads creep 8's local path from its search at the end of its delay
-(tick 1569). Searching then, to where the target stands then, moves
-the swings of SPEC-0019, verification 5 (`c-CH1`, row 4: from 706 to
-700) and verification 6 (`c-CH5`) one update earlier, so the
-simulation searches at the first update after the delay, as before.
-Here creep 8 searches in tick 1573 and its path parts from the game's
-after (176, 400): (144, 368), (112, 336), ... instead of (144, 400),
-(112, 400), (80, 368), so it never meets the corner of kobold 6. Needed:
-whether the search at the end of the delay holds for the attacks of
-`c-CH1` and `c-CH5` (orders from a script) as well, and what else
-differs there (the goal, the countdown of the chase, the update the
-attacker first walks at).
+- here: (144, 368), (112, 336), (80, 304), (48, 272), (16, 240),
+  (-16, 208), (-48, 176), (-80, 176), ... (-304, 144);
+- the game (SPEC-0021, Verification): (144, 400), (112, 400), (80, 368),
+  ...
 
-**3. Checksums.** The turn checksums of `c-RXD-1` change at turns the
-simulation does not, from turn 14 on, before the creeps move: what
-gathering adds to the checksum (SPEC-0024) is open.
+The units standing here at the search: kobold 6 at (100, 450) (cells
+x 386..387, y 397..398), creep 7 at (-60, 520), the town hall; creep 9
+walks. The diagonal step from (176, 400) to (144, 368) is free here.
+Needed: what the game's search had that made it go west along y 400:
+the cells occupied at that search (any unit or object besides kobold
+6), the goal cell and range of the chase search, or the order of the
+heap entries of equal keys there (SPEC-0020).
+
+**2. Checksums of gathering.** With the moments of SPEC-0024
+("Gathering") known to 5 ticks, the turns of `c-RXI-1` and `c-RXD-1`
+cannot be matched one for one yet; the exact ticks (or a rule from the
+update the worker stops at) would allow it, and the causes of turns 24
+and 195 of `c-RXI-1`.
 
 ## Construction (`game::movement`, `game`, SPEC-0026)
 

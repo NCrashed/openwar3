@@ -1269,8 +1269,12 @@ impl<'a> Game<'a> {
             self.state.borrow_mut().timers.move_to(at);
         }
         // Reaction delays that end now: new goals, before the updates.
-        movement::reaction_ends(&mut self.state.borrow_mut());
+        movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // Those that end after the updates, up to the next tick's clock.
+        if at.is_some() {
+            movement::reaction_ends(&mut self.state.borrow_mut(), None, false);
+        }
         movement::start_buildings(&mut self.state.borrow_mut());
         // Units whose order ended start their next queued one (SPEC-0031).
         queue::pass(&mut self.state.borrow_mut());

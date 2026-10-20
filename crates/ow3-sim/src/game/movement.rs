@@ -192,6 +192,10 @@ pub struct Moving {
     /// the earliest tick of the update that may act: the unit acts on the
     /// order from its first update after both.
     reaction: Option<(u64, u32, u64)>,
+    /// The end of the reaction delay of an attack taken at an acquisition
+    /// or a call for help, on the timer queue (SPEC-0019): the unit takes
+    /// its goal in the tick that holds it.
+    reaction_end: Option<u32>,
     /// An attack ordered by a script: the update at which the unit acts
     /// cannot start its swing yet (SPEC-0019, "When it starts").
     swing_waits: bool,
@@ -431,6 +435,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             target,
             restart: m.walking || m.restart,
             reaction: None,
+            reaction_end: None,
             chase: None,
             renew_stands: false,
             given,
@@ -453,6 +458,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: false,
             skip: false,
             reaction: None,
+            reaction_end: None,
             chase: None,
             renew_stands: false,
             given,
@@ -1193,8 +1199,8 @@ pub(super) fn harvest_order(
 
 /// Unit `h` joins a fight on `target` as an idle unit answering a call
 /// for help (SPEC-0019): an attack with order id 0 after its reaction
-/// delay from this tick.
-pub(super) fn join_fight(state: &mut State, h: u32, target: u32) -> bool {
+/// delay from this tick, or from the time `from` on the timer queue.
+pub(super) fn join_fight(state: &mut State, h: u32, target: u32, from: Option<u32>) -> bool {
     let tick = state.ticks;
     let Some(at) = position_of(state, target) else {
         return false;
@@ -1205,7 +1211,11 @@ pub(super) fn join_fight(state: &mut State, h: u32, target: u32) -> bool {
             state.game_random[REACTION].fraction(),
             state.combat.reaction_delay,
         );
-        react(state, h, tick, delay, tick);
+        match from {
+            // From the expiry of the caller's check (SPEC-0019).
+            Some(time) => react_until(state, h, add(time, delay)),
+            None => react(state, h, tick, delay, tick),
+        }
     }
     taken
 }
@@ -1423,6 +1433,19 @@ fn react(state: &mut State, h: u32, from: u64, delay: u32, earliest: u64) {
             m.commit(clock);
             m.velocity = [0, 0];
         }
+    }
+}
+
+/// `react` for an attack taken at an acquisition or a call for help: the
+/// delay ends at `end` on the timer queue (SPEC-0019).
+fn react_until(state: &mut State, h: u32, end: u32) {
+    let tick = state.ticks;
+    react(state, h, tick, 0, tick);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.reaction = None;
+        m.reaction_end = Some(end);
     }
 }
 
@@ -1766,10 +1789,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let here = m.origin;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
-        let waiting = m.reaction.is_some_and(|(from, delay, earliest)| {
-            let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
-            tick < earliest || real_of(waited) < real_of(delay)
-        });
+        let waiting = m.reaction_end.is_some()
+            || m.reaction.is_some_and(|(from, delay, earliest)| {
+                let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
+                tick < earliest || real_of(waited) < real_of(delay)
+            });
         if !waiting {
             m.reaction = None;
             // An attack ordered by a script swings from the next update on.
@@ -2238,25 +2262,35 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
 }
 
 /// The reaction delays that end in this tick, before its updates
-/// (SPEC-0021, "Searches of many units in the same tick"): each such unit
-/// takes a new goal and comes first among the units handled; delays
-/// ending in the same tick end in the order they began.
-///
-/// PROVISIONAL: the attacker's path is searched at its next update, where
-/// SPEC-0021 reads it from the end of the delay (`c-RXD-1`, tick 1569);
-/// searching there moves the swings of verifications 5 and 6 of SPEC-0019
-/// an update earlier (QUESTIONS.md, "Crowd chase").
-pub(super) fn reaction_ends(state: &mut State) {
-    let tick = state.ticks;
+/// (SPEC-0019, "Reaction delay"; SPEC-0021, "Searches of many units in the
+/// same tick"): each such unit takes a new goal and comes first among the
+/// units handled; delays ending in the same tick end in the order they
+/// began. An attack taken at an acquisition or a call for help ends its
+/// delay in the tick whose queue interval holds its end, and its goal is
+/// where the target stands in that tick; its path to it is searched at
+/// its next update. Called before the updates of the tick (`first`) with
+/// their time `U` as `until` (the ends up to it, all of the tick without
+/// updates), and after them with `None` (the
+/// ends up to the clock of the next tick, SPEC-0018).
+pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) {
+    let (tick, clock) = (state.ticks, state.move_clock);
+    let limit = until.unwrap_or_else(|| add(clock, crate::timers::TICK));
+    let min = [state.world_bounds[0], state.world_bounds[1]];
     let mut ending: Vec<(u64, u32)> = state
         .moving
         .iter()
         .filter_map(|&h| match state.objects.get(&h) {
             Some(Object::Unit(u)) => {
                 let m = u.movement?;
-                let (from, delay, earliest) = m.reaction?;
-                let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
-                (tick >= earliest && real_of(waited) >= real_of(delay)).then_some((m.given, h))
+                let ends = match (m.reaction_end, m.reaction) {
+                    (Some(end), _) => real_of(end) <= real_of(limit),
+                    (None, Some((from, delay, earliest))) if first => {
+                        let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
+                        tick >= earliest && real_of(waited) >= real_of(delay)
+                    }
+                    _ => false,
+                };
+                ends.then_some((m.given, h))
             }
             _ => None,
         })
@@ -2265,11 +2299,29 @@ pub(super) fn reaction_ends(state: &mut State) {
     for (_, h) in ending {
         let given = state.orders_given + 1;
         state.orders_given = given;
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        let (timed, target, here) = match state.objects.get_mut(&h) {
+            Some(Object::Unit(u)) => match u.movement.as_mut() {
+                Some(m) => {
+                    let timed = m.reaction_end.take().is_some();
+                    m.reaction = None;
+                    m.given = given;
+                    match m.order {
+                        Order::Attack { target } => (timed, target, m.origin),
+                        _ => continue,
+                    }
+                }
+                None => continue,
+            },
+            _ => continue,
+        };
+        // The goal is where the target stands now.
+        if timed
+            && let Some(at) = position_of(state, target)
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
         {
-            m.reaction = None;
-            m.given = given;
+            m.target = at;
+            m.chase = Some(countdown(here, relative(at, min)));
         }
     }
 }
@@ -2443,7 +2495,7 @@ enum Check {
 /// that order.
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let tick = state.ticks;
-    let clock = state.move_clock;
+    let next_clock = add(state.move_clock, crate::timers::TICK);
     let mut due: Vec<(u32, Check)> = Vec::new();
     for i in 0..state.units.len() {
         let h = state.units[i];
@@ -2455,7 +2507,9 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
         // The unit's own timer runs whatever it does.
         let mut expired = None;
-        if u.acquire_phase != super::NO_PHASE && real_of(clock) >= real_of(u.next_acquire) {
+        // The check runs in the tick whose queue interval, after the clock
+        // of this tick up to that of the next, holds its expiry.
+        if u.acquire_phase != super::NO_PHASE && real_of(u.next_acquire) <= real_of(next_clock) {
             expired = Some(u.next_acquire);
             u.next_acquire = add(u.next_acquire, HALF);
         }
@@ -2499,22 +2553,25 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             continue;
         };
         let at = [o.x, o.y];
-        // The delay counts from the expiry: here from this tick, less the
-        // time since the expiry.
-        let (order_id, since) = match check {
-            Check::Idle { expiry } => (0, sub(clock, expiry)),
-            Check::AttackMove => (ORDER_ATTACK, 0),
+        let (order_id, expiry) = match check {
+            Check::Idle { expiry } => (0, Some(expiry)),
+            Check::AttackMove => (ORDER_ATTACK, None),
         };
         if order(state, h, Order::Attack { target }, order_id, at) {
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            react(state, h, tick, sub(delay, since), tick);
+            // An idle unit's delay counts from the expiry of its check,
+            // an attack-move's from this tick.
+            match expiry {
+                Some(e) => react_until(state, h, add(e, delay)),
+                None => react(state, h, tick, delay, tick),
+            }
             acquired.push(h);
             // A creep calls its camp (SPEC-0030), in the order of
             // SPEC-0019.
-            acquired.extend(super::creeps::call_for_help(state, h, target));
+            acquired.extend(super::creeps::call_for_help(state, h, target, expiry));
         }
     }
     acquired

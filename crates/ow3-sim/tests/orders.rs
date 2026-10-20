@@ -343,9 +343,10 @@ fn idle_footmen_acquire() {
 /// Verification 8 of SPEC-0019: a paused enemy footman at the centre and
 /// 20 footmen on a circle of radius 300 round it, created after it in
 /// tick 201 of the game, after `SetRandomSeed`. Each circle footman
-/// acquires the centre in the first tick whose movement clock reaches its
-/// creation plus `0.5 * x` s, here `floor(100 * x) + 1` ticks after the
-/// creation; with seed 7 the first ones turn at the first update after
+/// acquires the centre in the tick whose timer queue interval holds its
+/// creation (here the expiry 1.0 of the timer that makes it, where the
+/// test maps have 1.0001) plus `0.5 * x` s: `floor(100 * x)` ticks after
+/// the creation; with seed 7 the first ones turn at the first update after
 /// `100 * x` plus their reaction delays: 10, 10, 34 and 64.
 #[test]
 fn acquisition_ticks() {
@@ -353,13 +354,13 @@ fn acquisition_ticks() {
         (
             7,
             [
-                4, 9, 19, 23, 27, 32, 37, 45, 46, 47, 49, 69, 71, 73, 82, 85, 89, 89, 91, 95,
+                3, 8, 18, 22, 26, 31, 36, 44, 45, 46, 48, 68, 70, 72, 81, 84, 88, 88, 90, 94,
             ],
         ),
         (
             8,
             [
-                2, 6, 14, 17, 20, 33, 34, 34, 41, 47, 68, 70, 71, 74, 80, 82, 86, 90, 92, 97,
+                1, 5, 13, 16, 19, 32, 33, 33, 40, 46, 67, 69, 70, 73, 79, 81, 85, 89, 91, 96,
             ],
         ),
     ] {
@@ -401,7 +402,7 @@ fn acquisition_ticks() {
                 let i = acquired.iter().find(|a| a.0 == tick).unwrap().1;
                 first(i, &|a, b| a.facing != b.facing)
             };
-            let turns = [turn(4), turn(9), turn(23), turn(19)];
+            let turns = [turn(3), turn(8), turn(22), turn(18)];
             assert_eq!(turns, [Some(10), Some(10), Some(34), Some(64)]);
         }
     }

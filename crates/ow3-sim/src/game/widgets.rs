@@ -269,9 +269,9 @@ pub(super) fn create_unit(
         movement: None,
         attack_move: None,
         acquire_phase,
-        // The first check expires 0.5 x s after the creation, on the
-        // movement clock (SPEC-0019).
-        next_acquire: add(state.move_clock, mul(acquire_phase, HALF_SECOND)),
+        // The first check expires 0.5 x s after the creation, counted on
+        // the timer queue (SPEC-0019).
+        next_acquire: add(state.timers.time(), mul(acquire_phase, HALF_SECOND)),
         paused: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,

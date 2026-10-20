@@ -144,7 +144,7 @@ pub(super) fn wake_on_hit(state: &mut State, victim: u32, attacker: u32) {
         }
     }
     for h in others {
-        movement::join_fight(state, h, attacker);
+        movement::join_fight(state, h, attacker, None);
         enter_fight(state, h);
     }
 }
@@ -182,8 +182,15 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
 /// creeps of its camp come too, in the same tick, in the order of the
 /// grid of SPEC-0019 ("Order of the responders"); each that comes calls
 /// in turn, so a chain reaches creeps beyond the caller, after all of the
-/// caller's. Gives the creeps that came, in that order.
-pub(super) fn call_for_help(state: &mut State, caller: u32, target: u32) -> Vec<u32> {
+/// caller's. Their reaction delays count from `from` on the timer queue
+/// (the expiry of the caller's check), or from this tick. Gives the creeps
+/// that came, in that order.
+pub(super) fn call_for_help(
+    state: &mut State,
+    caller: u32,
+    target: u32,
+    from: Option<u32>,
+) -> Vec<u32> {
     if !is_creep(state, caller) {
         return Vec::new();
     }
@@ -196,7 +203,7 @@ pub(super) fn call_for_help(state: &mut State, caller: u32, target: u32) -> Vec<
             .filter(|h| *h != caller && !came.contains(h))
             .collect();
         for h in movement::call_order(state, near) {
-            if movement::join_fight(state, h, target) {
+            if movement::join_fight(state, h, target, from) {
                 enter_fight(state, h);
                 came.push(h);
                 callers.push_back(h);

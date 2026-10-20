@@ -73,9 +73,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXD-1.w3g",
-        "harvesting changes the game's state at turns where the simulation has nothing (objects \
-         of the gathering, SPEC-0029 does not cover the checksum), and the creeps start their \
-         chase in another order from tick 1561 on (tests/crowd.rs)",
+        "harvesting changes the game's state at turns where the simulation has nothing (the \
+         objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks), and a creep \
+         takes another path from tick 1585 on (tests/crowd.rs)",
+    ),
+    (
+        "c-RXI-1.w3g",
+        "the objects of the gathering (SPEC-0024, \"Gathering\") are known to 5 ticks, and turns \
+         24 and 195 have changes of unknown cause",
     ),
 ];
 

@@ -198,15 +198,16 @@ fn crowd_chase_report() {
             eprintln!("game {:?}\nours {:?}", game_events[k], ours_events[k]);
         }
     }
-    // PROVISIONAL: the events are the game's up to tick 1561, where the
-    // creeps start their chase in another order (reported to the
+    // PROVISIONAL: the events are the game's up to tick 1591, where a
+    // creep takes another point of its path (reported to the
     // analysts); the rest waits for that.
     let first_tick = first.map_or(u64::MAX, |i| game_events[i].0);
-    assert!(first_tick >= 1561, "first difference at tick {first_tick}");
+    assert!(first_tick >= 1591, "first difference at tick {first_tick}");
 }
 
-/// When each creep first takes a path update, here and in the game. The
-/// tank starts with the game; the others are reported to the analysts.
+/// Each creep takes its first path update in the tick of the game: the
+/// acquisition checks as engine timers and the responders in the order of
+/// the grid (SPEC-0019).
 #[test]
 fn crowd_chase_creeps_start() {
     let Some(ours) = play(2000) else {
@@ -217,8 +218,6 @@ fn crowd_chase_creeps_start() {
         let g = game.iter().find(|e| e.2 == unit && e.1 == "update");
         let o = ours.events.iter().find(|e| e.2 == unit && e.1 == "update");
         eprintln!("creep {unit}: game {g:?}\n         ours {o:?}");
-        if unit == 9 {
-            assert_eq!(g.map(|e| e.0), o.map(|e| e.0));
-        }
+        assert_eq!(g.map(|e| e.0), o.map(|e| e.0), "creep {unit}");
     }
 }

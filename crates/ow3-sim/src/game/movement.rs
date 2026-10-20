@@ -1194,18 +1194,53 @@ pub(super) fn harvest_order(
 /// Unit `h` joins a fight on `target` as an idle unit answering a call
 /// for help (SPEC-0019): an attack with order id 0 after its reaction
 /// delay from this tick.
-pub(super) fn join_fight(state: &mut State, h: u32, target: u32) {
+pub(super) fn join_fight(state: &mut State, h: u32, target: u32) -> bool {
     let tick = state.ticks;
     let Some(at) = position_of(state, target) else {
-        return;
+        return false;
     };
-    if order(state, h, Order::Attack { target }, 0, at) {
+    let taken = order(state, h, Order::Attack { target }, 0, at);
+    if taken {
         let delay = mul(
             state.game_random[REACTION].fraction(),
             state.combat.reaction_delay,
         );
         react(state, h, tick, delay, tick);
     }
+    taken
+}
+
+/// The side of a cell of the grid a call for help walks (SPEC-0019).
+const CALL_CELL: f32 = 256.0;
+
+/// `units` in the order a call for help visits them (SPEC-0019, "Order of
+/// the responders"): by cells of 256 from the map's lower left corner,
+/// the rows from the bottom up, in a row from left to right, in a cell
+/// the unit created later first; a unit lies in the cell of its position
+/// less its collision size.
+pub(super) fn call_order(state: &State, mut units: Vec<u32>) -> Vec<u32> {
+    let [x0, y0] = [state.world_bounds[0], state.world_bounds[1]].map(real_of);
+    let created: BTreeMap<u32, usize> = state
+        .units
+        .iter()
+        .enumerate()
+        .map(|(i, &h)| (h, i))
+        .collect();
+    let key = |h: &u32| {
+        let Some(u) = state.unit(Some(*h)) else {
+            return (i64::MAX, i64::MAX, 0);
+        };
+        let c = state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(0.0, |t| real_of(t.collision));
+        let cell = |v: u32, origin: f32| ((real_of(v) - c - origin) / CALL_CELL).floor() as i64;
+        let index = created.get(h).copied().unwrap_or(0) as i64;
+        (cell(u.y, y0), cell(u.x, x0), -index)
+    };
+    units.sort_by_key(key);
+    units
 }
 
 /// Creep `h` walks home to `home` with a `move` order (SPEC-0030).
@@ -2264,7 +2299,6 @@ pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
 const ACQUIRE_PERIOD: u64 = 100;
 /// The first check of an attack-move after its order, or after a kill.
 const ATTACK_MOVE_FIRST: u64 = 102;
-const HUNDRED: u32 = 0x42C8_0000;
 const HALF: u32 = 0x3F00_0000;
 
 /// An `attack` order to a point (SPEC-0019, "Attack-move with enemies"):
@@ -2344,35 +2378,47 @@ pub(super) fn attack_moves(state: &mut State) {
 /// Why a unit looks for enemies now.
 #[derive(Clone, Copy)]
 enum Check {
-    /// An idle unit at its own schedule: the phase drawn at its creation
-    /// and the tick its schedule counts from.
-    Idle { phase: u32, start: u64 },
+    /// An idle unit at its own schedule: when the check expired on the
+    /// movement clock.
+    Idle { expiry: u32 },
     /// A unit walking an attack-move.
     AttackMove,
 }
 
 /// Units with a weapon look for enemies (SPEC-0019): idle ones on their
-/// own schedule, `floor(100 * x)` ticks after their creation and then
-/// every 100 ticks, with `x` drawn when they were created ("Acquisition by
-/// idle units"); units walking an attack-move every 100 ticks from 102
-/// ticks after the order ("Attack-move with enemies"). Of the enemies
-/// whose centres are within `acquire` and both collision sizes a unit
-/// takes the nearest unit, a structure only when there is no unit, and on
-/// equal distances the one with the smaller y, then x. An idle unit
-/// attacks it on its own (`GetUnitCurrentOrder` 0) after the reaction
-/// delay counted from the exact time of the check; an attack-move stops
-/// at once and attacks after the reaction delay counted from the check's
-/// tick, its order staying `attack`. Gives the units that acquired a
-/// target, in that order.
+/// own schedule, engine timers that expire `0.5 * x` s after their
+/// creation and then every 0.5 s, with `x` drawn when they were created,
+/// each running in the first tick whose movement clock is at or after its
+/// expiry ("Acquisition by idle units"); units walking an attack-move
+/// every 100 ticks from 102 ticks after the order ("Attack-move with
+/// enemies"). Of the enemies whose centres are within `acquire` and both
+/// collision sizes a unit takes the nearest unit, a structure only when
+/// there is no unit, and on equal distances the one with the smaller y,
+/// then x. An idle unit attacks it on its own (`GetUnitCurrentOrder` 0)
+/// after the reaction delay counted from the expiry of its check; an
+/// attack-move stops at once and attacks after the reaction delay counted
+/// from the check's tick, its order staying `attack`. Gives the units that
+/// acquired a target and those that answered their calls for help, in
+/// that order.
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let tick = state.ticks;
+    let clock = state.move_clock;
     let mut due: Vec<(u32, Check)> = Vec::new();
     for i in 0..state.units.len() {
         let h = state.units[i];
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
-        if !u.alive || u.paused {
+        if !u.alive {
+            continue;
+        }
+        // The unit's own timer runs whatever it does.
+        let mut expired = None;
+        if u.acquire_phase != super::NO_PHASE && real_of(clock) >= real_of(u.next_acquire) {
+            expired = Some(u.next_acquire);
+            u.next_acquire = add(u.next_acquire, HALF);
+        }
+        if u.paused {
             continue;
         }
         if let Some(a) = u.attack_move.as_mut() {
@@ -2395,16 +2441,8 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         if u.creep.sleeping {
             continue;
         }
-        let Some(phase) = Some(u.acquire_phase).filter(|&x| x != super::NO_PHASE) else {
-            continue;
-        };
-        // The checks fall in the tick `floor(100 * x)` after the creation,
-        // and the delay counts from `100 * x` exactly (SPEC-0019,
-        // verification 8).
-        let start = u.born;
-        let first = start + real_of(floor(mul(phase, HUNDRED))) as u64;
-        if tick >= first && (tick - first) % ACQUIRE_PERIOD == 0 {
-            due.push((h, Check::Idle { phase, start }));
+        if let Some(expiry) = expired {
+            due.push((h, Check::Idle { expiry }));
         }
     }
     if due.is_empty() {
@@ -2420,19 +2458,22 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             continue;
         };
         let at = [o.x, o.y];
-        let (order_id, from, extra) = match check {
-            Check::Idle { phase, start } => (0, start, mul(phase, HALF)),
-            Check::AttackMove => (ORDER_ATTACK, tick, 0),
+        // The delay counts from the expiry: here from this tick, less the
+        // time since the expiry.
+        let (order_id, since) = match check {
+            Check::Idle { expiry } => (0, sub(clock, expiry)),
+            Check::AttackMove => (ORDER_ATTACK, 0),
         };
         if order(state, h, Order::Attack { target }, order_id, at) {
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            react(state, h, from, add(delay, extra), from);
+            react(state, h, tick, sub(delay, since), tick);
             acquired.push(h);
-            // A creep calls its camp (SPEC-0030).
-            super::creeps::call_for_help(state, h, target);
+            // A creep calls its camp (SPEC-0030), in the order of
+            // SPEC-0019.
+            acquired.extend(super::creeps::call_for_help(state, h, target));
         }
     }
     acquired
@@ -2513,7 +2554,9 @@ const CALL_REACH: f32 = 180.0;
 /// The hit of `attacker` on `victim` (SPEC-0019, "Retaliation and call
 /// for help"): an idle victim acquires the attacker whatever the distance,
 /// and so do the idle units within `CallForHelp` and a little of it that
-/// answer its call, in the order of their creation; all of them wait
+/// answer its call, in the order of the grid of "Order of the
+/// responders" and in a chain, each answering unit calling in turn; all of
+/// them wait
 /// their reaction delay from this tick, the victim drawing first.
 ///
 /// PROVISIONAL: only units with a weapon answer, workers (`peon`) never;
@@ -2551,21 +2594,34 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     if !answers(victim) {
         return;
     }
+    // The victim calls, then each unit that answers calls in turn, in the
+    // order of the grid (SPEC-0019, "Order of the responders").
     let reach = real_of(state.combat.call_for_help) + CALL_REACH;
     let mut responders = vec![victim];
-    for &h in &state.units {
-        let Some(Object::Unit(u)) = state.objects.get(&h) else {
-            continue;
+    let mut next = 0;
+    while next < responders.len() {
+        let (cx, cy) = match state.unit(Some(responders[next])) {
+            Some(c) if next > 0 => (real_of(c.x), real_of(c.y)),
+            _ => (x, y),
         };
-        let (dx, dy) = (real_of(u.x) - x, real_of(u.y) - y);
-        if h != victim
-            && h != attacker
-            && dx * dx + dy * dy <= reach * reach
-            && state.setup.helps(u.owner, owner)
-            && answers(h)
-        {
-            responders.push(h);
-        }
+        next += 1;
+        let near: Vec<u32> = state
+            .units
+            .iter()
+            .copied()
+            .filter(|&h| {
+                let Some(Object::Unit(u)) = state.objects.get(&h) else {
+                    return false;
+                };
+                let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
+                h != attacker
+                    && !responders.contains(&h)
+                    && dx * dx + dy * dy <= reach * reach
+                    && state.setup.helps(u.owner, owner)
+                    && answers(h)
+            })
+            .collect();
+        responders.extend(call_order(state, near));
     }
     for h in responders {
         if order(state, h, Order::Attack { target: attacker }, 0, at) {

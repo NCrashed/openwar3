@@ -179,16 +179,31 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
 }
 
 /// Creep `caller` acquired `target`: it enters the fight, and the idle
-/// creeps of its camp come too, in the same tick.
-pub(super) fn call_for_help(state: &mut State, caller: u32, target: u32) {
+/// creeps of its camp come too, in the same tick, in the order of the
+/// grid of SPEC-0019 ("Order of the responders"); each that comes calls
+/// in turn, so a chain reaches creeps beyond the caller, after all of the
+/// caller's. Gives the creeps that came, in that order.
+pub(super) fn call_for_help(state: &mut State, caller: u32, target: u32) -> Vec<u32> {
     if !is_creep(state, caller) {
-        return;
+        return Vec::new();
     }
     enter_fight(state, caller);
-    for h in camp(state, caller) {
-        movement::join_fight(state, h, target);
-        enter_fight(state, h);
+    let mut came = Vec::new();
+    let mut callers = std::collections::VecDeque::from([caller]);
+    while let Some(c) = callers.pop_front() {
+        let near: Vec<u32> = camp(state, c)
+            .into_iter()
+            .filter(|h| *h != caller && !came.contains(h))
+            .collect();
+        for h in movement::call_order(state, near) {
+            if movement::join_fight(state, h, target) {
+                enter_fight(state, h);
+                came.push(h);
+                callers.push_back(h);
+            }
+        }
     }
+    came
 }
 
 /// The creeps of this tick: guard checks, return timers, creeps home.

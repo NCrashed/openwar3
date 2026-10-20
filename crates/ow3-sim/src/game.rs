@@ -178,13 +178,14 @@ pub struct Unit {
     attack_move: Option<movement::AttackMove>,
     /// The move order it follows (SPEC-0018).
     movement: Option<movement::Moving>,
-    /// The tick the unit was created at.
-    born: u64,
     /// A unit with a weapon looks for targets `100 * x` ticks after its
     /// creation and then every 100 ticks, `x` (a real in `0..1`) drawn
     /// when it is created (SPEC-0019, "Acquisition by idle units");
     /// [`NO_PHASE`] for a unit without a weapon.
     acquire_phase: u32,
+    /// When its next acquisition check expires on the movement clock: an
+    /// engine timer at its creation plus `0.5 * x` s, then every 0.5 s.
+    next_acquire: u32,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0

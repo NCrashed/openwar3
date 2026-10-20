@@ -37,6 +37,8 @@ const FOOD_CAP: i32 = 4;
 const FOOD_USED: i32 = 5;
 /// The game generator the alarm of a new building draws (SPEC-0026).
 const ALARM: usize = 21;
+/// 0.5 as a bit pattern of a real.
+const HALF_SECOND: u32 = 0x3F00_0000;
 const EVENT_UNIT_DAMAGED: i32 = 52;
 const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
 const EVENT_UNIT_DEATH: i32 = 53;
@@ -266,8 +268,10 @@ pub(super) fn create_unit(
         attack: None,
         movement: None,
         attack_move: None,
-        born: state.ticks,
         acquire_phase,
+        // The first check expires 0.5 x s after the creation, on the
+        // movement clock (SPEC-0019).
+        next_acquire: add(state.move_clock, mul(acquire_phase, HALF_SECOND)),
         paused: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,

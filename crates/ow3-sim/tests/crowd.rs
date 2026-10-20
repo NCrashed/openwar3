@@ -221,3 +221,22 @@ fn crowd_chase_creeps_start() {
         assert_eq!(g.map(|e| e.0), o.map(|e| e.0), "creep {unit}");
     }
 }
+
+/// The units are handled in the game's order within each tick (SPEC-0021,
+/// "Searches of many units in the same tick"): the creeps by the ends of
+/// their reaction delays, the peasants by their orders, newest first.
+#[test]
+fn crowd_chase_order_of_updates() {
+    let Some(ours) = play(1600) else {
+        return;
+    };
+    let game = events(&game_data().join("replays/c-RXD-1.events.tsv"));
+    let order = |list: &[Logged]| {
+        let mut by_tick: BTreeMap<u64, Vec<i32>> = BTreeMap::new();
+        for e in list.iter().filter(|e| e.1 == "update" && e.0 < 1591) {
+            by_tick.entry(e.0).or_default().push(e.2);
+        }
+        by_tick
+    };
+    assert_eq!(order(&ours.events), order(&game));
+}

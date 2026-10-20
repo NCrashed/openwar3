@@ -2007,6 +2007,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // The goal taken 66 ticks after a chase resumes
                         // comes with an update standing (SPEC-0019).
                         let steer = if renewed && std::mem::take(&mut m.renew_stands) {
+                            // A new goal, first among the units handled
+                            // from the next tick (SPEC-0021).
+                            state.orders_given += 1;
+                            m.given = state.orders_given;
                             follow::Steer::Stand(goal)
                         } else {
                             steer
@@ -2231,6 +2235,43 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
     let range = super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
     let reach = add(add(mul(range, CELL), mul(own, CELL)), mul(other, CELL));
     in_range(relative([u.x, u.y], min), relative(at, min), reach)
+}
+
+/// The reaction delays that end in this tick, before its updates
+/// (SPEC-0021, "Searches of many units in the same tick"): each such unit
+/// takes a new goal and comes first among the units handled; delays
+/// ending in the same tick end in the order they began.
+///
+/// PROVISIONAL: the attacker's path is searched at its next update, where
+/// SPEC-0021 reads it from the end of the delay (`c-RXD-1`, tick 1569);
+/// searching there moves the swings of verifications 5 and 6 of SPEC-0019
+/// an update earlier (QUESTIONS.md, "Crowd chase").
+pub(super) fn reaction_ends(state: &mut State) {
+    let tick = state.ticks;
+    let mut ending: Vec<(u64, u32)> = state
+        .moving
+        .iter()
+        .filter_map(|&h| match state.objects.get(&h) {
+            Some(Object::Unit(u)) => {
+                let m = u.movement?;
+                let (from, delay, earliest) = m.reaction?;
+                let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
+                (tick >= earliest && real_of(waited) >= real_of(delay)).then_some((m.given, h))
+            }
+            _ => None,
+        })
+        .collect();
+    ending.sort_unstable();
+    for (_, h) in ending {
+        let given = state.orders_given + 1;
+        state.orders_given = given;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.reaction = None;
+            m.given = given;
+        }
+    }
 }
 
 /// Unit `h` takes up its attack on `target` again after its swing

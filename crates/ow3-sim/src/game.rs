@@ -1268,6 +1268,8 @@ impl<'a> Game<'a> {
             // What happens at the updates sees the queue time `U`.
             self.state.borrow_mut().timers.move_to(at);
         }
+        // Reaction delays that end now: new goals, before the updates.
+        movement::reaction_ends(&mut self.state.borrow_mut());
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::start_buildings(&mut self.state.borrow_mut());
         // Units whose order ended start their next queued one (SPEC-0031).

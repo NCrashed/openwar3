@@ -585,44 +585,42 @@ the spec is silent:
 
 ## Crowd chase `c-RXD-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0021)
 
-With the acquisition checks as engine timers and the responders in the
-order of the grid (SPEC-0019), the replay played with the path
-decisions traced (`tests/crowd.rs`) gives the events of
-`c-RXD-1.events.tsv` one for one up to tick 1585 (1293 events), the four
-creeps starting their chase in the game's ticks (1567, 1573, 1585,
-1609), and the positions of the corrected log the same up to tick 1585.
+`tests/crowd.rs` plays the replay with the path decisions traced. Up
+to tick 1591 the events of `c-RXD-1.events.tsv` are the game's one for
+one, in the game's order within each tick (new goals and clusters of
+SPEC-0021), and the four creeps take their first updates in the
+game's ticks (1567, 1573, 1585, 1609). Two things do not follow yet.
 
-**1. Order of the updates within a tick.** The game lists the updates
-of tick 1609 as creeps 6, 7, 8, 9, then peasants 5, 4, 3, 2, 1, 0
-(1585 and 1591 the same without creep 6). For the peasants this is
-SPEC-0021, "Searches of many units in the same tick": their orders were
-given 0 to 5, the newest first. The creeps had their attack orders in
-tick 1557 in the order 7, 8, 6, 9 (acquirer, then responders), which by
-that rule would give 9, 6, 8, 7; the game's 6, 7, 8, 9 is instead the
-reverse of their first updates after the reaction delay (9 at 1567, 8 at
-1573, 7 at 1585, 6 at 1609). Needed: when an attack order taken at an
-acquisition or a call for help puts the unit at the front of the
-handling order (at the order, or when its reaction delay ends, or at its
-first update), and whether the same holds for other orders that wait a
-reaction delay.
+**1. The tick of the acquisition check and the ends of the reaction
+delays.** By the rule of SPEC-0019 (a check runs in the first tick
+whose movement clock is at or after its expiry, the first expiry at
+the creation plus `0.5 x` s) creep 7 (`x` = 0.55945015, created in tick
+201 with the movement clock at 1.0 here) has its 14th expiry at
+1.0 + 0.279725 + 13 x 0.5 = 7.779725. The movement clock, 0.005 added
+each tick in single precision, is 7.779674 in tick 1557 here (7.779675
+read in the game), short of the expiry, so the check runs in tick 1558
+here. The game ran it in tick 1557. The draws of generator 9 here, in
+the order of SPEC-0019 (7, then 8, 6, 9), times `ReactionDelay`:
+0.122052, 0.062619, 0.249910, 0.040617 s. The delays end here in ticks
+1582 (7), 1571 (8), 1608 (6), 1567 (9), against the game's 1581, 1569,
+1607, 1565. Needed: the expiry of the check and the movement clock at
+the creation of the creeps as the game holds them, the four delays
+drawn in the game, and the clock the reaction delays count from for
+the acquirer and for the units that answer its call.
 
-**2. The point a chasing creep walks to.** Creep 8 (`nkob`, made at
-(260, 520)) at its update of tick 1585, at (250.52, 507.03), has here
-the local path (cells of 32 from the map corner, the map 192 x 192 on
--12288) 392.125 400.25, 391.5 399.5, 390.5 398.5, 389.5 397.5,
-389.5 396.5, 388.5 395.5, 387.5 394.5, ... 382.5 389.5 (index 11), ...
-374.5 388.5, from target 1 (391.5 399.5, just reached). The simulation
-takes the farthest point seen, index 11, world (-48, 176), and walks at
-about 48 degrees; the game walks exactly along the diagonal (steps of
--0.952, -0.957 a tick), which fits index 3, world (176, 432). Creep 6
-(`nkob`, collision 31) stands at (100, 450), creep 7 at (-60, 520) starts
-its own chase at this tick (before creep 8 in the game's order, after it
-here), creep 9 at (89.1, 578.3) walks. Creep 9 parts the same way at its
-update of 1591. Needed: why the game stops at index 3: whether the
-farthest-seen step looks past a standing unit with a wider clearance,
-counts units that are walking or start walking in the tick, stops where
-the path turns (index 4 is a straight step down), or takes at most a
-number of points.
+**2. The path search at the end of the reaction delay.** SPEC-0021
+reads creep 8's local path from its search at the end of its delay
+(tick 1569). Searching then, to where the target stands then, moves
+the swings of SPEC-0019, verification 5 (`c-CH1`, row 4: from 706 to
+700) and verification 6 (`c-CH5`) one update earlier, so the
+simulation searches at the first update after the delay, as before.
+Here creep 8 searches in tick 1573 and its path parts from the game's
+after (176, 400): (144, 368), (112, 336), ... instead of (144, 400),
+(112, 400), (80, 368), so it never meets the corner of kobold 6. Needed:
+whether the search at the end of the delay holds for the attacks of
+`c-CH1` and `c-CH5` (orders from a script) as well, and what else
+differs there (the goal, the countdown of the chase, the update the
+attacker first walks at).
 
 **3. Checksums.** The turn checksums of `c-RXD-1` change at turns the
 simulation does not, from turn 14 on, before the creeps move: what

@@ -705,3 +705,26 @@ fn shift_queues_an_order() {
         "{p:?}"
     );
 }
+
+/// The fog of war (SPEC-0032): after the first update the local player
+/// sees round its town hall, and the creeps far away are not drawn.
+#[test]
+fn the_fog_hides_far_creeps() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(1_000_000);
+    let vision = sim.vision().unwrap();
+    let visible = vision.iter().filter(|&&c| c == 2).count();
+    assert!(visible > 100 && visible < vision.len() / 10, "{visible}");
+    let drawn: Vec<u32> = sim.draws().iter().map(|d| d.handle).collect();
+    let units = sim.units();
+    let creeps: Vec<_> = units
+        .iter()
+        .filter(|u| u.owner == ow3_sim::game::CREEPS && u.alive)
+        .collect();
+    assert!(!creeps.is_empty());
+    assert!(creeps.iter().all(|c| !drawn.contains(&c.handle)));
+    let hall = first(&sim, b"htow");
+    assert!(drawn.contains(&hall));
+}

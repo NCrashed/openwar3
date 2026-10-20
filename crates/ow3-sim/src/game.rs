@@ -1611,6 +1611,11 @@ impl<'a> Game<'a> {
         Some((state.fog.size(), grid))
     }
 
+    /// Whether the units of `player` revealed anything yet.
+    pub fn fog_started(&self, player: i32) -> bool {
+        self.state.borrow().fog.grid(player).is_some()
+    }
+
     /// The fog state of point (`x`, `y`) for `player`.
     pub fn fog_at(&self, player: i32, x: f32, y: f32) -> u8 {
         let state = self.state.borrow();

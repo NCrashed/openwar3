@@ -373,7 +373,7 @@ impl Sim {
             .game
             .units()
             .into_iter()
-            .filter(|u| u.alive && !u.hidden)
+            .filter(|u| u.alive && !u.hidden && self.shown(u))
             .filter_map(|u| {
                 let mark = if u.type_id == ngol {
                     Mark::Mine
@@ -807,12 +807,54 @@ impl Sim {
         self.game.units()
     }
 
+    /// The fog of war of the local player (SPEC-0032), cell by cell
+    /// (`ow3_sim::game::fog::MASKED` and the others, rows from the
+    /// bottom); `None` when all is seen: the fog is off, or the first
+    /// update has not come yet. Without `FogMaskEnable` cells never seen
+    /// look fogged.
+    pub fn vision(&self) -> Option<Vec<u8>> {
+        use ow3_sim::game::fog;
+        let (enabled, mask) = self.game.fog_enabled();
+        if !enabled {
+            return None;
+        }
+        let (_, mut cells) = self.game.fog(LOCAL_PLAYER)?;
+        if !mask {
+            for c in &mut cells {
+                *c = (*c).max(fog::FOGGED);
+            }
+        }
+        Some(cells)
+    }
+
+    /// Whether the local player sees unit `u`: its own and its allies'
+    /// always, others in visible cells, buildings also in fogged ones.
+    ///
+    /// PROVISIONAL: allied vision and what the fog shows of buildings are
+    /// open (SPEC-0032 open question 2); a building in the fog is shown as
+    /// it is now, not as it was last seen.
+    fn shown(&self, u: &ow3_sim::game::UnitView) -> bool {
+        use ow3_sim::game::fog;
+        if u.owner == LOCAL_PLAYER
+            || !self.game.fog_enabled().0
+            || !self.game.fog_started(LOCAL_PLAYER)
+            || self.game.relation(LOCAL_PLAYER, u.handle) == Some(Relation::Friend)
+        {
+            return true;
+        }
+        match self.game.fog_at(LOCAL_PLAYER, u.x, u.y) {
+            fog::VISIBLE => true,
+            fog::FOGGED => self.game.unit_stats(u.handle).is_some_and(|s| s.building),
+            _ => false,
+        }
+    }
+
     pub fn draws(&mut self) -> Vec<UnitDraw> {
         let now = self.game.ticks();
         let mut draws = Vec::new();
         for u in self.game.units() {
             let pose = self.pose(&u, now);
-            if u.hidden {
+            if u.hidden || !self.shown(&u) {
                 continue;
             }
             let Some(look) = self.models.get(&u.type_id) else {

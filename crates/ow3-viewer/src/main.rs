@@ -205,6 +205,7 @@ fn screenshot(
         sim_hour = sim.time_of_day();
         sim_seconds = sim.game_seconds();
         sim_fog = sim.terrain_fog();
+        renderer.set_vision(&queue, sim.vision().as_deref());
         let mut units = sim.draws();
         let (posed, hidden) = scene.posed(&sim.destructable_poses());
         units.extend(posed);
@@ -284,6 +285,8 @@ struct App {
     fullscreen: bool,
     /// The moves of the camera by the script seen so far.
     camera_moves: u32,
+    /// The fog of war shown, to upload it when it changes.
+    vision: Option<Vec<u8>>,
     gpu: Option<Gpu>,
     /// When the animations started.
     started: std::time::Instant,
@@ -839,6 +842,12 @@ impl App {
                 self.controls.goal.target = [x, y, z];
             }
             sim.ghost = ground;
+            // The fog of war, when its update changed it.
+            let vision = sim.vision();
+            if vision != self.vision {
+                gpu.renderer.set_vision(&gpu.queue, vision.as_deref());
+                self.vision = vision;
+            }
             let mut units = sim.draws();
             // Trees hit or felled, in a pose of their own.
             let (posed, hidden) = self.scene.posed(&sim.destructable_poses());
@@ -999,6 +1008,7 @@ fn main() -> ExitCode {
         size: options.size,
         fullscreen: !options.windowed,
         camera_moves: start.map_or(0, |(_, n)| n),
+        vision: None,
         gpu: None,
         started: std::time::Instant::now(),
         sim,

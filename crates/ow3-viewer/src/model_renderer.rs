@@ -28,10 +28,12 @@ struct Globals {
     water: vec4<f32>,
     fog_params: vec4<f32>,
     fog_color: vec4<f32>,
+    vision_area: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
 @group(0) @binding(2) var shadow_sampler: sampler;
+@group(0) @binding(3) var vision_map: texture_2d<f32>;
 @group(1) @binding(0) var skin: texture_2d<f32>;
 @group(1) @binding(1) var skin_sampler: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
@@ -99,7 +101,7 @@ override UNSHADED: bool = false;
 fn lit(v: VertexOut) -> vec4<f32> {
     let texel = textureSample(skin, skin_sampler, v.uv);
     if UNSHADED {
-        return vec4<f32>(fogged(texel.rgb * v.tint, v.depth), texel.a * v.alpha);
+        return vec4<f32>(fogged(seen(texel.rgb * v.tint, v.world), v.depth), texel.a * v.alpha);
     }
     // Cliffs take the light of the terrain, other models that of units.
     var sun = globals.unit_sun;
@@ -116,7 +118,7 @@ fn lit(v: VertexOut) -> vec4<f32> {
     let n = normalize(v.normal);
     let facing = max(dot(n, sun.xyz), 0.0);
     let light = min(sun.w * color.rgb * facing + color.w * ambient.rgb, vec3<f32>(1.0));
-    return vec4<f32>(fogged(colour * v.tint * light, v.depth), texel.a * v.alpha);
+    return vec4<f32>(fogged(seen(colour * v.tint * light, v.world), v.depth), texel.a * v.alpha);
 }
 
 @fragment
@@ -290,9 +292,10 @@ impl ModelRenderer {
             label: Some("models"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{SHADER}{}{}",
+                    "{SHADER}{}{}{}",
                     crate::renderer::SHADOW_WGSL,
-                    crate::renderer::FOG_WGSL
+                    crate::renderer::FOG_WGSL,
+                    crate::renderer::VISION_WGSL
                 )
                 .into(),
             ),

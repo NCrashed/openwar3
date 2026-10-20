@@ -53,6 +53,25 @@ fn fogged(colour: vec3<f32>, depth: f32) -> vec3<f32> {
 }
 "#;
 
+/// The fog of war (SPEC-0032) for the shaders that declare
+/// `globals.vision_area`, `vision_map` and `shadow_sampler`: `seen`
+/// darkens a colour by the state of the fog cells round a world point,
+/// one texel a cell at its centre, filtered linearly between cells.
+///
+/// PROVISIONAL: how the game draws the fog in the world is open
+/// (SPEC-0032 open question 4); here fogged cells at half brightness and
+/// masked ones black, with a smooth edge.
+pub(crate) const VISION_WGSL: &str = r#"
+fn seen(colour: vec3<f32>, world: vec2<f32>) -> vec3<f32> {
+    let uv = (world - globals.vision_area.xy) / (128.0 * globals.vision_area.zw);
+    return colour * textureSampleLevel(vision_map, shadow_sampler, uv, 0.0).r;
+}
+"#;
+
+/// The brightness of the three fog states in the vision map: masked,
+/// fogged, visible.
+pub const VISION_LEVELS: [u8; 3] = [0, 128, 255];
+
 pub(crate) const SHADOW_WGSL: &str = r#"
 const SHADOW_COLOUR: vec3<f32> = vec3<f32>(0.048, 0.048, 0.095);
 const SHADOW_AMOUNT: f32 = 0.502;
@@ -87,10 +106,14 @@ struct Globals {
     // Fog: style, start, end, density; colour and 1 when there is fog.
     fog_params: vec4<f32>,
     fog_color: vec4<f32>,
+    // The fog of war: the lower left corner of the map and the cells
+    // across and up (SPEC-0032).
+    vision_area: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
 @group(0) @binding(2) var shadow_sampler: sampler;
+@group(0) @binding(3) var vision_map: texture_2d<f32>;
 @group(1) @binding(0) var atlas: texture_2d_array<f32>;
 @group(1) @binding(1) var atlas_sampler: sampler;
 
@@ -135,7 +158,7 @@ fn vs(v: VertexIn) -> VertexOut {
 @fragment
 fn fs(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = shaded(textureSample(atlas, atlas_sampler, v.uv, v.cell), v.world);
-    return vec4<f32>(fogged(texel.rgb * v.light * v.tint.rgb, v.depth), texel.a);
+    return vec4<f32>(fogged(seen(texel.rgb * v.light * v.tint.rgb, v.world), v.depth), texel.a);
 }
 
 @fragment
@@ -146,7 +169,7 @@ fn fs_water(v: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(atlas, atlas_sampler, v.uv, u32(globals.water.x));
     let light = globals.unit_sun.w * globals.unit_color.rgb * max(globals.unit_sun.z, 0.0)
         + globals.unit_color.w * globals.unit_ambient.rgb;
-    return vec4<f32>(fogged(texel.rgb * v.tint.rgb * light, v.depth), v.tint.a);
+    return vec4<f32>(fogged(seen(texel.rgb * v.tint.rgb * light, v.world), v.depth), v.tint.a);
 }
 "#;
 
@@ -164,6 +187,7 @@ struct Globals {
     water: [f32; 4],
     fog_params: [f32; 4],
     fog_color: [f32; 4],
+    vision_area: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -226,6 +250,10 @@ pub struct Renderer {
     /// The shadow map: the lower left corner of the map and the size of
     /// the sample grid.
     shadow_area: [f32; 4],
+    /// The fog of war one texel a cell ([`VISION_LEVELS`]), and the lower
+    /// left corner of the map and the cells across and up.
+    vision: wgpu::Texture,
+    vision_area: [f32; 4],
 }
 
 /// The image and its smaller copies, each half the size of the one before.
@@ -286,6 +314,37 @@ fn r8_texture(
     height: u32,
     texels: &[u8],
 ) -> wgpu::TextureView {
+    r8_texture_of(device, queue, width, height, texels).1
+}
+
+/// Writes all texels of a one-byte texture, rows from the bottom.
+fn write_r8(queue: &wgpu::Queue, texture: &wgpu::Texture, texels: &[u8]) {
+    let size = texture.size();
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(size.width),
+            rows_per_image: Some(size.height),
+        },
+        size,
+    );
+}
+
+/// [`r8_texture`] with the texture, to write it again later.
+fn r8_texture_of(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    width: u32,
+    height: u32,
+    texels: &[u8],
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shadows"),
         size: wgpu::Extent3d {
@@ -300,26 +359,9 @@ fn r8_texture(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        texels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width),
-            rows_per_image: Some(height),
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    texture.create_view(&wgpu::TextureViewDescriptor::default())
+    write_r8(queue, &texture, texels);
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 /// One model of the interface drawn over the view through a projection of
@@ -348,6 +390,7 @@ impl ModelView {
             mapped_at_creation: false,
         });
         let no_shadow = r8_texture(device, queue, 1, 1, &[0]);
+        let all_seen = r8_texture(device, queue, 1, 1, &[255]);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("portrait globals"),
@@ -364,6 +407,10 @@ impl ModelView {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&all_seen),
                 },
             ],
         });
@@ -447,6 +494,7 @@ impl ModelView {
             water: [0.0; 4],
             fog_params: [0.0; 4],
             fog_color: [0.0; 4],
+            vision_area: [0.0, 0.0, 1.0, 1.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.rect = Some(rect);
@@ -633,7 +681,9 @@ impl Renderer {
     ) -> Renderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground"),
-            source: wgpu::ShaderSource::Wgsl(format!("{SHADER}{SHADOW_WGSL}{FOG_WGSL}").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{SHADER}{SHADOW_WGSL}{FOG_WGSL}{VISION_WGSL}").into(),
+            ),
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
@@ -663,6 +713,17 @@ impl Renderer {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // The fog of war.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -756,6 +817,20 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..wgpu::SamplerDescriptor::default()
         });
+        // The fog of war, one texel a cell, all seen until a game sets it.
+        let t = &scene.terrain;
+        let cells = (
+            t.width.saturating_sub(1).max(1),
+            t.height.saturating_sub(1).max(1),
+        );
+        let (vision, vision_view) = r8_texture_of(
+            device,
+            queue,
+            cells.0,
+            cells.1,
+            &vec![255; (cells.0 * cells.1) as usize],
+        );
+        let vision_area = [t.origin_x, t.origin_y, cells.0 as f32, cells.1 as f32];
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &globals_layout,
@@ -771,6 +846,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&vision_view),
                 },
             ],
         });
@@ -889,6 +968,8 @@ impl Renderer {
             terrain_light: PLAIN_LIGHT,
             unit_light: PLAIN_LIGHT,
             shadow_area,
+            vision,
+            vision_area,
         }
     }
 
@@ -1208,6 +1289,21 @@ impl Renderer {
         best.map(|(_, handle)| handle)
     }
 
+    /// Shows the fog of war: the state of each cell (masked 0, fogged 1,
+    /// visible 2, rows from the bottom), or with `None` all seen.
+    pub fn set_vision(&self, queue: &wgpu::Queue, cells: Option<&[u8]>) {
+        let size = self.vision.size();
+        let n = (size.width * size.height) as usize;
+        let texels: Vec<u8> = match cells {
+            Some(c) if c.len() == n => c
+                .iter()
+                .map(|&s| VISION_LEVELS[usize::from(s.min(2))])
+                .collect(),
+            _ => vec![255; n],
+        };
+        write_r8(queue, &self.vision, &texels);
+    }
+
     /// Draws the ground seen by `camera` into `target`.
     pub fn draw(
         &self,
@@ -1238,6 +1334,7 @@ impl Renderer {
             water: [self.water_frame as f32, 0.0, 0.0, 0.0],
             fog_params: self.fog.0,
             fog_color: self.fog.1,
+            vision_area: self.vision_area,
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

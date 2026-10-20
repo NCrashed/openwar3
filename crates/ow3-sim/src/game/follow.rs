@@ -541,7 +541,9 @@ fn decide(
             // PROVISIONAL: SPEC-0020 says only that the unit searches
             // again; in c-RVL-1 a footman whose order point another one
             // stood on stopped and its order ended two updates later.
-            if last == 0 && follow.final_goal {
+            // A worker walking to a building keeps searching: it goes in
+            // or delivers only touching it (SPEC-0029).
+            if last == 0 && follow.final_goal && walker.building.is_none() {
                 if follow.stuck {
                     return Steer::Arrived;
                 }

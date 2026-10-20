@@ -673,6 +673,46 @@ block each other. Needed:
 Until answered: gathering workers walk, block and are blocked like any
 unit.
 
+Seen in `c-RXI-1` (first difference of its path events, tick 1075):
+peasant 5 comes out of the mine at (-1050.18, 48.29) while peasant 2
+walks east on y = 49; in the game neither waits nor is blocked and at
+tick 1099 the two overlap (6.6 apart), here 5 waits for 2 and 2 is
+blocked by 5. Also needed:
+
+- **Leaving the mine.** The free cell a worker is put on when its entry
+  point is taken (SPEC-0029, open question 1): the displaced exits of
+  `c-RXI-1` are cell centres west of the entry points, (-1104, 48) for
+  an entry at (-1052.06, -17.07), (-1072, -16) and (-1072, -80) for
+  others. When the entry point counts as taken, and the order of the
+  search. Here the worker comes out where it went in.
+- **The first updates after leaving.** Peasant 5 has four updates
+  standing at the exit (1075 to 1093) and moves at 1094: a fixed wait
+  or a turn?
+
+A worker whose walk to its building cannot get closer keeps searching
+here; it goes in or delivers only touching the building.
+
+## New orders while walking (`game::movement`, SPEC-0019)
+
+In `c-RTW-3` footman 825 walks on patrol (851991) and gets `smart` to a
+point at tick 3111: in the game it stops in that tick, here it walks on
+to its next update (3116) as a new `move` while walking does. Needed:
+which orders stop a walking unit at once and which wait for its next
+update (a move after patrol, attack-move, follow; smart on a point or
+a unit), and when it moves again (29 ticks for a turn of about 175
+degrees in the game, 25 here).
+
+## Chases after a swing (`game::attack`, SPEC-0019)
+
+- A better target taken while the cooldown runs (`c-RXD-1`, kobold 8
+  at tick 2007, in its backswing) keeps the new goal with a stand at
+  the first update from D + cool - dmgpt of the last hit; this gives the
+  game's events at 2155 and 2161. Is that the rule?
+- Creep 9 of `c-RXD-1` hits at 1967 with its target out of reach at the
+  damage point; its stand would come at 2161, where the game has a
+  walking update (look-ahead, `made_wait20` of creep 7, blocked). Its
+  swings and hits before 2161 are needed.
+
 ## Order confirmation (the viewer)
 
 The viewer shows the model of `TargetUnitConfirm` (skins) on a unit or a

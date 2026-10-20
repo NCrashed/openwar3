@@ -408,7 +408,18 @@ time to time:
   tick 2075 with its target still within the range test of the new
   goal point, stood (its cooldown had not run out), and walked only
   after its next goal in tick 2149, from its update of 2155, although
-  the target had left its range at about tick 2125. A switch of target
+  the target had left its range at about tick 2125. Such an attacker
+  has its goal and path like a walking one and turns while it stands:
+  from its first update after the end of the backswing its heading
+  turns towards its path by the turn rule of SPEC-0018 (0.5 rad per
+  update for the kobold: 3.3774, 3.8774, 4.3774, 4.8774, 5.3774 at its
+  updates 2077 to 2095, then 5.3774) and its facing follows by the
+  facing rule of SPEC-0013 (steps 0.07, 0.14, then 0.2 per update),
+  with velocity 0 at every update, because the start-of-attack test
+  above holds (the goal point is within range) and the swing waits for
+  the cooldown. It is facing its heading by tick 2143; after the new
+  goal of 2149 its heading was 5.2104 and it walked from 2155 (read in
+  the game). A switch of target
   during the backswing (creep 8 in tick 2007, creep 6 in tick 2031) did
   not change these ticks: the goal at the end of the backswing is taken
   for the new target.

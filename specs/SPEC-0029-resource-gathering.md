@@ -47,24 +47,34 @@ left in it.
 
 ### Reaching a building or a tree
 
-- **A building** (gold mine, town hall, lumber mill) is reached at the
-  first update at which the peasant's footprint (SPEC-0020: class 1,
-  the cells `x-1 .. x`, `y-1 .. y` around the cell `(x, y)` of its
-  position) touches a cell of the building's pathing texture that
-  blocks walking (red, SPEC-0022), touching meaning that the two cells
-  are equal or neighbours, also diagonal ones (Chebyshev distance of
-  the cells at most 1). The red cells are the inner 8 x 8 of the gold
+- **A building** (gold mine, town hall, lumber mill) is reached through
+  the end of the worker's path (below, "The path to a building"): that
+  path ends where its search touched the building's red cells, short of
+  its goal, so at the update at which the worker arrives at its last
+  point (within 0.49 cells, SPEC-0020, step 3) it stands still for that
+  update as at the end of a local path that did not reach its goal, and
+  at its next update it enters the mine or gives its gold. In `c-RXI-1`
+  each of the 47 entries and deliveries after a walk had this stand
+  6 to 9 ticks before the change of order the script read (the stands
+  are the `blocked` events of `c-RXI-1.events.tsv`; the script reads
+  the order up to a few ticks late). Peasant 5
+  was 0.496 cells from the end of its path at its update of tick 859
+  (not arrived; it walked on), 0.318 at 865 (arrived: stand) and
+  entered at 871, although its footprint was already next to a red cell
+  at 859. A worker that arrives while another is in the mine stands
+  there with no further update of its path and no search until the
+  mine is free (peasant 4: arrived at 865, entered at 1071, in the tick
+  peasant 5 left). The red cells are the inner 8 x 8 of the gold
   mine's `16x16Goldmine` (the outer ring blocks building only), the
   inner 12 x 12 of the town hall's `16x16Simple` and the whole 10 x 10
   of the lumber mill's `10x10SimpleSolid`, placed by SPEC-0022
-  (snapping and placement). Because the footprint lies to the lower
-  left of the position, the distance from the building's centre at
-  which this happens depends on the side: for a mine at (cx, cy) the
-  peasant entered at 190.9 from the east and 190.4 from the north, at
-  156.8 from the west and 156.4 from the south, at 263.3 from the
-  north-east and about 218 from the other diagonals; it delivered at a
-  town hall at 218.8 / 219.3 coming from the west / south and 252.9 /
-  253.3 from the east / north.
+  (snapping and placement). Distances from the building's centre at
+  which the peasant entered or delivered in the tests of this spec:
+  for a mine at (cx, cy) 190.9 from the east and 190.4 from the north,
+  156.8 from the west and 156.4 from the south, 263.3 from the
+  north-east and about 218 from the other diagonals; at a town hall
+  218.8 / 219.3 coming from the west / south and 252.9 / 253.3 from the
+  east / north.
 - **The path to a building.** The worker's walk to a mine or a town
   hall searches its path as a chase searches towards its target
   (SPEC-0019, "touches the target"): the goal is the building's

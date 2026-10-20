@@ -583,6 +583,51 @@ the spec is silent:
   less 24 at the game time then, which matches the game to 2e-6 hours
   but not bit for bit.
 
+## Crowd chase `c-RXD-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0021)
+
+The replay played with the path decisions traced (`tests/crowd.rs`)
+gives the events of `c-RXD-1.events.tsv` one for one up to tick 1561:
+1254 events, every look-ahead update of the six peasants at the same
+ticks and positions (within 0.04), and the positions of the log the
+same. Two notes on the files: the positions of `.events.tsv` are
+multiples of 0.032 (-1694.304 = -52947 x 0.032) where the log has
+-1694.313 for the same tick, so they look rounded where they were read;
+and the events of a tick come at the tick before the log's position
+change (update at 307, first moved position at 307 in the log, at 308
+in the simulation, which commits the move in the next tick).
+
+The first difference is the start of the creeps' chase:
+
+| Creep | First update, game | Here |
+|---|---|---|
+| 6 `nkob` (100, 450) | 1609 | 1573 |
+| 7 `nkob` (-60, 520) | 1585 | 1561 |
+| 8 `nkob` (260, 520) | 1573 | 1609 |
+| 9 `nkot` (100, 600) | 1567 | 1567 |
+
+Here the acquisition phases drawn at creation (generator of the damage
+dice, SPEC-0019) are 0.3038, 0.5595, 0.0595 and 0.3532 for creeps 6 to
+9, so their idle checks fall at ticks 231, 256, 206 and 236 plus
+multiples of 100. Creep 7 finds a peasant at its check of tick 1556,
+orders the attack (reaction delay and half its phase, SPEC-0019) and
+updates first at 1561; its call for help (SPEC-0030) brings creep 9 at
+1567, creep 6 at 1573 and creep 8 at 1609. In the game the same four
+ticks after 1556 appear (1567, 1573, 1609) with creep 7 itself at 1585.
+Needed:
+
+- which creep acquired a target first in the game, at which tick, and
+  which peasant; the acquisition phases of the four creeps;
+- when a creep that acquired starts its chase (1585 for creep 7 would be
+  29 ticks after 1556), and when the creeps it calls start theirs: in
+  which order the camp is told (here by creation order) and how each
+  one's first update is set;
+- whether the call for help comes at the acquisition or at the
+  acquirer's first update.
+
+The turn checksums of `c-RXD-1` change at turns the simulation does not
+(from turn 14 on, before the creeps move: the harvest), so what the
+gathering adds to the checksum (SPEC-0024) is open as well.
+
 ## Construction (`game::movement`, `game`, SPEC-0026)
 
 - **Several workers on one building** (power build). In the game more

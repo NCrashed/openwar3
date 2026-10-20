@@ -51,7 +51,7 @@ mod creeps;
 mod enumerate;
 mod facing;
 pub mod fog;
-mod follow;
+pub mod follow;
 mod formation;
 mod harvest;
 mod movement;
@@ -696,6 +696,8 @@ pub struct State {
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
+    /// The path decisions of the units, when a test asks for them.
+    pub path_trace: Option<Vec<follow::PathEvent>>,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -786,6 +788,7 @@ impl State {
             update_time: 0,
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
+            path_trace: None,
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

@@ -64,12 +64,20 @@ fn remainders_of_the_reference_replay() {
 
 /// Replays of the test maps whose play needs what the specs do not give
 /// yet, with the reason.
-const UNSPECIFIED: &[(&str, &str)] = &[(
-    "c-RTW-3.w3g",
-    "the follow of turn 190 ends as recorded (turn 207); after the group order of turn 233 the \
-         simulation draws the script generator at turns 239 to 259 (the patience of blocked units, \
-         SPEC-0025) where the game does not: not found yet",
-)];
+const UNSPECIFIED: &[(&str, &str)] = &[
+    (
+        "c-RTW-3.w3g",
+        "the follow of turn 190 ends as recorded (turn 207); after the group order of turn 233 \
+         the simulation draws the script generator at turns 239 to 259 (the patience of blocked \
+         units, SPEC-0025) where the game does not: not found yet",
+    ),
+    (
+        "c-RXD-1.w3g",
+        "harvesting changes the game's state at turns where the simulation has nothing (objects \
+         of the gathering, SPEC-0029 does not cover the checksum), and the creeps start their \
+         chase in another order from tick 1561 on (tests/crowd.rs)",
+    ),
+];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.
 fn test_replays() -> Vec<PathBuf> {

@@ -272,6 +272,32 @@ struct Shared<'a> {
     budget: &'a mut Budget,
     paths: &'a mut BTreeMap<u32, Follow>,
     random: &'a mut Random,
+    events: Vec<PathEvent>,
+}
+
+/// What a unit decided at an update, for comparing with the game's
+/// (the `.events.tsv` of the replays).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathEventKind {
+    /// The look-ahead check of the unit's update, at its position.
+    Update,
+    /// `a` waits 5 updates for `b`.
+    Wait,
+    /// `b` makes `a` wait 20 updates.
+    MadeWait,
+    /// `a` is blocked: it stands and searches again.
+    Blocked,
+}
+
+/// A path decision at tick `tick`; `at` is the unit's position relative to
+/// the world corner, as bit patterns of reals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PathEvent {
+    pub tick: u64,
+    pub kind: PathEventKind,
+    pub a: u32,
+    pub b: Option<u32>,
+    pub at: [u32; 2],
 }
 
 /// A unit at an update, as `steer` needs it.
@@ -336,19 +362,18 @@ pub fn steer(state: &mut State, walker: &Walker, tick: u64) -> Steer {
         follow.take_segment(order_cells);
         follow
     });
-    let decided = decide(
-        &mut follow,
-        grid,
-        &others,
-        &mut Shared {
-            budget: &mut state.budget,
-            paths: &mut state.paths,
-            random: &mut state.random,
-        },
-        walker,
-        tick,
-    );
+    let mut shared = Shared {
+        budget: &mut state.budget,
+        paths: &mut state.paths,
+        random: &mut state.random,
+        events: Vec::new(),
+    };
+    let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
+    let events = shared.events;
     state.paths.insert(walker.handle, follow);
+    if let Some(trace) = &mut state.path_trace {
+        trace.extend(events);
+    }
     decided
 }
 
@@ -482,6 +507,13 @@ fn decide(
     }
     let target = follow.local[follow.target];
     // The look-ahead check sees every unit.
+    shared.events.push(PathEvent {
+        tick,
+        kind: PathEventKind::Update,
+        a: walker.handle,
+        b: None,
+        at: walker.here,
+    });
     let failing: Vec<(i32, i32)> = path::ahead_cells(at, target, class)
         .into_iter()
         .filter(|&(x, y)| !grid.passable(x, y) || others.by_cell.contains_key(&(x, y)))
@@ -503,10 +535,25 @@ fn decide(
                 continue;
             }
             let faster = real(other.squared_speed) >= real(walker.squared_speed);
+            let event = |kind, a, b| PathEvent {
+                tick,
+                kind,
+                a,
+                b: Some(b),
+                at: walker.here,
+            };
             match shared.paths.get_mut(&b) {
-                Some(path) if !faster && other.class == class => path.wait = MADE_TO_WAIT,
+                Some(path) if !faster && other.class == class => {
+                    path.wait = MADE_TO_WAIT;
+                    shared
+                        .events
+                        .push(event(PathEventKind::MadeWait, b, walker.handle));
+                }
                 _ => {
                     follow.wait = WAIT - 1;
+                    shared
+                        .events
+                        .push(event(PathEventKind::Wait, walker.handle, b));
                     return Steer::Stand(to_world(target));
                 }
             }
@@ -535,6 +582,13 @@ fn decide(
             follow.patience -= 1;
         }
     }
+    shared.events.push(PathEvent {
+        tick,
+        kind: PathEventKind::Blocked,
+        a: walker.handle,
+        b: None,
+        at: walker.here,
+    });
     follow.next = Next::Search;
     follow.local.clear();
     Steer::Stand(segment_goal)

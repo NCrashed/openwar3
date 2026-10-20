@@ -324,6 +324,11 @@ pub fn ahead_cells(s: [u32; 2], target: [u32; 2], class: u8) -> Vec<(i32, i32)> 
 pub trait Cells {
     /// Whether cell (`x`, `y`) is free; cells outside the map are not.
     fn free(&self, x: i32, y: i32) -> bool;
+    /// Whether cell (`x`, `y`) is passable on the pathing map alone,
+    /// whatever units stand on it.
+    fn passable_alone(&self, x: i32, y: i32) -> bool {
+        self.free(x, y)
+    }
     /// The size of the map in cells.
     fn size(&self) -> (i32, i32);
 
@@ -398,6 +403,10 @@ pub struct WithUnits<'a> {
 impl Cells for WithUnits<'_> {
     fn free(&self, x: i32, y: i32) -> bool {
         self.grid.passable(x, y) && !self.occupied.contains(&(x, y))
+    }
+
+    fn passable_alone(&self, x: i32, y: i32) -> bool {
+        self.grid.passable(x, y)
     }
 
     fn size(&self) -> (i32, i32) {
@@ -536,17 +545,18 @@ pub fn local(grid: &impl Cells, s: [u32; 2], g: [u32; 2], class: u8, limit: u32)
 }
 
 /// The local search of a chase (SPEC-0019): to `g`, but ending at the
-/// first cell removed from the heap whose centre is within `range`
-/// (cells) of `g`, at that centre.
-pub fn local_near(
+/// first expanded cell one of whose steps to its neighbours tests a cell
+/// of the target's footprint `target` (a cell passable on the pathing
+/// map), at that cell's centre.
+pub fn local_touching(
     grid: &impl Cells,
     s: [u32; 2],
     g: [u32; 2],
     class: u8,
     limit: u32,
-    range: u32,
+    target: &[(i32, i32)],
 ) -> Found {
-    search(grid, s, g, class, limit, Some(range))
+    search(grid, s, g, class, limit, Some(target))
 }
 
 fn search(
@@ -555,17 +565,18 @@ fn search(
     g: [u32; 2],
     class: u8,
     limit: u32,
-    within: Option<u32>,
+    target: Option<&[(i32, i32)]>,
 ) -> Found {
-    let near = |c: (i32, i32)| {
-        within.is_some_and(|r| {
-            let p = centre(c);
-            let (dx, dy) = (sub(p[0], g[0]), sub(p[1], g[1]));
-            real(add(mul(dx, dx), mul(dy, dy))) <= real(mul(r, r))
+    // Whether a step from `c` to `n` tests a cell of the target.
+    let touches = |c: (i32, i32), n: (i32, i32)| {
+        target.is_some_and(|t| {
+            step_cells(c, n, class)
+                .into_iter()
+                .any(|(x, y)| grid.passable_alone(x, y) && t.contains(&(x, y)))
         })
     };
     let (start, goal) = (cell_of(s), cell_of(g));
-    if within.is_none() && start == goal {
+    if target.is_none() && start == goal {
         return Found {
             points: vec![s, g],
             reached: true,
@@ -599,11 +610,6 @@ fn search(
         // An entry left behind when the cell got a cheaper cost.
         if node.g == g_then && !node.closed {
             nodes.get_mut(&c).unwrap().closed = true;
-            if near(c) {
-                // A chase's path ends near the target.
-                end_near = Some(c);
-                break;
-            }
             if c == goal {
                 reached = true;
                 break;
@@ -613,6 +619,11 @@ fn search(
                 let (width, height) = grid.size();
                 if !(0..width).contains(&n.0) || !(0..height).contains(&n.1) {
                     continue;
+                }
+                // A chase touching its target ends here (SPEC-0019).
+                if touches(c, n) {
+                    end_near = Some(c);
+                    break;
                 }
                 if !grid.step(c, n, class) {
                     clear = false;
@@ -645,6 +656,9 @@ fn search(
                 let key = cost.wrapping_add(estimate(n.0, n.1, goal.0, goal.1));
                 heap.push(key, (n, cost));
             }
+        }
+        if end_near.is_some() {
+            break;
         }
         if iterations >= limit || heap.is_empty() {
             break;

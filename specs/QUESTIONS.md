@@ -586,35 +586,34 @@ the spec is silent:
 ## Crowd chase `c-RXD-1` (`game::follow`, `game::movement`, SPEC-0019, SPEC-0021)
 
 `tests/crowd.rs` plays the replay with the path decisions traced. With
-the checks and the ends of the reaction delays as queue timers, the
-delays of the four creeps end in the game's ticks (1565, 1569, 1581,
-1607), each taking as its goal peasant 5 where it stands then
-(x -391.784, -387.984, -376.586, -351.890, as read in the game), and up
-to tick 1591 the events are the game's one for one, in the game's order
-within each tick.
+the chase search ending where it touches its target (SPEC-0019), the
+events of `c-RXD-1.events.tsv` are now the game's one for one up to
+tick 1837, in the game's order within each tick, and the positions of
+the creeps the game's up to ticks 1838 (creep 9) to 2408 (creep 8).
+Two points of the simulation were set by the data, not by a rule of
+the specs:
 
-**1. Creep 8's local path.** At its first update, tick 1573, creep 8
-searches from (260, 520) towards peasant 5 at (-387.984, 111.852) here.
-Its path is the game's up to (176, 400) and then parts:
+- the countdown of a chase's goal renewal counts from the first update
+  after the goal was taken at the end of the reaction delay (creep 9
+  renewed at 1669, not at 1663);
+- a chase that takes a new goal drops a wait it was in (creep 9 waited
+  for kobold 6 at 1759 and looked ahead again at 1771, at its renewal,
+  not after 5 updates).
 
-- here: (144, 368), (112, 336), (80, 304), (48, 272), (16, 240),
-  (-16, 208), (-48, 176), (-80, 176), ... (-304, 144);
-- the game (SPEC-0021, Verification): (144, 400), (112, 400), (80, 368),
-  ...
+**1. Taking another target while attacking.** In tick 1836 creep 9,
+attacking peasant 5, acquired peasant 3 (`a` row of the log) and
+looked ahead towards it at its update of 1837. The specs give no rule
+for it (SPEC-0021 lists the new goal of such an acquisition). Needed:
+when an attacking unit looks for another target (its acquisition timer
+still running? at which checks?), which target it takes over its own
+(nearer, in range, the one that hits it), and how its reaction delay
+and goal work then; the ticks 1836, 1857, 2007, 2031 and 2207 of
+SPEC-0021 would check it. And whether the two points above are rules
+of the game.
 
-The units standing here at the search: kobold 6 at (100, 450) (cells
-x 386..387, y 397..398), creep 7 at (-60, 520), the town hall; creep 9
-walks. The diagonal step from (176, 400) to (144, 368) is free here.
-Needed: what the game's search had that made it go west along y 400:
-the cells occupied at that search (any unit or object besides kobold
-6), the goal cell and range of the chase search, or the order of the
-heap entries of equal keys there (SPEC-0020).
-
-**2. Checksums of gathering.** With the moments of SPEC-0024
-("Gathering") known to 5 ticks, the turns of `c-RXI-1` and `c-RXD-1`
-cannot be matched one for one yet; the exact ticks (or a rule from the
-update the worker stops at) would allow it, and the causes of turns 24
-and 195 of `c-RXI-1`.
+**2. Checksums of gathering.** With the exact ticks now in SPEC-0024
+this is implementation work; `c-RXI-1` and `c-RXD-1` stay among the
+replays whose checksum turns are not followed until it is done.
 
 ## Construction (`game::movement`, `game`, SPEC-0026)
 

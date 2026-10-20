@@ -320,10 +320,12 @@ pub struct Walker {
 /// What a chase needs at an update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chase {
-    /// The target's position now, relative to the world corner.
+    /// The target's position at its last update, relative to the world
+    /// corner, and its size class: its footprint, which ends the search
+    /// when touched (SPEC-0019).
     pub target: [u32; 2],
-    /// The attack range alone and with both collision sizes, in cells.
-    pub range: u32,
+    pub target_class: u8,
+    /// The attack range with both collision sizes, in cells.
     pub reach: u32,
 }
 
@@ -393,6 +395,10 @@ fn decide(
         grid,
         occupied: &others.standing,
     };
+    // A chase with a new goal has a new path, which waits for no one.
+    if walker.chase.is_some() && to_cells(walker.order) != follow.order {
+        follow.wait = 0;
+    }
     if follow.wait > 0 {
         follow.wait -= 1;
         return Steer::Stand(to_world(follow.goal));
@@ -445,14 +451,15 @@ fn decide(
             return Steer::Stand(segment_goal);
         }
         let found = match walker.chase {
-            // A chase searches to where its target is now, up to its range.
-            Some(chase) if follow.final_goal => path::local_near(
+            // A chase searches to its goal and ends where it touches its
+            // target (SPEC-0019).
+            Some(chase) if follow.final_goal => path::local_touching(
                 &seen,
                 at,
-                to_cells(chase.target),
+                follow.goal,
                 class,
                 LOCAL_LIMIT,
-                chase.range,
+                &path::occupied_cells(to_cells(chase.target), chase.target_class),
             ),
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };

@@ -196,6 +196,9 @@ pub struct Moving {
     /// or a call for help, on the timer queue (SPEC-0019): the unit takes
     /// its goal in the tick that holds it.
     reaction_end: Option<u32>,
+    /// The goal was taken at the end of the reaction delay: the first
+    /// update keeps it and starts the countdown of its renewal from there.
+    goal_taken: bool,
     /// An attack ordered by a script: the update at which the unit acts
     /// cannot start its swing yet (SPEC-0019, "When it starts").
     swing_waits: bool,
@@ -436,6 +439,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: m.walking || m.restart,
             reaction: None,
             reaction_end: None,
+            goal_taken: false,
             chase: None,
             renew_stands: false,
             given,
@@ -459,6 +463,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             skip: false,
             reaction: None,
             reaction_end: None,
+            goal_taken: false,
             chase: None,
             renew_stands: false,
             given,
@@ -1765,7 +1770,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         let range = super::attack::weapon_for(state, type_id, attack_target).map_or(0, |w| w.range);
         let reach = data.map_or(0, |t| add(mul(range, CELL), mul(t.collision, CELL)));
-        let range_cells = mul(range, CELL);
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
@@ -1881,14 +1885,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // goal is.
             let mut in_reach = false;
             let mut renewed = false;
-            let mut target_now = [0, 0];
             let mut full_reach = reach;
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
-                        target_now = relative(at, min);
+                        let target_now = relative(at, min);
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
+                            // The goal taken at the end of the reaction
+                            // delay; its renewal counts from here.
+                            _ if std::mem::take(&mut m.goal_taken) => {
+                                m.chase = Some(countdown(here, relative(m.target, min)));
+                                renewed = true;
+                            }
                             _ => {
                                 // A new goal; the paths follow it
                                 // (`game::follow`).
@@ -2021,11 +2030,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             class,
                             squared_speed: follow::squared_speed(m.velocity),
                             cluster: 1,
-                            chase: Some(follow::Chase {
-                                target: target_now,
-                                range: range_cells,
-                                reach: full_reach,
-                            }),
+                            chase: Some(chase_of(state, target, full_reach)),
                         };
                         let steer = follow::steer(state, &walker, tick);
                         // The goal taken 66 ticks after a chase resumes
@@ -2275,7 +2280,6 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
 pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) {
     let (tick, clock) = (state.ticks, state.move_clock);
     let limit = until.unwrap_or_else(|| add(clock, crate::timers::TICK));
-    let min = [state.world_bounds[0], state.world_bounds[1]];
     let mut ending: Vec<(u64, u32)> = state
         .moving
         .iter()
@@ -2299,14 +2303,14 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
     for (_, h) in ending {
         let given = state.orders_given + 1;
         state.orders_given = given;
-        let (timed, target, here) = match state.objects.get_mut(&h) {
+        let (timed, target) = match state.objects.get_mut(&h) {
             Some(Object::Unit(u)) => match u.movement.as_mut() {
                 Some(m) => {
                     let timed = m.reaction_end.take().is_some();
                     m.reaction = None;
                     m.given = given;
                     match m.order {
-                        Order::Attack { target } => (timed, target, m.origin),
+                        Order::Attack { target } => (timed, target),
                         _ => continue,
                     }
                 }
@@ -2321,8 +2325,32 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
             && let Some(m) = u.movement.as_mut()
         {
             m.target = at;
-            m.chase = Some(countdown(here, relative(at, min)));
+            m.chase = None;
+            m.goal_taken = true;
         }
+    }
+}
+
+/// What a chase of `target` needs for its search: the target's position
+/// at its last update (where it stands, for a unit without a move) and its
+/// size class (SPEC-0019), and `reach`.
+fn chase_of(state: &State, target: u32, reach: u32) -> follow::Chase {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let (at, collision) = match state.unit(Some(target)) {
+        Some(t) => (
+            t.movement
+                .map_or_else(|| relative([t.x, t.y], min), |m| m.origin),
+            state.data.units.get(&t.type_id).map_or(0, |d| d.collision),
+        ),
+        None => (
+            position_of(state, target).map_or([0, 0], |p| relative(p, min)),
+            0,
+        ),
+    };
+    follow::Chase {
+        target: at,
+        target_class: crate::path::size_class(collision),
+        reach,
     }
 }
 
@@ -2367,11 +2395,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32) {
             class,
             squared_speed: 0,
             cluster: 1,
-            chase: Some(follow::Chase {
-                target: goal,
-                range: mul(range, CELL),
-                reach,
-            }),
+            chase: Some(chase_of(state, target, reach)),
         };
         follow::steer(state, &walker, tick);
     }

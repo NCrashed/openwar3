@@ -181,8 +181,9 @@ fn crowd_chase_report() {
             && a.1 == b.1
             && a.2 == b.2
             && (a.1 == "update" || a.3 == b.3)
-            && (a.4[0] - b.4[0]).abs() < 0.04
-            && (a.4[1] - b.4[1]).abs() < 0.04
+            // Only updates carry a position in the game's file.
+            && (a.1 != "update"
+                || ((a.4[0] - b.4[0]).abs() < 0.04 && (a.4[1] - b.4[1]).abs() < 0.04))
     };
     let first = game_events
         .iter()
@@ -198,11 +199,11 @@ fn crowd_chase_report() {
             eprintln!("game {:?}\nours {:?}", game_events[k], ours_events[k]);
         }
     }
-    // PROVISIONAL: the events are the game's up to tick 1591, where a
-    // creep takes another point of its path (reported to the
+    // PROVISIONAL: the events are the game's up to tick 1837, where a
+    // creep takes another target while attacking (reported to the
     // analysts); the rest waits for that.
     let first_tick = first.map_or(u64::MAX, |i| game_events[i].0);
-    assert!(first_tick >= 1591, "first difference at tick {first_tick}");
+    assert!(first_tick >= 1837, "first difference at tick {first_tick}");
 }
 
 /// Each creep takes its first path update in the tick of the game: the
@@ -227,13 +228,13 @@ fn crowd_chase_creeps_start() {
 /// their reaction delays, the peasants by their orders, newest first.
 #[test]
 fn crowd_chase_order_of_updates() {
-    let Some(ours) = play(1600) else {
+    let Some(ours) = play(1840) else {
         return;
     };
     let game = events(&game_data().join("replays/c-RXD-1.events.tsv"));
     let order = |list: &[Logged]| {
         let mut by_tick: BTreeMap<u64, Vec<i32>> = BTreeMap::new();
-        for e in list.iter().filter(|e| e.1 == "update" && e.0 < 1591) {
+        for e in list.iter().filter(|e| e.1 == "update" && e.0 < 1837) {
             by_tick.entry(e.0).or_default().push(e.2);
         }
         by_tick

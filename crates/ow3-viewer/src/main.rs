@@ -236,7 +236,7 @@ fn screenshot(
         let mut frame = sim.interface(&selection, None);
         frame
             .quads
-            .extend(sim.minimap_quads(outline(&camera, scene, (w, h))));
+            .extend(sim.minimap_quads(camera.frame_on_plane((w, h))));
         renderer.prepare_ui(&device, &queue, &mut sim.chain, &frame, (w, h));
         let portrait = options.select.and_then(|h| sim.portrait(h));
         renderer.set_portrait(
@@ -943,7 +943,7 @@ impl App {
             let mut frame = sim.interface(&self.selection, Some(mouse));
             frame
                 .quads
-                .extend(sim.minimap_quads(outline(&self.camera, &self.scene, size)));
+                .extend(sim.minimap_quads(self.camera.frame_on_plane(size)));
             if let Some(start) = self.drag {
                 frame.quads.extend(drag_box(start, self.cursor, size));
             }
@@ -1106,30 +1106,6 @@ fn light(renderer: &mut Renderer, scene: &Scene, hour: f32) {
     };
     renderer.terrain_light = at(&scene.terrain_light);
     renderer.unit_light = at(&scene.unit_light);
-}
-
-/// The ground under the corners of the view of the world (SPEC-0028) seen
-/// by `camera` in a window `size` pixels large, round it from the lower
-/// left; `None` when a corner looks above the ground.
-fn outline(camera: &Camera, scene: &Scene, size: (u32, u32)) -> Option<[[f32; 2]; 4]> {
-    let (w, h) = (size.0 as f32, size.1 as f32);
-    let world = ow3_viewer::hud::WORLD;
-    let y = |v: f32| (1.0 - v / ow3_viewer::ui::HEIGHT) * h;
-    let corners = [
-        (0.0, y(world[1])),
-        (w, y(world[1])),
-        (w, y(world[3])),
-        (0.0, y(world[3])),
-    ];
-    let terrain = &scene.terrain;
-    let mut out = [[0.0; 2]; 4];
-    for (o, (x, y)) in out.iter_mut().zip(corners) {
-        let [gx, gy, _] = camera.ground_point(x, y, size, |x, y| {
-            ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
-        })?;
-        *o = [gx, gy];
-    }
-    Some(out)
 }
 
 /// Pixels the mouse moves with the left button down before it draws a

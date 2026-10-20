@@ -204,6 +204,27 @@ impl Camera {
         (eye, direction)
     }
 
+    /// Where the rays through the corners of the world frame of a window
+    /// `size` pixels large meet the plane of the target's height, round
+    /// it from the lower left (SPEC-0028, "Camera rectangle"); `None` when
+    /// a corner looks above it.
+    pub fn frame_on_plane(&self, size: (u32, u32)) -> Option<[[f32; 2]; 4]> {
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        let [_, bottom, _, top] = WORLD_FRAME;
+        let y = |v: f32| (1.0 - v / 0.6) * h;
+        let corners = [(0.0, y(bottom)), (w, y(bottom)), (w, y(top)), (0.0, y(top))];
+        let mut out = [[0.0; 2]; 4];
+        for (o, (x, y)) in out.iter_mut().zip(corners) {
+            let (eye, d) = self.ray(x, y, size);
+            if d[2] >= 0.0 {
+                return None;
+            }
+            let t = (self.target[2] - eye[2]) / d[2];
+            *o = [eye[0] + d[0] * t, eye[1] + d[1] * t];
+        }
+        Some(out)
+    }
+
     /// Where the ray through pixel (`x`, `y`) first meets the ground of
     /// height `ground(x, y)`: marched in steps of 16, then halved down.
     pub fn ground_point(
@@ -344,5 +365,44 @@ mod tests {
         assert!((camera.target[1] - 100.0).abs() < 1e-3 && camera.target[0].abs() < 1e-3);
         camera.pan(100.0, 0.0);
         assert!((camera.target[0] - 100.0).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    /// The minimap's camera rectangle against SPEC-0028 ("Camera
+    /// rectangle"), in the pixels of IceCrown's minimap in a 1024 x 768
+    /// window: x = world x / 130.16 + 104.41, y = 669.2 - world y / 136.35.
+    #[test]
+    fn camera_rectangles_of_the_spec() {
+        for (pitch, distance, expected) in [
+            (56.0, 1650.0, [95.6, 113.2, 663.5, 672.9]),
+            (56.0, 3000.0, [88.4, 120.4, 658.8, 676.0]),
+            (89.9, 1650.0, [97.5, 111.4, 665.5, 672.9]),
+        ] {
+            let camera = Camera {
+                target: [0.0; 3],
+                distance,
+                yaw: 90.0,
+                pitch,
+                fov: 70.0,
+            };
+            let points = camera.frame_on_plane((1024, 768)).unwrap();
+            let px = |x: f32| x / 130.16 + 104.41;
+            let py = |y: f32| 669.2 - y / 136.35;
+            let xs = points.map(|p| px(p[0]));
+            let ys = points.map(|p| py(p[1]));
+            let got = [
+                xs.iter().copied().fold(f32::INFINITY, f32::min),
+                xs.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+                ys.iter().copied().fold(f32::INFINITY, f32::min),
+                ys.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+            ];
+            for (g, e) in got.iter().zip(expected) {
+                assert!((g - e).abs() < 0.3, "{pitch} {distance}: {got:?}");
+            }
+        }
     }
 }

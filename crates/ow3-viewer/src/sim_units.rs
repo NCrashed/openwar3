@@ -65,6 +65,8 @@ struct Camp {
     at: [f32; 2],
     creeps: Vec<u32>,
     levels: i32,
+    /// The player saw its place with no living creeps: no circle since.
+    cleared: std::cell::Cell<bool>,
 }
 
 /// A map running in the simulation.
@@ -225,6 +227,7 @@ impl Sim {
                     at: [u.x, u.y],
                     creeps: Vec::new(),
                     levels: 0,
+                    cleared: std::cell::Cell::new(false),
                 });
             }
             sim.camps[camp].creeps.push(u.handle);
@@ -469,14 +472,17 @@ impl Sim {
             }
         }
         // The camps of the start whose creeps are not seen, at their first
-        // creeps. PROVISIONAL: a camp whose creeps all died shows no more,
-        // seen or not (SPEC-0028 does not say when the circle goes).
+        // creeps, with the colour and size of the start. A camp whose
+        // place the player saw without living creeps shows no more.
         for camp in &self.camps {
             let living: Vec<&UnitView> = units
                 .iter()
                 .filter(|u| camp.creeps.contains(&u.handle))
                 .collect();
-            if !living.is_empty() && !living.iter().any(|u| self.shown(u)) {
+            if living.is_empty() && self.sees(camp.at[0], camp.at[1]) {
+                camp.cleared.set(true);
+            }
+            if !camp.cleared.get() && !living.iter().any(|u| self.shown(u)) {
                 marks.push((
                     camp.at,
                     Mark::Camp {

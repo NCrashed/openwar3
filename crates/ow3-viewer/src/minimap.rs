@@ -12,14 +12,15 @@
 //!
 //! The icons of gold mines and neutral buildings come from the skins, the
 //! creep camp circle is `UI\Minimap\MinimapIconCreepLoc.blp` tinted by the
-//! camp's strength (SPEC-0028, "Creep camps").
+//! camp's strength (SPEC-0028, "Creep camps"). Units are squares of 4/256
+//! of the picture's width, buildings of 8/256. The camera is the smallest
+//! rectangle round the points where the rays through the corners of the
+//! world frame meet the plane of the camera target's height.
 //!
 //! PROVISIONAL: the colours are those of `ReplaceableTextures\TeamColor`,
-//! which the spec does not name; all buildings are 5 pixels square (the
-//! town hall was 5 x 5, a farm 6 x 5); a camp joins creeps within 840 of
-//! its first one, of the measured 820 to 860; the camera outline is a
-//! rectangle as wide as the view half way up and as deep as it; the edges
-//! between fog states are hard (SPEC-0032 open question 4).
+//! which the spec does not name; a camp joins creeps within 840 of its
+//! first one, of the measured 820 to 860; the edges between fog states are
+//! hard (SPEC-0032 open question 4).
 
 use crate::console::Rect;
 use crate::ui::{Blend, Quad};
@@ -42,9 +43,11 @@ const FOGGED: f32 = 0.74;
 const MASKED_PARTLY: f32 = 0.40;
 const MAP_FLAG_MASKED_PARTLY: u32 = 0x0010;
 
-/// Sizes in pixels: units, buildings, icons; the camera outline's width.
-const UNIT: f32 = 3.0;
-const BUILDING: f32 = 5.0;
+/// Sizes of units and buildings as shares of the picture's width
+/// (SPEC-0028: 3 x 3 and about 5.5 x 6 pixels of a 177 pixel picture).
+const UNIT: f32 = 4.0 / 256.0;
+const BUILDING: f32 = 8.0 / 256.0;
+/// Sizes in pixels: icons; the camera outline's width.
 const ICON: f32 = 9.0;
 const LINE: f32 = 1.0;
 
@@ -463,7 +466,10 @@ impl Minimap {
                 continue;
             };
             let size = |s: f32| [s * PIXEL, s * PIXEL];
-            let side = |building: bool| size(if building { BUILDING } else { UNIT });
+            let side = |building: bool| {
+                let s = (PICTURE[2] - PICTURE[0]) * if building { BUILDING } else { UNIT };
+                [s, s]
+            };
             let team =
                 |player: u8| format!("ReplaceableTextures\\TeamColor\\TeamColor{player:02}.blp");
             out.push(match mark {
@@ -513,19 +519,14 @@ impl Minimap {
                 blend: Blend::Alpha,
             });
         }
+        // The camera: the smallest rectangle round the four points.
         if let Some(c) = view {
-            let length =
-                |a: [f32; 2], b: [f32; 2]| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
-            let width = (length(c[0], c[1]) + length(c[3], c[2])) / 2.0;
-            let depth = (length(c[1], c[2]) + length(c[0], c[3])) / 2.0;
-            let centre = [
-                c.iter().map(|p| p[0]).sum::<f32>() / 4.0,
-                c.iter().map(|p| p[1]).sum::<f32>() / 4.0,
-            ];
+            let low = |i: usize| c.iter().map(|p| p[i]).fold(f32::INFINITY, f32::min);
+            let high = |i: usize| c.iter().map(|p| p[i]).fold(f32::NEG_INFINITY, f32::max);
             let [a0, b0, a1, b1] = self.area;
             let clamp = |p: [f32; 2]| [p[0].clamp(a0, a1), p[1].clamp(b0, b1)];
-            let lb = self.to_interface(clamp([centre[0] - width / 2.0, centre[1] - depth / 2.0]));
-            let rt = self.to_interface(clamp([centre[0] + width / 2.0, centre[1] + depth / 2.0]));
+            let lb = self.to_interface(clamp([low(0), low(1)]));
+            let rt = self.to_interface(clamp([high(0), high(1)]));
             if let (Some([l, b]), Some([r, t])) = (lb, rt) {
                 let line = LINE * PIXEL;
                 for rect in [

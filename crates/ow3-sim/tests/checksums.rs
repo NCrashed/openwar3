@@ -64,18 +64,11 @@ fn remainders_of_the_reference_replay() {
 
 /// Replays of the test maps whose play needs what the specs do not give
 /// yet, with the reason.
-const UNSPECIFIED: &[(&str, &str)] = &[
-    (
-        "c-RTW-1.w3g",
-        "a click from one footman to another leaves the recorded checksum as it is at turn 59, \
-         against the selection sum of SPEC-0024",
-    ),
-    (
-        "c-RTW-3.w3g",
-        "a unit told to move to a friendly unit (turn 190) follows it, which no spec describes; \
+const UNSPECIFIED: &[(&str, &str)] = &[(
+    "c-RTW-3.w3g",
+    "a unit told to move to a friendly unit (turn 190) follows it, which no spec describes; \
          the group order of turn 233 then meets it elsewhere",
-    ),
-];
+)];
 
 /// The replays of the test maps (`c-*.w3g`) that can be played, sorted.
 fn test_replays() -> Vec<PathBuf> {

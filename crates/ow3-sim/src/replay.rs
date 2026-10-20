@@ -45,6 +45,10 @@ pub struct Playback<'a> {
     /// What each replay player has selected, and its control groups.
     selections: BTreeMap<u8, Vec<u32>>,
     groups: BTreeMap<(u8, u8), Vec<u32>>,
+    /// The same by the id pairs of the replay, for the selection sum of
+    /// the checksum (SPEC-0024).
+    selection_ids: BTreeMap<u8, Vec<[u32; 2]>>,
+    group_ids: BTreeMap<(u8, u8), Vec<[u32; 2]>>,
     /// The creation numbers and types of the units, in creation order.
     ids: Vec<(u32, i32)>,
     /// The tick the game runs to in the current time slot.
@@ -151,6 +155,8 @@ impl<'a> Playback<'a> {
             players,
             selections: BTreeMap::new(),
             groups: BTreeMap::new(),
+            selection_ids: BTreeMap::new(),
+            group_ids: BTreeMap::new(),
             ids: Vec::new(),
             end: 0,
             notes: Vec::new(),
@@ -186,11 +192,22 @@ impl<'a> Playback<'a> {
         self.stops += self.walking.difference(&walking).count() as u32;
         self.walking = walking;
         marks.walking = self.stops;
-        for (player, units) in &self.selections {
-            marks.selections = fold(marks.selections, u32::from(*player));
-            for &u in units {
-                marks.selections = fold(marks.selections, u);
+        // The selection sum of each player (SPEC-0024, `Y`): the number of
+        // units selected, their `idsum`s, those of the control groups.
+        // PROVISIONAL: the subgroups and the lead unit are left out; they
+        // repeat units of the selection.
+        let idsum = |id: &[u32; 2]| (id[0] ^ id[1]).rotate_left(3);
+        for (player, ids) in &self.selection_ids {
+            let mut y = ids.len() as u32;
+            for id in ids {
+                y = fold(y, idsum(id));
             }
+            for ((_, _), group) in self.group_ids.range((*player, 0)..=(*player, u8::MAX)) {
+                for id in group {
+                    y = fold(y, idsum(id));
+                }
+            }
+            marks.selections = fold(marks.selections, fold(u32::from(*player), y));
         }
         self.marks.push(marks);
     }
@@ -326,6 +343,18 @@ impl<'a> Playback<'a> {
         let selected = self.selections.get(&player).cloned().unwrap_or_default();
         match action {
             Action::Select { mode, units } => {
+                let ids = self.selection_ids.entry(player).or_default();
+                match mode {
+                    1 => {
+                        for id in units {
+                            if !ids.contains(id) {
+                                ids.push(*id);
+                            }
+                        }
+                    }
+                    2 => ids.retain(|id| !units.contains(id)),
+                    _ => {}
+                }
                 let units = self.units(units);
                 let selection = self.selections.entry(player).or_default();
                 match mode {
@@ -341,10 +370,17 @@ impl<'a> Playback<'a> {
                 }
             }
             Action::AssignGroup { group, units } => {
+                self.group_ids.insert((player, *group), units.clone());
                 let units = self.units(units);
                 self.groups.insert((player, *group), units);
             }
             Action::SelectGroup(group) => {
+                let ids = self
+                    .group_ids
+                    .get(&(player, *group))
+                    .cloned()
+                    .unwrap_or_default();
+                self.selection_ids.insert(player, ids);
                 let units = self
                     .groups
                     .get(&(player, *group))

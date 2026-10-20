@@ -89,6 +89,9 @@ pub struct UnitType {
     /// Creeps of the type sleep at night (`canSleep` of `UnitData.slk`,
     /// SPEC-0030).
     pub can_sleep: bool,
+    /// The order of subgroups in a selection, higher first (`prio` of
+    /// `UnitData.slk`, SPEC-0028).
+    pub prio: i32,
     /// Movement (SPEC-0018): speed (`spd`, units per second), turn rate
     /// (`turnRate`, radians per update of 0.03 s) and propulsion window
     /// (`propWin`, degrees), as reals.
@@ -449,6 +452,7 @@ impl ObjectData {
                 "targType",
                 "formation",
                 "canSleep",
+                "prio",
             ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
@@ -465,6 +469,10 @@ impl ObjectData {
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
                 unit.can_sleep = values[6].as_deref().is_some_and(|v| v.trim() == "1");
+                unit.prio = values[7]
+                    .as_deref()
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their

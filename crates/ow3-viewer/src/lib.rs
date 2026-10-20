@@ -15,6 +15,7 @@ pub mod overlay;
 pub mod particles;
 pub mod renderer;
 pub mod scene;
+pub mod selection;
 pub mod shore;
 pub mod sim_units;
 pub mod terrain_mesh;

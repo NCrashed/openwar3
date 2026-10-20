@@ -313,11 +313,34 @@ impl Sim {
         self.game.ticks() as f32 * 0.005
     }
 
-    /// The interface over the view for this frame, with `selected` and the
-    /// mouse at `mouse` (interface coordinates).
-    pub fn interface(&self, selected: Option<u32>, mouse: Option<[f32; 2]>) -> crate::ui::Frame {
-        let s = selected.and_then(|h| self.selected(h));
-        self.hud.frame(self.resources(), s.as_ref(), mouse)
+    /// The interface over the view for this frame: `selection` with its
+    /// lead's card and the group in the information panel, the mouse at
+    /// `mouse` (interface coordinates).
+    pub fn interface(
+        &self,
+        selection: &crate::selection::Selection,
+        mouse: Option<[f32; 2]>,
+    ) -> crate::ui::Frame {
+        let kind = |h| self.kind(h);
+        let lead = selection.lead(kind);
+        let active = selection.active_units(kind);
+        let s = lead.and_then(|h| self.selected(h));
+        let views = self.game.units();
+        let group: Vec<crate::hud::Member> = selection
+            .units()
+            .iter()
+            .filter_map(|&h| views.iter().find(|u| u.handle == h))
+            .map(|u| crate::hud::Member {
+                type_id: u.type_id,
+                life: if u.max_life > 0.0 {
+                    u.life / u.max_life
+                } else {
+                    0.0
+                },
+                active: active.contains(&u.handle),
+            })
+            .collect();
+        self.hud.frame(self.resources(), s.as_ref(), &group, mouse)
     }
 
     /// The placed destructables in a pose of their own now: where the map
@@ -518,6 +541,165 @@ impl Sim {
             food_used: state(5),
             food_cap: state(4),
         }
+    }
+
+    /// A right click with `units` selected: on the ground a group order to
+    /// all of them (SPEC-0025, flag 0x0008 of SPEC-0028), on a unit or tree
+    /// each takes it.
+    pub fn command_group(
+        &mut self,
+        units: &[u32],
+        on: Option<u32>,
+        at: Option<[f32; 3]>,
+        force: bool,
+    ) -> Option<String> {
+        let (&first, rest) = units.split_first()?;
+        if rest.is_empty() || on.is_some() {
+            let mut line = None;
+            for &u in units {
+                let l = self.command(u, on, at, force);
+                line = line.or(l);
+            }
+            return line;
+        }
+        let [x, y, z] = at?;
+        if self.game.tree_near(x, y, TREE_PICK).is_some() {
+            let mut line = None;
+            for &u in units {
+                let l = self.command(u, None, at, force);
+                line = line.or(l);
+            }
+            return line;
+        }
+        self.game.issue_group_point_order(units, "smart", x, y);
+        self.confirm(
+            self.point_confirm.clone(),
+            [x, y, z],
+            1.0,
+            self.colours.friend,
+        );
+        Some(format!(
+            "#{first} and {} more: move to ({x:.0}, {y:.0})",
+            rest.len()
+        ))
+    }
+
+    /// A button of the command card with `all` units selected and `active`
+    /// those of the active subgroup: moves, stops and the like go to all of
+    /// them (a point order as a group order), the others to the active
+    /// subgroup (training, building and the rally point to its first unit).
+    pub fn run_group(
+        &mut self,
+        all: &[u32],
+        active: &[u32],
+        command: crate::hud::Command,
+        point: Option<[f32; 2]>,
+    ) -> Option<String> {
+        use crate::hud::Command;
+        let name = match command {
+            Command::Move => Some("move"),
+            Command::Attack => Some("attack"),
+            Command::Patrol => Some("patrol"),
+            _ => None,
+        };
+        if let (Some(name), Some([x, y]), true) = (name, point, all.len() > 1) {
+            let done = self.game.issue_group_point_order(all, name, x, y);
+            return Some(format!(
+                "{} units: {command:?} at ({x:.0}, {y:.0}) {}",
+                all.len(),
+                if done { "taken" } else { "refused" }
+            ));
+        }
+        let units: &[u32] = match command {
+            Command::Move | Command::Attack | Command::Patrol | Command::Stop | Command::Hold => {
+                all
+            }
+            Command::Gather | Command::ReturnGoods => active,
+            _ => active.get(..1).unwrap_or(&[]),
+        };
+        let mut line = None;
+        for &u in units {
+            let l = self.run(u, command, point);
+            line = line.or(l);
+        }
+        line
+    }
+
+    /// A button that takes a unit, clicked on `target`, for `units`.
+    pub fn run_on_group(
+        &mut self,
+        units: &[u32],
+        command: crate::hud::Command,
+        target: u32,
+    ) -> Option<String> {
+        let mut line = None;
+        for &u in units.iter().filter(|&&u| u != target) {
+            let l = self.run_on(u, command, target);
+            line = line.or(l);
+        }
+        line
+    }
+
+    /// What the selection needs of unit `h` (its type and the type's
+    /// `prio`), `None` for one that is gone.
+    pub fn kind(&self, h: u32) -> Option<crate::selection::Kind> {
+        let u = self
+            .game
+            .units()
+            .into_iter()
+            .find(|u| u.handle == h && u.alive)?;
+        Some(crate::selection::Kind {
+            type_id: u.type_id,
+            prio: self.game.type_prio(u.type_id),
+        })
+    }
+
+    /// The units of the local player among `units`, without buildings
+    /// unless there are only buildings: what a rectangle selects.
+    ///
+    /// PROVISIONAL: SPEC-0028 measured footmen, riflemen and knights only.
+    pub fn selectable(&self, units: &[u32]) -> Vec<u32> {
+        let all = self.game.units();
+        let own: Vec<(u32, bool)> = units
+            .iter()
+            .filter_map(|&h| {
+                let u = all.iter().find(|u| u.handle == h)?;
+                (u.alive && !u.hidden && u.owner == LOCAL_PLAYER).then(|| {
+                    let building = self.game.unit_stats(h).is_some_and(|s| s.building);
+                    (h, building)
+                })
+            })
+            .collect();
+        let mobile: Vec<u32> = own.iter().filter(|(_, b)| !b).map(|&(h, _)| h).collect();
+        let mut chosen = if mobile.is_empty() {
+            own.iter().map(|&(h, _)| h).collect()
+        } else {
+            mobile
+        };
+        // The ones made first (handles grow with creation).
+        chosen.sort_unstable();
+        chosen
+    }
+
+    /// The local player's units of the type and owner of unit `h` among
+    /// `units` (those on the screen), nearest to it first, at most 12, `h`
+    /// first: what a double click or Ctrl and a click select (SPEC-0028).
+    pub fn same_type(&self, h: u32, units: &[u32]) -> Vec<u32> {
+        let all = self.game.units();
+        let Some(c) = all.iter().find(|u| u.handle == h) else {
+            return Vec::new();
+        };
+        let mut near: Vec<(f32, u32)> = units
+            .iter()
+            .filter_map(|&o| all.iter().find(|u| u.handle == o))
+            .filter(|u| u.alive && !u.hidden && u.type_id == c.type_id && u.owner == c.owner)
+            .map(|u| ((u.x - c.x).powi(2) + (u.y - c.y).powi(2), u.handle))
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut out = vec![h];
+        out.extend(near.into_iter().map(|(_, o)| o).filter(|&o| o != h));
+        out.truncate(crate::selection::MOST);
+        out
     }
 
     /// Where the map's script last put the camera, and how many times it

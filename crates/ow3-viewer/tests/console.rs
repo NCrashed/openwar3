@@ -490,3 +490,67 @@ fn the_camera_starts_at_the_workers() {
     let d = ((x - hall.x).powi(2) + (y - hall.y).powi(2)).sqrt();
     assert!(d < 600.0, "{d} from the town hall");
 }
+
+/// Several units selected (SPEC-0028): a rectangle takes the player's
+/// units without its buildings, a double click those of the same type
+/// nearest first, a group order moves them all, and the information
+/// panel shows the group.
+#[test]
+fn a_group_of_peasants() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let hpea = i32::from_be_bytes(*b"hpea");
+    let units = sim.units();
+    let peasants: Vec<u32> = units
+        .iter()
+        .filter(|u| u.type_id == hpea && u.owner == 0)
+        .map(|u| u.handle)
+        .collect();
+    let hall = first(&sim, b"htow");
+    let mut everything = peasants.clone();
+    everything.push(hall);
+    // A rectangle over the town hall and the peasants takes the peasants.
+    assert_eq!(sim.selectable(&everything), peasants);
+    // Only the town hall: it is taken.
+    assert_eq!(sim.selectable(&[hall]), [hall]);
+    // The same type: the clicked one first.
+    let same = sim.same_type(peasants[2], &everything);
+    assert_eq!(same.len(), peasants.len());
+    assert_eq!(same[0], peasants[2]);
+    let mut selection = ow3_viewer::selection::Selection::default();
+    selection.set(&peasants);
+    // The panel shows the group: one icon a peasant.
+    let frame = sim.interface(&selection, None);
+    let icon = sim.hud.buttons(sim.selected(peasants[0]).as_ref()).len();
+    assert!(icon > 0);
+    let grid = frame
+        .quads
+        .iter()
+        .filter(|q| (q.rect[2] - q.rect[0] - 0.031_25).abs() < 1e-4 && !q.texture.is_empty())
+        .count();
+    assert_eq!(grid, peasants.len());
+    // A group order moves them all.
+    let h = view(&sim, hall);
+    let line = sim
+        .run_group(
+            &peasants,
+            &peasants,
+            Command::Move,
+            Some([h.x + 600.0, h.y]),
+        )
+        .unwrap();
+    assert!(line.ends_with("taken"), "{line}");
+    let before: Vec<(f32, f32)> = peasants
+        .iter()
+        .map(|&p| (view(&sim, p).x, view(&sim, p).y))
+        .collect();
+    for _ in 0..30 {
+        sim.advance(100_000);
+    }
+    for (&p, b) in peasants.iter().zip(before) {
+        let v = view(&sim, p);
+        assert!(v.x > b.0 + 100.0, "#{p} from {b:?} to {}, {}", v.x, v.y);
+    }
+}

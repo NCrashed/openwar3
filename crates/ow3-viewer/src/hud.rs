@@ -44,6 +44,16 @@ pub struct Selected {
     pub carrying: bool,
 }
 
+/// A unit of a selected group, for the information panel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Member {
+    pub type_id: i32,
+    /// Its share of its maximum life.
+    pub life: f32,
+    /// Whether it is in the active subgroup.
+    pub active: bool,
+}
+
 /// What a command button does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -380,6 +390,7 @@ impl Hud {
         &self,
         resources: Resources,
         selected: Option<&Selected>,
+        group: &[Member],
         mouse: Option<[f32; 2]>,
     ) -> Frame {
         let mut out = Frame::default();
@@ -425,7 +436,9 @@ impl Hud {
             },
             &mut out,
         );
-        if let Some(s) = selected {
+        if group.len() > 1 {
+            self.group(group, &mut out);
+        } else if let Some(s) = selected {
             self.info(s, &mut out);
         }
         let buttons = self.buttons(selected);
@@ -442,6 +455,41 @@ impl Hud {
             self.tooltip(&b, &mut out);
         }
         out
+    }
+
+    /// The units of a group in the information panel: 12 buttons in 6
+    /// columns and 2 rows (SPEC-0028, "Group in the information panel"),
+    /// each the unit's icon.
+    ///
+    /// PROVISIONAL: the life under each icon as a green bar, and the units
+    /// outside the active subgroup darker; the game's look is not
+    /// specified.
+    fn group(&self, group: &[Member], out: &mut Frame) {
+        for (i, m) in group.iter().take(12).enumerate() {
+            let (column, row) = (i % 6, i / 6);
+            let left = 0.308_906 + 0.030_99 * column as f32;
+            let bottom = if row == 0 { 0.055_556 } else { 0.004_781 };
+            let rect = [left, bottom + 0.006, left + 0.031_25, bottom + 0.046];
+            let Some(icon) = self.units.get(&code(m.type_id), "Art") else {
+                continue;
+            };
+            let shade = if m.active { 1.0 } else { 0.55 };
+            out.quads.push(Quad {
+                rect,
+                uv: [0.0, 1.0, 0.0, 1.0],
+                texture: icon.to_owned(),
+                colour: [shade, shade, shade, 1.0],
+                blend: Blend::Alpha,
+            });
+            let share = m.life.clamp(0.0, 1.0);
+            out.quads.push(Quad {
+                rect: [left, bottom, left + 0.031_25 * share, bottom + 0.004],
+                uv: [0.0, 1.0, 0.0, 1.0],
+                texture: String::new(),
+                colour: [0.0, 0.85, 0.0, 1.0],
+                blend: Blend::Alpha,
+            });
+        }
     }
 
     /// The name, life, mana, damage and armor of `s`.

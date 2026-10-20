@@ -214,6 +214,8 @@ pub struct Renderer {
     anchors: Vec<UnitAnchor>,
     /// The unit picked with the mouse.
     pub selected: Option<u32>,
+    /// All the units selected, which show their circles.
+    pub selection: Vec<u32>,
     /// The unit under the mouse, which shows its circle and bar.
     pub hovered: Option<u32>,
     /// Alt is held: every unit shows its bar.
@@ -881,6 +883,7 @@ impl Renderer {
             format,
             anchors: Vec::new(),
             selected: None,
+            selection: Vec::new(),
             hovered: None,
             all_bars: false,
             terrain_light: PLAIN_LIGHT,
@@ -1104,7 +1107,9 @@ impl Renderer {
             .iter()
             .filter(|a| {
                 a.life.is_some()
-                    && (self.selected == Some(a.handle) || self.hovered == Some(a.handle))
+                    && (self.selected == Some(a.handle)
+                        || self.selection.contains(&a.handle)
+                        || self.hovered == Some(a.handle))
             })
             .map(|a| Circle {
                 centre: [a.foot[0], a.foot[1]],
@@ -1124,6 +1129,42 @@ impl Renderer {
             &camera.view_projection(),
             ground,
         );
+    }
+
+    /// The units whose feet are within the pixels from `a` to `b` (any two
+    /// corners) of a view of `size` pixels, in the order they were placed.
+    pub fn units_in(
+        &self,
+        a: (f32, f32),
+        b: (f32, f32),
+        camera: &Camera,
+        size: (u32, u32),
+    ) -> Vec<u32> {
+        let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+        let m = camera.view_projection();
+        let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+        self.anchors
+            .iter()
+            .filter(|a| a.handle != 0 && a.life.is_some())
+            .filter(|a| {
+                crate::overlay::project(&m, a.foot).is_some_and(|[x, y]| {
+                    let (px, py) = ((x + 1.0) * w / 2.0, (1.0 - y) * h / 2.0);
+                    px >= x0 && px <= x1 && py >= y0 && py <= y1
+                })
+            })
+            .map(|a| a.handle)
+            .collect()
+    }
+
+    /// The units on the screen: those whose feet are in the view of the
+    /// world (SPEC-0028), for a double click.
+    pub fn units_on_screen(&self, camera: &Camera, size: (u32, u32)) -> Vec<u32> {
+        let h = size.1 as f32;
+        let world = crate::hud::WORLD;
+        let top = (1.0 - world[3] / crate::ui::HEIGHT) * h;
+        let bottom = (1.0 - world[1] / crate::ui::HEIGHT) * h;
+        self.units_in((0.0, top), (size.0 as f32, bottom), camera, size)
     }
 
     /// The unit under pixel (`x`, `y`) of a view of `size` pixels: the one

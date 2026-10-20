@@ -1478,6 +1478,17 @@ impl<'a> Game<'a> {
         (f32::from_bits(x), f32::from_bits(y))
     }
 
+    /// The `prio` of unit type `type_id`, which orders the subgroups of a
+    /// selection (SPEC-0028).
+    pub fn type_prio(&self, type_id: i32) -> i32 {
+        self.state
+            .borrow()
+            .data
+            .units
+            .get(&type_id)
+            .map_or(0, |t| t.prio)
+    }
+
     /// Where scripts last put the local player's camera, and how many times
     /// they did, so that a viewer sees each move once.
     pub fn camera_target(&self) -> Option<([f32; 2], u32)> {

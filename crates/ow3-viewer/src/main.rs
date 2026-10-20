@@ -4,10 +4,15 @@
 //! `--size`; F11 switches): the arrows or the mouse at an edge of the
 //! screen move, the mouse wheel or +/- zooms, Q/E turn, R/F tilt (all
 //! after the hotkeys of the command card), C prints the camera as a
-//! `--camera` argument. A left click selects a unit; a right click then sends it to
-//! the ground point or attacks the enemy clicked (with Ctrl held, any unit
-//! clicked). The console below shows the resources, the selected unit and
-//! its command card: a click on a button or its hotkey (by the key's
+//! `--camera` argument. A left click selects a unit, a drag the player's
+//! units in its rectangle (at most 12); Shift adds (or takes out), Ctrl or
+//! a double click takes all of the clicked one's type on the screen, Tab
+//! moves to the next subgroup, Ctrl and a digit makes a control group, a
+//! digit selects it (twice: the camera goes there). A right click sends
+//! the selected units to the ground point (a group order) or attacks the
+//! enemy clicked (with Ctrl held, any unit clicked). The console below
+//! shows the resources, the selected unit or group and the lead's command
+//! card: a click on a button or its hotkey (by the key's
 //! place, in any layout, before the camera's keys) gives the order, and
 //! one that takes a point waits for a left click on the ground (a right
 //! click drops it). Escape drops a waiting order or closes a list, and
@@ -219,7 +224,11 @@ fn screenshot(
     renderer.set_fog(options.fog.or(sim_fog));
     renderer.prepare_overlay(&device, &queue, &camera, (w, h));
     if let Some(sim) = sim {
-        let mut frame = sim.interface(options.select, None);
+        let mut selection = ow3_viewer::selection::Selection::default();
+        if let Some(h) = options.select {
+            selection.click(h);
+        }
+        let mut frame = sim.interface(&selection, None);
         frame
             .quads
             .extend(sim.minimap_quads(outline(&camera, scene, (w, h))));
@@ -282,6 +291,16 @@ struct App {
     cursor: (f32, f32),
     /// Whether Ctrl is held: a right click then attacks any unit.
     ctrl: bool,
+    /// Whether Shift is held: clicks and rectangles add to the selection.
+    shift: bool,
+    /// The local player's selection and control groups (SPEC-0028).
+    selection: ow3_viewer::selection::Selection,
+    /// Where the left button went down over the world, for a rectangle.
+    drag: Option<(f32, f32)>,
+    /// The last click on a unit and the last recall of a group, for double
+    /// clicks and double presses.
+    last_click: Option<(std::time::Instant, u32)>,
+    last_recall: Option<(std::time::Instant, usize)>,
     /// Whether Alt is held: every unit shows its health bar.
     alt: bool,
     /// The fog of `--fog`, in place of the script's.
@@ -401,12 +420,15 @@ impl ApplicationHandler for App {
                 };
                 // The hotkeys of the command card come before the camera's.
                 // By the key's place, so that they work in any layout.
-                let letter = match physical_key {
-                    PhysicalKey::Code(code) => {
-                        format!("{code:?}").strip_prefix("Key").map(str::to_owned)
-                    }
-                    PhysicalKey::Unidentified(_) => None,
+                let code = match physical_key {
+                    PhysicalKey::Code(code) => format!("{code:?}"),
+                    PhysicalKey::Unidentified(_) => String::new(),
                 };
+                // Tab and the control groups, by the key's place.
+                if state == ElementState::Pressed && self.selection_key(&code) {
+                    return;
+                }
+                let letter = code.strip_prefix("Key").map(str::to_owned);
                 if state == ElementState::Pressed && self.hotkey(letter.as_deref().unwrap_or(&name))
                 {
                     return;
@@ -432,6 +454,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.ctrl = modifiers.state().control_key();
+                self.shift = modifiers.state().shift_key();
                 self.alt = modifiers.state().alt_key();
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -451,6 +474,13 @@ impl ApplicationHandler for App {
                 self.left_click();
             }
             WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                self.left_release();
+            }
+            WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
                 ..
@@ -461,9 +491,12 @@ impl ApplicationHandler for App {
                 {
                     return;
                 }
+                let all = self.selection.units().to_vec();
                 if let (Some(gpu), Some(sim)) = (&mut self.gpu, &mut self.sim)
-                    && let Some(unit) = gpu.renderer.selected
+                    && !all.is_empty()
                 {
+                    // The own units selected take the order, all of them.
+                    let own = sim.selectable(&all);
                     let size = (gpu.config.width, gpu.config.height);
                     let (x, y) = self.cursor;
                     let on = gpu.renderer.pick(x, y, &self.camera, size);
@@ -471,7 +504,7 @@ impl ApplicationHandler for App {
                     let at = self.camera.ground_point(x, y, size, |x, y| {
                         ow3_viewer::terrain_mesh::ground_z(terrain, x, y)
                     });
-                    if let Some(line) = sim.command(unit, on, at, self.ctrl) {
+                    if let Some(line) = sim.command_group(&own, on, at, self.ctrl) {
                         println!("{line}");
                     }
                 }
@@ -512,17 +545,149 @@ impl App {
     /// A command button pressed for the selected unit: an order that takes
     /// a point waits for it, the others are carried out.
     fn press(&mut self, button: ow3_viewer::hud::Button) {
-        let (Some(gpu), Some(sim)) = (&self.gpu, &mut self.sim) else {
+        let (all, active) = self.selected_units();
+        let Some(sim) = &mut self.sim else {
             return;
         };
-        let Some(unit) = gpu.renderer.selected else {
+        if active.is_empty() {
             return;
-        };
+        }
         if button.command.targets() {
             sim.hud.pending = Some(button.command);
-        } else if let Some(line) = sim.run(unit, button.command, None) {
+        } else if let Some(line) = sim.run_group(&all, &active, button.command, None) {
             println!("{line}");
         }
+        self.sync_selection();
+    }
+
+    /// The units selected and those of the active subgroup.
+    fn selected_units(&self) -> (Vec<u32>, Vec<u32>) {
+        let Some(sim) = &self.sim else {
+            return (Vec::new(), Vec::new());
+        };
+        (
+            self.selection.units().to_vec(),
+            self.selection.active_units(|h| sim.kind(h)),
+        )
+    }
+
+    /// Forgets the selected units that are gone and shows the selection:
+    /// the circles of all, the lead's card and portrait.
+    fn sync_selection(&mut self) {
+        let (Some(gpu), Some(sim)) = (&mut self.gpu, &self.sim) else {
+            return;
+        };
+        self.selection.retain(|h| sim.kind(h).is_some());
+        gpu.renderer.selected = self.selection.lead(|h| sim.kind(h));
+        gpu.renderer.selection = self.selection.units().to_vec();
+    }
+
+    /// The left button went up: a click selects the unit under the mouse
+    /// (with Shift added or taken out, with Ctrl or a double click all of
+    /// its type on the screen), a drag the units in its rectangle (with
+    /// Shift added) (SPEC-0028, "Selection").
+    fn left_release(&mut self) {
+        let Some(start) = self.drag.take() else {
+            return;
+        };
+        let Some(gpu) = &self.gpu else {
+            return;
+        };
+        let size = (gpu.config.width, gpu.config.height);
+        let end = self.cursor;
+        let moved = (end.0 - start.0).abs().max((end.1 - start.1).abs());
+        if moved >= DRAG {
+            let inside = gpu.renderer.units_in(start, end, &self.camera, size);
+            if let Some(sim) = &self.sim {
+                let chosen = sim.selectable(&inside);
+                if self.shift {
+                    self.selection.add(&chosen);
+                } else if !chosen.is_empty() {
+                    self.selection.set(&chosen);
+                }
+            }
+        } else {
+            let picked = gpu.renderer.pick(end.0, end.1, &self.camera, size);
+            let Some(picked) = picked else {
+                return;
+            };
+            let now = std::time::Instant::now();
+            let double = self.last_click.is_some_and(|(at, h)| {
+                h == picked && now.duration_since(at) < std::time::Duration::from_millis(350)
+            });
+            self.last_click = Some((now, picked));
+            let own = self
+                .sim
+                .as_ref()
+                .is_some_and(|s| !s.selectable(&[picked]).is_empty());
+            if (self.ctrl || double) && own {
+                let on_screen = gpu.renderer.units_on_screen(&self.camera, size);
+                if let Some(sim) = &self.sim {
+                    self.selection.set(&sim.same_type(picked, &on_screen));
+                }
+            } else if self.shift && own {
+                self.selection.shift_click(picked);
+            } else {
+                self.selection.click(picked);
+            }
+            if let Some(line) = self.sim.as_ref().and_then(|s| s.describe(picked)) {
+                println!("{line}");
+            }
+        }
+        if let Some(sim) = &mut self.sim {
+            sim.hud.card = ow3_viewer::hud::Card::Main;
+        }
+        self.sync_selection();
+    }
+
+    /// Tab and the digits: the next subgroup, and the control groups
+    /// (SPEC-0028): Ctrl and a digit assigns the selection to its group,
+    /// Shift and a digit adds it, a digit selects the group, and a second
+    /// press moves the camera to it. Whether the key was one of these.
+    fn selection_key(&mut self, code: &str) -> bool {
+        if code == "Tab" {
+            if let Some(sim) = &self.sim {
+                self.selection.next_subgroup(|h| sim.kind(h));
+                sim_card_main(&mut self.sim);
+            }
+            self.sync_selection();
+            return true;
+        }
+        let Some(digit) = code
+            .strip_prefix("Digit")
+            .and_then(|d| d.parse::<u32>().ok())
+        else {
+            return false;
+        };
+        let Some(group) = ow3_viewer::selection::group_of_digit(digit) else {
+            return false;
+        };
+        if self.ctrl {
+            self.selection.assign(group);
+        } else if self.shift {
+            self.selection.add_to_group(group);
+        } else {
+            let now = std::time::Instant::now();
+            let again = self.last_recall.is_some_and(|(at, g)| {
+                g == group && now.duration_since(at) < std::time::Duration::from_millis(500)
+            });
+            self.last_recall = Some((now, group));
+            if self.selection.recall(group) {
+                sim_card_main(&mut self.sim);
+                if again
+                    && let Some(sim) = &self.sim
+                    && let Some(view) = self
+                        .selection
+                        .lead(|h| sim.kind(h))
+                        .and_then(|h| sim.units().into_iter().find(|u| u.handle == h))
+                {
+                    self.controls.goal.target[0] = view.x;
+                    self.controls.goal.target[1] = view.y;
+                }
+            }
+        }
+        self.sync_selection();
+        true
     }
 
     /// A left click: a button of the console, the point of a waiting
@@ -553,32 +718,28 @@ impl App {
             gpu.renderer
                 .pick(self.cursor.0, self.cursor.1, &self.camera, size)
         });
-        if let (Some(sim), Some(unit)) = (&mut self.sim, selected)
+        let (all, active) = self.selected_units();
+        if let (Some(sim), Some(_)) = (&mut self.sim, selected)
             && let Some(command) = sim.hud.pending.take()
         {
+            // Moves, attacks and patrols go to all units selected, the
+            // others to the active subgroup.
+            use ow3_viewer::hud::Command;
+            let units = match command {
+                Command::Move | Command::Attack | Command::Patrol => &all,
+                _ => &active,
+            };
             // On a unit: the order with it as the target, if it takes one.
             let line = on
-                .filter(|&t| t != unit)
-                .and_then(|t| sim.run_on(unit, command, t))
-                .or_else(|| sim.run(unit, command, ground));
+                .and_then(|t| sim.run_on_group(units, command, t))
+                .or_else(|| sim.run_group(&all, &active, command, ground));
             if let Some(line) = line {
                 println!("{line}");
             }
             return;
         }
-        if let Some(gpu) = &mut self.gpu {
-            let size = (gpu.config.width, gpu.config.height);
-            let picked = gpu
-                .renderer
-                .pick(self.cursor.0, self.cursor.1, &self.camera, size);
-            gpu.renderer.selected = picked;
-            if let Some(sim) = &mut self.sim {
-                sim.hud.card = ow3_viewer::hud::Card::Main;
-                if let Some(line) = picked.and_then(|h| sim.describe(h)) {
-                    println!("{line}");
-                }
-            }
-        }
+        // Else a click or a rectangle, decided when the button goes up.
+        self.drag = Some(self.cursor);
     }
 
     /// A hotkey of the command card for the selected unit; whether it was
@@ -616,6 +777,7 @@ impl App {
 
     /// Moves the camera and the simulation on and draws the next frame.
     fn frame(&mut self) {
+        self.sync_selection();
         // The ground under the mouse, outside the console.
         let ground = self
             .ui_point()
@@ -687,10 +849,13 @@ impl App {
                 self.cursor.0 / w * ow3_viewer::ui::WIDTH,
                 (1.0 - self.cursor.1 / h) * ow3_viewer::ui::HEIGHT,
             ];
-            let mut frame = sim.interface(gpu.renderer.selected, Some(mouse));
+            let mut frame = sim.interface(&self.selection, Some(mouse));
             frame
                 .quads
                 .extend(sim.minimap_quads(outline(&self.camera, &self.scene, size)));
+            if let Some(start) = self.drag {
+                frame.quads.extend(drag_box(start, self.cursor, size));
+            }
             gpu.renderer
                 .prepare_ui(&gpu.device, &gpu.queue, &mut sim.chain, &frame, size);
             let portrait = gpu.renderer.selected.and_then(|h| sim.portrait(h));
@@ -799,6 +964,11 @@ fn main() -> ExitCode {
         controls: Controls::new(camera),
         cursor: (0.0, 0.0),
         ctrl: false,
+        shift: false,
+        selection: ow3_viewer::selection::Selection::default(),
+        drag: None,
+        last_click: None,
+        last_recall: None,
         alt: false,
         fog: options.fog,
         frames: 0,
@@ -857,4 +1027,52 @@ fn outline(camera: &Camera, scene: &Scene, size: (u32, u32)) -> Option<[[f32; 2]
         *o = [gx, gy];
     }
     Some(out)
+}
+
+/// Pixels the mouse moves with the left button down before it draws a
+/// rectangle instead of clicking.
+const DRAG: f32 = 4.0;
+
+/// Back to the main command card, as a new selection shows it.
+fn sim_card_main(sim: &mut Option<Sim>) {
+    if let Some(sim) = sim {
+        sim.hud.card = ow3_viewer::hud::Card::Main;
+    }
+}
+
+/// The rectangle being dragged from pixel `a` to the mouse at `b` in a
+/// window `size` pixels large, as four thin green bars of the interface;
+/// nothing for a drag shorter than `DRAG`.
+///
+/// PROVISIONAL: the game's look of it is not specified.
+fn drag_box(a: (f32, f32), b: (f32, f32), size: (u32, u32)) -> Vec<ow3_viewer::ui::Quad> {
+    if (b.0 - a.0).abs().max((b.1 - a.1).abs()) < DRAG {
+        return Vec::new();
+    }
+    let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+    let ui = |p: (f32, f32)| {
+        [
+            p.0 / w * ow3_viewer::ui::WIDTH,
+            (1.0 - p.1 / h) * ow3_viewer::ui::HEIGHT,
+        ]
+    };
+    let (p, q) = (ui(a), ui(b));
+    let (x0, x1) = (p[0].min(q[0]), p[0].max(q[0]));
+    let (y0, y1) = (p[1].min(q[1]), p[1].max(q[1]));
+    let t = 0.0015;
+    [
+        [x0, y0, x1, y0 + t],
+        [x0, y1 - t, x1, y1],
+        [x0, y0, x0 + t, y1],
+        [x1 - t, y0, x1, y1],
+    ]
+    .into_iter()
+    .map(|rect| ow3_viewer::ui::Quad {
+        rect,
+        uv: [0.0, 1.0, 0.0, 1.0],
+        texture: String::new(),
+        colour: [0.0, 1.0, 0.0, 1.0],
+        blend: ow3_viewer::ui::Blend::Alpha,
+    })
+    .collect()
 }

@@ -170,3 +170,20 @@ fn group_agents_report() {
     });
     eprintln!("first differences: {:?}", report(&game, &ours));
 }
+
+#[test]
+fn lumber_agents_report() {
+    let Some(game) = game_commits("c-RYP-1") else {
+        return;
+    };
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    // Peasants by their order among the units.
+    let ours = our_commits("c-RYP-1", 6000, |h, units, _| {
+        units
+            .iter()
+            .filter(|u| u.type_id == code(b"hpea"))
+            .position(|u| u.handle == h)
+            .map_or(-1, |i| i as i32)
+    });
+    eprintln!("first differences: {:?}", report(&game, &ours));
+}

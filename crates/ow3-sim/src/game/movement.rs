@@ -2382,6 +2382,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.velocity = [0, 0];
                                 m.walking = false;
                             }
+                            follow::Steer::Hold => {
+                                m.velocity = [0, 0];
+                                m.walking = false;
+                            }
                             follow::Steer::Stand(to) => {
                                 motion(&mut m, to, false, speed, limit, turn_rate, window);
                             }
@@ -2474,6 +2478,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // No motion, but the heading turns (SPEC-0020).
                         follow::Steer::Stand(to) => {
                             motion(&mut m, to, false, speed, limit, turn_rate, window);
+                        }
+                        follow::Steer::Hold => {
+                            m.velocity = [0, 0];
+                            m.walking = false;
                         }
                         // At the end of its walk to a building a worker stands
                         // and turns towards it (SPEC-0029).

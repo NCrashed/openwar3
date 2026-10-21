@@ -109,6 +109,8 @@ pub enum Steer {
     Walk([u32; 2]),
     /// No motion, the heading turning towards this point.
     Stand([u32; 2]),
+    /// No motion and no turn (a new path refused, SPEC-0021).
+    Hold,
     /// At the order point.
     Arrived,
 }
@@ -429,7 +431,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
     if fresh && state.budget.high > HIGH_BUDGET {
-        return Steer::Stand(walker.order);
+        return Steer::Hold;
     }
     let lifted = footprint.as_ref().filter(|_| fresh);
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
@@ -489,7 +491,17 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         random: &mut state.random,
         events: Vec::new(),
         search_only,
-        building: footprint.map(|f| f.0).unwrap_or_default(),
+        // A walk to a tree ends touching it too (c-RYP-1: peasant 0 at
+        // 325 walked to the corner cell of its tree).
+        building: footprint.map(|f| f.0).unwrap_or_else(|| {
+            walker
+                .tree
+                .and_then(|t| match state.objects.get(&t) {
+                    Some(super::Object::Destructable(d)) => Some(d.footprint.red().to_vec()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        }),
         group,
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);

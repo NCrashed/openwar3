@@ -169,9 +169,18 @@ gives (349, 385), and it came out at (-1104, 48). Peasants 5 (tick 2866)
 and 3 (tick 5380) entered at cell (351, 385) where the worker that had
 just entered the mine stood; ring 1 has no free cell, ring 2 gives
 (350, 383) first, and both came out at (-1072, -16). (Test RUF: entered
-at (-6162.17, -5957.45), came out at (-6192, -5936).) Whether workers
-of the gathering cycle (which block nothing, above) count for this was
-not tested.
+at (-6162.17, -5957.45), came out at (-6192, -5936).) Workers of the
+gathering cycle that walk (they block nothing for other units, below)
+do not count for this search; waiting ones do (above), and a worker
+still on its first walk to the mine counts as any unit. `c-RXI-1` tick
+3497: peasant 3 came out on its entry point (351.1182, 385.5313)
+although peasant 2, in the gathering cycle and walking to the mine, was
+in that same cell at (351.0083, 385.5001). `c-RXD-1` tick 4191: worker 4 came out from its
+entry cell (443, 385) while worker 2 waited on that cell and worker 0,
+on its first walk to the mine (never in it yet), walked past at
+(441.7311, 382.5647) (cell (441, 382)); ring 1 had no free cell, in
+ring 2 the cells (441, 383) and (442, 383) overlapped worker 0's
+footprint and (443, 383) was taken: out at (1904, -16).
 
 **An empty mine.** When the last gold is taken (the mine had 30 in
 test RUJ: three trips), the mine's gold is 0 as the peasant leaves it

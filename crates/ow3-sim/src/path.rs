@@ -1096,10 +1096,10 @@ pub fn high_level_cost(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> u32 
 /// among targets (SPEC-0029, "Another tree"): the search with iteration
 /// limit `limit`; `None` when it fails or hits the limit, else its
 /// removals and the path's length, the sum over its legs of the integer
-/// square root of their squared length in blocks.
+/// square root of their squared length in cells.
 ///
 /// PROVISIONAL: the extra 2 for legs ending at nodes of a special kind is
-/// left out (which kind was not read).
+/// left out (which kind was not read; none on the paths read).
 pub fn high_level_path_cost(
     grid: &Grid,
     s: [u32; 2],
@@ -1111,7 +1111,8 @@ pub fn high_level_path_cost(
     if !found.reached || found.iterations >= limit {
         return None;
     }
-    let isqrt = |dx: i32, dy: i32| ((dx * dx + dy * dy) as u64).isqrt() as u32;
+    // Leg lengths in cells: twice the blocks.
+    let isqrt = |dx: i32, dy: i32| ((4 * (dx * dx + dy * dy)) as u64).isqrt() as u32;
     let cost = if chain.len() <= 2 && chain.first().map(|c| c.0) == chain.last().map(|c| c.0) {
         let b = |p: [u32; 2]| [(floor(p[0]) >> 1), (floor(p[1]) >> 1)];
         let (a, z) = (b(s), b(g));

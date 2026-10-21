@@ -1020,7 +1020,6 @@ fn within_reach(state: &State, h: u32, tree: u32) -> bool {
 /// free and an iteration limit of 32, then of the best removals plus 16
 /// (SPEC-0029, "Another tree").
 ///
-/// PROVISIONAL: the trees are visited in the order of their handles.
 fn take_another_tree(state: &mut State, h: u32, tick: u64) {
     let Some(g) = get(state, h) else {
         return;
@@ -1058,12 +1057,13 @@ fn take_another_tree(state: &mut State, h: u32, tick: u64) {
         })
         .map(|(&t, _)| t)
         .collect();
-    // Row by row from the bottom, each row from the left (c-RYP-1: the
-    // third tree visited was (358, 378), as in the game).
-    trees.sort_by_key(|t| {
-        position(state, *t).map_or((u32::MAX, u32::MAX), |[x, y]| {
-            let k = |v: u32| (f32::from_bits(v) + 1.0e6) as u32;
-            (k(y), k(x))
+    // Through the grid of 256 of SPEC-0019: cells by rows from the bottom,
+    // each row from the left, in a cell the last created first (c-RYP-1,
+    // read in the game).
+    let cell = |v: u32, m: u32| ((f32::from_bits(v) - f32::from_bits(m)) / 256.0).floor() as i64;
+    trees.sort_by_key(|&t| {
+        position(state, t).map_or((i64::MAX, i64::MAX, 0), |[x, y]| {
+            (cell(y, min[1]), cell(x, min[0]), -i64::from(t))
         })
     });
     let mut limit = 32;
@@ -1080,10 +1080,7 @@ fn take_another_tree(state: &mut State, h: u32, tick: u64) {
         let found = grid.with_free_around(goal, |g| {
             crate::path::high_level_path_cost(g, at, goal, class, limit)
         });
-        // PROVISIONAL: the 2 of the leg to a node of the special kind,
-        // taken as the goal node (it gives the game's cost 4 for the tree
-        // taken by peasant 4 of c-RYP-1, and its two later ties).
-        if let Some((removals, cost)) = found.map(|(r, c)| (r, c + 2)) {
+        if let Some((removals, cost)) = found {
             limit = limit.min(removals + 16);
             if best.is_none_or(|(_, c)| cost < c) {
                 best = Some((t, cost));

@@ -115,9 +115,13 @@ drawn with.
   update). If the remaining difference is smaller, it becomes equal to
   the target direction. It turns the shorter way.
 - At an update that stops the unit (velocity 0), the stored heading is
-  the heading turned in this way, wrapped into `[0, 2 pi)` by the
-  `fmod` of SPEC-0004 (`2 pi` = `40c90fdb`, then `+ 2 pi` if negative);
-  it is not taken from the velocity. In replay `c-RXI-1` peasant 0
+  the heading turned in this way, brought into `[0, 2 pi)`: above
+  `2 pi` by the `fmod` of SPEC-0004 (`2 pi` = `40c90fdb`), below 0 by a
+  plain `add(x, 2 pi)`, and kept as it is inside the range; it is not
+  taken from the velocity (the case below 0 from `c-RXR-1` units 3 and
+  4 at tick 307, found by the implementer). Commits made outside the
+  unit's own update (a new cluster at the end of a backswing, for
+  example) leave the heading unchanged. In replay `c-RXI-1` peasant 0
   stopped at the mine in tick 1069: heading before `40c2b7cc`
   (6.084936), turned by its `turnRate` 0.6 to `40d5eaff` (6.684936),
   stored `3ecdb265` (a plain `sub(x, 2 pi)` would give `3ecdb240`).

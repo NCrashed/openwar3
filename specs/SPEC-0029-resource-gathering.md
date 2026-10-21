@@ -216,6 +216,27 @@ by the give-up mark, 4.4871 cells from the tree's point: work at once;
 peasant 5 arrived at tree 27 in tick 1309 by the touch mark, 4.4925
 cells (squared 20.18 > 17.02): test failed, searched again in 1315.
 
+**Another tree.** When the work was started at a tree out of the
+harvest's reach (the give-up case above), the harvest checks again
+0.5 s later and takes another tree: among the trees within `Area1` of
+`Ahar` (900) of the current tree's point, the current one excluded and
+only harvestable ones, the one with the smallest high-level path cost
+from the worker. The cost of a candidate is a high-level search
+(SPEC-0020) from the worker to it, with the candidate's own cells and
+the worker's counted as free and an iteration limit (32 at first, then
+after each success the smaller of the limit and that search's removal
+count plus 16; a search that fails or hits the limit drops the
+candidate); the cost is the length of the found path, the sum over its
+legs of the integer square root of the squared leg length in
+high-level units (plus 2 for each leg ending at a node of a special
+kind), or the integer square root of the squared start-goal distance
+when both lie in one node. The first candidate with the smallest cost
+is kept (later equal costs do not replace it), and the worker gets a
+harvest order on it. `c-RYP-1` peasant 4 (read in the game): arrived at
+tree 22 in 1243 out of reach, at 1343 about 30 candidates with costs 4
+to 32, the first with cost 4 was the tree at (358, 378); it turned to
+it at 1351 and started chopping it at 1357.
+
 **Entering the gathering cycle.** A gold worker enters the cycle at
 its first exit from a mine (below). A lumber worker enters it when it
 first arrives at its tree and starts work there (the arrival test of
@@ -458,7 +479,8 @@ each peasant's model polled every 20 ms):
    carrying.
 5. Other races (orc peon and its burrows, undead acolytes and haunted
    mines, night elf wisps and entangled mines).
-6. The tree a worker takes when its ordered tree cannot be reached.
+6. The enumeration order of the trees in "Another tree" and what the
+   second search point is when none is found there.
 7. The gold trip speed bonus when the worker stops gathering, and its
    order against the other events of the entry tick.
 

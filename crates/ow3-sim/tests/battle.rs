@@ -112,10 +112,12 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 18 hits match (grunt 11 renews its goal
-    // where the game does not, asked).
+    // PROVISIONAL: the first 20 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
-    assert!(first.is_none_or(|i| i >= 18), "first difference at hit {first:?}");
+    assert!(
+        first.is_none_or(|i| i >= 20),
+        "first difference at hit {first:?}"
+    );
 }
 
 /// The path events of `c-RXR-1` in ticks 301 to 800 (updates, waits,

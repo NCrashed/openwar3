@@ -215,8 +215,6 @@ pub struct Moving {
     /// or a call for help, on the timer queue (SPEC-0019): the unit takes
     /// its goal in the tick that holds it.
     reaction_end: Option<u32>,
-    /// The tick in which the reaction delay ended.
-    reacted: u64,
     /// The goal was taken at the end of the reaction delay: the first
     /// update keeps it and starts the countdown of its renewal from there.
     goal_taken: bool,
@@ -463,7 +461,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: (m.walking && !state.regrouping) || m.restart,
             reaction: None,
             reaction_end: None,
-            reacted: 0,
             goal_taken: false,
             renew_at: None,
             chase: None,
@@ -490,7 +487,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             stop_after_step: false,
             reaction: None,
             reaction_end: None,
-            reacted: 0,
             goal_taken: false,
             renew_at: None,
             chase: None,
@@ -2082,10 +2078,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.chase = Some(countdown(here, relative(m.target, min)));
                             }
                             _ => {
-                                // A new goal; the paths follow it
-                                // (`game::follow`).
-                                m.target = at;
-                                m.chase = Some(countdown(here, relative(at, min)));
+                                // A new goal, if the target is in another cell of
+                                // the 64 grid than the old goal; the paths follow
+                                // it (`game::follow`). In the same cell the old
+                                // goal stays (c-RXR-1: grunt 11 at 799; test
+                                // c-RYV).
+                                if grid64(relative(at, min)) != grid64(relative(m.target, min)) {
+                                    m.target = at;
+                                }
+                                m.chase = Some(countdown(here, relative(m.target, min)));
                             }
                         }
                         let other = match state.objects.get(&target) {
@@ -2442,6 +2443,12 @@ pub(super) fn in_range(a: [u32; 2], b: [u32; 2], reach: u32) -> bool {
     real_of(d2) < real_of(r2) || real_of(sub(d2, r2)).abs() < real_of(RANGE_SLACK)
 }
 
+/// The cell of the 64 x 64 grid of the high-level search (SPEC-0020)
+/// that holds point `p`, relative to the world corner.
+fn grid64(p: [u32; 2]) -> [i32; 2] {
+    p.map(|v| (real_of(v) / 64.0).floor() as i32)
+}
+
 /// The updates until a chase renews its goal after taking the goal `b`
 /// from `a` (SPEC-0019): `round(0.33 d)` with `d` in cells, clamped to
 /// 16..132. The square root is the correctly rounded one of IEEE 754.
@@ -2561,7 +2568,6 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
                 Some(m) => {
                     let timed = m.reaction_end.take().is_some();
                     m.reaction = None;
-                    m.reacted = tick;
                     m.given = given;
                     match m.order {
                         Order::Attack { target } => (timed, target),
@@ -2825,19 +2831,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let mut expired = None;
         if u.acquire_phase != super::NO_PHASE && real_of(u.next_acquire) <= real_of(next_clock) {
             expired = Some(u.next_acquire);
-            // A unit still in its reaction delay, or whose delay ended in
-            // this tick, has no target yet (c-RXR-1: troll 16, called to
-            // help at 688, delay ending at 724, checked at 724 and again
-            // 0.5 s later). PROVISIONAL: the order within the tick is
-            // not read.
-            let reacting = u.movement.is_some_and(|m| {
-                m.reaction.is_some() || m.reaction_end.is_some() || m.reacted == tick
-            });
-            let period = if target.is_some() && !reacting {
-                ONE
-            } else {
-                HALF
-            };
+            let period = if target.is_some() { ONE } else { HALF };
             u.next_acquire = add(u.next_acquire, period);
         }
         if u.paused {
@@ -2888,30 +2882,9 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         // A better target than the one attacked: taken at once, without a
         // reaction delay or a call for help (SPEC-0019).
         if let Check::Attacking { current, .. } = check {
-            // The new goal after a swing still waits for the cooldown.
-            let renew = state.unit(Some(h)).and_then(|u| {
-                u.attack
-                    .and_then(|a| a.renew_at)
-                    .or(u.movement.and_then(|m| m.renew_at))
-            });
             if let Some(better) = targets.better_than(state, h, current)
-                && let Some(at) = position_of(state, better)
-                && {
-                    // A walking attacker stops at once (SPEC-0019).
-                    freeze(state, h);
-                    true
-                }
-                && order(state, h, Order::Attack { target: better }, 0, at)
+                && switch_target(state, h, better)
             {
-                if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-                    && let Some(m) = u.movement.as_mut()
-                {
-                    m.goal_taken = true;
-                    if let Some(r) = renew {
-                        m.renew_at = Some(r);
-                        m.renew_stands = true;
-                    }
-                }
                 acquired.push(h);
             }
             continue;
@@ -2946,6 +2919,71 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
     }
     acquired
+}
+
+/// Unit `h` attacks `better` instead of its target at once: no reaction
+/// delay and no call for help; a walking attacker stops at once, and a
+/// new goal after a swing still waits for the cooldown (SPEC-0019).
+/// Whether it took the order.
+fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
+    let renew = state.unit(Some(h)).and_then(|u| {
+        u.attack
+            .and_then(|a| a.renew_at)
+            .or(u.movement.and_then(|m| m.renew_at))
+    });
+    let Some(at) = position_of(state, better) else {
+        return false;
+    };
+    freeze(state, h);
+    if !order(state, h, Order::Attack { target: better }, 0, at) {
+        return false;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.goal_taken = true;
+        if let Some(r) = renew {
+            m.renew_at = Some(r);
+            m.renew_stands = true;
+        }
+    }
+    true
+}
+
+/// Whether unit `h`, attacking `current` on its own, takes `other` that
+/// calls for help instead: `other` in range of its attack and `current`
+/// out of it (SPEC-0019, "Checks while attacking").
+fn prefers(state: &State, h: u32, current: u32, other: u32) -> bool {
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let own = state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0.0, |d| real_of(d.collision));
+    let (x, y) = (real_of(u.x), real_of(u.y));
+    let rate = |t: u32| {
+        let o = state.unit(Some(t))?;
+        let collision = state
+            .data
+            .units
+            .get(&o.type_id)
+            .map_or(0.0, |d| real_of(d.collision));
+        let range =
+            super::attack::weapon_for(state, u.type_id, Some(t)).map_or(0.0, |w| real_of(w.range));
+        let (dx, dy) = (real_of(o.x) - x, real_of(o.y) - y);
+        let distance = dx * dx + dy * dy;
+        let reach = range + own + collision;
+        Some((distance <= reach * reach, distance))
+    };
+    let (Some(mine), Some(theirs)) = (rate(current), rate(other)) else {
+        return false;
+    };
+    // PROVISIONAL: only this case was seen; with both out of range the
+    // nearer attacker was not taken (c-RXR-1: troll 19 in 713, grunt 11
+    // in 839).
+    theirs.0 && !mine.0
 }
 
 /// The units that can be targets, by x: (x, y, collision, owner,
@@ -3158,6 +3196,30 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
         }
         _ => false,
     };
+    // A unit attacking a target it took on its own answers by switching to
+    // the attacker at once when its checks would rate the attacker better
+    // (c-RXR-1: troll 16, chasing rifleman 7 far away, took footman 4 in
+    // range at the call of grunt 14 in 827).
+    let current = |h: u32| {
+        let u = state.unit(Some(h))?;
+        let target = match (u.attack, u.movement) {
+            (Some(a), _) if a.order_id == 0 => a.target,
+            (None, Some(m)) if m.order_id == 0 => match m.order {
+                Order::Attack { target } => target,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        (u.alive
+            && !u.paused
+            && !u.creep.returning
+            && u.attack_move.is_none()
+            && u.casting.is_none()
+            && u.stunned_until.is_none_or(|t| state.ticks >= t)
+            && target != attacker)
+            .then_some(target)
+    };
+    let switches = |h: u32| current(h).is_some_and(|c| prefers(state, h, c, attacker));
     // The victim calls whatever it is doing (in `c-RXR-1` the troll
     // headhunters answered grunt 12, which was attacking, in tick 688),
     // then each unit that answers calls in turn, in the order of the grid
@@ -3184,15 +3246,24 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                     && !responders.contains(&h)
                     && dx * dx + dy * dy <= reach * reach
                     && state.setup.helps(u.owner, owner)
-                    && answers(h)
+                    && (answers(h) || switches(h))
             })
             .collect();
         responders.extend(call_order(state, near));
     }
-    if !answers(victim) {
+    if !answers(victim) && !switches(victim) {
         responders.remove(0);
     }
+    let switching: Vec<u32> = responders
+        .iter()
+        .copied()
+        .filter(|&h| switches(h))
+        .collect();
     for h in responders {
+        if switching.contains(&h) {
+            switch_target(state, h, attacker);
+            continue;
+        }
         if order(state, h, Order::Attack { target: attacker }, 0, at) {
             let delay = mul(
                 state.game_random[REACTION].fraction(),

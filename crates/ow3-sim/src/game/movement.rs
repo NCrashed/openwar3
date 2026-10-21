@@ -3384,7 +3384,8 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
 
 /// How much farther than `CallForHelp` idle units hear a call for help
 /// (SPEC-0019: about 175; 180 fits all the distances measured).
-const CALL_REACH: f32 = 180.0;
+/// What a missile's impact adds to CallForHelp for its call (SPEC-0019).
+const IMPACT_REACH: f32 = 150.0;
 /// Seconds after a call for help in which the caller makes no other.
 const CALL_COOLDOWN: f32 = 3.0;
 /// How far a remembered attacker of a call for help is taken.
@@ -3401,7 +3402,7 @@ const REMEMBERED_REACH: f32 = 2000.0;
 /// PROVISIONAL: only units with a weapon answer, workers (`peon`) never;
 /// the area is a circle round the victim's centre (its exact shape is
 /// open); only hits of weapons call for help, not scripted damage.
-pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
+pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: Option<[u32; 2]>) {
     let tick = state.ticks;
     let (Some(v), Some(a)) = (state.unit(Some(victim)), state.unit(Some(attacker))) else {
         return;
@@ -3470,10 +3471,26 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     // A call starts a 3.0 s timer of the victim; while it runs, damage to
     // it makes no call (c-RXR-1: grunt 13 in 4823). PROVISIONAL: the
     // chain's callers are not held by their own timers.
-    let calls = state
-        .unit(Some(victim))
-        .is_some_and(|v| now >= real_of(v.call_until));
-    let reach = real_of(state.combat.call_for_help) + CALL_REACH;
+    // A missile's impact calls instead, round the impact point, with
+    // CallForHelp + 150 and no timer (SPEC-0019; test RZG). A unit is
+    // reached when its centre is within the radius plus its collision
+    // size (c-RXR-1, 6479: trolls at 611.1 in, 635.2 out).
+    let calls = impact.is_some()
+        || state
+            .unit(Some(victim))
+            .is_some_and(|v| now >= real_of(v.call_until));
+    let (x, y) = impact.map_or((x, y), |p| (real_of(p[0]), real_of(p[1])));
+    let radius =
+        real_of(state.combat.call_for_help) + if impact.is_some() { IMPACT_REACH } else { 0.0 };
+    let call_radius = real_of(state.combat.call_for_help);
+    let reach_of = |u: &super::Unit, first: bool| {
+        (if first { radius } else { call_radius })
+            + state
+                .data
+                .units
+                .get(&u.type_id)
+                .map_or(0.0, |t| real_of(t.collision))
+    };
     let mut responders = vec![victim];
     let mut reached = vec![victim];
     let mut next = 0;
@@ -3485,7 +3502,12 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             Some(c) if next > 0 => (real_of(c.x), real_of(c.y)),
             _ => (x, y),
         };
+        let first = next == 0;
         next += 1;
+        // PROVISIONAL: no chain of calls (c-RXR-1, 6479; test RZG).
+        if !first {
+            break;
+        }
         // Every unit the call reaches remembers the attacker.
         reached.extend(state.units.iter().copied().filter(|&h| {
             let Some(Object::Unit(u)) = state.objects.get(&h) else {
@@ -3494,7 +3516,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
             u.alive
                 && h != attacker
-                && dx * dx + dy * dy <= reach * reach
+                && dx * dx + dy * dy <= reach_of(u, first) * reach_of(u, first)
                 && state.setup.helps(u.owner, owner)
         }));
         let near: Vec<u32> = state
@@ -3508,7 +3530,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
                 h != attacker
                     && !responders.contains(&h)
-                    && dx * dx + dy * dy <= reach * reach
+                    && dx * dx + dy * dy <= reach_of(u, first) * reach_of(u, first)
                     && state.setup.helps(u.owner, owner)
                     && (answers(h) || switches(h))
             })
@@ -3523,7 +3545,10 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
         .copied()
         .filter(|&h| switches(h))
         .collect();
-    if calls && let Some(Object::Unit(v)) = state.objects.get_mut(&victim) {
+    if calls
+        && impact.is_none()
+        && let Some(Object::Unit(v)) = state.objects.get_mut(&victim)
+    {
         v.call_until = (now + CALL_COOLDOWN).to_bits();
     }
     if calls {

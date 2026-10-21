@@ -338,7 +338,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     super::cast::stun(&mut s, target, if hero { hero_stun } else { unit_stun });
                 }
             }
-            strike(vm, state, h, target, amount, attack_type, area);
+            strike(vm, state, h, target, amount, attack_type, area, None);
             state.borrow_mut().event_time = None;
         }
         // One tick after the swing the attacker takes a goal again, also
@@ -460,6 +460,7 @@ fn splash_at(
 /// The damage of a hit of `h` on `target`, by its swing or its missile:
 /// the units round the target first, then the target, and the answers
 /// to it (SPEC-0016, SPEC-0019).
+#[allow(clippy::too_many_arguments)]
 fn strike(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
@@ -468,6 +469,7 @@ fn strike(
     amount: u32,
     attack_type: i32,
     area: Option<Area>,
+    impact: Option<[u32; 2]>,
 ) {
     // The units round the target, before the target takes its hit.
     let splashed = area
@@ -499,7 +501,7 @@ fn strike(
     let mut s = state.borrow_mut();
     // The victim and its friends answer the hit (SPEC-0019).
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-        super::movement::retaliate(&mut s, target, h);
+        super::movement::retaliate(&mut s, target, h, impact);
     }
     if !standing(&s, target) {
         let tick = s.ticks;
@@ -688,19 +690,33 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             (true, Some(area)) => {
                 let hit = splash_at(&state.borrow(), m.attacker, m.point, None, area, m.amount);
                 for (victim, share) in hit {
-                    strike(vm, state, m.attacker, victim, share, m.attack_type, None);
+                    strike(
+                        vm,
+                        state,
+                        m.attacker,
+                        victim,
+                        share,
+                        m.attack_type,
+                        None,
+                        Some(m.point),
+                    );
                 }
             }
             (true, None) => {}
-            (false, _) => strike(
-                vm,
-                state,
-                m.attacker,
-                m.target,
-                m.amount,
-                m.attack_type,
-                m.area,
-            ),
+            (false, _) => {
+                // The impact calls for help round where the missile hits.
+                let impact = super::movement::position_of(&state.borrow(), m.target);
+                strike(
+                    vm,
+                    state,
+                    m.attacker,
+                    m.target,
+                    m.amount,
+                    m.attack_type,
+                    m.area,
+                    impact,
+                )
+            }
         }
     }
     state.borrow_mut().event_time = None;

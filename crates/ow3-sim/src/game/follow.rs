@@ -35,6 +35,8 @@ const WORLD: u32 = 0x4200_0000;
 const ARRIVAL: u32 = 0x3EFA_E148;
 /// Leg lengths of a segment, in blocks (10.0).
 const SEGMENT: f32 = 10.0;
+/// The distance in blocks at which a segment ends at its waypoint (0.49).
+const SEGMENT_END: u32 = 0x3EFA_E148;
 /// The iteration limit of a local search.
 const LOCAL_LIMIT: u32 = 700;
 /// When the iterations of the window reach this many, the searching unit
@@ -687,6 +689,19 @@ fn decide(
         follow.take_segment(order);
         follow.next = Next::Search;
         passed = true;
+    }
+    // The end of a segment at a waypoint: within 0.49 blocks of it the
+    // next segment is searched at once, the unit walking on (SPEC-0020,
+    // step 3; c-RXD-1: creep 7 at 5215).
+    if follow.next == Next::Walk && !follow.final_goal && walker.chase.is_none() {
+        let half = |c: u32| mul(c, 0x3F00_0000);
+        let (dx, dy) = (
+            sub(half(at[0]), half(follow.goal[0])),
+            sub(half(at[1]), half(follow.goal[1])),
+        );
+        if real(add(mul(dx, dx), mul(dy, dy))) <= real(mul(SEGMENT_END, SEGMENT_END)) {
+            follow.next = Next::Segment;
+        }
     }
     if follow.next == Next::Segment {
         follow.take_segment(order);

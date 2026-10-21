@@ -1,4 +1,4 @@
-//! Orders of units and their movement on open ground (SPEC-0018, part 1,
+//! Orders of units and their                 at_order,ovement on open ground (SPEC-0018, part 1,
 //! and SPEC-0019).
 //!
 //! An ordered unit is updated every 6 ticks from the order on. At an
@@ -556,6 +556,9 @@ pub struct Cluster {
     goal: [u32; 2],
     /// The tick of the first update.
     first: u64,
+    /// The members' positions at the order, in cells: the first update
+    /// lays the cluster out from them (c-RTW-3 tick 5497).
+    at_order: Vec<[u32; 2]>,
     /// The waypoints in cells relative to the world corner, from the
     /// first update on, and the current one.
     waypoints: Vec<[u32; 2]>,
@@ -675,10 +678,20 @@ pub(super) fn regroup(
             .map(|i| taken[i])
             .collect();
         if members.len() > 1 {
+            let at_order: Vec<[u32; 2]> = cluster_members(
+                state,
+                &members,
+                [state.world_bounds[0], state.world_bounds[1]],
+            )
+            .0
+            .iter()
+            .map(|m| m.position)
+            .collect();
             state.clusters.push(Cluster {
                 members,
                 goal: target,
                 first,
+                at_order,
                 waypoints: Vec::new(),
                 current: 0,
                 angle: 0,
@@ -734,6 +747,12 @@ fn update_clusters(state: &mut State, tick: u64) -> BTreeMap<u32, Control> {
             continue;
         }
         if cluster.waypoints.is_empty() {
+            let mut members = members.clone();
+            if cluster.at_order.len() == members.len() {
+                for (m, &p) in members.iter_mut().zip(&cluster.at_order) {
+                    m.position = p;
+                }
+            }
             let goal = mul_both(relative(cluster.goal, min), CELL);
             let leader = nearest(&members, goal);
             let class = cluster

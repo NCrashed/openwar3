@@ -1240,40 +1240,30 @@ fn high_level_chain(
 
 /// The path of a walk to a target with a footprint, a tree (SPEC-0020,
 /// "Two searches, and a target's footprint"): the 5000-limit search to
-/// the target's point `g` with the 3 x 3 blocks around it free, then the
-/// unit's own 400-limit search to the first node of that path, from the
-/// start, whose square meets those blocks (the end of the path when none
-/// does). The first search's removals, and the second search.
+/// the target's point `g` with the 3 x 3 blocks around it free gives the
+/// path the unit follows; a list that did not get there ends at the
+/// centre of the closest node's block. Its removals, and the path.
 ///
-/// PROVISIONAL: the goal of the second search is the analysts'
-/// hypothesis from three searches of `c-RYP-1`.
+/// PROVISIONAL: the second, 400-limit search to the segment goal is
+/// taken to walk the same way, and the end of a failed list is read in
+/// one case (`c-RYP-1`, peasant 3).
 pub fn high_level_to_target(
     grid: &mut Grid,
     s: [u32; 2],
     g: [u32; 2],
     class: u8,
 ) -> (u32, Option<Found>) {
-    let c = (floor(g[0]) >> 1, floor(g[1]) >> 1);
     let first = grid.with_free_around(g, |grid| high_level_chain(grid, s, g, class, 5000));
-    let Some((found, chain)) = first else {
+    let Some((mut found, chain)) = first else {
         return (0, None);
     };
-    // The blocks from a node's position up by the size of its square.
-    let meets = |&((l, _, _), (x0, y0)): &Placed| {
-        let (x1, y1) = (x0 + (1 << l) - 1, y0 + (1 << l) - 1);
-        x0 <= c.0 + 2 && c.0 - 2 <= x1 && y0 <= c.1 + 2 && c.1 - 2 <= y1
-    };
-    let i = (1..chain.len())
-        .find(|&i| meets(&chain[i]))
-        .unwrap_or(chain.len() - 1);
-    // The point in blocks, the goal in cells.
-    let goal = found.points[i].map(|p| add(p, p));
-    // Its end is not the target.
-    let path = high_level_limited(grid, s, goal, class, HIGH_LEVEL_LIMIT).map(|f| Found {
-        reached: false,
-        ..f
-    });
-    (found.iterations, path)
+    if !found.reached
+        && chain.len() > 1
+        && let (Some(&(_, (x, y))), Some(last)) = (chain.last(), found.points.last_mut())
+    {
+        *last = [add(i2r(x), HALF), add(i2r(y), HALF)];
+    }
+    (found.iterations, Some(found))
 }
 
 /// The length of the leg from `a` to `b`, in their units.

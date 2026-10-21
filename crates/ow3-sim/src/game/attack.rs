@@ -198,6 +198,11 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let cooldown =
                         super::cast::attack_slow(s, h).map_or(cooldown, |f| mul(cooldown, f));
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
+                    // A launch draws one more output for the missile
+                    // (SPEC-0016).
+                    if weapon.kind != WeaponKind::Normal {
+                        s.game_random[ATTACK_DICE].fraction();
+                    }
                     let (amount, bash) = proc_effect(s, h, amount);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         let next = a.next + ticks(cooldown);
@@ -229,6 +234,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                             weapon.attack_type,
                             weapon.area.clone(),
                             weapon.kind == WeaponKind::Artillery,
+                            a.hit_at.unwrap_or(s.move_clock),
                         )
                     {
                         s.missiles.push(missile);
@@ -477,6 +483,10 @@ fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
 /// PROVISIONAL: "ahead" is taken as the direction to the target (the
 /// attacker faces it within 0.2 radians when it swings) and the side as
 /// its right (SPEC-0016 measured only targets straight ahead).
+///
+/// `launched` is the time of the launch on the timer queue: the expiry of
+/// the damage point timer.
+#[allow(clippy::too_many_arguments)]
 fn launch(
     state: &State,
     h: u32,
@@ -485,6 +495,7 @@ fn launch(
     attack_type: i32,
     area: Option<Area>,
     artillery: bool,
+    launched: u32,
 ) -> Option<Missile> {
     let u = state.unit(Some(h))?;
     let data = state.data.units.get(&u.type_id)?;
@@ -511,7 +522,6 @@ fn launch(
     if f32::from_bits(flight) < f32::from_bits(step) {
         return None;
     }
-    let launched = state.move_clock;
     let homing = (data.missile_homing && !artillery).then(|| {
         // The first step is the move of the launch.
         (step, state.ticks + HOMING_TICKS)

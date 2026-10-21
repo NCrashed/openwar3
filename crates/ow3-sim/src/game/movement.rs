@@ -218,10 +218,6 @@ pub struct Moving {
     /// The goal was taken at the end of the reaction delay: the first
     /// update keeps it and starts the countdown of its renewal from there.
     goal_taken: bool,
-    /// The goal is that of a switch to a better target (SPEC-0019,
-    /// "Checks while attacking"): the first update takes it and does
-    /// nothing more.
-    switched: bool,
     /// The new goal after a swing comes at the first update from this tick
     /// on (SPEC-0019).
     renew_at: Option<u64>,
@@ -466,7 +462,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
-            switched: false,
             renew_at: None,
             chase: None,
             renew_stands: false,
@@ -493,7 +488,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
-            switched: false,
             renew_at: None,
             chase: None,
             renew_stands: false,
@@ -2167,15 +2161,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
                 let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
                 if let Order::Attack { target } = m.order {
-                    let switched = std::mem::take(&mut m.switched);
-                    // PROVISIONAL: so the switch of a standing unit too
-                    // (c-RXR-1: troll 19 took footman 4 in range in tick
-                    // 714, made no search at 715 and launched as from a
-                    // swing at 721); asked.
-                    if in_reach && switched {
-                        m.walking = false;
-                        m.velocity = [0, 0];
-                    } else if in_reach && after_swing && m.renew_stands {
+                    if in_reach && after_swing && m.renew_stands {
                         // The goal after a swing comes after the updates
                         // of its tick: nothing more at this one (SPEC-0019).
                         m.renew_stands = false;
@@ -2859,10 +2845,6 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                     .and_then(|a| a.renew_at)
                     .or(u.movement.and_then(|m| m.renew_at))
             });
-            let walking = state
-                .unit(Some(h))
-                .and_then(|u| u.movement)
-                .is_some_and(|m| m.walking);
             if let Some(better) = targets.better_than(state, h, current)
                 && let Some(at) = position_of(state, better)
                 && {
@@ -2876,7 +2858,6 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                     && let Some(m) = u.movement.as_mut()
                 {
                     m.goal_taken = true;
-                    m.switched = walking;
                     if let Some(r) = renew {
                         m.renew_at = Some(r);
                         m.renew_stands = true;
@@ -2961,7 +2942,13 @@ impl Targets {
         let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
         let data = state.data.units.get(&u.type_id)?;
         let own = real_of(data.collision);
-        let half = real_of(data.acquire) / 2.0;
+        // Half the acquisition range, or the longest range of its weapons
+        // if that is more (c-RXR-1: troll headhunters, acquire 500 and
+        // range 450, looked 450 and both collisions round them).
+        let range = |w: &Option<crate::data::Weapon>| w.as_ref().map_or(0.0, |w| real_of(w.range));
+        let half = (real_of(data.acquire) / 2.0)
+            .max(range(&data.weapon))
+            .max(range(&data.weapon2));
         // (in range, squared distance) of a candidate.
         let rate = |t: u32, ox: f32, oy: f32, collision: f32| {
             let range = super::attack::weapon_for(state, u.type_id, Some(t))
@@ -2978,24 +2965,13 @@ impl Targets {
             .get(&t.type_id)
             .map_or(0.0, |d| real_of(d.collision));
         let mine = rate(current, real_of(t.x), real_of(t.y), collision);
-        // PROVISIONAL: with the target beyond the acquisition range the
-        // whole range is looked at (c-RXR-1: troll headhunters chasing a
-        // rifleman far away took footman 4 at 477 in ticks 714 and 720,
-        // acquire 500, while troll 16 did not take footman 3 at 529 in
-        // 724); asked.
-        let full = real_of(data.acquire) + own + collision;
-        let far = mine.1 > full * full;
         let mut best = (current, mine, threat(state, h, current));
         for &(ox, oy, collision, other_owner, _, other) in &self.list {
             if other == current || !enemies(state, owner, other_owner) {
                 continue;
             }
             let collision = real_of(collision);
-            let limit = if far {
-                real_of(data.acquire)
-            } else {
-                half + own + collision
-            };
+            let limit = half + own + collision;
             let (dx, dy) = (ox - x, oy - y);
             if dx.abs() > limit || dy.abs() > limit || dx * dx + dy * dy > limit * limit {
                 continue;

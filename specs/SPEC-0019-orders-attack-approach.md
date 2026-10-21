@@ -402,9 +402,15 @@ time to time:
   waypoint plus its offset, SPEC-0025) is at most its order reach, and
   the direction from it to the place differs by at most 0.2 rad from
   the direction of the step it is about to make (its facing if it does
-  not move; the difference wrapped to `-pi .. pi`). The order reach is
-  the order's range in cells (range / 32), but at least 0.49; a unit
-  with a flag not seen set counts as within reach always. An arrived
+  not move; the difference wrapped to `-pi .. pi`). The reach is the
+  order reach (the order's range in cells, range / 32, but at least
+  0.49) only while the cluster's stall count (SPEC-0025, "Following the
+  cluster's path") is 0; otherwise it is 0.49. Since the stall count
+  goes up at every update at the cluster's last waypoint (it is 1 from
+  the first update there), the order reach counts only at the waypoints
+  before the last one, where the count stays 0 for a cluster of one; at
+  the last waypoint every unit must come within 0.49 of its place. A
+  unit with a flag not seen set counts as within reach always. An arrived
   unit gets speed 0 at that update, keeps its heading, and its path is
   dropped; at its next update it searches again, high level and local,
   from its position to its target. Replay `c-RYP-1`, peasant 4 on its
@@ -414,9 +420,15 @@ time to time:
   (353.5, 375.5) cells (the segment goal of the cluster path). At 841
   it was 4.1681 from the place (angle 0.1712): walked on; at 847 3.9928
   (angle 0.1787): stood, and at 853 it searched to the tree's point
-  (360, 380). The earlier reading of a reach of about 66 to the current
-  path point (`c-RXD-1` worker 5 at 3583) was a misreading of this test
-  and should be checked again with this rule.
+  (360, 380); the cluster's stall count was 0 at all its updates. In
+  replay `c-RXD-1` the six workers walking to the mine at the start
+  have the order reach 2.0625 cells (66) set by their harvest order,
+  but their clusters are at their last (only) waypoint, stall count 1,
+  2, 3, ... from the first update, and the test used 0.49 at every
+  update read (clock 4.56 to 4.74, around tick 937). The earlier
+  reading of a reach of about 66 to the current path point (`c-RXD-1`
+  worker 5 at 3583) was a misreading of this test and should be
+  checked again with this rule.
 - **A new goal and the existing path.** At a renewal the target's
   position becomes the new goal only if it lies in another cell of the
   64 grid of the high-level search (cells of 64 x 64 counted from the

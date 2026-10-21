@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ow3_jass::vm::Vm;
-use ow3_math::{add, mul, sub};
+use ow3_math::{add, div, mul, sub};
 
 use super::movement::{self, CELL, Order, relative};
 use super::{Object, State};
@@ -84,6 +84,12 @@ pub struct Harvest {
     /// placing of buildings (SPEC-0029, "Workers in the gathering cycle
     /// do not block each other").
     cycling: bool,
+    /// The pace of the gold cycle (SPEC-0029): the expiry of its 10 s
+    /// timer, its speed bonus, and the last trip with the bonus during it.
+    pace_timer: u32,
+    bonus: u32,
+    last_trip: u32,
+    last_bonus: u32,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -568,6 +574,58 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
     }
 }
 
+/// The time a worker's round trip of the gold cycle aims at outside the
+/// mine is `PACE_AIM - IN_MINE` (SPEC-0029, "Pace").
+const PACE_AIM: f32 = 5.0;
+/// The timer of the pace, in seconds.
+const PACE_TIMER: f32 = 10.0;
+
+/// Worker `h` goes into a gold mine: its speed is set so that its trips
+/// take their aim (SPEC-0029, "Pace"; c-RXI-1, worker 5: 1.2 from its
+/// second entry). From the time since its last entry, if under 10 s, the
+/// trip outside `t` (less the time in the mine), weighted by the speed
+/// during it, with the trip before: `q = sum / (n (K - M))`, clamped to
+/// 0.5..1.2; else no bonus.
+fn pace(state: &mut State, h: u32) {
+    let now = state.timers.time();
+    let Some(mut g) = get(state, h) else {
+        return;
+    };
+    let f = |v: f32| v.to_bits();
+    let r = f32::from_bits(sub(g.pace_timer, now)).max(0.0);
+    let inside = f(IN_MINE as f32 / 200.0);
+    let p = sub(f(PACE_TIMER), f(r));
+    let t = sub(p, inside);
+    let old = g.bonus;
+    if r > 0.0 && f32::from_bits(t) > 0.0 {
+        let one = f(1.0);
+        let mut sum = mul(t, add(old, one));
+        let mut n = one;
+        if g.last_trip != 0 {
+            sum = add(sum, mul(g.last_trip, add(g.last_bonus, one)));
+            n = add(n, one);
+        }
+        let q = div(sum, mul(n, sub(f(PACE_AIM), inside)));
+        let q = f32::from_bits(q).clamp(0.5, 1.2);
+        g.last_trip = t;
+        g.last_bonus = old;
+        g.bonus = sub(f(q), one);
+    } else {
+        g.last_trip = 0;
+        g.last_bonus = 0;
+        g.bonus = 0;
+    }
+    g.pace_timer = add(now, f(PACE_TIMER));
+    set(state, h, Some(g));
+}
+
+/// The factor of worker `h`'s speed from the pace of its gold cycle.
+pub(super) fn pace_factor(state: &State, h: u32) -> Option<u32> {
+    get(state, h)
+        .filter(|g| g.bonus != 0)
+        .map(|g| add(1.0f32.to_bits(), g.bonus))
+}
+
 /// A worker that starts to wait at a busy mine holds its cells for every
 /// unit: the units on them are put at the nearest free place by the
 /// search of a worker coming out of a mine (SPEC-0029).
@@ -637,6 +695,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .collect();
         for w in entering {
             hide(&mut s, w, true);
+            pace(&mut s, w);
         }
     }
     let due: Vec<(u32, u32)> = {
@@ -696,6 +755,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 let next = entry.waiting.remove(0);
                 entry.inside = Some((next, tick + IN_MINE));
                 hide(s, next, true);
+                pace(s, next);
             }
             left <= 0
         };

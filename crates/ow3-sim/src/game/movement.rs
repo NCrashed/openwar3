@@ -1860,6 +1860,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             Some(u) if !u.buffs.is_empty() => mul(limit, super::auras::speed_factor(state, u)),
             _ => limit,
         };
+        // The pace of the gold cycle (SPEC-0029).
+        let limit = super::harvest::pace_factor(state, h).map_or(limit, |k| mul(limit, k));
         let cluster = control.get(&h).map_or(1, |c| c.size);
         // A member at its place short of the last waypoint waits there.
         let place_on_way = control.get(&h).is_some_and(|c| !c.last);

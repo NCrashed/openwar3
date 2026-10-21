@@ -278,7 +278,6 @@ pub(super) fn create_unit(
         acquire_seq: 0,
         after_death: false,
         guard_return: None,
-        pending_switch: None,
         call_until: 0,
         remembered: None,
         paused: false,

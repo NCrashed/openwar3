@@ -198,9 +198,6 @@ pub struct Unit {
     /// The tick at which it walks back to its guard point, the place it
     /// was created at, after an attack it took on its own ended.
     guard_return: Option<u64>,
-    /// A better target found by a check during its backswing: the attack
-    /// switches to it at the end of the backswing.
-    pending_switch: Option<u32>,
     /// Until when (queue time) damage to it makes no call for help.
     call_until: u32,
     /// The attacker of the last call for help that reached it, answered or

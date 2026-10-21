@@ -182,6 +182,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                             amount,
                             weapon.attack_type,
                             weapon.area.clone(),
+                            weapon.kind == WeaponKind::Artillery,
                         )
                     {
                         s.missiles.push(missile);
@@ -260,14 +261,30 @@ pub(super) fn weapon_for(state: &State, type_id: i32, target: Option<u32>) -> Op
 /// about one unit farther, centred a little beyond the target, open
 /// question 6); only units are damaged, not destructables or items.
 fn splash(state: &State, h: u32, target: u32, area: &Area, amount: u32) -> Vec<(u32, u32)> {
-    let (Some(attacker), Some(t)) = (state.unit(Some(h)), state.unit(Some(target))) else {
+    let Some(t) = state.unit(Some(target)) else {
         return Vec::new();
     };
-    let (x, y) = (f32::from_bits(t.x), f32::from_bits(t.y));
+    splash_at(state, h, [t.x, t.y], Some(target), area, amount)
+}
+
+/// The units round point `at` that an area hit of `h` reaches, but
+/// `except`, with their shares of `amount`.
+fn splash_at(
+    state: &State,
+    h: u32,
+    at: [u32; 2],
+    except: Option<u32>,
+    area: &Area,
+    amount: u32,
+) -> Vec<(u32, u32)> {
+    let Some(attacker) = state.unit(Some(h)) else {
+        return Vec::new();
+    };
+    let (x, y) = (f32::from_bits(at[0]), f32::from_bits(at[1]));
     let enemies_only = area.targets.iter().any(|c| c == "enemy");
     let mut out = Vec::new();
     for &other in &state.units {
-        if other == target {
+        if Some(other) == except {
             continue;
         }
         let Some(Object::Unit(u)) = state.objects.get(&other) else {
@@ -358,33 +375,34 @@ fn strike(
         super::movement::killed(&mut s, h, tick, backswing);
     }
 }
-
 /// A missile in flight (SPEC-0016, "Missiles"): it moves `step` world
-/// units a tick towards the target's centre and strikes when it reaches
-/// it, or in tick `due` when it was launched too near to fly.
+/// units a tick towards the target's centre, or for artillery towards
+/// the point where the target stood at the launch, and strikes when it
+/// reaches it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Missile {
     attacker: u32,
     target: u32,
     at: [u32; 2],
     step: u32,
-    due: Option<u64>,
+    /// The point a shell of artillery goes to.
+    ground: Option<[u32; 2]>,
     amount: u32,
     attack_type: i32,
     area: Option<Area>,
 }
 
-/// Below this distance from the launch point (90) the damage comes in the
-/// tick after the launch.
+/// Below this distance from the launch point (90) the damage comes at the
+/// launch.
 const NO_FLIGHT: f32 = 90.0;
 
 /// The missile of `h` launched now at `target`, if its type has a missile
-/// speed. The launch point is `launchY` ahead and `launchX` to the side.
+/// speed and the target is 90 or more from the launch point. The launch
+/// point is `launchY` ahead and `launchX` to the side.
 ///
 /// PROVISIONAL: "ahead" is taken as the direction to the target (the
 /// attacker faces it within 0.2 radians when it swings) and the side as
-/// its right; the dice are drawn at the launch. SPEC-0016 measured only
-/// targets straight ahead.
+/// its right (SPEC-0016 measured only targets straight ahead).
 fn launch(
     state: &State,
     h: u32,
@@ -392,6 +410,7 @@ fn launch(
     amount: u32,
     attack_type: i32,
     area: Option<Area>,
+    artillery: bool,
 ) -> Option<Missile> {
     let u = state.unit(Some(h))?;
     let data = state.data.units.get(&u.type_id)?;
@@ -414,12 +433,15 @@ fn launch(
     ];
     let (lx, ly) = (sub(to[0], at[0]), sub(to[1], at[1]));
     let flight = f32::from_bits(sqrt(add(mul(lx, lx), mul(ly, ly))));
+    if flight < NO_FLIGHT {
+        return None;
+    }
     Some(Missile {
         attacker: h,
         target,
         at,
         step: div(data.missile_speed, 200.0f32.to_bits()),
-        due: (flight < NO_FLIGHT).then_some(state.ticks + 1),
+        ground: artillery.then_some(to),
         amount,
         attack_type,
         area,
@@ -427,36 +449,32 @@ fn launch(
 }
 
 /// The missiles of this tick move on; those that arrive strike, in the
-/// order of their launch. A missile whose target is gone is lost.
+/// order of their launch. A missile whose target died or is gone is lost;
+/// a shell of artillery goes on to its point.
 ///
 /// PROVISIONAL: how a missile follows a target that moves fast past the
-/// attacker, and what one does when its target dies, is open (SPEC-0016,
-/// open question 9).
+/// attacker is open (SPEC-0016, open question 9).
 fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     let arrived = {
         let mut s = state.borrow_mut();
         let s = &mut *s;
-        let tick = s.ticks;
         let mut arrived = Vec::new();
         let mut flying = Vec::with_capacity(s.missiles.len());
         for mut m in std::mem::take(&mut s.missiles) {
-            if !standing(s, m.target) {
-                continue;
-            }
-            if let Some(due) = m.due {
-                if due <= tick {
-                    arrived.push(m);
-                } else {
-                    flying.push(m);
+            let to = match m.ground {
+                Some(point) => point,
+                None if standing(s, m.target) => {
+                    let Some(to) = super::movement::position_of(s, m.target) else {
+                        continue;
+                    };
+                    to
                 }
-                continue;
-            }
-            let Some(to) = super::movement::position_of(s, m.target) else {
-                continue;
+                None => continue,
             };
             let (dx, dy) = (sub(to[0], m.at[0]), sub(to[1], m.at[1]));
             let length = sqrt(add(mul(dx, dx), mul(dy, dy)));
             if f32::from_bits(length) <= f32::from_bits(m.step) {
+                m.at = to;
                 arrived.push(m);
                 continue;
             }
@@ -468,15 +486,25 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         arrived
     };
     for m in arrived {
-        strike(
-            vm,
-            state,
-            m.attacker,
-            m.target,
-            m.amount,
-            m.attack_type,
-            m.area,
-        );
+        match (m.ground, &m.area) {
+            // A shell hits the units round its point by their distances.
+            (Some(point), Some(area)) => {
+                let hit = splash_at(&state.borrow(), m.attacker, point, None, area, m.amount);
+                for (victim, share) in hit {
+                    strike(vm, state, m.attacker, victim, share, m.attack_type, None);
+                }
+            }
+            (Some(_), None) => {}
+            (None, _) => strike(
+                vm,
+                state,
+                m.attacker,
+                m.target,
+                m.amount,
+                m.attack_type,
+                m.area,
+            ),
+        }
     }
 }
 
@@ -494,10 +522,11 @@ pub(super) fn views(state: &State) -> Vec<MissileView> {
     state
         .missiles
         .iter()
-        .filter(|m| m.due.is_none())
         .filter_map(|m| {
             let type_id = state.unit(Some(m.attacker)).map_or(0, |u| u.type_id);
-            let to = super::movement::position_of(state, m.target)?;
+            let to = m
+                .ground
+                .or_else(|| super::movement::position_of(state, m.target))?;
             Some(MissileView {
                 type_id,
                 at: m.at.map(f32::from_bits),

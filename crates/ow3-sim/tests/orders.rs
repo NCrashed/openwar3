@@ -218,6 +218,30 @@ fn archer_missiles_fly() {
     assert!((far as i64 - mid as i64 - 44).abs() <= 1, "{mid} {far}");
 }
 
+/// SPEC-0016, "Missiles": a mortar team's shell flies the same time to
+/// the target's point (`200 * L / 900` ticks), 44.4 ticks more at 500
+/// than at 300.
+#[test]
+fn mortar_shells_fly() {
+    let first_damage = |d: i32| -> Option<u64> {
+        let units = format!(
+            "set a = CreateUnit(Player(0), 'hmtm', -3000, -2000, 0)\n    set t = CreateUnit(Player(15), 'hpea', {}, -2000, 180)",
+            -3000 + d
+        );
+        let mut game = game(&units, "call IssueTargetOrder(a, \"attack\", t)", |data| {
+            target_type(data, 16.0)
+        })?;
+        let path = run(&mut game, 1200);
+        path.iter()
+            .find(|(_, u)| u[1].life < u[1].max_life)
+            .map(|(t, _)| *t)
+    };
+    let (Some(near), Some(far)) = (first_damage(300), first_damage(500)) else {
+        return;
+    };
+    assert!((far as i64 - near as i64 - 44).abs() <= 1, "{near} {far}");
+}
+
 /// The turning table of SPEC-0019: a knight next to a target at `a`
 /// degrees from its heading, first damage in ticks after the order given
 /// in an update tick. The knight turns at the first update at or after

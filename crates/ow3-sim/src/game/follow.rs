@@ -1080,7 +1080,14 @@ fn count_block(
     at: [u32; 2],
 ) {
     if follow.patience == 0 {
-        let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
+        // Near the goal of its path: the end of its high-level list
+        // (SPEC-0025; c-RYP-1: peasant 3 at 1435, list ending at its
+        // closest node).
+        let goal = follow
+            .waypoints
+            .last()
+            .map_or(order, |&p| path::blocks_to_cells(p));
+        let (dx, dy) = (sub(goal[0], at[0]), sub(goal[1], at[1]));
         let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
         follow.patience = if near && walker.cluster <= 1 {
             2

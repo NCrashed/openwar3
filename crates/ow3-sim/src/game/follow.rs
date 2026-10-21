@@ -577,7 +577,12 @@ fn decide(
         let place = to_world(follow.goal);
         let (dx, dy) = (sub(place[0], walker.here[0]), sub(place[1], walker.here[1]));
         let off = super::facing::angle_difference(super::movement::angle(dx, dy), direction);
-        if super::movement::in_range(walker.here, place, reach) && real(off).abs() <= 0.2 {
+        if super::movement::in_range(walker.here, place, reach) {
+            // Not yet turned to it: it stands and turns this update
+            // (c-RYP-1: peasant 5 at 1009, arrived at 1015).
+            if real(off).abs() > 0.2 {
+                return Steer::Stand(place);
+            }
             return Steer::Hold;
         }
     }

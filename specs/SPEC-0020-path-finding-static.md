@@ -321,15 +321,31 @@ the high-level search from its position to the order point. Then:
    no unpassable cell at all, the target is the last point of the path
    (the unit walks straight to it).
 3. **Each update**, before moving:
+   - **End of a segment at a waypoint** (checked first): when the local
+     path ends at a waypoint of the unit's high-level list (not at the
+     order point), the segment is done as soon as the unit's position
+     after this update's step, in high-level units (cells / 2), is
+     within 0.49 of that waypoint (squared distance at most `0.49 *
+     0.49`, that is 0.98 cells); then in the same update the next
+     segment goal is taken (step 1 from that waypoint) and searched
+     (step 2), and the unit walks on without standing. Replay
+     `c-RXD-1`, creep 7 walking home, local path ending at the waypoint
+     (207.75, 200.75): at 5209 its position after the step (416.3111,
+     400.7957) cells = (208.1556, 200.3979), squared distance 0.2885:
+     no; at 5215 (416.1200, 400.9616) = (208.0600, 200.4808), 0.1686:
+     the segment ended, local search from there to the next segment
+     goal (399.5, 401.5) in the same update, and the step of 5215 went
+     on (read in the game).
    - **Arrival at the target**: if the squared distance in cells from
      the unit to the target is at most `0.49 * 0.49` (engine
      arithmetic): if the target is not the last point of the local
      path, the target becomes the farthest later point that can be
      **seen** from the unit's position (below; it is the next point if
      none farther can be seen). If it is the last point and the segment
-     goal is a waypoint, the unit **stands still for this update**
-     (no motion, no turn), and at the next update a new segment goal is
-     taken (step 1 from the reached waypoint) and searched (step 2). If
+     goal is a waypoint, the end of the segment above normally comes
+     first; this older reading (the unit **stands still for this
+     update** and searches at the next) is kept only for the case that
+     the waypoint check did not fire (not seen since). If
      it is the order point, the order ends (SPEC-0018 arrival). If it is
      the end of a local path that did not reach its goal (the search
      ended at the closest node), the unit stands still for this update

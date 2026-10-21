@@ -22,8 +22,8 @@ use super::{Object, State};
 use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::{Area, Weapon, WeaponKind, is_hero};
 use crate::random::ATTACK_DICE;
-use ow3_math::natives::sqrt;
-use ow3_math::{add, div, mul, sub};
+use ow3_math::natives::{cos, sin, sqrt};
+use ow3_math::{add, div, floor, mul, sub};
 
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -554,18 +554,14 @@ fn launch(
         return None;
     }
     let to = super::movement::position_of(state, target)?;
-    let (dx, dy) = (sub(to[0], u.x), sub(to[1], u.y));
-    let length = sqrt(add(mul(dx, dx), mul(dy, dy)));
-    let (fx, fy) = if f32::from_bits(length) > 0.0 {
-        (div(dx, length), div(dy, length))
-    } else {
-        (1.0f32.to_bits(), 0)
-    };
+    // Along the facing the unit shows, `launchY` ahead and `launchX` to
+    // the right, floored to quarters (c-RXR-1, five troll missiles).
+    let (fx, fy) = (cos(u.facing), sin(u.facing));
     let [side, ahead] = data.launch;
-    // Forward (fx, fy) and to the right (fy, -fx).
+    let quarter = |v: u32| mul(floor(mul(v, 4.0f32.to_bits())), 0.25f32.to_bits());
     let at = [
-        add(u.x, add(mul(fx, ahead), mul(fy, side))),
-        add(u.y, sub(mul(fy, ahead), mul(fx, side))),
+        quarter(add(u.x, add(mul(fx, ahead), mul(fy, side)))),
+        quarter(add(u.y, sub(mul(fy, ahead), mul(fx, side)))),
     ];
     let flight = distance(at, to);
     let step = mul(speed, HOMING_STEP);

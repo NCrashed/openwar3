@@ -3415,6 +3415,16 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 now
             };
             u.next_acquire = add(from, AFTER_DEATH);
+            // An attack-move goes on at once, or at the end of the
+            // backswing (c-RXR-1: footman 2 searched towards its point at
+            // its update of 2581).
+            let left = real_of(from) - real_of(now);
+            let at = state.ticks + 1 + (left / real_of(crate::timers::TICK)).ceil() as u64;
+            if let Some(a) = u.attack_move.as_mut()
+                && a.resume_at.is_none()
+            {
+                a.resume_at = Some(at);
+            }
             u.acquire_seq = seq;
             u.after_death = true;
             if own {

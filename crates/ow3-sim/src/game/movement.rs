@@ -2037,9 +2037,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // The first search after the reaction delay;
                             // the renewal counts from here.
                             _ if std::mem::take(&mut m.goal_taken) => {
-                                // The goal is where the target is when the
-                                // search is made (SPEC-0019).
-                                m.target = at;
+                                // An idle unit's goal is where the target is
+                                // when the search is made; an attack-move keeps
+                                // the one of the end of its reaction delay
+                                // (SPEC-0019).
+                                // PROVISIONAL: one case of each in c-RXR-1.
+                                if m.order_id == 0 {
+                                    m.target = at;
+                                }
                                 m.chase = Some(countdown(here, relative(m.target, min)));
                                 renewed = true;
                             }
@@ -2060,8 +2065,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // The swing starts with the target or the goal in
                         // range (SPEC-0019).
                         full_reach = add(reach, mul(other, CELL));
-                        in_reach = in_range(here, target_now, full_reach)
-                            || in_range(here, relative(m.target, min), full_reach);
+                        in_reach = in_range(here, relative(m.target, min), full_reach);
+                        let _ = target_now;
                     }
                     _ => {
                         m.arrived = true;

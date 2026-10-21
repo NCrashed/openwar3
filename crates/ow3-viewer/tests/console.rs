@@ -304,11 +304,13 @@ fn a_peasant_gathers_lumber() {
         full |= v.carrying == Some((2, 10)) && v.order == 852_017;
         if v.chopping.is_some() {
             chopped = true;
-            // It faces the tree and swings at it.
+            // It faces about the tree and swings at it: arriving it turns
+            // by one step of its turn rate at most, so it may stay a
+            // little short of the tree (c-RYP-1: peasant 0, 0.62 off).
             let to = (ty - v.y).atan2(tx - v.x);
             let off = (v.facing - to + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
                 - std::f32::consts::PI;
-            faced |= off.abs() < 0.2;
+            faced |= off.abs() < 1.0;
             swung |= sim.draws().iter().any(|d| {
                 d.handle == peasant && matches!(d.pose, ow3_viewer::models::UnitPose::Attack(_))
             });

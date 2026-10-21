@@ -1143,16 +1143,6 @@ fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
     }
 }
 
-/// A worker that reached tree `target` turns to it: its heading points at
-/// the tree, which its facing follows.
-///
-/// PROVISIONAL: SPEC-0029 does not give the facing of a worker at a tree.
-fn face_tree(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
-    if let Some(Object::Destructable(_)) = state.objects.get(&target) {
-        face_target(state, m, target, min);
-    }
-}
-
 /// Unit `m` turns to `target`: its heading points at its position, which
 /// its facing follows.
 fn face_target(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
@@ -2127,7 +2117,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
-            face_tree(state, &mut m, target, min);
+            // It turns to the tree by one step of its turn rate at most
+            // (c-RYP-1: peasant 0 at 991, 0.0627 -> 0.6627).
+            if let Some(Object::Destructable(d)) = state.objects.get(&target) {
+                let at = relative([d.x, d.y], min);
+                motion(&mut m, at, false, speed, limit, turn_rate, window);
+            }
             m.arrived = false;
         }
         if let Order::Work { .. } = m.order {
@@ -2648,7 +2643,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
-            face_tree(state, &mut m, target, min);
+            // It turns to a tree by one step of its turn rate at most
+            // (c-RYP-1: peasant 0 at 991, 0.0627 -> 0.6627).
+            if let Some(Object::Destructable(d)) = state.objects.get(&target) {
+                let at = relative([d.x, d.y], min);
+                motion(&mut m, at, false, speed, limit, turn_rate, window);
+            }
             m.arrived = false;
         }
         // So too a worker sent back to its building under construction.

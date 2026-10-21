@@ -2301,6 +2301,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         follow::Steer::Stand(to) => {
                             motion(&mut m, to, false, speed, limit, turn_rate, window);
                         }
+                        // At the end of its walk to a building a worker stands
+                        // and turns towards it (SPEC-0029).
+                        follow::Steer::Arrived if building.is_some() => {
+                            motion(&mut m, goal, false, speed, limit, turn_rate, window);
+                        }
                         follow::Steer::Arrived => {}
                     }
                 }

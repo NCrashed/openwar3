@@ -136,16 +136,6 @@ fn battle_path_events() {
             ))
         })
         .filter(|e: &Event| kinds.contains(&e.1.as_str()))
-        // The live run wrote made_wait20 with the updating unit first (asked).
-        .map(|mut e: Event| {
-            if e.1 == "made_wait20"
-                && let Some(b) = e.3
-            {
-                e.3 = Some(e.2);
-                e.2 = b;
-            }
-            e
-        })
         .collect();
     let path = game_data().join("replays/c-RXR-1.w3g");
     let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();

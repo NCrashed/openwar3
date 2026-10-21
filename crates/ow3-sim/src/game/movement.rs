@@ -2052,6 +2052,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // goal is.
             let mut in_reach = false;
             let mut renewed = false;
+            // The goal of R after a swing (SPEC-0019).
+            let mut after_swing = false;
             // The goal before a renewal after a swing (SPEC-0019).
             let old_goal = m.target;
             let mut full_reach = reach;
@@ -2063,6 +2065,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // The new goal after a swing (SPEC-0019).
                             _ if renew_now => {
                                 m.renew_at = None;
+                                after_swing = true;
                                 m.target = at;
                                 // A goal of a timer: the countdown starts at
                                 // the search, the next update, which does not
@@ -2185,7 +2188,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
                 let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
                 if let Order::Attack { target } = m.order {
-                    if in_reach {
+                    if in_reach && after_swing && m.renew_stands {
+                        // The goal after a swing comes after the updates
+                        // of its tick: nothing more at this one (SPEC-0019).
+                        m.renew_stands = false;
+                        m.walking = false;
+                        m.velocity = [0, 0];
+                    } else if in_reach {
                         // In range: stand, turn to the target and strike
                         // once the turn left is below 0.2 radians and the
                         // cooldown lets the swing hit in time (SPEC-0019,
@@ -2237,7 +2246,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // A standing attacker's stand does not turn its
                         // heading; a walking one turns as its look-ahead
                         // check of the old path says (SPEC-0019).
-                        let renewing = renewed && std::mem::take(&mut m.renew_stands);
+                        let renewing = after_swing && std::mem::take(&mut m.renew_stands);
                         let hold = renewing && m.velocity == [0, 0];
                         let steer = if renewing {
                             let mut stand = goal;

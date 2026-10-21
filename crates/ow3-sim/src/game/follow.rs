@@ -81,6 +81,9 @@ pub struct Follow {
     next: Next,
     /// The first tick at which the unit may search again.
     hold_until: u64,
+    /// A new goal came while the searches were held: the old path is
+    /// walked until the hold ends, then a new one is searched.
+    moved: bool,
     /// The order point in cells the waypoints were searched to.
     order: [u32; 2],
     /// Updates the unit still stands waiting for another unit.
@@ -427,6 +430,13 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         .and_then(|b| state.unit(Some(b)))
         .and_then(|b| b.footprint.as_ref())
         .map(|f| (f.red().to_vec(), f.green().to_vec()));
+    if state
+        .paths
+        .get(&walker.handle)
+        .is_some_and(|f| f.moved && tick >= f.hold_until)
+    {
+        state.paths.remove(&walker.handle);
+    }
     let fresh = !state.paths.contains_key(&walker.handle);
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
@@ -476,6 +486,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             target: 0,
             next: Next::Search,
             hold_until: 0,
+            moved: false,
             wait: 0,
             made: false,
             patience: 0,
@@ -789,4 +800,18 @@ fn farthest_seen(
         best = i;
     }
     best
+}
+
+/// Unit `h` has a new goal (a new place in its cluster): its path is
+/// searched anew at its next update, unless its searches are held, when
+/// it walks its old path until the hold ends (SPEC-0020; c-RTW-3: 846,
+/// 864, 900 and 954 at 5539).
+pub(super) fn new_goal(state: &mut State, h: u32) {
+    let tick = state.ticks;
+    match state.paths.get_mut(&h) {
+        Some(f) if f.hold_until > tick => f.moved = true,
+        _ => {
+            state.paths.remove(&h);
+        }
+    }
 }

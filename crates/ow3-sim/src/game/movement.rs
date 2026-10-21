@@ -544,8 +544,14 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     for cluster in &mut state.clusters {
         cluster.keep(|m| m != h);
     }
-    // A new path is searched at the next update (SPEC-0020).
-    state.paths.remove(&h);
+    // A new path is searched at the next update (SPEC-0020); in a new
+    // layout of a queued group a held path is walked on until its hold
+    // ends.
+    if state.regrouping {
+        follow::new_goal(state, h);
+    } else {
+        state.paths.remove(&h);
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = Some(moving);
         u.attack = None;
@@ -958,7 +964,7 @@ fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
         {
             m.target = to;
         }
-        state.paths.remove(&h);
+        follow::new_goal(state, h);
     }
 }
 
@@ -2138,6 +2144,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 // count (SPEC-0019, "Schedule").
                                 m.chase = Some(countdown(here, relative(at, min)) + 1);
                             }
+                            // Swinging at its target the unit has left its
+                            // cluster: no countdown and no renewal until the
+                            // next backswing ends (c-RXR-1: rifleman 9 from
+                            // 2695 to 5053).
+                            Some(_)
+                                if state.unit(Some(h)).is_some_and(|u| {
+                                    u.attack.is_some_and(|a| a.target == target)
+                                }) => {}
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             // The first search after the reaction delay;
                             // the renewal counts from here.

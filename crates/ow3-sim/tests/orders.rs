@@ -1371,3 +1371,40 @@ fn endurance_aura() {
     let last = path.len() - 2;
     assert!((step(last) - 1.485).abs() < 0.002, "{}", step(last));
 }
+
+/// SPEC-0038, "Losing the buff": a footman that walks out of the aura
+/// keeps the faster step until the second 2 s check (game ticks 202 mod
+/// 400) after the last 0.5 s check that found it in reach.
+#[test]
+fn an_aura_lasts_two_removal_checks() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'hfoo', -2700, -2000, 0)\n    set t = CreateUnit(Player(0), 'Otch', -2600, -1800, 0)\n    call SelectHeroSkill(t, 'AOae')",
+        "call IssuePointOrder(a, \"move\", 2000, -2000)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 3000);
+    let step = |t: usize| path[t + 1].1[0].x - path[t].1[0].x;
+    // The last 0.5 s check that found it within 900 of the hero.
+    let seen = path
+        .iter()
+        .filter(|(tick, units)| {
+            let (dx, dy) = (units[0].x + 2600.0, units[0].y + 1800.0);
+            tick % 100 == 1 && dx * dx + dy * dy <= 900.0 * 900.0
+        })
+        .map(|p| p.0)
+        .next_back()
+        .unwrap();
+    let removal = (seen..).filter(|t| t % 400 == 202).nth(1).unwrap();
+    let fast = |t: u64| {
+        let i = path.iter().position(|p| p.0 == t).unwrap();
+        (step(i) - 1.485).abs() < 0.002
+    };
+    let slow = |t: u64| {
+        let i = path.iter().position(|p| p.0 == t).unwrap();
+        (step(i) - 1.35).abs() < 0.002
+    };
+    assert!(fast(removal), "{seen} {removal}");
+    assert!(slow(removal + 12), "{seen} {removal}");
+}

@@ -1,24 +1,28 @@
 //! Hero auras (SPEC-0038): devotion, endurance and unholy aura.
 //!
 //! At checks every 0.5 s each hero with an aura gives its buff to the
-//! friendly ground units within `Area` of it, itself included. A unit
-//! keeps the buff 3 s after the last check that found it in reach.
+//! friendly ground units within `Area` of it, itself included. Buffs are
+//! taken away only at checks every 2 s, at the second one after the last
+//! check that found the unit in reach.
 //! Devotion adds `DataA` to the armor; endurance and unholy aura add
 //! `DataA` to the movement speed as a share, from the unit's next update.
 //!
-//! PROVISIONAL: the phase of the checks (here the ticks 1 mod 100) and
-//! the end of a buff when the hero walks away are open (SPEC-0038, open
-//! questions 1 and 2); attack speed and regeneration are not done.
+//! PROVISIONAL: the phase of the checks (ticks 1 mod 100 and 202 mod 400)
+//! is that of the test maps (SPEC-0038); a walking hero leaving a
+//! standing unit took one check more in two cases; attack speed and
+//! regeneration are not done.
 
 use super::{Object, State};
 use crate::data::is_hero;
 
 /// The auras by their base codes.
 const AURAS: [[u8; 4]; 3] = [*b"AHad", *b"AOae", *b"AUau"];
-/// Ticks between the checks, and how long a buff stays after the last
-/// check that found its unit in reach.
+/// Ticks between the checks that give the buffs, and between those that
+/// take them away (c-RYR: script ticks 402, 802, 1202, ...).
 const PERIOD: u64 = 100;
-const KEEP: u64 = 600;
+const REMOVAL: u64 = 400;
+/// Script tick 402 of the tests (3.0 s) is game tick 602.
+const REMOVAL_PHASE: u64 = 202;
 
 /// The base code of `ability`.
 fn base(state: &State, ability: i32) -> i32 {
@@ -45,6 +49,14 @@ fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
 /// The checks of this tick.
 pub(super) fn tick(state: &mut State) {
     let tick = state.ticks;
+    if tick % REMOVAL == REMOVAL_PHASE {
+        // Not found in reach since the removal check before.
+        for &o in &state.units.clone() {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
+                u.buffs.retain(|&(_, _, seen)| seen + REMOVAL > tick);
+            }
+        }
+    }
     if tick % PERIOD != 1 {
         return;
     }
@@ -83,11 +95,6 @@ pub(super) fn tick(state: &mut State) {
         if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
             u.buffs.retain(|&(a, _, _)| a != ability);
             u.buffs.push((ability, level, tick));
-        }
-    }
-    for &o in &state.units.clone() {
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
-            u.buffs.retain(|&(_, _, seen)| tick < seen + KEEP);
         }
     }
 }

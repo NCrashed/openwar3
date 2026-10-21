@@ -3208,10 +3208,13 @@ fn prefers(state: &State, h: u32, current: u32, other: u32) -> bool {
     let (Some(mine), Some(theirs)) = (rate(current), rate(other)) else {
         return false;
     };
-    // PROVISIONAL: only this case was seen; with both out of range the
-    // nearer attacker was not taken (c-RXR-1: troll 19 in 713, grunt 11
-    // in 839).
-    theirs.0 && !mine.0
+    if mine.0 != theirs.0 {
+        return theirs.0;
+    }
+    if mine.0 {
+        return false;
+    }
+    (threat(state, h, other), theirs.1) < (threat(state, h, current), mine.1)
 }
 
 /// The units that can be targets, by x: (x, y, collision, owner,

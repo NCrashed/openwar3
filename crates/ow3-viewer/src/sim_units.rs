@@ -1036,6 +1036,40 @@ impl Sim {
             }
             draws.push(draw);
         }
+        // Missiles in flight, pointing at their targets (SPEC-0016).
+        // PROVISIONAL: drawn at a fixed height of 60 over the ground; the
+        // launch height and the arc (`launchZ`, `Missilearc`) are not
+        // used yet.
+        for m in self.game.missiles() {
+            let [x, y] = m.at;
+            if !self.sees(x, y) {
+                continue;
+            }
+            let Some(model) = self.hud.missile_model(m.type_id) else {
+                continue;
+            };
+            let angle = (m.towards[1] - y).atan2(m.towards[0] - x);
+            let placement = Placement {
+                model,
+                replaceable: None,
+                team: 0,
+                position: [x, y, self.game.ground_z(x, y) + 60.0],
+                angle,
+                scale: [1.0; 3],
+            };
+            draws.push(UnitDraw {
+                replaceable: None,
+                matrix: crate::models::placement_matrix(&placement),
+                model: placement.model,
+                team: 0,
+                handle: 0,
+                life: None,
+                pose: UnitPose::Stand,
+                selection: 0.0,
+                relation: None,
+                tint: [1.0; 3],
+            });
+        }
         // Remembered buildings that are gone: drawn until their place is
         // seen again.
         let gone: Vec<u32> = self

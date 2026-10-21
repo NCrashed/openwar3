@@ -445,6 +445,22 @@ impl Hud {
         })
     }
 
+    /// The model of the missiles of units of `type_id` (`Missileart` of
+    /// its entry in the unit files, the first of a list), as `.mdx`.
+    pub fn missile_model(&self, type_id: i32) -> Option<String> {
+        let art = self.units.get(&code(type_id), "Missileart")?;
+        let path = art.split(',').next()?.trim().trim_matches('"');
+        if path.is_empty() {
+            return None;
+        }
+        let lower = path.to_ascii_lowercase();
+        Some(match lower.strip_suffix(".mdl") {
+            Some(_) => format!("{}.mdx", &path[..path.len() - 4]),
+            None if lower.ends_with(".mdx") => path.to_owned(),
+            None => format!("{path}.mdx"),
+        })
+    }
+
     /// The model of the time of day indicator of the race
     /// (`TimeOfDayIndicator` of the skins, SPEC-0028), as `.mdx`.
     pub fn time_indicator_model(&self) -> Option<String> {

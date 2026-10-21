@@ -479,3 +479,30 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         );
     }
 }
+
+/// A missile in flight as a viewer sees it: the type of the unit that
+/// launched it, where it is (world units) and where it goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MissileView {
+    pub type_id: i32,
+    pub at: [f32; 2],
+    pub towards: [f32; 2],
+}
+
+/// The missiles in flight.
+pub(super) fn views(state: &State) -> Vec<MissileView> {
+    state
+        .missiles
+        .iter()
+        .filter(|m| m.due.is_none())
+        .filter_map(|m| {
+            let type_id = state.unit(Some(m.attacker)).map_or(0, |u| u.type_id);
+            let to = super::movement::position_of(state, m.target)?;
+            Some(MissileView {
+                type_id,
+                at: m.at.map(f32::from_bits),
+                towards: to.map(f32::from_bits),
+            })
+        })
+        .collect()
+}

@@ -44,6 +44,7 @@ macro_rules! native {
 }
 
 mod boards;
+pub use attack::MissileView;
 pub use boards::Button;
 pub use creeps::CREEPS;
 mod attack;
@@ -1411,6 +1412,11 @@ impl<'a> Game<'a> {
         if let Some(period) = restart {
             state.start_timer(handle, period);
         }
+    }
+
+    /// The missiles in flight (SPEC-0016).
+    pub fn missiles(&self) -> Vec<MissileView> {
+        attack::views(&self.state.borrow())
     }
 
     /// The units that exist, in the order they were created, as a viewer

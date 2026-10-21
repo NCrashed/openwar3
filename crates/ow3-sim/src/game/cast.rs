@@ -233,6 +233,9 @@ pub(super) fn stun(state: &mut State, h: u32, ticks: u64) {
         u.stunned_until = Some(u.stunned_until.map_or(until, |t| t.max(until)));
     }
     movement::stand_still(state, h);
+    // Its order goes on after the stun with a new path (c-RXD-1: worker 5
+    // stunned in 4337, new path at its update of 4741).
+    state.paths.remove(&h);
 }
 
 /// Whether unit `h` is stunned now.

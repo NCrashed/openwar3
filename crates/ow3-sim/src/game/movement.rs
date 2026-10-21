@@ -2210,7 +2210,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
                 let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
                 if let Order::Attack { target } = m.order {
-                    if in_reach && after_swing && m.renew_stands {
+                    if in_reach && after_swing && m.renew_stands && !m.renew_cooldown {
                         // The goal after a swing comes after the updates
                         // of its tick: nothing more at this one (SPEC-0019).
                         m.renew_stands = false;
@@ -2278,6 +2278,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // A standing attacker's stand does not turn its
                         // heading; a walking one turns as its look-ahead
                         // check of the old path says (SPEC-0019).
+                        let cooldown = after_swing && std::mem::take(&mut m.renew_cooldown);
                         let renewing = after_swing && std::mem::take(&mut m.renew_stands);
                         let hold = renewing && m.velocity == [0, 0];
                         let steer = if renewing {
@@ -2287,16 +2288,27 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     order: relative(old_goal, min),
                                     ..walker
                                 };
-                                if let follow::Steer::Walk(to) | follow::Steer::Stand(to) =
-                                    follow::steer(state, &old, tick)
-                                {
-                                    stand = to;
+                                match follow::steer(state, &old, tick) {
+                                    follow::Steer::Walk(to) | follow::Steer::Stand(to) => {
+                                        stand = to
+                                    }
+                                    _ => {}
                                 }
                             }
                             // A new goal, first among the units handled
                             // from the next tick (SPEC-0021).
                             state.orders_given += 1;
                             m.given = state.orders_given;
+                            // At the expiry a target in range is struck at once,
+                            // the swing waiting for the cooldown (c-RXR-1:
+                            // footman 2 in 2629).
+                            let swing = cooldown
+                                && position_of(state, target).is_some_and(|at| {
+                                    in_range(here, relative(at, min), full_reach)
+                                });
+                            if swing {
+                                begin_attack = Some(target);
+                            }
                             follow::Steer::Stand(stand)
                         } else {
                             follow::steer(state, &walker, tick)
@@ -3360,6 +3372,7 @@ fn cooldown_renewal(state: &mut State, h: u32) {
     if let Some(m) = u.movement.as_mut() {
         m.renew_at = Some(at);
         m.renew_cooldown = true;
+        m.renew_stands = true;
     }
 }
 

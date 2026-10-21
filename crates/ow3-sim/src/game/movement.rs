@@ -221,6 +221,8 @@ pub struct Moving {
     /// The new goal after a swing comes at the first update from this tick
     /// on (SPEC-0019).
     renew_at: Option<u64>,
+    /// That renewal is the expiry of a cooldown from before this attack.
+    renew_cooldown: bool,
     /// An attack ordered by a script: the update at which the unit acts
     /// cannot start its swing yet (SPEC-0019, "When it starts").
     swing_waits: bool,
@@ -463,6 +465,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction_end: None,
             goal_taken: false,
             renew_at: None,
+            renew_cooldown: false,
             chase: None,
             renew_stands: false,
             given,
@@ -489,6 +492,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction_end: None,
             goal_taken: false,
             renew_at: None,
+            renew_cooldown: false,
             chase: None,
             renew_stands: false,
             given,
@@ -2231,7 +2235,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // run out at an update (c-RXD-1, creeps 6 and 8
                             // after their switches of 2007 and 2031).
                             // PROVISIONAL: what tells the two apart.
-                            let fresh = u.cooldown_target != target && m.renew_at.is_none();
+                            let fresh = u.cooldown_target != target
+                                && (m.renew_at.is_none() || m.renew_cooldown);
                             !timed && (fresh || tick + point >= u.weapon_ready)
                         });
                         let (h, d) = heading_and_turn(&m, goal);
@@ -2970,6 +2975,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             // end of its tick.
             let from = expiry.unwrap_or(add(state.move_clock, crate::timers::TICK));
             react_until(state, h, add(from, delay));
+            cooldown_renewal(state, h);
             acquired.push(h);
             // A creep calls its camp (SPEC-0030), in the order of
             // SPEC-0019.
@@ -3331,6 +3337,29 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h);
         }
+    }
+}
+
+/// A new attack of unit `h` while the cooldown of its last swing runs:
+/// when the cooldown expires and the unit cannot swing yet, it takes its
+/// goal again and searches at its next update, standing there, as after
+/// a swing (SPEC-0019; c-RXR-1, footman 1 chasing grunt 11 after grunt
+/// 12 died: expiry 13.4399939, search at 13.4699125).
+fn cooldown_renewal(state: &mut State, h: u32) {
+    let end = add(state.move_clock, crate::timers::TICK);
+    let tick = state.ticks;
+    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        return;
+    };
+    let left = real_of(u.cooldown_end) - real_of(end);
+    if left <= 0.0 {
+        return;
+    }
+    // The tick whose queue interval holds the expiry.
+    let at = tick + (left / real_of(crate::timers::TICK)).ceil() as u64;
+    if let Some(m) = u.movement.as_mut() {
+        m.renew_at = Some(at);
+        m.renew_cooldown = true;
     }
 }
 

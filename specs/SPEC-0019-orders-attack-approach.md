@@ -706,9 +706,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
   periodic check at 13.5099993 (tick 2703) and grunt 13 by a call for
   help at 13.5299950 (2707), and after its backswing ended (13.5899954)
   its 0.01 s check took 10 with a reaction delay of 0.146777.
-- **Cooldown expiry during a chase.** When the cooldown of the last
-  swing expires while the unit chases a target it cannot hit yet, the
-  approach is restarted: the unit stops at once (no motion until its
+- **Cooldown expiry.** When the cooldown of the last swing expires, the
+  swing starts in that timer's callback if the unit's last update found
+  it ready (target in range and heading within 0.2 rad of it, the test
+  of "Turning before an attack"); grunt 10 in `c-RXR-1` switched to
+  footman 1 at 24.6099854, was ready at its update of 24.7195358 and
+  swung at the expiry 24.7299862. Otherwise (out of range, or still
+  turning) the approach is restarted: the unit stops at once (no motion until its
   next update) and at its next update it searches again towards the
   target and walks on at once. Footman 1 in `c-RXR-1` chased grunt 11
   from its search in tick 2647; its update of 2689 moved it, its old
@@ -716,6 +720,10 @@ An idle unit with a weapon attacks an enemy unit on its own:
   it did not move in ticks 2690 to 2695, searched again (same goal) at
   its update of 2695 and moved from 2696; it swung at 13.5899115 (hit
   in tick 2819). One case read.
+  Creeps 6 and 8 of `c-RXD-1`, switched to new targets during their
+  backswings (ticks 2031 and 2007), were still turning at their
+  expiries (10.5299501, 10.7699480): no swing there; creep 6 swung at
+  its update of 10.6199379, the first that found it ready.
 - **A new target and the old cooldown.** The cooldown of the last
   swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
   in range, it did not move) ended its reaction delay at 11.9424612,

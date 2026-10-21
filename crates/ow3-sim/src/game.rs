@@ -747,6 +747,10 @@ pub struct State {
     paths: std::collections::BTreeMap<u32, follow::Follow>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
+    /// The hits of weapons without a missile, when a test asks for them:
+    /// tick, the queue time of the hit (its damage point timer's expiry),
+    /// the queue time at the end of the tick and the target.
+    pub hit_trace: Option<Vec<(u64, u32, u32, u32)>>,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -861,6 +865,7 @@ impl State {
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_trace: None,
+            hit_trace: None,
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

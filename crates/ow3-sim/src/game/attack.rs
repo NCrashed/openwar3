@@ -238,6 +238,9 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         s.missiles.push(missile);
                         None
                     } else {
+                        if let (Some(trace), Some(at)) = (s.hit_trace.as_mut(), a.hit_at) {
+                            trace.push((tick, at, s.timers.time(), a.target));
+                        }
                         Some((a.target, amount, weapon.attack_type, weapon.area, bash))
                     }
                 }

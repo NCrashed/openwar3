@@ -177,7 +177,11 @@ fn report(name: &str, until: u64) -> Option<u64> {
         .map(|e| (e.0, e.1.clone(), e.2, e.3, e.4))
         .collect();
     ours_events.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
-    let mut game_events: Vec<Logged> = game.into_iter().filter(|e| e.0 <= UNTIL).collect();
+    let kinds = ["update", "wait4", "made_wait20", "blocked"];
+    let mut game_events: Vec<Logged> = game
+        .into_iter()
+        .filter(|e| e.0 <= UNTIL && kinds.contains(&e.1.as_str()))
+        .collect();
     game_events.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
     let same = |a: &Logged, b: &Logged| {
         a.0 == b.0
@@ -360,4 +364,13 @@ fn group_walks_report() {
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
     assert!(tick >= 5479, "first difference at tick {tick}");
+}
+
+/// `c-RYP-1`: peasants harvesting lumber in a block of trees.
+#[test]
+fn lumber_walks_report() {
+    let Some(first) = report("c-RYP-1", 12205) else {
+        return;
+    };
+    eprintln!("lumber: first difference at tick {first}");
 }

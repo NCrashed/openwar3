@@ -43,18 +43,20 @@ fn log() -> Option<(Tracks, Vec<Damage>)> {
             }
             Some(&"d") => {
                 let target = w.get(4).and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
-                // The log's tick counts the script's 0.005 s timer: a hit,
-                // a timer of the main queue, fires before it in its tick, a
-                // missile (troll headhunters) after it, at the end of the
-                // tick (SPEC-0016).
-                let missile = w.get(3) == Some(&"ohun");
-                let tick = if missile { tick } else { tick + 1 };
                 damage.push((tick, target, num(5).unwrap_or(0.0)));
             }
             _ => {}
         }
     }
-    Some((at, damage))
+    // Hits on one target in one tick are one change of life here.
+    let mut merged: Vec<Damage> = Vec::new();
+    for d in damage {
+        match merged.last_mut() {
+            Some(last) if last.0 == d.0 && last.1 == d.1 => last.2 += d.2,
+            _ => merged.push(d),
+        }
+    }
+    Some((at, merged))
 }
 
 /// Where the simulation first leaves the game: per unit, the first
@@ -71,16 +73,31 @@ fn battle_report() {
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.game.state.borrow_mut().hit_trace = Some(Vec::new());
     let mut at: Tracks = BTreeMap::new();
     let mut life: BTreeMap<usize, f32> = BTreeMap::new();
     let mut damage: Vec<Damage> = Vec::new();
     while playback.step_tick() {
         let tick = playback.game.ticks();
+        let hits = playback
+            .game
+            .state
+            .borrow_mut()
+            .hit_trace
+            .replace(Vec::new());
         for (i, u) in playback.game.units().iter().enumerate() {
             at.entry(i).or_default().insert(tick, [u.x, u.y]);
             let before = *life.entry(i).or_insert(u.life);
             if u.life < before - 0.001 {
-                damage.push((tick, i, before - u.life));
+                // The log's tick counts the script's 0.005 s timer, which
+                // expires about 0.0001 after the start of the tick: a hit
+                // before it is logged in the tick before; a missile comes
+                // at the end of the tick (SPEC-0016).
+                let early = hits.iter().flatten().any(|&(t, e, end, target)| {
+                    let start = f32::from_bits(end) - 0.005;
+                    t == tick && target == u.handle && f32::from_bits(e) - start <= 0.0001007
+                });
+                damage.push((if early { tick - 1 } else { tick }, i, before - u.life));
             }
             life.insert(i, u.life);
         }
@@ -112,10 +129,10 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 20 hits match (looked at next).
+    // PROVISIONAL: the first 83 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
     assert!(
-        first.is_none_or(|i| i >= 20),
+        first.is_none_or(|i| i >= 83),
         "first difference at hit {first:?}"
     );
 }

@@ -389,6 +389,10 @@ pub struct Walker {
     /// footprint as free (SPEC-0020, "Two searches, and a target's
     /// footprint").
     pub tree: Option<u32>,
+    /// For an order with a range (gathering), the reach in cells and the
+    /// direction of the unit's step (its facing if it stands): arrival
+    /// at its place (SPEC-0019, "Arrival at the member's place").
+    pub arrive: Option<(u32, u32)>,
 }
 
 /// What a chase needs at an update.
@@ -506,7 +510,10 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
-    state.paths.insert(walker.handle, follow);
+    // An arrived unit searches a new path at its next update.
+    if decided != Steer::Hold {
+        state.paths.insert(walker.handle, follow);
+    }
     if let Some(trace) = &mut state.path_trace {
         trace.extend(events);
     }
@@ -556,6 +563,17 @@ fn decide(
         }
         if follow.waypoints.is_empty() {
             return Steer::Walk(walker.order);
+        }
+    }
+    // Arrival at its place: within the order's reach and turned to it;
+    // it stands, keeps its heading, and searches again at its next update
+    // (SPEC-0019; c-RYP-1 peasant 4 at 847).
+    if let Some((reach, direction)) = walker.arrive {
+        let place = to_world(follow.goal);
+        let (dx, dy) = (sub(place[0], walker.here[0]), sub(place[1], walker.here[1]));
+        let off = super::facing::angle_difference(super::movement::angle(dx, dy), direction);
+        if super::movement::in_range(walker.here, place, reach) && real(off).abs() <= 0.2 {
+            return Steer::Hold;
         }
     }
     // A waypoint of a chase path is passed in range of the attack: the

@@ -357,7 +357,7 @@ impl Moving {
 
 /// The angle of vector (`x`, `y`) in `0..2 pi`, through `acos` and `sqrt`
 /// of the engine (SPEC-0018).
-fn angle(x: u32, y: u32) -> u32 {
+pub(super) fn angle(x: u32, y: u32) -> u32 {
     let len = sqrt(add(mul(x, x), mul(y, y)));
     if real_of(len).abs() <= real_of(NO_LENGTH) {
         return 0;
@@ -2377,6 +2377,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             chase: Some(chase_of(state, target, full_reach)),
                             building: None,
                             tree: None,
+                            arrive: None,
                         };
                         // The new goal after a swing comes with an update
                         // standing; a walking attacker first makes the
@@ -2474,6 +2475,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         }
                         _ => None,
                     };
+                    // The reach of a gather order on a tree and the direction of the
+                    // step (SPEC-0019, "Arrival at the member's place").
+                    let arrive = tree.is_some().then(|| {
+                        let [vx, vy] = m.velocity;
+                        let direction = if m.walking && m.velocity != [0, 0] {
+                            angle(vx, vy)
+                        } else {
+                            state.unit(Some(h)).map_or(m.heading, |u| u.facing)
+                        };
+                        (GATHER_REACH, direction)
+                    });
                     let walker = |order| follow::Walker {
                         handle: h,
                         here,
@@ -2484,6 +2496,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         chase,
                         building,
                         tree,
+                        arrive,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -2663,6 +2676,9 @@ const FOLLOW_RANGE: u32 = 0x4396_0000;
 const FOLLOWER_FIRST_RENEWAL: u32 = 18;
 /// Updates from a follower's renewal to the next one, less one.
 const FOLLOWER_RENEWAL: u32 = 16;
+/// The reach of a gather order in cells: 132 / 32 (the gather range
+/// 116 of `Ahar` plus 16, read for a peasant; SPEC-0019).
+const GATHER_REACH: u32 = 0x4084_0000;
 
 /// The collision size of unit `h`, 0 for none.
 fn collision_of(state: &State, h: u32) -> u32 {
@@ -2870,6 +2886,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
             chase: Some(chase_of(state, target, reach)),
             building: None,
             tree: None,
+            arrive: None,
         };
         follow::search(state, &walker, tick);
     }

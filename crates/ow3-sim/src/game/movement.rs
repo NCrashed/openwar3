@@ -2817,6 +2817,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             });
             if let Some(better) = targets.better_than(state, h, current)
                 && let Some(at) = position_of(state, better)
+                && {
+                    // A walking attacker stops at once (SPEC-0019).
+                    freeze(state, h);
+                    true
+                }
                 && order(state, h, Order::Attack { target: better }, 0, at)
             {
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h)

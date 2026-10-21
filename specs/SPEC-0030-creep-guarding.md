@@ -95,6 +95,18 @@ Each creep has its own check, made at fixed times:
   timer of `GuardReturnTime` (5.0 s, 1000 ticks) starts; when it
   expires the creep gets the `move` order home. Attacks on the creep or
   by it in the meantime do not change the timer.
+- **The timers.** Both are timers of the engine's queue (SPEC-0002):
+  the check timer starts at the queue time of the fight entry and
+  repeats with expiries `e(n + 1) = add(e(n), 2.0)` (the truncating add
+  of SPEC-0004); the return timer starts at the expiry of the check
+  that found the creep outside and expires at `add(e, 5.0)`. Each fires
+  in the tick `k` with `Q(k) < e <= Q(k + 1)`, so over a long fight the
+  ticks drift from the "400 and 1000 ticks" count. Replay `c-RXD-1`
+  (creeps 6 to 9, read in the game): start 7.7798247 (tick 1557),
+  checks 9.7798243 ... 17.7798233 (ticks 1957 ... 3557, bit for bit by
+  the add), outside at 17.7798233, return at 22.7798233, which falls in
+  tick 4557 by this rule (Q(4557) = 22.7771778, Q(4558) = 22.7821770):
+  the move order home of all four.
 
 So the time from the passing of 600 to the turn is 1000 ticks plus the
 wait for the next check (0 to 400 ticks) plus the time the creep needs to

@@ -692,11 +692,12 @@ enum Task {
     },
 }
 
-/// Game state shared with the natives.
 /// A unit's motion after an update: tick, unit, committed position and
-/// velocity (world units relative to the corner), stored heading.
-pub type AgentRecord = (u64, u32, [u32; 2], [u32; 2], u32);
+/// velocity (world units relative to the corner), stored heading and
+/// the point steered to (as given to the motion).
+pub type AgentRecord = (u64, u32, [u32; 2], [u32; 2], u32, [u32; 2]);
 
+/// Game state shared with the natives.
 pub struct State {
     pub clock: FrameClock,
     pub timers: TimerQueue<u32>,

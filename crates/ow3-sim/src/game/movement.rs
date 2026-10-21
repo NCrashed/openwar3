@@ -234,6 +234,8 @@ pub struct Moving {
     swing_gate: Option<u64>,
     /// The next goal of a resumed chase comes with an update standing.
     renew_stands: bool,
+    /// The point the last update steered to, for the trace.
+    aim: [u32; 2],
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
     given: u64,
@@ -390,6 +392,7 @@ fn motion(
     window: u32,
 ) -> bool {
     let (h, d) = heading_and_turn(m, target);
+    m.aim = target;
     let moves = may_move && real_of(d).abs() < real_of(window) && real_of(speed) > 0.0;
     let h = if real_of(d).abs() <= real_of(turn_rate) {
         add(h, d)
@@ -521,6 +524,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             given,
             swing_gate: None,
             swing_waits: false,
+            aim: [0, 0],
         },
     };
     state.orders_given = given;
@@ -1599,7 +1603,7 @@ fn freeze(state: &mut State, h: u32) {
         m.commit(clock);
         m.velocity = [0, 0];
         m.walking = false;
-        let record = (state.ticks, h, m.origin, m.velocity, m.heading);
+        let record = (state.ticks, h, m.origin, m.velocity, m.heading, [0, 0]);
         if let Some(trace) = state.agent_trace.as_mut() {
             trace.push(record);
         }
@@ -2302,6 +2306,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             cluster: 1,
                             chase: Some(chase_of(state, target, full_reach)),
                             building: None,
+                            tree: None,
                         };
                         // The new goal after a swing comes with an update
                         // standing; a walking attacker first makes the
@@ -2380,6 +2385,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             .map(|_| target),
                         _ => None,
                     };
+                    let tree = match m.order {
+                        Order::Gather { target } if building.is_none() => Some(target),
+                        _ => None,
+                    };
                     // A follower's search ends touching its leader, as a
                     // chase's (c-RTW-3: 828 at 5413).
                     let chase = match m.order {
@@ -2400,6 +2409,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         cluster,
                         chase,
                         building,
+                        tree,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -2503,7 +2513,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         }
         state.updated.insert(h);
         if let Some(trace) = state.agent_trace.as_mut() {
-            trace.push((tick, h, m.origin, m.velocity, m.heading));
+            trace.push((tick, h, m.origin, m.velocity, m.heading, m.aim));
         }
         if let Some(target) = begin_attack {
             super::attack::begin(state, h, target, tick, m.order_id);
@@ -2770,6 +2780,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
             cluster: 1,
             chase: Some(chase_of(state, target, reach)),
             building: None,
+            tree: None,
         };
         follow::search(state, &walker, tick);
     }

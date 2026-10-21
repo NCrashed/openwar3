@@ -235,6 +235,39 @@ impl Grid {
         self.state_at(l, u >> l, v >> l)
     }
 
+    /// Runs `f` on this grid with the 3 x 3 blocks centred on the block of
+    /// point `p` (cells) free whatever covers them, the larger squares
+    /// taken from them (SPEC-0020, "Two searches, and a target's
+    /// footprint").
+    pub fn with_free_around<R>(&mut self, p: [u32; 2], f: impl FnOnce(&Grid) -> R) -> R {
+        let c = (floor(p[0]) >> 1, floor(p[1]) >> 1);
+        let saved = self.levels.clone();
+        let blocks: Vec<(i32, i32)> = (c.1 - 1..=c.1 + 1)
+            .flat_map(|v| (c.0 - 1..=c.0 + 1).map(move |u| (u, v)))
+            .filter(|&(u, v)| u >= 0 && v >= 0)
+            .collect();
+        for l in 0..4 {
+            let squares: std::collections::BTreeSet<(i32, i32)> =
+                blocks.iter().map(|&(u, v)| (u >> l, v >> l)).collect();
+            for (u, v) in squares {
+                let level = &self.levels[l as usize];
+                if u >= level.columns || v >= level.rows {
+                    continue;
+                }
+                let state = if l == 0 {
+                    State::Free
+                } else {
+                    self.computed(l, u, v)
+                };
+                let columns = level.columns;
+                self.levels[l as usize].states[(v * columns + u) as usize] = state;
+            }
+        }
+        let r = f(self);
+        self.levels = saved;
+        r
+    }
+
     /// `F(u, v)`: whether block (`u`, `v`) is free.
     fn block_free(&self, u: i32, v: i32) -> bool {
         self.holding(0, u, v) == Some(State::Free)
@@ -1048,6 +1081,23 @@ impl<'a> HighLevel<'a> {
 /// `class`: waypoints in blocks from the start to the end, or `None` when
 /// the start block is not free.
 pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Found> {
+    high_level_limited(grid, s, g, class, HIGH_LEVEL_LIMIT)
+}
+
+/// The cost of the first high-level search of a path, with the limit 5000
+/// (SPEC-0021, "High-level budgets"): its removals.
+pub fn high_level_cost(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> u32 {
+    high_level_limited(grid, s, g, class, 5000).map_or(0, |f| f.iterations)
+}
+
+/// The high-level search with iteration limit `limit`.
+fn high_level_limited(
+    grid: &Grid,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+) -> Option<Found> {
     let block = |p: [u32; 2]| (floor(p[0]) >> 1, floor(p[1]) >> 1);
     let to_blocks = |p: [u32; 2]| p.map(|c| mul(c, HALF));
     let (sb, gb) = (block(s), block(g));
@@ -1120,7 +1170,7 @@ pub fn high_level(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Fo
                 search.square_neighbours(n);
             }
         }
-        if iterations >= HIGH_LEVEL_LIMIT || search.heap.is_empty() {
+        if iterations >= limit || search.heap.is_empty() {
             break;
         }
     }

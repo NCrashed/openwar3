@@ -694,6 +694,10 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             })
             .collect();
         for w in entering {
+            // Its cells stay where it entered: the units on them are
+            // pushed aside as by a worker that starts to wait (c-RXI-1
+            // tick 3505).
+            push_aside(&mut s, w);
             hide(&mut s, w, true);
             pace(&mut s, w);
         }
@@ -751,11 +755,19 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let entry = s.mines.entry(mine).or_default();
             entry.inside = None;
             // The next waiting one goes in.
-            if left > 0 && !entry.waiting.is_empty() {
-                let next = entry.waiting.remove(0);
+            // Only a worker that has started to wait: one that reached
+            // the mine decides at its next update (c-RXI-1, peasant 4 in
+            // tick 6007).
+            let next = entry
+                .waiting
+                .iter()
+                .position(|w| !entry.starting.iter().any(|(s, _)| s == w));
+            if left > 0
+                && let Some(i) = next
+            {
+                let next = entry.waiting.remove(i);
                 entry.inside = Some((next, tick + IN_MINE));
                 hide(s, next, true);
-                pace(s, next);
             }
             left <= 0
         };
@@ -948,8 +960,27 @@ fn start_waiting(state: &mut State) {
             t > tick
         });
     }
+    // At its update it goes in if the mine is free, else it waits; either
+    // way the units on its cells are pushed aside and the pace of its
+    // gold trip is taken (SPEC-0029).
     for w in due {
-        push_aside(state, w);
+        let free = state
+            .mines
+            .values_mut()
+            .find(|m| m.waiting.contains(&w))
+            .filter(|m| m.inside.is_none());
+        let goes_in = if let Some(mine) = free {
+            mine.waiting.retain(|&x| x != w);
+            mine.inside = Some((w, tick + IN_MINE));
+            true
+        } else {
+            false
+        };
+        // One that goes in is hidden by the entries of this tick.
+        if !goes_in {
+            push_aside(state, w);
+            pace(state, w);
+        }
     }
 }
 

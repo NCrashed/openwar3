@@ -43,6 +43,9 @@ const LONG_SEARCH: u32 = 64;
 const HOLD: u64 = 60;
 /// Iterations of local searches per window (SPEC-0021).
 const BUDGET: u32 = 1100;
+/// Iterations of the first high-level searches of new paths per update
+/// cycle (SPEC-0021, "High-level budgets": the 2000 / 300 table).
+const HIGH_BUDGET: u32 = 300;
 /// Updates a unit waits for a moving one, and makes a slower one wait.
 const WAIT: u32 = 5;
 const MADE_TO_WAIT: u32 = 20;
@@ -115,12 +118,15 @@ pub enum Steer {
 pub struct Budget {
     window: u64,
     used: u32,
+    /// The iterations of high-level searches this update cycle.
+    high: u32,
 }
 
 impl Budget {
     /// The count starts again before every second update cycle, those
     /// with an odd number (SPEC-0021, "The window is two update cycles").
     pub(super) fn cycle(&mut self, number: u64) {
+        self.high = 0;
         if number % 2 == 1 {
             self.window = number;
             self.used = 0;
@@ -377,6 +383,10 @@ pub struct Walker {
     /// takes its footprint as free, and the last local search ends
     /// touching its red cells, which are not obstacles it met (SPEC-0029).
     pub building: Option<u32>,
+    /// For a walk to a tree, the tree: the high-level search takes its
+    /// footprint as free (SPEC-0020, "Two searches, and a target's
+    /// footprint").
+    pub tree: Option<u32>,
 }
 
 /// What a chase needs at an update.
@@ -416,12 +426,35 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         .and_then(|b| b.footprint.as_ref())
         .map(|f| (f.red().to_vec(), f.green().to_vec()));
     let fresh = !state.paths.contains_key(&walker.handle);
+    // A new path finding the high-level budget used up is refused for
+    // the tick (SPEC-0021, "High-level budgets").
+    if fresh && state.budget.high > HIGH_BUDGET {
+        return Steer::Stand(walker.order);
+    }
     let lifted = footprint.as_ref().filter(|_| fresh);
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
         grid.stamp(red, green, false);
     }
-    let high = fresh
-        .then(|| path::high_level(state.grid.as_ref().unwrap(), at, order_cells, walker.class));
+    // The first search, with limit 5000, is counted in the budget; the
+    // path comes from the second (SPEC-0020, "Two searches, and a
+    // target's footprint"). For a tree the blocks around it are free.
+    let class = walker.class;
+    let both = |grid: &Grid| {
+        (
+            path::high_level_cost(grid, at, order_cells, class),
+            path::high_level(grid, at, order_cells, class),
+        )
+    };
+    let high = fresh.then(|| {
+        let grid = state.grid.as_mut().unwrap();
+        let (cost, found) = if walker.tree.is_some() {
+            grid.with_free_around(order_cells, both)
+        } else {
+            both(grid)
+        };
+        state.budget.high += cost;
+        found
+    });
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
         grid.stamp(red, green, true);
     }

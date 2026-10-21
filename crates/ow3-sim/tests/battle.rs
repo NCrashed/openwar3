@@ -309,7 +309,7 @@ fn battle_agents_report() {
         .as_deref()
         .unwrap_or(&[])
         .iter()
-        .filter_map(|&(t, h, p, v, heading)| {
+        .filter_map(|&(t, h, p, v, heading, _)| {
             let i = handles.iter().position(|&x| x == h)?;
             Some((
                 (t, i),

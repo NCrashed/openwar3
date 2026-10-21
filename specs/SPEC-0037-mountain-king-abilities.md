@@ -65,6 +65,20 @@ In all three stuns the order came back 2 or 3 ticks later than `Dur`
 the updates in the next tick; these numbers are corrected for that).
 Whether the end waits for the unit's next update is open.
 
+### The order after a stun
+
+While stunned the unit makes no updates of its walk (no member step,
+no look-ahead check). When the stun ends its order is given again as
+if new: a new cluster is made (SPEC-0025), and at the unit's next
+update the cluster's search (limit 5000), its own search (limit 400)
+and the local search are made from where it stands, and it walks on
+from there. Replay `c-RXD-1`, worker 5 walking to the mine (read in
+the game): stopped in tick 4337 at (439.3159, 386.1949) cells (speed
+0, order stunned); no updates until the order came back in tick 4739
+(402 ticks later, as above); in 4741 a new cluster, the three searches
+from (439.3159, 386.1949) towards the mine's point (448, 384), local
+path of 5 points; it walked from 4747.
+
 ## Edge cases
 
 - Storm bolt and bash damage ignore the armor value; storm bolt against

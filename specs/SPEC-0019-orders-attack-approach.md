@@ -575,10 +575,9 @@ time to time:
   above holds (the goal point is within range) and the swing waits for
   the cooldown. It is facing its heading by tick 2143; after the new
   goal of 2149 its heading was 5.2104 and it walked from 2155 (read in
-  the game). A switch of target
-  during the backswing (creep 8 in tick 2007, creep 6 in tick 2031) did
-  not change these ticks: the goal at the end of the backswing is taken
-  for the new target.
+  the game). A switch of target during the backswing (creep 8 in tick
+  2007, creep 6 in tick 2031) is taken at once (next paragraph); it did
+  not change these ticks.
 - A target moved with `SetUnitPosition` by 40 or more while the attacker
   walked made the attacker go straight to the new place (it took a new
   goal at once); moved by 20 it did not, the attacker stopped near the
@@ -841,6 +840,16 @@ An idle unit with a weapon attacks an enemy unit on its own:
   periodic check at 13.5099993 (tick 2703) and grunt 13 by a call for
   help at 13.5299950 (2707), and after its backswing ended (13.5899954)
   its 0.01 s check took 10 with a reaction delay of 0.146777.
+  When the current target is still alive and such a check in the
+  backswing finds a better target (the rating above), the switch is
+  made at once: the unit takes the new target and from its next
+  standing updates turns towards it by its turn rate, still in its
+  backswing; the swing at the new target waits for the cooldown as
+  usual. `c-RXD-1` creep 7: damage point on worker 5 and, in the same
+  tick 4457, a check that took a new target; at its updates of 4459 and
+  4465 (speed 0) its heading went 6.204931 -> 5.704931 -> 5.210267 (the
+  direction to the new target), then stayed until 4561. (Implemented
+  this way, the replay's path events match to 4747.)
 - **Cooldown expiry.** When the cooldown of the last swing expires, the
   swing starts in that timer's callback if the unit's last update found
   it ready (target in range and heading within 0.2 rad of it, the test

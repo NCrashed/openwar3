@@ -1269,6 +1269,9 @@ mod tests {
             resources: 0,
             chopping: None,
             follower_stands: false,
+            level: 0,
+            xp: 0,
+            attributes: [0; 3],
         }
     }
 

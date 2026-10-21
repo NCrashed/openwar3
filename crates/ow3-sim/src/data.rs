@@ -76,6 +76,12 @@ pub struct UnitType {
     /// A hero's primary attribute (`Primary`: STR, AGI or INT), as a
     /// real; 0 for others.
     pub primary: u32,
+    /// Which attribute is primary: 1 strength, 2 agility, 3
+    /// intelligence, 0 none.
+    pub primary_attribute: u8,
+    /// A hero's attribute gains per level (`STRplus`, `AGIplus`,
+    /// `INTplus`), as reals (SPEC-0034).
+    pub attribute_plus: [u32; 3],
     /// Weapon 1 (SPEC-0016), if the type has one; weapon 2 when only it is
     /// on.
     pub weapon: Option<Weapon>,
@@ -643,6 +649,9 @@ impl ObjectData {
                 "sight",
                 "nsight",
                 "level",
+                "STRplus",
+                "AGIplus",
+                "INTplus",
             ],
         )? {
             let b = Balance {
@@ -674,6 +683,13 @@ impl ObjectData {
                 unit.sight = real(values[21].as_ref());
                 unit.night_sight = real(values[22].as_ref());
                 unit.level = cost(values[23].as_ref());
+                unit.attribute_plus = [24, 25, 26].map(|i| real(values[i].as_ref()));
+                unit.primary_attribute = match values[12].as_deref() {
+                    Some("STR") => 1,
+                    Some("AGI") => 2,
+                    Some("INT") => 3,
+                    _ => 0,
+                };
                 unit.primary = match values[12].as_deref() {
                     Some("STR") => b.strength,
                     Some("AGI") => unit.agility,
@@ -848,6 +864,14 @@ impl ObjectData {
             }
             if let Some(orient) = def.number(b"uori") {
                 unit.orient_interp = f32::from_bits(orient) as u8;
+            }
+            if let Some(p) = def.text(b"upra") {
+                unit.primary_attribute = match p.to_ascii_uppercase().as_str() {
+                    "STR" => 1,
+                    "AGI" => 2,
+                    "INT" => 3,
+                    _ => 0,
+                };
             }
             unit.primary = match def.text(b"upra") {
                 Some(p) if p.eq_ignore_ascii_case("STR") => b.strength,

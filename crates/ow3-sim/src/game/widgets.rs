@@ -114,7 +114,7 @@ fn item(state: &State, h: Option<u32>) -> Option<&Item> {
 }
 
 #[derive(Clone, Copy)]
-enum Attribute {
+pub(super) enum Attribute {
     Strength,
     Agility,
     Intelligence,
@@ -122,7 +122,7 @@ enum Attribute {
 
 /// Sets an attribute of hero `h` (SPEC-0013, "Hero attributes"). Gives the
 /// life to set through [`set_unit_life`] when the hero dies of it.
-fn set_attribute(
+pub(super) fn set_attribute(
     state: &mut State,
     h: Option<u32>,
     attribute: Attribute,
@@ -279,6 +279,8 @@ pub(super) fn create_unit(
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,
         intelligence: data.intelligence,
+        xp: 0,
+        level: i64::from(is_hero(type_id)),
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -401,6 +403,10 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
         // A dead destructable blocks by its texture of death, a dead
         // building no more (SPEC-0022).
         super::obstacles::died(&mut state, widget);
+        // The heroes near a dying unit take its experience (SPEC-0033).
+        if state.unit(Some(widget)).is_some() {
+            super::heroes::death(&mut state, widget);
+        }
         let owner = state.unit(Some(widget)).map(|u| u.owner);
         // Its food is freed (SPEC-0027): the food used of a unit, the food
         // of a finished building.
@@ -667,7 +673,9 @@ fn damage_unit(
             .cloned()
             .unwrap_or_default();
         let armor = if is_hero(unit.type_id) {
-            state.combat.hero_armor(data.armor, data.agility)
+            state
+                .combat
+                .hero_armor(data.armor, ow3_math::i2r(unit.agility))
         } else {
             data.armor
         };
@@ -916,19 +924,6 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "constant native IsHeroUnitId takes integer unitId returns boolean",
         |vm, state, args| { Ok(Some(Value::Boolean(is_hero(integer(&args[0]))))) }
     );
-    // PROVISIONAL: heroes do not gain experience yet, so a hero is level 1.
-    native!(
-        add,
-        state,
-        "constant native GetHeroLevel takes unit whichHero returns integer",
-        |vm, state, args| {
-            let level = state
-                .borrow()
-                .unit(handle(&args[0]))
-                .map_or(0, |u| i32::from(is_hero(u.type_id)));
-            Ok(Some(Value::Integer(level)))
-        }
-    );
     // Hero attributes (SPEC-0013, "Hero attributes"): a change takes
     // effect at once, `permanent` or not. Strength moves max life by 25 a
     // point and the life by as much, to no less than 1, and restarts the
@@ -988,8 +983,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         });
     }
     // A hero starts with 1 skill point when its type has hero data, with
-    // 0 when it is made from another type (SPEC-0009). PROVISIONAL: there
-    // are no levels and no skills to spend them on yet.
+    // 0 when it is made from another type (SPEC-0009), and gains one a
+    // level (SPEC-0034). PROVISIONAL: no skills to spend them on yet.
     native!(
         add,
         state,
@@ -998,7 +993,12 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let state = state.borrow();
             let points = state.unit(handle(&args[0])).map_or(0, |u| {
                 let data = state.data.units.get(&u.type_id);
-                i32::from(is_hero(u.type_id) && data.is_some_and(|t| t.hero_data))
+                let first = i32::from(data.is_some_and(|t| t.hero_data));
+                if is_hero(u.type_id) {
+                    first + (u.level as i32 - 1).max(0)
+                } else {
+                    0
+                }
             });
             Ok(Some(Value::Integer(points)))
         }

@@ -55,6 +55,7 @@ pub mod fog;
 pub mod follow;
 mod formation;
 mod harvest;
+mod heroes;
 mod movement;
 mod obstacles;
 pub mod players;
@@ -194,6 +195,9 @@ pub struct Unit {
     strength: i32,
     agility: i32,
     intelligence: i32,
+    /// A hero's experience and level (SPEC-0033); level 0 for others.
+    xp: i64,
+    level: i64,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -453,6 +457,11 @@ pub struct UnitView {
     /// A follower standing in its follow range, its order going on
     /// (SPEC-0019).
     pub follower_stands: bool,
+    /// A hero's level and experience (0 for other units), and its
+    /// strength, agility and intelligence (SPEC-0033, SPEC-0034).
+    pub level: i64,
+    pub xp: i64,
+    pub attributes: [i32; 3],
 }
 
 /// An attack in progress, in ticks.
@@ -1461,6 +1470,9 @@ impl<'a> Game<'a> {
                     }),
                     resources: u.resources,
                     follower_stands: u.movement.is_some_and(|m| m.follower_stands()),
+                    level: u.level,
+                    xp: u.xp,
+                    attributes: [u.strength, u.agility, u.intelligence],
                     chopping: harvest::chopping(&state, handle),
                 }),
                 _ => None,
@@ -2862,6 +2874,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
+    heroes::register(&mut add, state);
 
     movement::register(&mut add, state);
     fog::register(&mut add, state);

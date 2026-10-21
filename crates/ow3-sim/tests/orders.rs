@@ -58,6 +58,7 @@ native IssueImmediateOrderById takes unit whichUnit, integer order returns boole
 type location extends agent
 native Location takes real x, real y returns location
 native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean
+native SetHeroLevel takes unit whichHero, integer level, boolean showEyeCandy returns nothing
 globals
     unit a = null
     unit t = null
@@ -1174,4 +1175,45 @@ fn a_creep_turns_home_after_its_guard_check() {
         "{end:?}"
     );
     assert_eq!(end.order, 0);
+}
+
+/// SPEC-0034, verification 1, and SPEC-0033, levels: a paladin set to
+/// level 10 has 5400 XP, STR 46 and 1250 life.
+#[test]
+fn hero_level_ten() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)",
+        "call SetHeroLevel(a, 10, false)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 2);
+    let u = path.last().unwrap().1[0];
+    assert_eq!((u.level, u.xp), (10, 5400));
+    assert_eq!(u.attributes[0], 46);
+    assert_eq!(u.max_life, 1250.0);
+}
+
+/// SPEC-0033, experience from a death: a footman of an enemy gives 40, a
+/// kobold of the creeps 25 x 0.8 = 20 at level 1 and 25 x 0.7 = 17.5,
+/// rounded to 18, at level 2.
+#[test]
+fn hero_experience_from_deaths() {
+    for (victim, owner, level, xp) in [
+        ("hfoo", 1, 1, 40),
+        ("nkob", 12, 1, 20),
+        ("nkob", 12, 2, 218),
+    ] {
+        let units = format!(
+            "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)\n    set t = CreateUnit(Player({owner}), '{victim}', 200, 0, 0)"
+        );
+        let orders = format!("call SetHeroLevel(a, {level}, false)\n    call KillUnit(t)");
+        let Some(mut game) = game(&units, &orders, |_| {}) else {
+            return;
+        };
+        let path = run(&mut game, ORDER_TICK + 2);
+        let u = path.last().unwrap().1[0];
+        assert_eq!(u.xp, xp, "{victim} at level {level}");
+    }
 }

@@ -56,6 +56,8 @@ pub struct Combat {
     pub creep_call_for_help: u32,
     pub guard_distance: u32,
     pub guard_return_time: u32,
+    /// Hero experience and attributes (SPEC-0033, SPEC-0034).
+    pub heroes: Heroes,
 }
 
 impl Default for Combat {
@@ -70,6 +72,7 @@ impl Default for Combat {
             creep_call_for_help: s2r("600"),
             guard_distance: s2r("600"),
             guard_return_time: s2r("5"),
+            heroes: Heroes::default(),
         }
     }
 }
@@ -99,6 +102,7 @@ impl Combat {
                 "CreepCallForHelp" => combat.creep_call_for_help = s2r(value),
                 "GuardDistance" => combat.guard_distance = s2r(value),
                 "GuardReturnTime" => combat.guard_return_time = s2r(value),
+                _ if combat.heroes.set(key, value) => {}
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {
                         for (slot, v) in combat.bonus[attack].iter_mut().zip(value.split(',')) {
@@ -319,5 +323,168 @@ mod tests {
         // The paladin: 2 - 2 + 0.3 * 13.
         let armor = combat.hero_armor(bits(2.0), bits(13.0));
         assert!((f32::from_bits(armor) - 3.9).abs() < 1e-6);
+    }
+}
+
+/// A table of `[Misc]` whose later values follow a formula (SPEC-0033):
+/// the listed values from index `first` on, then
+/// `f(x) = A * f(x - 1) + B * x + C`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct XpTable {
+    pub listed: Vec<i64>,
+    pub formula: [i64; 3],
+    /// The index of the first listed value.
+    pub first: i64,
+}
+
+impl XpTable {
+    /// The value at index `x`; 0 below the first index.
+    pub fn value(&self, x: i64) -> i64 {
+        if x < self.first || self.listed.is_empty() {
+            return 0;
+        }
+        let at = (x - self.first) as usize;
+        if let Some(&v) = self.listed.get(at) {
+            return v;
+        }
+        let [a, b, c] = self.formula;
+        let mut v = *self.listed.last().unwrap();
+        for i in self.first + self.listed.len() as i64..=x {
+            v = a
+                .saturating_mul(v)
+                .saturating_add(b.saturating_mul(i))
+                .saturating_add(c);
+        }
+        v
+    }
+}
+
+/// The hero constants of `[Misc]` (SPEC-0033, SPEC-0034).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Heroes {
+    /// XP to reach a level (`NeedHeroXP`, indexed by that level from 2).
+    pub need_xp: XpTable,
+    /// XP for the death of a hero or another unit of a level.
+    pub grant_hero_xp: XpTable,
+    pub grant_normal_xp: XpTable,
+    /// Percent of a creep's XP by the hero's level (`HeroFactorXP`).
+    pub factor_xp: Vec<i64>,
+    pub max_level: i64,
+    /// `HeroExpRange`, as a real.
+    pub exp_range: u32,
+    /// `StrHitPointBonus`, `IntManaBonus`, `AgiAttackSpeedBonus`,
+    /// `StrAttackBonus`, as reals.
+    pub str_life: u32,
+    pub int_mana: u32,
+    pub agi_attack_speed: u32,
+    pub str_attack: u32,
+}
+
+impl Default for Heroes {
+    fn default() -> Heroes {
+        Heroes {
+            need_xp: XpTable {
+                listed: vec![200],
+                formula: [1, 100, 0],
+                first: 2,
+            },
+            grant_hero_xp: XpTable {
+                listed: vec![100, 120, 160, 220, 300],
+                formula: [1, 0, 100],
+                first: 1,
+            },
+            grant_normal_xp: XpTable {
+                listed: vec![25],
+                formula: [1, 5, 5],
+                first: 1,
+            },
+            factor_xp: vec![80, 70, 60, 50, 0],
+            max_level: 10,
+            exp_range: s2r("1200"),
+            str_life: s2r("25"),
+            int_mana: s2r("15"),
+            agi_attack_speed: s2r("0.02"),
+            str_attack: s2r("1.0"),
+        }
+    }
+}
+
+impl Heroes {
+    /// Takes `key = value` if it is one of the hero constants.
+    fn set(&mut self, key: &str, value: &str) -> bool {
+        let list = || -> Vec<i64> {
+            value
+                .split(',')
+                .filter_map(|v| v.trim().parse::<f64>().ok())
+                .map(|v| v as i64)
+                .collect()
+        };
+        let number = || value.trim().parse::<f64>().map_or(0, |v| v as i64);
+        let formula = |table: &mut XpTable, letter: &str| match letter {
+            "A" => table.formula[0] = number(),
+            "B" => table.formula[1] = number(),
+            _ => table.formula[2] = number(),
+        };
+        match key {
+            "NeedHeroXP" => self.need_xp.listed = list(),
+            "GrantHeroXP" => self.grant_hero_xp.listed = list(),
+            "GrantNormalXP" => self.grant_normal_xp.listed = list(),
+            "HeroFactorXP" => self.factor_xp = list(),
+            "MaxHeroLevel" => self.max_level = number(),
+            "HeroExpRange" => self.exp_range = s2r(value),
+            "StrHitPointBonus" => self.str_life = s2r(value),
+            "IntManaBonus" => self.int_mana = s2r(value),
+            "AgiAttackSpeedBonus" => self.agi_attack_speed = s2r(value),
+            "StrAttackBonus" => self.str_attack = s2r(value),
+            _ => {
+                let tables = [
+                    ("NeedHeroXPFormula", &mut self.need_xp),
+                    ("GrantHeroXPFormula", &mut self.grant_hero_xp),
+                    ("GrantNormalXPFormula", &mut self.grant_normal_xp),
+                ];
+                for (prefix, table) in tables {
+                    if let Some(letter) = key.strip_prefix(prefix) {
+                        formula(table, letter);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The XP a hero needs for level `level` (0 for level 1).
+    pub fn xp_for_level(&self, level: i64) -> i64 {
+        self.need_xp.value(level)
+    }
+
+    /// The highest level reached with `xp`.
+    pub fn level_of(&self, xp: i64) -> i64 {
+        let mut level = 1;
+        while level < self.max_level && xp >= self.xp_for_level(level + 1) {
+            level += 1;
+        }
+        level
+    }
+}
+
+#[cfg(test)]
+mod hero_tests {
+    use super::*;
+
+    /// SPEC-0033, the tables beyond their listed values.
+    #[test]
+    fn xp_tables() {
+        let h = Heroes::default();
+        let need: Vec<i64> = (2..=10).map(|l| h.xp_for_level(l)).collect();
+        assert_eq!(need, [200, 500, 900, 1400, 2000, 2700, 3500, 4400, 5400]);
+        let normal: Vec<i64> = (1..=5).map(|l| h.grant_normal_xp.value(l)).collect();
+        assert_eq!(normal, [25, 40, 60, 85, 115]);
+        let hero: Vec<i64> = (1..=10).map(|l| h.grant_hero_xp.value(l)).collect();
+        assert_eq!(hero, [100, 120, 160, 220, 300, 400, 500, 600, 700, 800]);
+        assert_eq!(h.level_of(199), 1);
+        assert_eq!(h.level_of(200), 2);
+        assert_eq!(h.level_of(6000), 10);
     }
 }

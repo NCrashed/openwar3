@@ -149,20 +149,19 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             };
             match attack {
                 Some(a) if a.next <= tick && standing(s, a.target) => {
-                    let data = s.data.units.get(&type_id);
                     let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
-                    let primary = data.filter(|_| is_hero(type_id)).map_or(0, |t| t.primary);
+                    let primary = hero_primary(s, h);
+                    let cooldown = hero_cooldown(s, h, weapon.cooldown);
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-                        let next = a.next + ticks(weapon.cooldown);
+                        let next = a.next + ticks(cooldown);
                         let end = tick + ticks(weapon.backswing);
                         let resume = Some(end + 1);
                         // The next swing, and with it the new goal of a
                         // chase, at the first update from `D + cool -
                         // dmgpt` on (SPEC-0019).
                         let renew_at = Some(
-                            (tick + ticks(weapon.cooldown))
-                                .saturating_sub(ticks(weapon.damage_point)),
+                            (tick + ticks(cooldown)).saturating_sub(ticks(weapon.damage_point)),
                         );
                         u.attack = Some(Attacking {
                             next,
@@ -534,4 +533,39 @@ pub(super) fn views(state: &State) -> Vec<MissileView> {
             })
         })
         .collect()
+}
+
+/// The primary attribute of hero `h` times `StrAttackBonus`, added to the
+/// damage of its hits (SPEC-0034); 0 for other units.
+fn hero_primary(state: &State, h: u32) -> u32 {
+    let Some(u) = state.unit(Some(h)).filter(|u| is_hero(u.type_id)) else {
+        return 0;
+    };
+    let points = match state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0, |t| t.primary_attribute)
+    {
+        1 => u.strength,
+        2 => u.agility,
+        3 => u.intelligence,
+        _ => 0,
+    };
+    mul(ow3_math::i2r(points), state.combat.heroes.str_attack)
+}
+
+/// The seconds between the hits of `h` with a weapon of `cooldown`: for a
+/// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034).
+fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
+    match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
+        Some(u) => {
+            let speed = mul(
+                state.combat.heroes.agi_attack_speed,
+                ow3_math::i2r(u.agility),
+            );
+            div(cooldown, add(1.0f32.to_bits(), speed))
+        }
+        None => cooldown,
+    }
 }

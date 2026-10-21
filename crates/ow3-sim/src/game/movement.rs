@@ -3179,8 +3179,9 @@ fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
 }
 
 /// Whether unit `h`, attacking `current` on its own, takes `other` that
-/// calls for help instead: `other` in range of its attack and `current`
-/// out of it (SPEC-0019, "Checks while attacking").
+/// calls for help instead, by the rating of its checks: in range before
+/// out of range, the target in range kept, else by what the enemy does and
+/// then the nearer (SPEC-0019, "Checks while attacking").
 fn prefers(state: &State, h: u32, current: u32, other: u32) -> bool {
     let Some(u) = state.unit(Some(h)) else {
         return false;

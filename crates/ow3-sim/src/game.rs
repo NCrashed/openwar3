@@ -786,6 +786,8 @@ pub struct State {
     /// The place of each group member's last search, in cells
     /// (SPEC-0025, "When a member searches again").
     member_places: BTreeMap<u32, [u32; 2]>,
+    /// Each member's place as laid out now, in cells.
+    member_now: BTreeMap<u32, [u32; 2]>,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -909,6 +911,7 @@ impl State {
             hit_trace: None,
             agent_trace: None,
             member_places: BTreeMap::new(),
+            member_now: BTreeMap::new(),
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

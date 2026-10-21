@@ -393,6 +393,9 @@ pub struct Walker {
     /// direction of the unit's step (its facing if it stands): arrival
     /// at its place (SPEC-0019, "Arrival at the member's place").
     pub arrive: Option<(u32, u32)>,
+    /// For a member of a cluster of more than one, its place as laid out
+    /// now, in cells.
+    pub place: Option<[u32; 2]>,
 }
 
 /// What a chase needs at an update.
@@ -677,6 +680,29 @@ fn decide(
             return Steer::Stand(segment_goal);
         }
         if follow.final_goal {
+            // A member at the end of its path to an old place, its place
+            // now elsewhere, counts as blocked (SPEC-0025, "Blocked units";
+            // c-RTW-3: 900 at 5545).
+            if let Some(place) = walker.place
+                && !close(at, place)
+            {
+                // Set and lowered in the same update.
+                let fresh = follow.patience == 0;
+                count_block(follow, shared, walker, order, at);
+                if fresh && follow.patience > 1 {
+                    follow.patience -= 1;
+                }
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                follow.next = Next::Search;
+                follow.local.clear();
+                return Steer::Stand(segment_goal);
+            }
             // A walk to a building stands at the end of its path, where it
             // touched the building, before it goes in (SPEC-0029).
             if !shared.building.is_empty() {
@@ -766,17 +792,7 @@ fn decide(
     // block with a counter of 1 is not known (SPEC-0025, open question 5);
     // here the same, with the counter staying 1.
     if !examined.is_empty() {
-        if follow.patience == 0 {
-            let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
-            let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
-            follow.patience = if near && walker.cluster <= 1 {
-                2
-            } else {
-                7 + ((shared.random.step() >> 22) & 1)
-            };
-        } else if follow.patience > 1 {
-            follow.patience -= 1;
-        }
+        count_block(follow, shared, walker, order, at);
     }
     shared.events.push(PathEvent {
         tick,
@@ -788,6 +804,28 @@ fn decide(
     follow.next = Next::Search;
     follow.local.clear();
     Steer::Stand(segment_goal)
+}
+
+/// One more block of a unit's path in a row: the patience counter
+/// (SPEC-0025, "Blocked units").
+fn count_block(
+    follow: &mut Follow,
+    shared: &mut Shared,
+    walker: &Walker,
+    order: [u32; 2],
+    at: [u32; 2],
+) {
+    if follow.patience == 0 {
+        let (dx, dy) = (sub(order[0], at[0]), sub(order[1], at[1]));
+        let near = real(add(mul(dx, dx), mul(dy, dy))) <= NEAR_GOAL;
+        follow.patience = if near && walker.cluster <= 1 {
+            2
+        } else {
+            7 + ((shared.random.step() >> 22) & 1)
+        };
+    } else if follow.patience > 1 {
+        follow.patience -= 1;
+    }
 }
 
 /// The point after `target` and then the farthest one that can be seen

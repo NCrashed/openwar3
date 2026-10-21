@@ -959,6 +959,7 @@ fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
     let square = |p: [u32; 2]| p.map(|c| (real_of(c) as i32) >> 1);
     for (&h, o) in cluster.members.iter().zip(&cluster.offsets) {
         let place = [add(w[0], o[0]), add(w[1], o[1])];
+        state.member_now.insert(h, place);
         // A member whose new place lies in the square of the place of its
         // last search keeps its path and that place (SPEC-0025, "When a
         // member searches again"; c-RTW-3 tick 5539).
@@ -2378,6 +2379,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             building: None,
                             tree: None,
                             arrive: None,
+                            place: None,
                         };
                         // The new goal after a swing comes with an update
                         // standing; a walking attacker first makes the
@@ -2477,15 +2479,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     };
                     // The reach of a gather order on a tree and the direction of the
                     // step (SPEC-0019, "Arrival at the member's place").
-                    let arrive = tree.is_some().then(|| {
-                        let [vx, vy] = m.velocity;
-                        let direction = if m.walking && m.velocity != [0, 0] {
-                            angle(vx, vy)
-                        } else {
-                            state.unit(Some(h)).map_or(m.heading, |u| u.facing)
-                        };
-                        (GATHER_REACH, direction)
-                    });
+                    let arrive = tree.is_some().then_some((GATHER_REACH, m.heading));
+                    let place = (cluster > 1)
+                        .then(|| state.member_now.get(&h).copied())
+                        .flatten();
                     let walker = |order| follow::Walker {
                         handle: h,
                         here,
@@ -2497,6 +2494,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         building,
                         tree,
                         arrive,
+                        place,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or
                     // straight without one.
@@ -2887,6 +2885,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
             building: None,
             tree: None,
             arrive: None,
+            place: None,
         };
         follow::search(state, &walker, tick);
     }

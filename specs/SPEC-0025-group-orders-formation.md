@@ -286,10 +286,15 @@ look-ahead is blocked by units and no unit makes it wait by the rules
 of SPEC-0021 ("Blocked by a unit"):
 
 1. if `P = 0`, it is set:
-   - `P = 2` if the squared distance from the unit's position to its
-     path's goal (for a group member: its place, waypoint plus offset)
-     is at most 144 (12 cells, 384 world units) **and** the unit's
-     cluster has at most one member;
+   - `P = 2` if the squared distance in cells from the unit's position
+     to the end of its high-level path (the goal of its high-level
+     search, or the closest node when that search failed) is at most
+     144 (12 cells, 384 world units) **and** the unit's cluster has at
+     most one member. `c-RYP-1`: peasant 3 at 1435, high-level search
+     to an enclosed tree failed at the closest node (365, 387) cells,
+     squared distance 188.31: 7 or 8, although the tree's point was
+     6.7 cells away; peasant 4 at 1225, path ending at its tree's point,
+     20.13: 2 (both clusters of one, read in the game);
    - otherwise `P = 7 + ((r >> 22) AND 1)` (7 or 8), with `r` one output
      of the **script generator** (SPEC-0007). (The game takes the
      integer part of `(x - 1) * 2` with `x = (r AND 0x7FFFFF) OR

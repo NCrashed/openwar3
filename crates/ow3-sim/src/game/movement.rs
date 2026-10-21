@@ -2457,6 +2457,18 @@ fn chase_of(state: &State, target: u32, reach: u32) -> follow::Chase {
     }
 }
 
+/// Whether unit `h` already chases `target` with a goal taken at this
+/// update.
+pub(super) fn chasing(state: &State, h: u32, target: u32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| {
+            m.order == Order::Attack { target } && m.renew_at.is_none() && m.chase.is_some()
+        })
+        && state.update_now
+}
+
 /// Unit `h` takes up its attack on `target` again after its swing
 /// (SPEC-0019): the goal is where the target is now, its path is searched
 /// at once, the unit moves from its next update on, and at its 12th

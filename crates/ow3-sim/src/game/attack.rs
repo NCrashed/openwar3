@@ -127,7 +127,11 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                     u.attack = None;
                 }
-                super::movement::chase(s, h, a.target, a.order_id, None);
+                // A chase that took its new goal at this update searches
+                // it at the next one (SPEC-0019, "After the swing").
+                if !super::movement::chasing(s, h, a.target) {
+                    super::movement::chase(s, h, a.target, a.order_id, None);
+                }
                 continue;
             }
         }

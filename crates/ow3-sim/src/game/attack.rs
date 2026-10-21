@@ -255,7 +255,15 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         if let (Some(trace), Some(at)) = (s.hit_trace.as_mut(), a.hit_at) {
                             trace.push((tick, at, s.timers.time(), a.target));
                         }
-                        Some((a.target, amount, weapon.attack_type, weapon.area, bash))
+                        // Evasion rolls after the dice; an evaded hit does
+                        // nothing (SPEC-0036).
+                        // PROVISIONAL: measured for melee hits only.
+                        if evades(s, a.target) {
+                            None
+                        } else {
+                            s.event_time = a.hit_at;
+                            Some((a.target, amount, weapon.attack_type, weapon.area, bash))
+                        }
                     }
                 }
                 Some(a) if due(s, &a) => {
@@ -280,6 +288,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 }
             }
             strike(vm, state, h, target, amount, attack_type, area);
+            state.borrow_mut().event_time = None;
         }
         // One tick after the swing the attacker takes a goal again, also
         // with its target in reach, where it stands and turns to its path
@@ -615,6 +624,8 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
         s.missiles = flying;
+        // The impacts come at the end of the tick.
+        s.event_time = Some(next_clock);
         arrived
     };
     for m in arrived {
@@ -642,6 +653,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             ),
         }
     }
+    state.borrow_mut().event_time = None;
 }
 
 /// A missile in flight as a viewer sees it: the type of the unit that
@@ -893,4 +905,42 @@ fn due(state: &State, a: &Attacking) -> bool {
         Some(at) => f32::from_bits(at) <= f32::from_bits(state.timers.time()),
         None => a.next <= state.ticks,
     }
+}
+
+/// Whether unit `target`, with evasion (`AEev`), evades a hit: one more
+/// output of game generator 2, after the attacker's dice, below `DataA`
+/// of its level (SPEC-0036). A paused unit does not roll.
+fn evades(state: &mut State, target: u32) -> bool {
+    let chance = {
+        let Some(u) = state.unit(Some(target)).filter(|u| !u.paused) else {
+            return false;
+        };
+        let evasion = i32::from_be_bytes(*b"AEev");
+        let data = &state.data;
+        let skill = u
+            .skills
+            .iter()
+            .copied()
+            .chain(
+                data.units
+                    .get(&u.type_id)
+                    .into_iter()
+                    .flat_map(|t| t.abilities.iter().map(|&a| (a, 1))),
+            )
+            .find(|&(a, level)| {
+                level > 0 && data.abilities.get(&a).is_some_and(|d| d.code == evasion)
+            });
+        let Some((ability, level)) = skill else {
+            return false;
+        };
+        data.abilities
+            .get(&ability)
+            .and_then(|d| d.per_level.get((level - 1).max(0) as usize))
+            .map(|n| n.data[0])
+    };
+    let Some(chance) = chance else {
+        return false;
+    };
+    let x = state.game_random[ATTACK_DICE].fraction();
+    f32::from_bits(x) < f32::from_bits(chance)
 }

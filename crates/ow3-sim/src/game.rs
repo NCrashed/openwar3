@@ -190,6 +190,9 @@ pub struct Unit {
     /// When its next acquisition check expires on the movement clock: an
     /// engine timer at its creation plus `0.5 * x` s, then every 0.5 s.
     next_acquire: u32,
+    /// The number of the start of that timer, for the order of checks with
+    /// the same expiry.
+    acquire_seq: u64,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0
@@ -762,6 +765,12 @@ pub struct State {
     /// latest first (SPEC-0031, "Groups"), by the number in
     /// `queue::Queued::Group`.
     queued_groups: Vec<Vec<u32>>,
+    /// Starts of acquisition check timers so far.
+    acquire_starts: u64,
+    /// The queue time of what happens now outside a timer callback: the
+    /// expiry of the hit being dealt, or the end of the tick for the
+    /// missiles (SPEC-0016).
+    event_time: Option<u32>,
     /// A queued group order is being laid out again: its members walking
     /// on take their new places without a stop.
     regrouping: bool,
@@ -870,6 +879,8 @@ impl State {
             orders_given: 0,
             group_orders: BTreeSet::new(),
             queued_groups: Vec::new(),
+            acquire_starts: 0,
+            event_time: None,
             regrouping: false,
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),

@@ -33,7 +33,7 @@
 //! (SPEC-0018, open question 1).
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use ow3_jass::semantics::Value;
@@ -2806,7 +2806,15 @@ enum Check {
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let tick = state.ticks;
     let next_clock = add(state.move_clock, crate::timers::TICK);
-    let mut due: Vec<(u32, Check)> = Vec::new();
+    let alive: BTreeSet<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| state.unit(Some(h)).is_some_and(|u| u.alive))
+        .collect();
+    let mut starts = state.acquire_starts;
+    // (expiry, start number, unit, check).
+    let mut due: Vec<(u32, u64, u32, Check)> = Vec::new();
     for i in 0..state.units.len() {
         let h = state.units[i];
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -2828,11 +2836,16 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             },
             (None, None) => None,
         };
+        // A dead target is none.
+        let target = target.filter(|&(t, _)| alive.contains(&t));
         let mut expired = None;
+        let seq = u.acquire_seq;
         if u.acquire_phase != super::NO_PHASE && real_of(u.next_acquire) <= real_of(next_clock) {
             expired = Some(u.next_acquire);
             let period = if target.is_some() { ONE } else { HALF };
             u.next_acquire = add(u.next_acquire, period);
+            starts += 1;
+            u.acquire_seq = starts;
         }
         if u.paused {
             continue;
@@ -2846,15 +2859,15 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                     && u.movement
                         .is_some_and(|m| m.ordered() && m.order == Order::Point);
                 if walking {
-                    due.push((h, Check::AttackMove { expiry }));
+                    due.push((expiry, 0, h, Check::AttackMove { expiry }));
                 }
             }
             continue;
         }
         // An attack the unit took on its own (order id 0) checks for a
         // better target (SPEC-0019, "Checks while attacking").
-        if let (Some(_), Some((current, 0))) = (expired, target) {
-            due.push((h, Check::Attacking { current }));
+        if let (Some(expiry), Some((current, 0))) = (expired, target) {
+            due.push((expiry, seq, h, Check::Attacking { current }));
             continue;
         }
         // Nor one that casts or is stunned (SPEC-0035, SPEC-0037).
@@ -2870,15 +2883,19 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             continue;
         }
         if let Some(expiry) = expired {
-            due.push((h, Check::Idle { expiry }));
+            due.push((expiry, seq, h, Check::Idle { expiry }));
         }
     }
+    state.acquire_starts = starts;
     if due.is_empty() {
         return Vec::new();
     }
+    // The checks are timers: in the order of their expiries, then of their
+    // starts.
+    due.sort_by(|a, b| real_of(a.0).total_cmp(&real_of(b.0)).then(a.1.cmp(&b.1)));
     let targets = Targets::new(state);
     let mut acquired = Vec::new();
-    for (h, check) in due {
+    for (_, _, h, check) in due {
         // A better target than the one attacked: taken at once, without a
         // reaction delay or a call for help (SPEC-0019).
         if let Check::Attacking { current, .. } = check {
@@ -3272,6 +3289,52 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             react(state, h, tick, delay, tick);
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h);
+        }
+    }
+}
+
+/// 0.01 s, the delay of the checks of the attackers of a unit that died.
+const AFTER_DEATH: u32 = 0x3C23_D70A;
+
+/// Unit `dead` died, killed by `killer`: each other unit attacking it
+/// gets its acquisition check timer started again to expire 0.01 s
+/// later, in the order in which they took it as their target, with no
+/// draw; those that took it on their own stop (c-RXR-1: the attackers of
+/// footman 4 in 2360, killed by troll 16).
+///
+/// PROVISIONAL: that the killer is left out (its own check came later).
+pub(super) fn target_died(state: &mut State, dead: u32, killer: Option<u32>) {
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
+    let mut attackers: Vec<(u64, u32, bool)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| u.alive)?;
+            let (target, order_id) = match (u.attack, u.movement) {
+                (Some(a), _) => (a.target, a.order_id),
+                (None, Some(m)) => match m.order {
+                    Order::Attack { target } => (target, m.order_id),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            (target == dead && Some(h) != killer && u.acquire_phase != super::NO_PHASE)
+                .then(|| (u.movement.map_or(0, |m| m.given), h, order_id == 0))
+        })
+        .collect();
+    attackers.sort_unstable();
+    for (_, h, own) in attackers {
+        state.acquire_starts += 1;
+        let seq = state.acquire_starts;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.next_acquire = add(now, AFTER_DEATH);
+            u.acquire_seq = seq;
+            if own {
+                u.attack = None;
+            }
+        }
+        if own {
+            halt(state, h);
         }
     }
 }

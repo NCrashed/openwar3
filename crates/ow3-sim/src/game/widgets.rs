@@ -275,6 +275,7 @@ pub(super) fn create_unit(
         // The first check expires 0.5 x s after the creation, counted on
         // the timer queue (SPEC-0019).
         next_acquire: add(state.timers.time(), mul(acquire_phase, HALF_SECOND)),
+        acquire_seq: 0,
         paused: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,
@@ -531,6 +532,9 @@ pub(super) fn kill_unit(
             _ => false,
         }
     };
+    if let (true, Some(h)) = (killed, h) {
+        super::movement::target_died(&mut state.borrow_mut(), h, killer);
+    }
     if let (true, Some(h)) = (killed, h) {
         died(vm, state, h, killer);
     }

@@ -763,6 +763,8 @@ fn search(
 /// A node of the high-level search: the level and the square of that
 /// level.
 type Square = (i32, i32, i32);
+/// A node of a high-level path: its square and its position.
+type Placed = (Square, (i32, i32));
 
 /// The iteration limit of the high-level search (open question 1).
 pub const HIGH_LEVEL_LIMIT: u32 = 400;
@@ -1098,6 +1100,18 @@ fn high_level_limited(
     class: u8,
     limit: u32,
 ) -> Option<Found> {
+    high_level_chain(grid, s, g, class, limit).map(|(found, _)| found)
+}
+
+/// The high-level search with iteration limit `limit`, and the squares and
+/// positions of the nodes of its path, one for each point.
+fn high_level_chain(
+    grid: &Grid,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+) -> Option<(Found, Vec<Placed>)> {
     let block = |p: [u32; 2]| (floor(p[0]) >> 1, floor(p[1]) >> 1);
     let to_blocks = |p: [u32; 2]| p.map(|c| mul(c, HALF));
     let (sb, gb) = (block(s), block(g));
@@ -1132,12 +1146,15 @@ fn high_level_limited(
     let start = search.node_from(sb, 0)?;
     let goal = search.node_from(gb, 0);
     if goal == Some(start) {
-        return Some(Found {
-            points: vec![to_blocks(s), to_blocks(g)],
-            reached: true,
-            iterations: 0,
-            clear: false,
-        });
+        return Some((
+            Found {
+                points: vec![to_blocks(s), to_blocks(g)],
+                reached: true,
+                iterations: 0,
+                clear: false,
+            },
+            vec![(start, sb), (start, sb)],
+        ));
     }
     search.nodes.insert(
         start,
@@ -1210,12 +1227,53 @@ fn high_level_limited(
             [add(i2r(px), offset), add(i2r(py), offset)]
         })
         .collect();
-    Some(Found {
-        points,
-        reached,
-        iterations,
-        clear: false,
-    })
+    Some((
+        Found {
+            points,
+            reached,
+            iterations,
+            clear: false,
+        },
+        chain.iter().map(|&n| (n, search.position(n))).collect(),
+    ))
+}
+
+/// The path of a walk to a target with a footprint, a tree (SPEC-0020,
+/// "Two searches, and a target's footprint"): the 5000-limit search to
+/// the target's point `g` with the 3 x 3 blocks around it free, then the
+/// unit's own 400-limit search to the first node of that path, from the
+/// start, whose square meets those blocks (the end of the path when none
+/// does). The first search's removals, and the second search.
+///
+/// PROVISIONAL: the goal of the second search is the analysts'
+/// hypothesis from three searches of `c-RYP-1`.
+pub fn high_level_to_target(
+    grid: &mut Grid,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+) -> (u32, Option<Found>) {
+    let c = (floor(g[0]) >> 1, floor(g[1]) >> 1);
+    let first = grid.with_free_around(g, |grid| high_level_chain(grid, s, g, class, 5000));
+    let Some((found, chain)) = first else {
+        return (0, None);
+    };
+    // The blocks from a node's position up by the size of its square.
+    let meets = |&((l, _, _), (x0, y0)): &Placed| {
+        let (x1, y1) = (x0 + (1 << l) - 1, y0 + (1 << l) - 1);
+        x0 <= c.0 + 2 && c.0 - 2 <= x1 && y0 <= c.1 + 2 && c.1 - 2 <= y1
+    };
+    let i = (1..chain.len())
+        .find(|&i| meets(&chain[i]))
+        .unwrap_or(chain.len() - 1);
+    // The point in blocks, the goal in cells.
+    let goal = found.points[i].map(|p| add(p, p));
+    // Its end is not the target.
+    let path = high_level_limited(grid, s, goal, class, HIGH_LEVEL_LIMIT).map(|f| Found {
+        reached: false,
+        ..f
+    });
+    (found.iterations, path)
 }
 
 /// The length of the leg from `a` to `b`, in their units.

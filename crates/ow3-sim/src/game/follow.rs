@@ -439,18 +439,15 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     // path comes from the second (SPEC-0020, "Two searches, and a
     // target's footprint"). For a tree the blocks around it are free.
     let class = walker.class;
-    let both = |grid: &Grid| {
-        (
-            path::high_level_cost(grid, at, order_cells, class),
-            path::high_level(grid, at, order_cells, class),
-        )
-    };
     let high = fresh.then(|| {
         let grid = state.grid.as_mut().unwrap();
         let (cost, found) = if walker.tree.is_some() {
-            grid.with_free_around(order_cells, both)
+            path::high_level_to_target(grid, at, order_cells, class)
         } else {
-            both(grid)
+            (
+                path::high_level_cost(grid, at, order_cells, class),
+                path::high_level(grid, at, order_cells, class),
+            )
         };
         state.budget.high += cost;
         found

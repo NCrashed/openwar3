@@ -215,6 +215,8 @@ pub struct Moving {
     /// or a call for help, on the timer queue (SPEC-0019): the unit takes
     /// its goal in the tick that holds it.
     reaction_end: Option<u32>,
+    /// The tick in which the reaction delay ended.
+    reacted: u64,
     /// The goal was taken at the end of the reaction delay: the first
     /// update keeps it and starts the countdown of its renewal from there.
     goal_taken: bool,
@@ -461,6 +463,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: (m.walking && !state.regrouping) || m.restart,
             reaction: None,
             reaction_end: None,
+            reacted: 0,
             goal_taken: false,
             renew_at: None,
             chase: None,
@@ -487,6 +490,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             stop_after_step: false,
             reaction: None,
             reaction_end: None,
+            reacted: 0,
             goal_taken: false,
             renew_at: None,
             chase: None,
@@ -2557,6 +2561,7 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
                 Some(m) => {
                     let timed = m.reaction_end.take().is_some();
                     m.reaction = None;
+                    m.reacted = tick;
                     m.given = given;
                     match m.order {
                         Order::Attack { target } => (timed, target),
@@ -2820,7 +2825,19 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let mut expired = None;
         if u.acquire_phase != super::NO_PHASE && real_of(u.next_acquire) <= real_of(next_clock) {
             expired = Some(u.next_acquire);
-            let period = if target.is_some() { ONE } else { HALF };
+            // A unit still in its reaction delay, or whose delay ended in
+            // this tick, has no target yet (c-RXR-1: troll 16, called to
+            // help at 688, delay ending at 724, checked at 724 and again
+            // 0.5 s later). PROVISIONAL: the order within the tick is
+            // not read.
+            let reacting = u.movement.is_some_and(|m| {
+                m.reaction.is_some() || m.reaction_end.is_some() || m.reacted == tick
+            });
+            let period = if target.is_some() && !reacting {
+                ONE
+            } else {
+                HALF
+            };
             u.next_acquire = add(u.next_acquire, period);
         }
         if u.paused {

@@ -116,8 +116,13 @@ left in it.
    (`IsUnitHidden` true) and stays where it stood. In test RUF (mine at
    (-4096, -5120), the peasant coming from the north) it entered at
    (-4080.40, -4932.93), 187.7 from the mine's centre.
-2. It stays inside for 1.0 s (200 ticks; 201 at the first entry of the
-   test), then appears again at the
+2. It stays inside for 1.0 s: a timer of the main queue (SPEC-0002) is
+   started at the moment of the entry (its own update when it walks
+   in; for a worker taken from the queue of a busy mine, the moment the
+   leaving worker's timer fires), and it comes out in the tick in which
+   the queue reaches that time plus 1.0, so 200 or 201 ticks (in
+   `c-RXI-1` peasant 4 was taken in at q 53.8084335, in tick 10765, and
+   came out in tick 10966), then appears again at the
    same position, carrying 10 gold, with order 852017; at that moment
    the mine's gold (`GetResourceAmount`) drops by 10.
 3. It walks to the nearest building that takes gold and delivers when

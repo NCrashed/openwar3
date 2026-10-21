@@ -77,6 +77,9 @@ fn battle_report() {
     let mut at: Tracks = BTreeMap::new();
     let mut life: BTreeMap<usize, f32> = BTreeMap::new();
     let mut damage: Vec<Damage> = Vec::new();
+    // The hits that killed: the log gives their whole amount, the life
+    // lost here is what was left.
+    let mut kills = std::collections::BTreeSet::new();
     while playback.step_tick() {
         let tick = playback.game.ticks();
         let hits = playback
@@ -98,6 +101,9 @@ fn battle_report() {
                     t == tick && target == u.handle && f32::from_bits(e) - start <= 0.0001007
                 });
                 damage.push((if early { tick - 1 } else { tick }, i, before - u.life));
+                if !u.alive {
+                    kills.insert((if early { tick - 1 } else { tick }, i));
+                }
             }
             life.insert(i, u.life);
         }
@@ -113,7 +119,15 @@ fn battle_report() {
             eprintln!("unit {unit}: first miss at {t}: game {p:?}, ours {q:?}");
         }
     }
-    let same = |a: &Damage, b: &Damage| a.0 == b.0 && a.1 == b.1 && (a.2 - b.2).abs() < 0.02;
+    // Within a tick the log lists the hits by time, here by unit.
+    let mut game_damage = game_damage;
+    game_damage.sort_by_key(|d| (d.0, d.1));
+    damage.sort_by_key(|d| (d.0, d.1));
+    let same = |a: &Damage, b: &Damage| {
+        a.0 == b.0
+            && a.1 == b.1
+            && ((a.2 - b.2).abs() < 0.02 || (kills.contains(&(b.0, b.1)) && b.2 <= a.2 + 0.02))
+    };
     let first = game_damage
         .iter()
         .zip(&damage)
@@ -129,10 +143,10 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 94 hits match (looked at next).
+    // PROVISIONAL: the first 105 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
     assert!(
-        first.is_none_or(|i| i >= 94),
+        first.is_none_or(|i| i >= 105),
         "first difference at hit {first:?}"
     );
 }

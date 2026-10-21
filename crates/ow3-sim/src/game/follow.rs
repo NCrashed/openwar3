@@ -83,6 +83,8 @@ pub struct Follow {
     order: [u32; 2],
     /// Updates the unit still stands waiting for another unit.
     wait: u32,
+    /// The wait was made by another unit (`made_wait20`, SPEC-0021).
+    made: bool,
     /// The patience counter of a blocked unit (SPEC-0025): 0 while its
     /// way is free.
     patience: u32,
@@ -412,6 +414,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             next: Next::Search,
             hold_until: 0,
             wait: 0,
+            made: false,
             patience: 0,
             order: order_cells,
         };
@@ -451,8 +454,15 @@ fn decide(
         grid,
         occupied: &others.standing,
     };
-    // A chase with a new goal has a new path, which waits for no one.
+    // A chase with a new goal has a new path, which waits for no one: at
+    // once when it waited for another unit, from the next update when
+    // another made it wait.
+    // PROVISIONAL: one case of each in c-RXD-1 (ticks 1771 and 2251).
     if walker.chase.is_some() && to_cells(walker.order) != follow.order {
+        if follow.made && follow.wait > 0 {
+            follow.wait = 0;
+            return Steer::Stand(to_world(follow.goal));
+        }
         follow.wait = 0;
     }
     if follow.wait > 0 {
@@ -635,12 +645,14 @@ fn decide(
             match shared.paths.get_mut(&b) {
                 Some(path) if !faster && other.class == class => {
                     path.wait = MADE_TO_WAIT;
+                    path.made = true;
                     shared
                         .events
                         .push(event(PathEventKind::MadeWait, b, walker.handle));
                 }
                 _ => {
                     follow.wait = WAIT - 1;
+                    follow.made = false;
                     shared
                         .events
                         .push(event(PathEventKind::Wait, walker.handle, b));

@@ -2484,13 +2484,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             Some((GATHER_REACH, m.heading, false))
                         }
                         // A mine counts with its reach once it is visible to
-                        // the worker's player (SPEC-0019; c-RXD-1).
-                        Order::Gather { target }
-                            if state.unit(Some(h)).is_some_and(|u| {
-                                super::fog::unit_visible(state, target, u.owner)
-                            }) =>
-                        {
-                            Some((MINE_REACH, m.heading, true))
+                        // the worker's player, before with 0.49; the place is
+                        // the segment goal (SPEC-0019; c-RXD-1).
+                        Order::Gather { target } => {
+                            let visible = state
+                                .unit(Some(h))
+                                .is_some_and(|u| super::fog::unit_visible(state, target, u.owner));
+                            Some((if visible { MINE_REACH } else { ARRIVAL }, m.heading, false))
                         }
                         _ => None,
                     };

@@ -80,9 +80,16 @@ launches a missile whose speed is `Missilespeed` of the unit's entry in
 900; `Missilearc` 0.15 for these), and the damage comes when it arrives.
 
 - The flight time is `L / Missilespeed` seconds, `L` the distance from
-  the launch point to the target's centre; the launch point is the
-  attacker's position moved by `launchY` forward along its facing and
-  `launchX` to the side (`Units\UnitWeapons.slk`; archer 62 and 11). So
+  the launch point to the target's centre. With `(x, y)` the attacker's
+  position and `F` its facing at the launch (the facing it shows, which
+  may still be turning towards the target), the launch point is
+  `(x + launchY cos F + launchX sin F, y + launchY sin F - launchX cos F)`
+  (`Units\UnitWeapons.slk`; archer 62 and 11, troll headhunter -34 and
+  -5), each coordinate then floored to a multiple of 0.25; positive
+  `launchX` is to the right of the facing. Five troll missiles of
+  `c-RXR-1` (launch point, facing and position read in the game) fit
+  this exactly; the direction to the target or the heading of the last
+  move in place of `F` were off by 0.6 to 1.1. So
   for a target straight ahead at centre distance `d` the damage tick is
   the launch tick (the swing start + `dmgpt1`, 144 or 145 ticks for the archer's 0.72 s) + about
   `200 * (d - 62) / 900` ticks.

@@ -294,8 +294,15 @@ the high-level search from its position to the order point. Then:
    start), walk along the high-level list towards the goal, adding up
    the lengths of the legs in block units. The first waypoint at which
    the sum reaches 10.0 (640 world units) is the segment goal and
-   becomes the current waypoint. If the sum never reaches 10.0, the
-   segment goal is the order point.
+   becomes the current waypoint. If the sum reaches 10.0 only at the
+   last point of the list, or never, the segment goal is the order
+   point. This matters when the high-level search failed and its list
+   ends at the closest node: the segment goal is then still the order
+   point, not the closest node (replay `c-RYP-1`, peasant 3 at 1141:
+   legs 2.06, 4.0, 2.24, 2.26 to the closest node (182.5, 193.5), sum
+   10.55 only there; local search to the tree's point (358, 384) cells,
+   which failed and ended at its closest cell (351, 384), point (351.5,
+   384.5)).
 2. **Local path.** A local search from the unit's position to the
    segment goal (class of the unit, limit 700). If any cell the search
    tested on its way was not passable (for a step or a ring check of an

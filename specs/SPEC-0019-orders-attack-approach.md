@@ -398,8 +398,9 @@ time to time:
   the goal only; the last point of the chase path is walked to its end.
 - **Arrival at the member's place.** At each member step (also for a
   single unit, which is a cluster of one) the unit counts as arrived
-  when both hold: its distance from its place (the cluster's current
-  waypoint plus its offset, SPEC-0025) is at most its order reach, and
+  when both hold: the distance from the position it reaches with this
+  update's step to its place (the current segment goal along the
+  cluster's path plus its offset, SPEC-0025) is at most its reach, and
   the direction from it to the place differs by at most 0.2 rad from
   the direction of the step it is about to make (its facing if it does
   not move; the difference wrapped to `-pi .. pi`). The reach is the
@@ -449,7 +450,13 @@ time to time:
   (mine visible, count 0, reach 2.0625), place the cluster waypoint
   (433.5, 387.5) cells: at 3577 2.2083 from it, walked on; at 3583
   2.0302 (angle 0): arrived; at 3589 the waypoint was the mine's point
-  (448, 384) and it searched. In the first walks of the six workers
+  (448, 384) and it searched. Worker 3 at 3361, before the mine was
+  visible (reach 0.49): it started the update at (416.8857, 391.4958),
+  its step took it to (417.0638, 391.4971), 0.4362 from its place
+  (417.5, 391.5) (angle 0.0010): arrived there with speed 0; at 3367
+  the mine was visible for all six workers, its next place was the
+  mine's point (448, 384) (the legs 8.0 and 8.16 from (208.75, 195.75)
+  first reach 10 there) and it searched and walked on. In the first walks of the six workers
   (clock 4.56 to 4.74, around tick 937) the reach used was 0.49
   throughout. The earlier reading of a reach of about 66 to the
   current path point (`c-RXD-1` worker 5 at 3583) was a misreading of

@@ -258,12 +258,14 @@ fn others(state: &State, h: u32) -> Others {
         };
         // A unit stopped this tick stands for the searches (`stands`).
         let (moving, stands, position, velocity) = match &u.movement {
-            Some(m) if m.velocity != [0, 0] => {
-                // Its speed as at the start of the updates of this tick.
-                let start = state.start_velocities.get(&o).copied();
-                let v = start.filter(|v| *v != [0, 0]).unwrap_or(m.velocity);
-                (true, false, super::movement::held_at(state, o, m), v)
-            }
+            // Its speed now, also when it moved at its update earlier in
+            // this tick.
+            Some(m) if m.velocity != [0, 0] => (
+                true,
+                false,
+                super::movement::held_at(state, o, m),
+                m.velocity,
+            ),
             Some(m) if velocity(m) != [0, 0] => {
                 let here = super::movement::relative([u.x, u.y], min);
                 (true, true, here, velocity(m))

@@ -750,7 +750,7 @@ pub struct State {
     /// engine arithmetic (SPEC-0018).
     move_clock: u32,
     /// The time of the update cycle at its last update tick (SPEC-0018).
-    update_time: u32,
+    pub(super) update_time: u32,
     /// This tick is an update tick (SPEC-0018).
     update_now: bool,
     /// The number of the last update cycle, 1 for the first (SPEC-0018).

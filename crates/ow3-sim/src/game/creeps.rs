@@ -249,11 +249,8 @@ pub(super) fn tick(state: &mut State) {
                 set(state, h, |c| c.returning = false);
                 // Home again: its acquisition check restarts 0.01 s later
                 // (c-RXD-1: creep 8 home in 5917, check in 5919).
-                // (It arrived in the tick before this one.)
-                let at = add(
-                    sub(state.move_clock, crate::timers::TICK),
-                    movement::AFTER_DEATH,
-                );
+                // From the update cycle of its arrival.
+                let at = add(state.update_time, movement::AFTER_DEATH);
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                     u.next_acquire = at;
                 }

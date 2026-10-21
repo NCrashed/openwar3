@@ -2479,7 +2479,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     };
                     // The reach of a gather order on a tree and the direction of the
                     // step (SPEC-0019, "Arrival at the member's place").
-                    let arrive = tree.is_some().then_some((GATHER_REACH, m.heading));
+                    let arrive = match m.order {
+                        Order::Gather { .. } if tree.is_some() => Some((GATHER_REACH, m.heading)),
+                        _ => None,
+                    };
                     let place = (cluster > 1)
                         .then(|| state.member_now.get(&h).copied())
                         .flatten();

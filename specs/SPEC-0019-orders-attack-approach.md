@@ -663,22 +663,35 @@ An idle unit with a weapon attacks an enemy unit on its own:
   239 for peasant 3 at 214 (both out of range). Only peasants were
   rated in these tests; the rating has further parts (kinds of units,
   units attacking, life) that were not measured (open question 10).
-- **When the target dies.** At the moment a unit dies (for a missile
-  hit, in the missile part at the end of the tick, SPEC-0016), each
-  unit that was attacking it because of an acquisition or a call for
-  help has its acquisition check timer restarted with 0.01 s, and the
-  unit stops (its attack ends; it is idle at the check). No generator
-  draw is made at the death. The killer itself was not among them in
-  the case read (its next check was its own periodic one; whether this
-  is because it is the killer or because its missile was in flight is
-  open). The check that follows is an ordinary one: it restarts the
+- **When the target dies.** At the moment a unit dies (in the hit of
+  an instant or melee weapon, or for a missile in the missile part at
+  the end of the tick, SPEC-0016), the attack of every unit attacking
+  it ends. Each such unit then goes back to the orders it had before
+  the attack (the order it was given, and for units that acquired the
+  target themselves the state of looking for targets), either at once
+  or, if it is in the backswing of a swing (`backSw1` after the hit),
+  when that backswing ends. Going back to looking for targets restarts
+  the acquisition check timer with 0.01 s. No generator draw is made at
+  the death. The check that follows is an ordinary one: it restarts the
   check timer with its period, rates the enemies (above) and the new
-  attack has its generator 9 draw and its reaction delay. Measured in
-  `c-RXR-1`: footman 4 died in the missile part of tick 2360 (now =
-  11.7990208); grunts 14, 15 and trolls 19, 18 had their checks at
-  11.8090200 (tick 2363), in that order, took footmen 5, 5, 5 and 3,
-  with reaction delays 0.0129, 0.1334, 0.1020 and 0.2035 s from that
-  time.
+  attack has its generator 9 draw and its reaction delay. A unit on
+  attack-move also takes up its move to the point again at that moment
+  (a new search towards the point at its next update, which may come
+  before the check).
+  Measured in `c-RXR-1`:
+  - footman 4 died in the missile part of tick 2360 (now 11.7990208);
+    grunts 14, 15 and trolls 19, 18 had their checks at 11.8090200
+    (tick 2363), in that order, took footmen 5, 5, 5 and 3, with
+    reaction delays 0.0129, 0.1334, 0.1020 and 0.2035 s from that time;
+    the killer, troll 16, was in its backswing and had no such check;
+  - grunt 12 died in rifleman 6's hit at 12.8899956 (tick 2579), with
+    footmen 1, 2 and riflemen 6, 7, 8, 9 attacking it. Only footman 2
+    (last hit in 2459, backswing over) went back at once: in tick 2581
+    its update searched towards its attack-move point (600, 0), then
+    its check took grunt 13. Footman 1 (hit in 2519) went back at the
+    end of its backswing, 13.0899944 (tick 2619), and its check at
+    13.0999937 took grunt 11; riflemen 7, 9 and 8 acquired 2 ticks
+    after their backswings ended (2631, 2655, 2703).
 - **A new target and the old cooldown.** The cooldown of the last
   swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
   in range, it did not move) ended its reaction delay at 11.9424612,

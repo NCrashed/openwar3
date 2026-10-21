@@ -544,14 +544,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     for cluster in &mut state.clusters {
         cluster.keep(|m| m != h);
     }
-    // A new path is searched at the next update (SPEC-0020); in a new
-    // layout of a queued group a held path is walked on until its hold
-    // ends.
-    if state.regrouping {
-        follow::new_goal(state, h);
-    } else {
-        state.paths.remove(&h);
-    }
+    // A new path is searched at the next update (SPEC-0020).
+    state.paths.remove(&h);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = Some(moving);
         u.attack = None;
@@ -964,7 +958,7 @@ fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
         {
             m.target = to;
         }
-        follow::new_goal(state, h);
+        state.paths.remove(&h);
     }
 }
 

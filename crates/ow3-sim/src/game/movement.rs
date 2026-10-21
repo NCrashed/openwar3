@@ -2168,7 +2168,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 start_gap,
                                 standing: false,
                             };
-                            m.restart = true;
+                            m.walking = false;
+                            m.velocity = [0, 0];
                         }
                         // A standing follower that walks again searches a new
                         // path at this update (c-RTW-3: 828 at 5413).
@@ -3200,7 +3201,28 @@ pub(super) fn group_of(state: &State, h: u32) -> Option<usize> {
 /// had all its updates yet, at its update before (SPEC-0021, "Occupied
 /// cells").
 pub(super) fn held_at(state: &State, h: u32, m: &Moving) -> [u32; 2] {
-    let pending = state
+    match state.start_origins.get(&h) {
+        Some(&before) if cluster_pending(state, h) => before,
+        _ => m.origin,
+    }
+}
+
+/// The velocity of moving unit `h` as the others see it during the
+/// updates of this tick: its current one, but for a member of a group
+/// whose cluster has not had all its updates yet, the one it had before
+/// (SPEC-0021, "Occupied cells"; c-RTW-3: 918, which started at its
+/// update of 5473, stood for 900's later in that tick).
+pub(super) fn seen_velocity(state: &State, h: u32, m: &Moving) -> [u32; 2] {
+    match state.start_velocities.get(&h) {
+        Some(&before) if cluster_pending(state, h) => before,
+        _ => m.velocity,
+    }
+}
+
+/// Whether unit `h` is a member of a group cluster some of whose
+/// members have their update of this tick still to come.
+fn cluster_pending(state: &State, h: u32) -> bool {
+    state
         .clusters
         .iter()
         .find(|c| c.members.len() > 1 && c.members.contains(&h))
@@ -3208,11 +3230,7 @@ pub(super) fn held_at(state: &State, h: u32, m: &Moving) -> [u32; 2] {
             c.members
                 .iter()
                 .any(|x| state.start_origins.contains_key(x) && !state.updated.contains(x))
-        });
-    match state.start_origins.get(&h) {
-        Some(&before) if pending => before,
-        _ => m.origin,
-    }
+        })
 }
 #[cfg(test)]
 mod tests {

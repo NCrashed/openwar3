@@ -271,6 +271,14 @@ fn others(state: &State, h: u32) -> Others {
         };
         // A unit stopped this tick stands for the searches (`stands`).
         let (moving, stands, position, velocity) = match &u.movement {
+            // A group member that started at its update earlier in this
+            // tick, while its cluster has updates to come, still stands.
+            Some(m)
+                if m.velocity != [0, 0]
+                    && super::movement::seen_velocity(state, o, m) == [0, 0] =>
+            {
+                (false, true, super::movement::held_at(state, o, m), [0, 0])
+            }
             // Its speed now, also when it moved at its update earlier in
             // this tick.
             Some(m) if m.velocity != [0, 0] => (

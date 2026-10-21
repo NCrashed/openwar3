@@ -567,7 +567,9 @@ fn a_group_of_peasants() {
         .iter()
         .map(|&p| (view(&sim, p).x, view(&sim, p).y))
         .collect();
-    for _ in 0..30 {
+    // The members that start at the same update hold each other up at
+    // first (SPEC-0021), so they get 4.5 s.
+    for _ in 0..45 {
         sim.advance(100_000);
     }
     for (&p, b) in peasants.iter().zip(before) {

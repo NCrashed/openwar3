@@ -560,7 +560,10 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let mut s = state.borrow_mut();
         let s = &mut *s;
         let tick = s.ticks;
-        let next_clock = add(s.move_clock, crate::timers::TICK);
+        // A flight is a timer: it ends in the tick whose queue time, at its
+        // end, is at or after the expiry (SPEC-0002; c-RXR-1, troll 19:
+        // expiry 4.297861, impact in the tick ending at 4.299997).
+        let next_clock = s.timers.time();
         let mut arrived = Vec::new();
         let mut flying = Vec::with_capacity(s.missiles.len());
         for mut m in std::mem::take(&mut s.missiles) {

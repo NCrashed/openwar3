@@ -606,9 +606,9 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
-    // At its tree the worker enters the gathering cycle (c-RYP-1:
-    // peasant 5 arrived in 1309, searched as a cycling worker in 1315).
-    // PROVISIONAL: inferred from that case, asked.
+    // At its first arrival at its tree the worker enters the gathering
+    // cycle (SPEC-0029; c-RYP-1: peasant 5 arrived in 1309, searched as a
+    // cycling worker in 1315).
     if decided == Steer::Hold
         && walker.tree.is_some()
         && follow.final_goal

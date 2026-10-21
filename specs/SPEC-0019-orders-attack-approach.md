@@ -453,9 +453,12 @@ time to time:
   between the centres at the damage).
 - **After the swing** the chase goes on at once (it does not wait for
   the cooldown). One tick after the end of the backswing (`backSw1`
-  after the damage) the attacker takes a goal as above, with the
-  target's position at that tick for both searches. It moves from its
-  next update on, starting from its current facing as its heading
+  after the damage) the attacker takes a goal as above for both
+  searches. The goal is the target's position at the start of the tick
+  in which the backswing ends (in `c-RXR-1` rifleman 9's backswing
+  ended in 5053 and its goal was grunt 15's position at the start of
+  5053, not at its end; all agent commits match with this). It moves
+  from its next update on, starting from its current facing as its heading
   (SPEC-0018, as for a new order). At its 12th update counted from that
   first one (66 ticks later) it takes a new goal and stands still for
   that update; then the 17-update schedule goes on. This was seen after

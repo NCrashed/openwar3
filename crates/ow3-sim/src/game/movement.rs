@@ -1364,7 +1364,7 @@ fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) ->
         // time 102 ticks later (SPEC-0019, "Attack-move with enemies").
         let attack_move = (name == "attack").then(|| AttackMove {
             point: target,
-            next_check: state.ticks + ATTACK_MOVE_FIRST,
+            next_check: add(state.timers.time(), ATTACK_MOVE_FIRST_TIME),
             resume_at: None,
         });
         set_attack_move(state, h, attack_move);
@@ -2700,10 +2700,9 @@ pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
     a != b && a != NEUTRAL_PASSIVE && b != NEUTRAL_PASSIVE && !state.setup.is_ally(a, b)
 }
 
-/// 100 ticks (0.5 s) between the acquisition checks of a unit.
-const ACQUIRE_PERIOD: u64 = 100;
-/// The first check of an attack-move after its order, or after a kill.
-const ATTACK_MOVE_FIRST: u64 = 102;
+/// The first check of an attack-move after its order, or after a kill:
+/// 0.51 s on the timer queue.
+const ATTACK_MOVE_FIRST_TIME: u32 = 0x3F02_8F5C;
 const HALF: u32 = 0x3F00_0000;
 
 /// An `attack` order to a point (SPEC-0019, "Attack-move with enemies"):
@@ -2712,7 +2711,8 @@ const HALF: u32 = 0x3F00_0000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttackMove {
     point: [u32; 2],
-    next_check: u64,
+    /// The expiry of its next check on the timer queue.
+    next_check: u32,
     resume_at: Option<u64>,
 }
 
@@ -2726,11 +2726,12 @@ fn set_attack_move(state: &mut State, h: u32, attack_move: Option<AttackMove>) {
 /// it walks on after its backswing, and checks again 102 ticks after the
 /// kill (SPEC-0019).
 pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
+    let time = state.timers.time();
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(a) = u.attack_move.as_mut()
     {
         a.resume_at = Some(tick + backswing);
-        a.next_check = tick + ATTACK_MOVE_FIRST;
+        a.next_check = add(time, ATTACK_MOVE_FIRST_TIME);
     }
 }
 
@@ -2789,7 +2790,7 @@ enum Check {
     /// A unit attacking `current`, which it took on its own.
     Attacking { current: u32 },
     /// A unit walking an attack-move.
-    AttackMove,
+    AttackMove { expiry: u32 },
 }
 
 /// Units with a weapon look for enemies (SPEC-0019): idle ones on their
@@ -2842,14 +2843,15 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             continue;
         }
         if let Some(a) = u.attack_move.as_mut() {
-            if a.next_check == tick {
-                a.next_check += ACQUIRE_PERIOD;
+            if real_of(a.next_check) <= real_of(next_clock) {
+                let expiry = a.next_check;
+                a.next_check = add(a.next_check, HALF);
                 let walking = u.attack.is_none()
                     && a.resume_at.is_none()
                     && u.movement
                         .is_some_and(|m| m.ordered() && m.order == Order::Point);
                 if walking {
-                    due.push((h, Check::AttackMove));
+                    due.push((h, Check::AttackMove { expiry }));
                 }
             }
             continue;
@@ -2922,7 +2924,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let at = [o.x, o.y];
         let (order_id, expiry) = match check {
             Check::Idle { expiry } => (0, Some(expiry)),
-            Check::AttackMove => (ORDER_ATTACK, None),
+            Check::AttackMove { expiry } => (ORDER_ATTACK, Some(expiry)),
             Check::Attacking { .. } => continue,
         };
         if order(state, h, Order::Attack { target }, order_id, at) {
@@ -2930,12 +2932,12 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            // An idle unit's delay counts from the expiry of its check,
-            // an attack-move's from this tick.
-            match expiry {
-                Some(e) => react_until(state, h, add(e, delay)),
-                None => react(state, h, tick, delay, tick),
-            }
+            // The delay counts from the expiry of the check, an idle
+            // unit's or an attack-move's, on the timer queue (SPEC-0019).
+            // PROVISIONAL: an attack-move's check is taken to expire at the
+            // end of its tick.
+            let from = expiry.unwrap_or(add(state.move_clock, crate::timers::TICK));
+            react_until(state, h, add(from, delay));
             acquired.push(h);
             // A creep calls its camp (SPEC-0030), in the order of
             // SPEC-0019.

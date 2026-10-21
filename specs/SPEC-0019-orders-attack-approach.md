@@ -417,7 +417,15 @@ time to time:
   within reach always. An arrived unit gets speed 0 at that update,
   keeps its heading, and its path is
   dropped; at its next update it searches again, high level and local,
-  from its position to its target. Replay `c-RYP-1`, peasant 4 on its
+  from its position to its target. A unit within reach but not turned
+  (angle above 0.2) makes no path step at that update: it stands (speed
+  0) and turns to the direction of its place, and at its next update it
+  is normally turned and arrives. Replay `c-RYP-1`, peasant 5, place
+  (353.5, 393.5) cells, reach 4.125: at 1003 4.1293 from the place,
+  walked on; at 1009 3.9610, angle -0.3400: stood, heading 0.721511 ->
+  0.381491 (the exact direction to the place; whether the turn rate can
+  limit this turn was not seen); at 1015 angle 0: arrived; at 1021 its
+  search to the tree's point (360, 390). Replay `c-RYP-1`, peasant 4 on its
   way to a tree, read in the game: order reach 4.125 cells (132, which
   is the gather range `Rng1` 116 of `Ahar` plus 16; where the 16 comes
   from, presumably the peasant's collision size, was not read), place

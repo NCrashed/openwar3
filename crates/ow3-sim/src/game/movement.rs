@@ -3223,28 +3223,6 @@ pub(super) fn held_at(state: &State, h: u32, m: &Moving) -> [u32; 2] {
         _ => m.origin,
     }
 }
-/// Member `h` of a group cluster, at `here` (relative world units), leaves
-/// it when it is short of its place, the group's goal plus its offset:
-/// the place in world units (SPEC-0025).
-fn leave_group(state: &mut State, h: u32, here: [u32; 2]) -> Option<[u32; 2]> {
-    let min = [state.world_bounds[0], state.world_bounds[1]];
-    let cluster = state
-        .clusters
-        .iter_mut()
-        .find(|c| c.members.len() > 1 && c.members.contains(&h))?;
-    let i = cluster.members.iter().position(|&m| m == h)?;
-    let offset = *cluster.offsets.get(i)?;
-    let goal = mul_both(relative(cluster.goal, min), CELL);
-    let place = [add(goal[0], offset[0]), add(goal[1], offset[1])];
-    let at = mul_both(here, CELL);
-    let (dx, dy) = (sub(place[0], at[0]), sub(place[1], at[1]));
-    if real_of(add(mul(dx, dx), mul(dy, dy))) <= real_of(mul(ARRIVAL, ARRIVAL)) {
-        return None;
-    }
-    cluster.keep(|m| m != h);
-    Some(absolute(mul_both(place, CELLS_TO_WORLD), min))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3276,4 +3254,26 @@ mod tests {
             assert!((f - e).abs() < 2e-7, "{found:?}");
         }
     }
+}
+
+/// Member `h` of a group cluster, at `here` (relative world units), leaves
+/// it when it is short of its place, the group's goal plus its offset:
+/// the place in world units (SPEC-0025).
+fn leave_group(state: &mut State, h: u32, here: [u32; 2]) -> Option<[u32; 2]> {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cluster = state
+        .clusters
+        .iter_mut()
+        .find(|c| c.members.len() > 1 && c.members.contains(&h))?;
+    let i = cluster.members.iter().position(|&m| m == h)?;
+    let offset = *cluster.offsets.get(i)?;
+    let goal = mul_both(relative(cluster.goal, min), CELL);
+    let place = [add(goal[0], offset[0]), add(goal[1], offset[1])];
+    let at = mul_both(here, CELL);
+    let (dx, dy) = (sub(place[0], at[0]), sub(place[1], at[1]));
+    if real_of(add(mul(dx, dx), mul(dy, dy))) <= real_of(mul(ARRIVAL, ARRIVAL)) {
+        return None;
+    }
+    cluster.keep(|m| m != h);
+    Some(absolute(mul_both(place, CELLS_TO_WORLD), min))
 }

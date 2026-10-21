@@ -404,30 +404,45 @@ fn strike(
         super::movement::killed(&mut s, h, tick, backswing);
     }
 }
-/// A missile in flight (SPEC-0016, "Missiles"): it moves `step` world
-/// units a tick towards the target's centre, or for artillery towards
-/// the point where the target stood at the launch, and strikes when it
-/// reaches it.
+/// A missile in flight (SPEC-0016, "Missiles"). One without homing hits
+/// its target wherever it is when a timer of `L / Missilespeed` from the
+/// launch expires (`L` the plane distance at the launch); a homing one
+/// moves `Missilespeed * 0.1` towards the target's centre every 0.1 s
+/// and hits once it is nearer than that; a shell of artillery goes to the
+/// target's point at the launch and hits the units round it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Missile {
     attacker: u32,
     target: u32,
+    /// Where it is, for a homing missile, or where it started.
     at: [u32; 2],
-    step: u32,
-    /// The point a shell of artillery goes to.
-    ground: Option<[u32; 2]>,
+    /// The target's point at the launch, for artillery and for drawing.
+    point: [u32; 2],
+    /// The movement clock at the launch and the expiry of its flight.
+    launched: u32,
+    expiry: u32,
+    /// A homing missile: its step per 0.1 s and the tick of its next step.
+    homing: Option<(u32, u64)>,
+    artillery: bool,
     amount: u32,
     attack_type: i32,
     area: Option<Area>,
 }
 
-/// Below this distance from the launch point (90) the damage comes at the
-/// launch.
-const NO_FLIGHT: f32 = 90.0;
+/// 0.1 s, the step of a homing missile, in ticks and as a real.
+const HOMING_TICKS: u64 = 20;
+const HOMING_STEP: u32 = 0x3DCC_CCCD;
+
+/// The plane distance from `a` to `b` (world units, engine reals).
+fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
+    let (dx, dy) = (sub(b[0], a[0]), sub(b[1], a[1]));
+    sqrt(add(mul(dx, dx), mul(dy, dy)))
+}
 
 /// The missile of `h` launched now at `target`, if its type has a missile
-/// speed and the target is 90 or more from the launch point. The launch
-/// point is `launchY` ahead and `launchX` to the side.
+/// speed and the target is not nearer than `Missilespeed * 0.1` to the
+/// launch point (then it hits at once). The launch point is `launchY`
+/// ahead and `launchX` to the side.
 ///
 /// PROVISIONAL: "ahead" is taken as the direction to the target (the
 /// attacker faces it within 0.2 radians when it swings) and the side as
@@ -443,7 +458,8 @@ fn launch(
 ) -> Option<Missile> {
     let u = state.unit(Some(h))?;
     let data = state.data.units.get(&u.type_id)?;
-    if f32::from_bits(data.missile_speed) <= 0.0 {
+    let speed = data.missile_speed;
+    if f32::from_bits(speed) <= 0.0 {
         return None;
     }
     let to = super::movement::position_of(state, target)?;
@@ -460,71 +476,98 @@ fn launch(
         add(u.x, add(mul(fx, ahead), mul(fy, side))),
         add(u.y, sub(mul(fy, ahead), mul(fx, side))),
     ];
-    let (lx, ly) = (sub(to[0], at[0]), sub(to[1], at[1]));
-    let flight = f32::from_bits(sqrt(add(mul(lx, lx), mul(ly, ly))));
-    if flight < NO_FLIGHT {
+    let flight = distance(at, to);
+    let step = mul(speed, HOMING_STEP);
+    if f32::from_bits(flight) < f32::from_bits(step) {
         return None;
     }
+    let launched = state.move_clock;
+    let homing = (data.missile_homing && !artillery).then(|| {
+        // The first step is the move of the launch.
+        (step, state.ticks + HOMING_TICKS)
+    });
+    let at = match homing {
+        Some(_) => {
+            let k = div(step, flight);
+            [
+                add(at[0], mul(sub(to[0], at[0]), k)),
+                add(at[1], mul(sub(to[1], at[1]), k)),
+            ]
+        }
+        None => at,
+    };
     Some(Missile {
         attacker: h,
         target,
         at,
-        step: div(data.missile_speed, 200.0f32.to_bits()),
-        ground: artillery.then_some(to),
+        point: to,
+        launched,
+        expiry: add(launched, div(flight, speed)),
+        homing,
+        artillery,
         amount,
         attack_type,
         area,
     })
 }
 
-/// The missiles of this tick move on; those that arrive strike, in the
-/// order of their launch. A missile whose target died or is gone is lost;
-/// a shell of artillery goes on to its point.
-///
-/// PROVISIONAL: how a missile follows a target that moves fast past the
-/// attacker is open (SPEC-0016, open question 9).
+/// The missiles of this tick: those that arrive strike, in the order of
+/// their launch. A missile whose target died or is gone is lost; a shell
+/// of artillery goes on to its point.
 fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     let arrived = {
         let mut s = state.borrow_mut();
         let s = &mut *s;
+        let tick = s.ticks;
+        let next_clock = add(s.move_clock, crate::timers::TICK);
         let mut arrived = Vec::new();
         let mut flying = Vec::with_capacity(s.missiles.len());
         for mut m in std::mem::take(&mut s.missiles) {
-            let to = match m.ground {
-                Some(point) => point,
-                None if standing(s, m.target) => {
+            if !m.artillery && !standing(s, m.target) {
+                continue;
+            }
+            match m.homing {
+                None => {
+                    if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                        arrived.push(m);
+                    } else {
+                        flying.push(m);
+                    }
+                }
+                Some((step, next)) if next == tick => {
                     let Some(to) = super::movement::position_of(s, m.target) else {
                         continue;
                     };
-                    to
+                    let left = distance(m.at, to);
+                    if f32::from_bits(left) < f32::from_bits(step) {
+                        arrived.push(m);
+                        continue;
+                    }
+                    let k = div(step, left);
+                    m.at = [
+                        add(m.at[0], mul(sub(to[0], m.at[0]), k)),
+                        add(m.at[1], mul(sub(to[1], m.at[1]), k)),
+                    ];
+                    m.homing = Some((step, next + HOMING_TICKS));
+                    flying.push(m);
                 }
-                None => continue,
-            };
-            let (dx, dy) = (sub(to[0], m.at[0]), sub(to[1], m.at[1]));
-            let length = sqrt(add(mul(dx, dx), mul(dy, dy)));
-            if f32::from_bits(length) <= f32::from_bits(m.step) {
-                m.at = to;
-                arrived.push(m);
-                continue;
+                Some(_) => flying.push(m),
             }
-            let scale = div(m.step, length);
-            m.at = [add(m.at[0], mul(dx, scale)), add(m.at[1], mul(dy, scale))];
-            flying.push(m);
         }
         s.missiles = flying;
         arrived
     };
     for m in arrived {
-        match (m.ground, &m.area) {
+        match (m.artillery, &m.area) {
             // A shell hits the units round its point by their distances.
-            (Some(point), Some(area)) => {
-                let hit = splash_at(&state.borrow(), m.attacker, point, None, area, m.amount);
+            (true, Some(area)) => {
+                let hit = splash_at(&state.borrow(), m.attacker, m.point, None, area, m.amount);
                 for (victim, share) in hit {
                     strike(vm, state, m.attacker, victim, share, m.attack_type, None);
                 }
             }
-            (Some(_), None) => {}
-            (None, _) => strike(
+            (true, None) => {}
+            (false, _) => strike(
                 vm,
                 state,
                 m.attacker,
@@ -546,58 +589,40 @@ pub struct MissileView {
     pub towards: [f32; 2],
 }
 
-/// The missiles in flight.
+/// The missiles in flight; one on a timer is drawn on the line from its
+/// launch point to the target by the share of its flight time gone.
 pub(super) fn views(state: &State) -> Vec<MissileView> {
+    let clock = f32::from_bits(state.move_clock);
     state
         .missiles
         .iter()
         .filter_map(|m| {
             let type_id = state.unit(Some(m.attacker)).map_or(0, |u| u.type_id);
-            let to = m
-                .ground
-                .or_else(|| super::movement::position_of(state, m.target))?;
+            let to = if m.artillery {
+                m.point
+            } else {
+                super::movement::position_of(state, m.target)?
+            };
+            let to = to.map(f32::from_bits);
+            let from = m.at.map(f32::from_bits);
+            let at = match m.homing {
+                Some(_) => from,
+                None => {
+                    let (start, end) = (f32::from_bits(m.launched), f32::from_bits(m.expiry));
+                    let share = ((clock - start) / (end - start).max(1e-6)).clamp(0.0, 1.0);
+                    [
+                        from[0] + (to[0] - from[0]) * share,
+                        from[1] + (to[1] - from[1]) * share,
+                    ]
+                }
+            };
             Some(MissileView {
                 type_id,
-                at: m.at.map(f32::from_bits),
-                towards: to.map(f32::from_bits),
+                at,
+                towards: to,
             })
         })
         .collect()
-}
-
-/// The primary attribute of hero `h` times `StrAttackBonus`, added to the
-/// damage of its hits (SPEC-0034); 0 for other units.
-fn hero_primary(state: &State, h: u32) -> u32 {
-    let Some(u) = state.unit(Some(h)).filter(|u| is_hero(u.type_id)) else {
-        return 0;
-    };
-    let points = match state
-        .data
-        .units
-        .get(&u.type_id)
-        .map_or(0, |t| t.primary_attribute)
-    {
-        1 => u.strength,
-        2 => u.agility,
-        3 => u.intelligence,
-        _ => 0,
-    };
-    mul(ow3_math::i2r(points), state.combat.heroes.str_attack)
-}
-
-/// The seconds between the hits of `h` with a weapon of `cooldown`: for a
-/// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034).
-fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
-    match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
-        Some(u) => {
-            let speed = mul(
-                state.combat.heroes.agi_attack_speed,
-                ow3_math::i2r(u.agility),
-            );
-            div(cooldown, add(1.0f32.to_bits(), speed))
-        }
-        None => cooldown,
-    }
 }
 
 /// The chance-on-attack abilities by their base codes: critical strike,
@@ -688,5 +713,40 @@ fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<u32>) {
         (amount, Some(numbers.data[2]))
     } else {
         (amount, None)
+    }
+}
+
+/// The primary attribute of hero `h` times `StrAttackBonus`, added to the
+/// damage of its hits (SPEC-0034); 0 for other units.
+fn hero_primary(state: &State, h: u32) -> u32 {
+    let Some(u) = state.unit(Some(h)).filter(|u| is_hero(u.type_id)) else {
+        return 0;
+    };
+    let points = match state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0, |t| t.primary_attribute)
+    {
+        1 => u.strength,
+        2 => u.agility,
+        3 => u.intelligence,
+        _ => 0,
+    };
+    mul(ow3_math::i2r(points), state.combat.heroes.str_attack)
+}
+
+/// The seconds between the hits of `h` with a weapon of `cooldown`: for a
+/// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034).
+fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
+    match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
+        Some(u) => {
+            let speed = mul(
+                state.combat.heroes.agi_attack_speed,
+                ow3_math::i2r(u.agility),
+            );
+            div(cooldown, add(1.0f32.to_bits(), speed))
+        }
+        None => cooldown,
     }
 }

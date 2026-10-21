@@ -120,6 +120,8 @@ pub struct UnitType {
     /// `Missilespeed` of its entry in `Units\*UnitFunc.txt`, as a real
     /// (SPEC-0016).
     pub missile_speed: u32,
+    /// `MissileHoming` of that entry: its missiles follow the target.
+    pub missile_homing: bool,
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
     /// SPEC-0022), as a key of [`ObjectData::path_textures`].
     pub path_texture: Option<String>,
@@ -1030,6 +1032,9 @@ impl ObjectData {
             let speed = functions.get(&section, "Missilespeed");
             let first = speed.and_then(|s| s.split(',').next().map(str::to_owned));
             unit.missile_speed = real(first.as_ref());
+            unit.missile_homing = functions
+                .get(&section, "MissileHoming")
+                .is_some_and(|v| v.split(',').next().is_some_and(|v| v.trim() == "1"));
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {

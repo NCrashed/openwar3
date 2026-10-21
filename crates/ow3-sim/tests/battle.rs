@@ -120,7 +120,7 @@ fn battle_report() {
     );
 }
 
-/// The path events of `c-RXR-1` in ticks 301 to 800 (updates, waits,
+/// The path events of `c-RXR-1` in ticks 301 to 1600 (updates, waits,
 /// made-to-waits and blocks) are the game's `c-RXR-1.events.tsv`.
 #[test]
 fn battle_path_events() {
@@ -152,7 +152,7 @@ fn battle_path_events() {
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.game.state.borrow_mut().path_trace = Some(Vec::new());
-    while playback.game.ticks() < 800 && playback.step_tick() {}
+    while playback.game.ticks() < 1600 && playback.step_tick() {}
     let handles: Vec<u32> = playback.game.units().iter().map(|u| u.handle).collect();
     let index = |h: u32| {
         handles
@@ -208,12 +208,15 @@ fn battle_path_events() {
                 || ((a.4[0] - b.4[0]).abs() < 0.04 && (a.4[1] - b.4[1]).abs() < 0.04))
     };
     let first = game.iter().zip(&ours).position(|(a, b)| !same(a, b));
+    eprintln!("events: game {}, ours {}", game.len(), ours.len());
     if let Some(i) = first {
         for k in i.saturating_sub(2)..(i + 6).min(game.len()).min(ours.len()) {
             eprintln!("game {:?}\nours {:?}", game[k], ours[k]);
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    // PROVISIONAL: the game's up to tick 793 (looked at next).
-    assert!(tick >= 793, "first difference at tick {tick}");
+    assert!(
+        tick == u64::MAX && game.len() == ours.len(),
+        "first difference at tick {tick}"
+    );
 }

@@ -198,6 +198,9 @@ pub struct Unit {
     /// The tick at which it walks back to its guard point, the place it
     /// was created at, after an attack it took on its own ended.
     guard_return: Option<u64>,
+    /// The cells of 256 its box covers in the grid of calls for help, with
+    /// the order in which it entered each (SPEC-0019).
+    call_cells: Vec<((i64, i64), u64)>,
     /// Until when (queue time) damage to it makes no call for help.
     call_until: u32,
     /// The attacker of the last call for help that reached it, answered or
@@ -787,6 +790,8 @@ pub struct State {
     member_now: BTreeMap<u32, [u32; 2]>,
     /// Creep timers started so far (SPEC-0030).
     pub(super) creep_timers: u64,
+    /// Entries into cells of the grid of calls for help so far.
+    pub(super) call_entries: u64,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -912,6 +917,7 @@ impl State {
             member_places: BTreeMap::new(),
             member_now: BTreeMap::new(),
             creep_timers: 0,
+            call_entries: 0,
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

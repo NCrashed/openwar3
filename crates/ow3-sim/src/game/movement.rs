@@ -1344,12 +1344,72 @@ pub(super) fn call_order(state: &State, mut units: Vec<u32>) -> Vec<u32> {
             .units
             .get(&u.type_id)
             .map_or(0.0, |t| real_of(t.collision));
-        let cell = |v: u32, origin: f32| ((real_of(v) - c - origin) / CALL_CELL).floor() as i64;
-        let index = created.get(h).copied().unwrap_or(0) as i64;
-        (cell(u.y, y0), cell(u.x, x0), -index)
+        // The first cell of its box in the scan, rows from the bottom and
+        // each row from the left, and in it the unit that entered last
+        // first (c-RXD-1: creeps 8 before 6 at 1557, 7 before 9 at 5919).
+        match u.call_cells.iter().min_by_key(|((x, y), _)| (*y, *x)) {
+            Some(&((x, y), seq)) => (y, x, -(seq as i64)),
+            None => {
+                let cell =
+                    |v: u32, origin: f32| ((real_of(v) - c - origin) / CALL_CELL).floor() as i64;
+                let index = created.get(h).copied().unwrap_or(0) as i64;
+                (cell(u.y, y0), cell(u.x, x0), -index)
+            }
+        }
     };
     units.sort_by_key(key);
     units
+}
+
+/// Keeps the cells of the grid of calls for help up to date: each unit is
+/// entered in every cell of 256 its box (its position, at its last commit
+/// when it walks, plus or minus its collision size) covers, newest first
+/// (SPEC-0019, "Order of the responders").
+pub(super) fn refresh_call_cells(state: &mut State) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let units = state.units.clone();
+    for h in units {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
+        let c = state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(0.0, |t| real_of(t.collision));
+        let [x, y] = u.movement.map_or(
+            [
+                real_of(u.x) - real_of(min[0]),
+                real_of(u.y) - real_of(min[1]),
+            ],
+            |m| [real_of(m.origin[0]), real_of(m.origin[1])],
+        );
+        let span = |p: f32| {
+            (((p - c) / CALL_CELL).floor() as i64)..=(((p + c) / CALL_CELL).floor() as i64)
+        };
+        let cells: Vec<(i64, i64)> = span(y)
+            .flat_map(|cy| span(x).map(move |cx| (cx, cy)))
+            .collect();
+        let old = u.call_cells.clone();
+        if old.len() == cells.len() && old.iter().all(|(c, _)| cells.contains(c)) {
+            continue;
+        }
+        let mut next = state.call_entries;
+        let new: Vec<((i64, i64), u64)> = cells
+            .into_iter()
+            .map(|cell| match old.iter().find(|(c, _)| *c == cell) {
+                Some(&kept) => kept,
+                None => {
+                    next += 1;
+                    (cell, next)
+                }
+            })
+            .collect();
+        state.call_entries = next;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.call_cells = new;
+        }
+    }
 }
 
 /// Creep `h` walks home to `home` with a `move` order (SPEC-0030).
@@ -1893,6 +1953,7 @@ pub(super) fn step(state: &mut State) {
 
 /// The updates due at this tick, after the timers.
 pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
+    refresh_call_cells(state);
     let tick = state.ticks;
     let control = update_clusters(state, tick);
     let min = [state.world_bounds[0], state.world_bounds[1]];
@@ -2627,6 +2688,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     }
 
     state.marked.clear();
+    refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
 }

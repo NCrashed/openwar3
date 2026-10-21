@@ -263,6 +263,20 @@ objects): two footmen created one after the other by the script got
 creation numbers 830 and 848, in another test 828 and 863. Units placed
 on the map before the game starts were not examined (open question 6).
 
+**Objects of an attack-move order.** In `c-RXR-1` the script gives ten
+units attack-move in tick 301; the object table changed only in that
+tick between 1.25 and 1.75 s (the searches of tick 307 and later made
+no objects). Each order made 16 objects, unit after unit: the order,
+one object made with it, eleven objects of the attack ability as the
+order starts, and three of path finding as the unit starts to move, of
+which the first was freed at once (so the next unit's order took its
+entry). In a 0.0001 s timer of the same tick seven of each unit's
+objects were freed, unit after unit, in the order 2, 13, 12, 11, 10,
+9, 8 (numbering the 16 from 1). Entries came from the head of the free
+list and, once it was empty, from the end of the table (size 1243 ->
+1349); creation numbers 1247 to 1406. The full list is in
+`game-data/1.27b/replays/c-RXR-1.objects-301.tsv`.
+
 ## Edge cases
 
 - Only the sum `R` over the game generators is used, so two generator

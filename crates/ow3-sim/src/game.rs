@@ -785,6 +785,12 @@ pub struct State {
     /// Workers that deliver at their next update, with its tick
     /// (SPEC-0029).
     deliveries: Vec<(u32, u64)>,
+    /// The time of the timer queue in this tick as the game keeps it: the
+    /// time `U` of the unit updates at an update tick, else 0.005 more
+    /// than in the tick before (c-RXR-1: 3.879997 in tick 777). A timer
+    /// of the attacks fires in the first tick whose time is at or after
+    /// its expiry.
+    game_clock: u32,
     /// How many times the game's internal objects that the turn
     /// checksums count (`C` and `D` of SPEC-0024) changed, and the ticks
     /// and the queue times of the changes to come.
@@ -875,6 +881,7 @@ impl State {
             mines: BTreeMap::new(),
             harvest_reached: Vec::new(),
             deliveries: Vec::new(),
+            game_clock: 0,
             objects_changed: 0,
             object_ticks: Vec::new(),
             object_timers: Vec::new(),
@@ -1356,6 +1363,14 @@ impl<'a> Game<'a> {
         // update tick"), and with them the buildings they start and the
         // events of those (SPEC-0026).
         let at = movement::update_time(&mut self.state.borrow_mut());
+        {
+            let mut s = self.state.borrow_mut();
+            s.game_clock = match at {
+                Some(at) => at,
+                None if s.game_clock == 0 => s.move_clock,
+                None => add(s.game_clock, crate::timers::TICK),
+            };
+        }
         let mut tick = self.state.borrow_mut().timers.begin_tick();
         if let Some(at) = at {
             loop {

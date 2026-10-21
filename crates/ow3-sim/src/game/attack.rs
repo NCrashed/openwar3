@@ -81,9 +81,8 @@ pub(super) fn standing(state: &State, target: u32) -> bool {
 /// weapon's damage point later (SPEC-0019).
 pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id: i32) {
     let point = match state.objects.get(&h) {
-        Some(Object::Unit(u)) => {
-            weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.damage_point)
-        }
+        Some(Object::Unit(u)) => weapon_for(state, u.type_id, Some(target))
+            .map_or(0, |w| hero_cooldown(state, h, w.damage_point)),
         _ => return,
     };
     let damage_point = ticks(point);
@@ -137,7 +136,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 Some(Object::Unit(u)) if u.alive => {
                     u.attack.filter(|a| a.resume.is_some()).map(|a| {
                         let point = weapon_for(s, u.type_id, Some(a.target))
-                            .map_or(1, |w| ticks(w.damage_point));
+                            .map_or(1, |w| ticks(hero_cooldown(s, h, w.damage_point)));
                         (a, a.next.saturating_sub(point))
                     })
                 }
@@ -173,7 +172,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 let point = s
                     .unit(Some(h))
                     .and_then(|u| weapon_for(s, u.type_id, Some(a.target)))
-                    .map_or(1, |w| ticks(w.damage_point));
+                    .map_or(1, |w| ticks(hero_cooldown(s, h, w.damage_point)));
                 a.next.saturating_sub(point) == tick
             });
             if starts {
@@ -204,6 +203,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         s.game_random[ATTACK_DICE].fraction();
                     }
                     let (amount, bash) = proc_effect(s, h, amount);
+                    let point = hero_cooldown(s, h, weapon.damage_point);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         let next = a.next + ticks(cooldown);
                         let end = tick + ticks(weapon.backswing);
@@ -211,9 +211,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         // The next swing, and with it the new goal of a
                         // chase, at the first update from `D + cool -
                         // dmgpt` on (SPEC-0019).
-                        let renew_at = Some(
-                            (tick + ticks(cooldown)).saturating_sub(ticks(weapon.damage_point)),
-                        );
+                        let renew_at = Some((tick + ticks(cooldown)).saturating_sub(ticks(point)));
                         u.attack = Some(Attacking {
                             next,
                             resume,
@@ -793,7 +791,8 @@ fn hero_primary(state: &State, h: u32) -> u32 {
 }
 
 /// The seconds between the hits of `h` with a weapon of `cooldown`: for a
-/// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034).
+/// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034). Its
+/// damage point shrinks the same way.
 fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
     match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
         Some(u) => {

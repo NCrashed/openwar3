@@ -2628,7 +2628,9 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
 pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) {
     let (tick, clock) = (state.ticks, state.move_clock);
     let limit = until.unwrap_or_else(|| add(clock, crate::timers::TICK));
-    let mut ending: Vec<(u64, u32)> = state
+    // The ends of the timed delays in the order of their expiries (c-RXR-1:
+    // trolls 18 and 19 in 5584), then by the orders.
+    let mut ending: Vec<(f32, u64, u32)> = state
         .moving
         .iter()
         .filter_map(|&h| match state.objects.get(&h) {
@@ -2642,13 +2644,14 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
                     }
                     _ => false,
                 };
-                ends.then_some((m.given, h))
+                let at = m.reaction_end.map_or(f32::NEG_INFINITY, real_of);
+                ends.then_some((at, m.given, h))
             }
             _ => None,
         })
         .collect();
-    ending.sort_unstable();
-    for (_, h) in ending {
+    ending.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    for (_, _, h) in ending {
         let given = state.orders_given + 1;
         state.orders_given = given;
         let (timed, target) = match state.objects.get_mut(&h) {

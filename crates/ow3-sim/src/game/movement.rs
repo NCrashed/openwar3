@@ -2308,6 +2308,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 });
                             if swing {
                                 begin_attack = Some(target);
+                            } else if cooldown {
+                                // The approach starts again: a new search at the
+                                // next update (c-RXR-1: footman 1 at 2695).
+                                state.paths.remove(&h);
                             }
                             follow::Steer::Stand(stand)
                         } else {

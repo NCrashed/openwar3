@@ -70,7 +70,12 @@ Inputs for each member `i` (in the cluster's member order, which is the
 order of the units in the order):
 
 - `p_i`: its current position (SPEC-0018: committed position plus
-  velocity times the elapsed time);
+  velocity times the elapsed time). For the first layout of a cluster,
+  made at its first update, this is the position at the moment of the
+  group order, not at that update: in replay `c-RTW-3` (tick 5497) the
+  leader 918 was walking, and the layout used its position of the order
+  (its commit of tick 5491). (Found by the implementer with the agents
+  file of that replay; one case.)
 - `r_i`: its collision radius in cells (read from memory: footman
   `0x3F780000` = 0.96875, knight and rifleman 1.0, peasant 0.5);
 - `k_i`: its formation rank, the `formation` column of

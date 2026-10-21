@@ -65,7 +65,13 @@ it answers and attacks at once. Replay `c-RXD-1` (read in the game):
 creep 8 reached home in tick 5917 (its order ended), its acquisition
 check of 5919 took worker 2 and called for help, and creeps 6, 7 and 9,
 still walking home, answered the call in that same tick (in the order
-8, 6, 7, 9) and attacked worker 2. Measured, by the distance from home logged every 4 ticks
+8, 6, 7, 9) and attacked worker 2. When the move order home ends,
+the creep's acquisition check starts again 0.01 s later and its guard
+check timer restarts (2.0 s); creep 8: home at queue time 29.5793381
+(tick 5917), check at 29.5893364 (tick 5919). The creeps that answer
+draw their reaction delays like any (order 8, 6, 7, 9 here), and one
+that enters the fight outside its zone starts its return timer at once
+(creeps 6 and 7). Measured, by the distance from home logged every 4 ticks
 (ticks counted by the test's 0.005 s periodic timer from the start of
 the test, game tick = count + 202):
 

@@ -294,8 +294,14 @@ of SPEC-0021 ("Blocked by a unit"):
      of the **script generator** (SPEC-0007). (The game takes the
      integer part of `(x - 1) * 2` with `x = (r AND 0x7FFFFF) OR
      0x3F800000` as a float in `[1, 2)`, which is exact.)
-2. if `P = 1`: a different reaction, read from the code but not seen in
-   the tests (open question);
+2. if `P = 1`: the unit gives up on the path: it gets the "within
+   reach" mark of the touch case below (it stands, turns towards its
+   place, and arrives as soon as it is turned); `P` is not lowered.
+   Replay `c-RYP-1`, peasant 4 at its tree: blocked at the end of its
+   path in 1225 without touching the tree (`P` 2 -> 1), at 1231 a
+   local search to the tree's point that ended at once (the path was
+   its own position), blocked again with `P = 1`: marked; turned at
+   1231 and 1237, arrived at 1243 (read in the game);
 3. otherwise `P = P - 1`.
 
 Except in case 2, the unit then stands still at this update and drops
@@ -471,8 +477,6 @@ one as they arrived.
    than by arriving.
 4. Cluster splitting with distant units, and the path distance used for
    units with hierarchical paths.
-5. What a unit does when its patience counter is 1 at a further block
-   (case 2 of "Blocked units: the patience counter").
 
 ## Sources
 

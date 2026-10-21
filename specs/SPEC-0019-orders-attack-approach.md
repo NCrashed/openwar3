@@ -202,9 +202,16 @@ idle creep that acquires a target, SPEC-0030) visits the units around
 the caller through a grid of cells of 256 x 256 world units from the
 map's lower left corner (-12288, -12288 on the test maps): the rows of
 cells from the bottom up, in each row the cells from left to right, and
-in each cell the unit created later first. A unit lies in the cell of
-the point (x - c, y - c), its position less its collision size `c`
-(the tests used collision 31; 31 and 32 cannot be told apart). The
+in each cell the unit that entered the cell last first. A unit is
+entered (at the front of each cell's list) in every cell its box
+`x - c .. x + c`, `y - c .. y + c` covers, `c` its collision size (the
+tests used 31; 31 and 32 cannot be told apart), at its creation and
+again whenever its box moves into a new cell; it is visited once, at
+the first of its cells in the scan, which is the cell of the point
+(x - c, y - c). So two units first met in the same cell come in the
+order in which they last entered it (for units that never moved, the
+later created first; for units that walked, the one that came in
+last first). The
 caller itself is skipped, and each responder that acquires the target
 fires `EVENT_UNIT_ACQUIRED_TARGET` and draws its reaction delay in this
 order, after the caller's own draw. A responding creep calls for help
@@ -231,6 +238,12 @@ In `c-RXD-1` the `nkob` at (-60, 520) acquired peasant 5 in tick 1557;
 the creeps responded in the order `nkob` (260, 520), `nkob` (100, 450),
 `nkot` (100, 600): cells (row, column) (49, 47) for the caller, (49, 48)
 for the two `nkob` (the later created first), (50, 48) for the `nkot`.
+
+Test SAA (five kobolds created A to E, A, B, C, D at (-60, -60),
+(+60, -60), (-60, +60), (+60, +60) around a point on a 256 boundary and
+E placed near that point): answers A, E, B, C, D; read in the game's
+enumeration: A first met in cell (59, 59), E and B in (60, 59) with E
+(entered last) first, C in (59, 60), D in (60, 60).
 
 ### Approach to an attack target
 

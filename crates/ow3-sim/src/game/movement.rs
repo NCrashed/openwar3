@@ -2034,9 +2034,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 renewed = true;
                             }
                             Some(left) if left > 0 => m.chase = Some(left - 1),
-                            // The goal taken at the end of the reaction
-                            // delay; its renewal counts from here.
+                            // The first search after the reaction delay;
+                            // the renewal counts from here.
                             _ if std::mem::take(&mut m.goal_taken) => {
+                                // The goal is where the target is when the
+                                // search is made (SPEC-0019).
+                                m.target = at;
                                 m.chase = Some(countdown(here, relative(m.target, min)));
                                 renewed = true;
                             }

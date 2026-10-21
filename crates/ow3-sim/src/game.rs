@@ -754,6 +754,10 @@ pub struct State {
     orders_given: u64,
     /// The numbers of the orders given to groups (SPEC-0025).
     group_orders: BTreeSet<u64>,
+    /// The members of each queued group order that have started it, the
+    /// latest first (SPEC-0031, "Groups"), by the number in
+    /// `queue::Queued::Group`.
+    queued_groups: Vec<Vec<u32>>,
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
@@ -854,6 +858,7 @@ impl State {
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),
+            queued_groups: Vec::new(),
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),

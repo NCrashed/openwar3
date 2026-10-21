@@ -7,9 +7,10 @@
 //! queued order starts as a new order given at that update. An order with
 //! no end of its own (`patrol`) keeps the rest waiting.
 //!
-//! A queued group order lays out its places (SPEC-0025) as if the members
-//! stood at their places of the order before, and each member walks to
-//! its place on its own when its order before ends.
+//! A queued group order goes to the point of the click for every member.
+//! Each member starts it when its order before ends, and each time one
+//! more does the group is ordered again: those that have started it, the
+//! latest first, from where they are then (SPEC-0031, "Groups").
 //!
 //! PROVISIONAL: a queued `stop` makes the unit stand 12 ticks more
 //! before the next order (the one case measured: 24 ticks at a 90 degree
@@ -17,8 +18,6 @@
 //! training orders with Shift are not covered (open question 1).
 
 use std::collections::VecDeque;
-
-use ow3_math::mul;
 
 use super::movement;
 use super::{Object, State};
@@ -35,6 +34,13 @@ pub enum Queued {
     Target { name: &'static str, target: u32 },
     /// `stop` and `holdposition`.
     Immediate { name: &'static str },
+    /// A group order to a point: its name, the point and the number of the
+    /// group in `State::queued_groups`.
+    Group {
+        name: &'static str,
+        target: [u32; 2],
+        group: usize,
+    },
 }
 
 /// Ticks a queued `stop` keeps the unit standing.
@@ -105,6 +111,24 @@ fn start(state: &mut State, h: u32, order: Queued) -> bool {
         Queued::Target { name, target } => movement::target_order(state, h, name, target),
         Queued::Immediate { name: "stop" } => true,
         Queued::Immediate { name } => movement::immediate_order(state, h, name),
+        Queued::Group {
+            name,
+            target,
+            group,
+        } => {
+            let Some(started) = state.queued_groups.get_mut(group) else {
+                return false;
+            };
+            started.retain(|&m| m != h);
+            started.insert(0, h);
+            let mut started = started.clone();
+            started.retain(|&m| state.unit(Some(m)).is_some_and(|u| u.alive));
+            if started.len() == 1 {
+                movement::point_order(state, h, name, target)
+            } else {
+                movement::regroup(state, &started, name, target)
+            }
+        }
     };
     let tick = state.ticks;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -158,49 +182,20 @@ pub(super) fn pass(state: &mut State) {
 }
 
 /// A queued group order `name` to `target` for `units` (SPEC-0031,
-/// "Groups"): the places are laid out from the members' places of the
-/// order before (the last point each has queued, else the point it walks
-/// to, else where it stands), and each member queues a walk to its own.
+/// "Groups"): each member queues it, and is laid out with the others that
+/// have started it when it starts.
 pub(super) fn push_group(state: &mut State, units: &[u32], name: &'static str, target: [u32; 2]) {
-    let min = [state.world_bounds[0], state.world_bounds[1]];
-    let cell = |p: [u32; 2]| {
-        let r = movement::relative(p, min);
-        [mul(r[0], movement::CELL), mul(r[1], movement::CELL)]
-    };
-    let mut members = Vec::new();
-    let mut handles = Vec::new();
+    let group = state.queued_groups.len();
+    state.queued_groups.push(Vec::new());
     for &h in units {
-        let Some(u) = state.unit(Some(h)) else {
-            continue;
-        };
-        let before = u
-            .orders
-            .orders
-            .iter()
-            .rev()
-            .find_map(|q| match q {
-                Queued::Point { target, .. } => Some(*target),
-                _ => None,
-            })
-            .or_else(|| u.movement.filter(|m| m.ordered()).map(|m| m.target_point()))
-            .unwrap_or([u.x, u.y]);
-        let data = state.data.units.get(&u.type_id);
-        members.push(super::formation::Member {
-            position: cell(before),
-            radius: mul(data.map_or(0, |t| t.collision), movement::CELL),
-            rank: data.map_or(0, |t| t.formation),
-        });
-        handles.push(h);
-    }
-    if members.len() < 2 {
-        for h in handles {
-            push(state, h, Queued::Point { name, target });
-        }
-        return;
-    }
-    let places = movement::group_places(state, &members, cell(target));
-    for (h, place) in handles.into_iter().zip(places) {
-        let target = movement::cells_to_world(place, min);
-        push(state, h, Queued::Point { name, target });
+        push(
+            state,
+            h,
+            Queued::Group {
+                name,
+                target,
+                group,
+            },
+        );
     }
 }

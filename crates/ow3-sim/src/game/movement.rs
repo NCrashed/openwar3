@@ -594,6 +594,13 @@ pub(super) fn group_point_order(
     for &h in units {
         super::queue::clear(state, h);
     }
+    regroup(state, units, name, target)
+}
+
+/// The group order of [`group_point_order`] without touching the members'
+/// queues: also the new layout of a queued group order each time one more
+/// member starts it (SPEC-0031, "Groups").
+pub(super) fn regroup(state: &mut State, units: &[u32], name: &str, target: [u32; 2]) -> bool {
     let taken: Vec<u32> = units
         .iter()
         .copied()
@@ -872,36 +879,6 @@ fn cluster_path(state: &State, from: [u32; 2], goal: [u32; 2], class: u8) -> Vec
         Some(grid) => follow::segment_goals(grid, from, goal, class),
         None => vec![goal],
     }
-}
-
-/// The places (cells) of `members` at the end of a group order to `goal`
-/// (cells), laid out as a cluster lays them out at its first update
-/// (SPEC-0025): the leader is the member nearest the goal, the formation
-/// faces from it along its path, and the places are the path's last
-/// waypoint plus the offsets.
-pub(super) fn group_places(
-    state: &State,
-    members: &[super::formation::Member],
-    goal: [u32; 2],
-) -> Vec<[u32; 2]> {
-    let leader = nearest(members, goal);
-    let class = crate::path::size_class(mul(members[leader].radius, 0x4200_0000));
-    let waypoints = cluster_path(state, members[leader].position, goal, class);
-    let (first, last) = match (waypoints.first(), waypoints.last()) {
-        (Some(&f), Some(&l)) => (f, l),
-        _ => (goal, goal),
-    };
-    let lead = members[leader].position;
-    let angle = angle(sub(first[0], lead[0]), sub(first[1], lead[1]));
-    super::formation::offsets(members, angle)
-        .into_iter()
-        .map(|o| [add(last[0], o[0]), add(last[1], o[1])])
-        .collect()
-}
-
-/// A point in cells as a world point.
-pub(super) fn cells_to_world(p: [u32; 2], min: [u32; 2]) -> [u32; 2] {
-    absolute(mul_both(p, CELLS_TO_WORLD), min)
 }
 
 /// Sends each member of `cluster` to its place: the current waypoint plus

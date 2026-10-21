@@ -161,6 +161,9 @@ pub enum Order {
     Return { building: u32 },
     /// Stand at a mine or tree and gather (or wait at the mine).
     Work { target: u32 },
+    /// Walk into the range of an ability on `target` to cast it
+    /// (SPEC-0035).
+    Cast { target: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -504,6 +507,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         u.movement = Some(moving);
         u.attack = None;
         u.turn = None;
+        u.casting = None;
     }
     if !state.moving.contains(&h) {
         state.moving.push(h);
@@ -1295,6 +1299,14 @@ pub(super) fn stop(state: &mut State, h: u32) {
     halt(state, h);
 }
 
+/// Unit `h` walks into the range of its cast on `target` (SPEC-0035).
+pub(super) fn cast_order(state: &mut State, h: u32, target: u32, order_id: i32) -> bool {
+    match position_of(state, target) {
+        Some(at) => order(state, h, Order::Cast { target }, order_id, at),
+        None => false,
+    }
+}
+
 /// A unit just trained walks to the rally point of its building, by the
 /// rules of `move` with the order id 851970 (SPEC-0027).
 pub(super) fn rally_order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
@@ -1383,6 +1395,10 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
 }
 
 fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    // The order of an ability (SPEC-0035).
+    if let Some(taken) = super::cast::order(state, h, name, target) {
+        return taken;
+    }
     if name == "move" {
         return follow_order(state, h, target, ORDER_MOVE);
     }
@@ -1493,7 +1509,7 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
 }
 
 /// The ids of the order names (SPEC-0019, "Order ids").
-const ORDER_IDS: [(&str, i32); 12] = [
+const ORDER_IDS: [(&str, i32); 13] = [
     ("smart", 851_971),
     ("stop", 851_972),
     ("cancel", 851_976),
@@ -1506,6 +1522,7 @@ const ORDER_IDS: [(&str, i32); 12] = [
     ("resumeharvesting", 852_017),
     ("harvest", 852_018),
     ("returnresources", 852_020),
+    ("holybolt", 852_092),
 ];
 
 /// `OrderId`: the id of `name` in any case, 0 for an unknown name.
@@ -1567,6 +1584,7 @@ fn halt(state: &mut State, h: u32) -> bool {
         return false;
     }
     u.attack = None;
+    u.casting = None;
     if let Some(m) = u.movement.as_mut() {
         m.arrived = true;
         m.walking = false;
@@ -1725,6 +1743,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     u.shown_order.map_or(0, |(id, _)| id)
                 }
                 Some(u) if u.attack_move.is_some() => ORDER_ATTACK,
+                Some(u) if u.casting.is_some() => u.casting.map_or(0, |c| c.order_id),
                 Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
                 None => 0,
@@ -1937,6 +1956,28 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.walking = false;
                 m.velocity = [0, 0];
                 face_target(state, &mut m, building, min);
+            }
+        }
+        // A caster walks to its target and starts its cast at the update at
+        // which it is in range (SPEC-0035).
+        // PROVISIONAL: the effect came 99 ticks after the last position
+        // change, taken as a start one tick before this update.
+        if let Order::Cast { target } = m.order
+            && !waiting
+            && !m.arrived
+        {
+            match position_of(state, target).filter(|_| super::attack::standing(state, target)) {
+                Some(at) => {
+                    m.target = at;
+                    let reach = super::cast::reach(state, h, target).unwrap_or(0);
+                    if in_range(here, relative(at, min), reach) {
+                        m.arrived = true;
+                        m.walking = false;
+                        m.velocity = [0, 0];
+                        super::cast::start(state, h, tick.saturating_sub(1));
+                    }
+                }
+                None => m.arrived = true,
             }
         }
         // A worker building stays until the building is finished.

@@ -378,6 +378,9 @@ pub struct Heroes {
     pub int_mana: u32,
     pub agi_attack_speed: u32,
     pub str_attack: u32,
+    /// The hero levels between two levels of an ability whose own
+    /// `levelSkip` is 0 (`HeroAbilityLevelSkip`, SPEC-0035).
+    pub ability_level_skip: i64,
 }
 
 impl Default for Heroes {
@@ -405,6 +408,7 @@ impl Default for Heroes {
             int_mana: s2r("15"),
             agi_attack_speed: s2r("0.02"),
             str_attack: s2r("1.0"),
+            ability_level_skip: 2,
         }
     }
 }
@@ -436,6 +440,7 @@ impl Heroes {
             "IntManaBonus" => self.int_mana = s2r(value),
             "AgiAttackSpeedBonus" => self.agi_attack_speed = s2r(value),
             "StrAttackBonus" => self.str_attack = s2r(value),
+            "HeroAbilityLevelSkip" => self.ability_level_skip = number(),
             _ => {
                 let tables = [
                     ("NeedHeroXPFormula", &mut self.need_xp),

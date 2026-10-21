@@ -59,6 +59,7 @@ type location extends agent
 native Location takes real x, real y returns location
 native IssuePointOrderLoc takes unit whichUnit, string order, location whichLocation returns boolean
 native SetHeroLevel takes unit whichHero, integer level, boolean showEyeCandy returns nothing
+native SelectHeroSkill takes unit whichHero, integer abilcode returns nothing
 globals
     unit a = null
     unit t = null
@@ -1216,4 +1217,57 @@ fn hero_experience_from_deaths() {
         let u = path.last().unwrap().1[0];
         assert_eq!(u.xp, xp, "{victim} at level {level}");
     }
+}
+
+/// SPEC-0035, verification 2: a paladin 300 from a footman with 100 life
+/// casts Holy Light: +200 life and -65 mana in tick `o + 100`, the order
+/// 852092 until `o + 434`.
+#[test]
+fn holy_light() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)\n    set t = CreateUnit(Player(0), 'hfoo', 300, 0, 180)\n    call SelectHeroSkill(a, 'AHhb')\n    call SetUnitState(t, ConvertUnitState(0), 100.0)",
+        "call IssueTargetOrder(a, \"holybolt\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 500);
+    let at = |tick: u64| &path.iter().find(|(t, _)| *t == tick).unwrap().1;
+    let o = ORDER_TICK;
+    // The footman also regenerates a little each tick.
+    let healed = at(o + 100)[1].life - at(o + 99)[1].life;
+    assert!((healed - 200.0).abs() < 0.1, "{healed}");
+    assert!(at(o + 99)[0].max_mana - at(o + 99)[0].mana < 0.1);
+    let paid = at(o + 99)[0].mana - at(o + 100)[0].mana;
+    assert!((paid - 65.0).abs() < 0.1, "{paid}");
+    assert_eq!(at(o + 433)[0].order, 852_092);
+    assert_eq!(at(o + 435)[0].order, 0);
+}
+
+/// SPEC-0035, casting out of range: the paladin walks to 1200 - 860.7
+/// from a footman 1200 away and heals it 99 ticks after its last step.
+#[test]
+fn holy_light_out_of_range() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hpal', 0, 0, 0)\n    set t = CreateUnit(Player(0), 'hfoo', 1200, 0, 180)\n    call SelectHeroSkill(a, 'AHhb')\n    call SetUnitState(t, ConvertUnitState(0), 100.0)",
+        "call IssueTargetOrder(a, \"holybolt\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 1200);
+    let healed = path
+        .windows(2)
+        .find(|w| w[1].1[1].life - w[0].1[1].life > 100.0)
+        .map(|w| w[1].0)
+        .expect("no heal");
+    let last_step = path
+        .windows(2)
+        .filter(|w| w[1].1[0].x != w[0].1[0].x)
+        .map(|w| w[1].0)
+        .max()
+        .unwrap();
+    let gap = 1200.0 - path.last().unwrap().1[0].x;
+    assert!((gap - 860.7).abs() < 1.0, "{gap}");
+    assert_eq!(healed - last_step, 99);
 }

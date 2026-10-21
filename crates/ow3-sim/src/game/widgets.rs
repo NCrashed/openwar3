@@ -281,6 +281,10 @@ pub(super) fn create_unit(
         intelligence: data.intelligence,
         xp: 0,
         level: i64::from(is_hero(type_id)),
+        skills: Vec::new(),
+        spent: 0,
+        ready: Vec::new(),
+        casting: None,
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -984,22 +988,16 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     }
     // A hero starts with 1 skill point when its type has hero data, with
     // 0 when it is made from another type (SPEC-0009), and gains one a
-    // level (SPEC-0034). PROVISIONAL: no skills to spend them on yet.
+    // level (SPEC-0034), less those spent (SPEC-0035).
     native!(
         add,
         state,
         "native GetHeroSkillPoints takes unit whichHero returns integer",
         |vm, state, args| {
             let state = state.borrow();
-            let points = state.unit(handle(&args[0])).map_or(0, |u| {
-                let data = state.data.units.get(&u.type_id);
-                let first = i32::from(data.is_some_and(|t| t.hero_data));
-                if is_hero(u.type_id) {
-                    first + (u.level as i32 - 1).max(0)
-                } else {
-                    0
-                }
-            });
+            let points = state
+                .unit(handle(&args[0]))
+                .map_or(0, |u| super::heroes::skill_points(&state, u));
             Ok(Some(Value::Integer(points)))
         }
     );

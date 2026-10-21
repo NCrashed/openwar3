@@ -145,7 +145,98 @@ pub(super) fn death(state: &mut State, dying: u32) {
     }
 }
 
+/// The skill points hero `u` has left: one a level, the first only for a
+/// type with hero data (SPEC-0009, SPEC-0034), less those it spent.
+pub(super) fn skill_points(state: &State, u: &super::Unit) -> i32 {
+    if !is_hero(u.type_id) {
+        return 0;
+    }
+    let first = i32::from(
+        state
+            .data
+            .units
+            .get(&u.type_id)
+            .is_some_and(|t| t.hero_data),
+    );
+    first + (u.level as i32 - 1).max(0) - u.spent
+}
+
+/// The level of `ability` of unit `u`: what a hero learned, else 1 for an
+/// ability of its type, else 0.
+pub(super) fn ability_level(state: &State, u: &super::Unit, ability: i32) -> i32 {
+    if let Some(&(_, level)) = u.skills.iter().find(|(a, _)| *a == ability) {
+        return level;
+    }
+    let own = state
+        .data
+        .units
+        .get(&u.type_id)
+        .is_some_and(|t| t.abilities.contains(&ability));
+    i32::from(own)
+}
+
+/// `SelectHeroSkill`: hero `h` spends a skill point on the next level of
+/// `ability` if it has a point, the ability is one of its type's and its
+/// level allows it: level `k` needs hero level `reqLevel + s * (k - 1)`,
+/// `s` the ability's `levelSkip` or else `HeroAbilityLevelSkip`
+/// (SPEC-0035).
+fn select_skill(state: &mut State, h: u32, ability: i32) {
+    let Some(u) = state
+        .unit(Some(h))
+        .filter(|u| u.alive && is_hero(u.type_id))
+    else {
+        return;
+    };
+    let learnable = state
+        .data
+        .units
+        .get(&u.type_id)
+        .is_some_and(|t| t.hero_abilities.contains(&ability));
+    let Some(data) = state.data.abilities.get(&ability).filter(|_| learnable) else {
+        return;
+    };
+    let next = ability_level(state, u, ability) + 1;
+    let skip = if data.level_skip != 0 {
+        i64::from(data.level_skip)
+    } else {
+        state.combat.heroes.ability_level_skip
+    };
+    let needs = i64::from(data.req_level) + skip * i64::from(next - 1);
+    if skill_points(state, u) <= 0 || next > data.levels || u.level < needs {
+        return;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        match u.skills.iter_mut().find(|(a, _)| *a == ability) {
+            Some(entry) => entry.1 = next,
+            None => u.skills.push((ability, next)),
+        }
+        u.spent += 1;
+    }
+}
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
+    native!(
+        add,
+        state,
+        "native SelectHeroSkill takes unit whichHero, integer abilcode returns nothing",
+        |vm, state, args| {
+            if let Some(h) = handle(&args[0]) {
+                select_skill(&mut state.borrow_mut(), h, integer(&args[1]));
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native GetUnitAbilityLevel takes unit whichUnit, integer abilcode returns integer",
+        |vm, state, args| {
+            let s = state.borrow();
+            let level = s
+                .unit(handle(&args[0]))
+                .map_or(0, |u| ability_level(&s, u, integer(&args[1])));
+            Ok(Some(Value::Integer(level)))
+        }
+    );
     native!(
         add,
         state,

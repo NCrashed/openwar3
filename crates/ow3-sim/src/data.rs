@@ -92,6 +92,12 @@ pub struct UnitType {
     pub target_type: Vec<String>,
     /// Its abilities (`abilList` of `UnitAbilities.slk`), SPEC-0029.
     pub abilities: Vec<i32>,
+    /// The abilities a hero may learn (`heroAbilList`), SPEC-0035.
+    pub hero_abilities: Vec<i32>,
+    /// Seconds from the start of a cast to its effect, and the order held
+    /// after it (`castpt`, `castbsw` of `UnitWeapons.slk`), as reals.
+    pub cast_point: u32,
+    pub cast_backswing: u32,
     /// Creeps of the type sleep at night (`canSleep` of `UnitData.slk`,
     /// SPEC-0030).
     pub can_sleep: bool,
@@ -142,6 +148,23 @@ pub struct Ability {
     pub duration: u32,
     pub range: u32,
     pub area: u32,
+    /// Its number of levels, the hero level its first level needs and the
+    /// step between levels (`levels`, `reqLevel`, `levelSkip`), SPEC-0035.
+    pub levels: i32,
+    pub req_level: i32,
+    pub level_skip: i32,
+    /// The numbers of each level, from level 1.
+    pub per_level: Vec<AbilityLevel>,
+}
+
+/// The numbers of a level of an ability: `CoolN`, `CostN`, `RngN` and
+/// `DataAN` to `DataCN`, reals as bit patterns but the cost (SPEC-0035).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AbilityLevel {
+    pub cooldown: u32,
+    pub cost: i32,
+    pub range: u32,
+    pub data: [u32; 3],
 }
 
 /// The pathing of a destructable type (`DestructableData.slk`,
@@ -564,7 +587,7 @@ impl ObjectData {
         let mut columns: Vec<String> = vec!["acquire".into(), "weapsOn".into()];
         columns.extend(weapon_fields(1));
         columns.extend(weapon_fields(2));
-        columns.extend(["launchX".to_owned(), "launchY".to_owned()]);
+        columns.extend(["launchX", "launchY", "castpt", "castbsw"].map(String::from));
         let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
         for (id, values) in rows(
             archives,
@@ -609,6 +632,8 @@ impl ObjectData {
                 })
             };
             unit.launch = [real(values[34].as_ref()), real(values[35].as_ref())];
+            unit.cast_point = real(values[36].as_ref());
+            unit.cast_backswing = real(values[37].as_ref());
             let (first, second) = (weapon(2), weapon(18));
             (unit.weapon, unit.weapon2) = match on {
                 3 => (first, second),
@@ -740,14 +765,36 @@ impl ObjectData {
                 .filter(|b| b.len() == 4)
                 .map_or(0, |b| i32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         };
+        let cost = |v: Option<&String>| -> i32 {
+            v.and_then(|v| v.trim().parse::<f32>().ok())
+                .map_or(0, |v| v as i32)
+        };
+        let mut ability_columns: Vec<String> = [
+            "code",
+            "DataA1",
+            "DataB1",
+            "DataC1",
+            "Dur1",
+            "Rng1",
+            "Area1",
+            "levels",
+            "reqLevel",
+            "levelSkip",
+        ]
+        .map(String::from)
+        .to_vec();
+        for level in 1..=4 {
+            for field in ["Cool", "Cost", "Rng", "DataA", "DataB", "DataC"] {
+                ability_columns.push(format!("{field}{level}"));
+            }
+        }
+        let ability_columns: Vec<&str> = ability_columns.iter().map(String::as_str).collect();
         for (id, values) in rows(
             archives,
             melee,
             "Units\\AbilityData.slk",
             "alias",
-            &[
-                "code", "DataA1", "DataB1", "DataC1", "Dur1", "Rng1", "Area1",
-            ],
+            &ability_columns,
         )? {
             data.abilities.insert(
                 id,
@@ -757,6 +804,20 @@ impl ObjectData {
                     duration: real(values[4].as_ref()),
                     range: real(values[5].as_ref()),
                     area: real(values[6].as_ref()),
+                    levels: cost(values[7].as_ref()),
+                    req_level: cost(values[8].as_ref()),
+                    level_skip: cost(values[9].as_ref()),
+                    per_level: (0..4)
+                        .map(|l| {
+                            let at = 10 + 6 * l;
+                            AbilityLevel {
+                                cooldown: real(values[at].as_ref()),
+                                cost: cost(values[at + 1].as_ref()),
+                                range: real(values[at + 2].as_ref()),
+                                data: [3, 4, 5].map(|i| real(values[at + i].as_ref())),
+                            }
+                        })
+                        .collect(),
                 },
             );
         }
@@ -765,10 +826,17 @@ impl ObjectData {
             melee,
             "Units\\UnitAbilities.slk",
             "unitAbilID",
-            &["abilList"],
+            &["abilList", "heroAbilList"],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.abilities = values[0]
+                    .as_deref()
+                    .unwrap_or("")
+                    .split(',')
+                    .map(|a| code(Some(&a.to_owned())))
+                    .filter(|&a| a != 0)
+                    .collect();
+                unit.hero_abilities = values[1]
                     .as_deref()
                     .unwrap_or("")
                     .split(',')

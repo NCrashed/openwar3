@@ -44,6 +44,7 @@ macro_rules! native {
 }
 
 mod boards;
+mod cast;
 pub use attack::MissileView;
 pub use boards::Button;
 pub use creeps::CREEPS;
@@ -198,6 +199,13 @@ pub struct Unit {
     /// A hero's experience and level (SPEC-0033); level 0 for others.
     xp: i64,
     level: i64,
+    /// The abilities a hero learned with their levels, the skill points it
+    /// spent, and when each ability is ready again (SPEC-0035).
+    skills: Vec<(i32, i32)>,
+    spent: i32,
+    ready: Vec<(i32, u64)>,
+    /// The ability it casts or walks to cast (SPEC-0035).
+    casting: Option<cast::Casting>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -1359,6 +1367,8 @@ impl<'a> Game<'a> {
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);
+        // Casts of abilities (SPEC-0035).
+        cast::tick(&mut self.vm, &self.state);
         // Creeps waking, giving up their chases and home again (SPEC-0030).
         creeps::tick(&mut self.state.borrow_mut());
         // What the units see (SPEC-0032).
@@ -1465,6 +1475,7 @@ impl<'a> Game<'a> {
                     walking: u.movement.is_some_and(|m| m.walking()),
                     target: u.movement.and_then(|m| m.target()),
                     order: queue::shown_order(&state, handle)
+                        .or(u.casting.map(|c| c.order_id))
                         .unwrap_or_else(|| u.movement.map_or(0, |m| m.order_id())),
                     constructing: u.construction.is_some(),
                     carrying: harvest::carried(&state, handle).map(|(r, n)| match r {

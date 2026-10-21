@@ -327,6 +327,24 @@ the same update, local path dropped, standing. At 5551 and 5557 it was
 blocked again in the same way (`P` 6 -> 5 -> 4), the last search
 leading to its old place again.
 
+Before the counter is used (both for units in the way and for the end
+of the path), the game tests whether the unit touches its order's
+target (the unit's cell against the target's footprint, with a margin
+that depends on the pathing class; read in part). If it does, the
+counter is not touched: the unit stands at this update, turns towards
+its place by its turn rate (SPEC-0018), and from now on counts as
+within reach in the arrival test (SPEC-0019, "Arrival at the member's
+place") until it arrives; that mark is cleared at the arrival. Replay
+`c-RYP-1`, peasant 5 walking to its tree at (360, 390) cells along row
+393.5, local path ending at (357.5, 393.5): at 1297 its step took it to
+(357.1828, 393.4994), 0.317 from that end and 4.4925 from the tree's
+point (reach 4.125, not arrived): blocked, touching, so marked; speed
+0, heading 6.2779 -> 5.6779 (0.6 towards the direction 5.3902 of the
+tree's point). At 1303 within reach by the mark, angle -0.2877: stood
+and turned the rest, heading 5.3902. At 1309 angle 0: arrived (speed 0,
+path dropped, mark cleared). At 1315, 4.4925 > 4.125 and no mark: a
+new search to the tree's point, local path to (358.5, 393.5).
+
 Measured (`c-RSM-2.w3g`): member 1 is blocked at the update with clock
 5.609832 by member 2, which stands waiting for its 5 updates; `P`
 becomes 7 and member 1 stands. At the next update (5.639830) it makes a

@@ -169,18 +169,25 @@ gives (349, 385), and it came out at (-1104, 48). Peasants 5 (tick 2866)
 and 3 (tick 5380) entered at cell (351, 385) where the worker that had
 just entered the mine stood; ring 1 has no free cell, ring 2 gives
 (350, 383) first, and both came out at (-1072, -16). (Test RUF: entered
-at (-6162.17, -5957.45), came out at (-6192, -5936).) Workers of the
-gathering cycle that walk (they block nothing for other units, below)
-do not count for this search; waiting ones do (above), and a worker
-still on its first walk to the mine counts as any unit. `c-RXI-1` tick
-3497: peasant 3 came out on its entry point (351.1182, 385.5313)
-although peasant 2, in the gathering cycle and walking to the mine, was
-in that same cell at (351.0083, 385.5001). `c-RXD-1` tick 4191: worker 4 came out from its
-entry cell (443, 385) while worker 2 waited on that cell and worker 0,
-on its first walk to the mine (never in it yet), walked past at
-(441.7311, 382.5647) (cell (441, 382)); ring 1 had no free cell, in
-ring 2 the cells (441, 383) and (442, 383) overlapped worker 0's
-footprint and (443, 383) was taken: out at (1904, -16).
+at (-6162.17, -5957.45), came out at (-6192, -5936).) The units that
+make a footprint not free here are those that would close the cells for
+a local path search of a ground unit (SPEC-0021): standing and walking
+units, a worker on its first walk to the mine and any waiting worker;
+not a worker of the gathering cycle that walks (it blocks no local
+search, below) and not a worker hidden in the mine. `c-RXD-1` tick
+4191: worker 4 came out from its entry cell (443, 385) while worker 2
+waited on that cell and worker 0, on its first walk to the mine,
+walked past with its cells at (440..441, 381..382): ring 1 had no free
+footprint, in ring 2 (442, 383) met worker 0's cell (441, 382) and
+(443, 383) was taken: out at (1904, -16). `c-RXI-1` tick 3497: peasant 3
+came out on its entry point (351.1182, 385.5313) although peasant 2, in
+the gathering cycle and walking to the mine, had its cells in that
+footprint.
+
+The footprint is tested cell by cell, rows from the bottom, each row
+from the left; the first closed cell ends the test. A unit's cells are
+the 2 x 2 cells from `floor(x - 1)` to `floor(x + 1) - 1` (and the same
+in y) for its position `(x, y)` at its last commit.
 
 **An empty mine.** When the last gold is taken (the mine had 30 in
 test RUJ: three trips), the mine's gold is 0 as the peasant leaves it
@@ -237,6 +244,17 @@ overlapped it and was moved: from its cell (350, 385) the ring 1 cells
 free, and peasant 5 went on from its centre (-1104, 80) (the log shows
 the new position in tick 1118). Other workers started waiting in ticks 871 (two),
 1075, 1105 and 1177 with nobody on their cells: nothing moved.
+
+This search counts other units differently from the exit search: a
+footprint is refused only by the cells of waiting workers (and of the
+worker that starts to wait); walking units, first-walk workers
+included, and the moved unit itself do not count (standing units of
+other kinds were not in the footprints read). `c-RXD-1` tick 4249:
+worker 0 started to wait at (443.1479, 383.3138) (cells 442..443,
+382..383) and moved worker 4 from its cell (442, 383); every ring-1
+footprint meeting x 442 was refused, and (441, 384) was taken (worker 4
+put at (1840, 16), its next step to (1834.30, 16.03)) although its cell
+(440, 383) held worker 1, walking on its first walk to the mine.
 
 **Going in pushes others aside too.** When a worker goes into the mine,
 the units whose footprints overlap its footprint are moved in the same

@@ -3093,7 +3093,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             let (dx, dy) = (real_of(o.x) - real_of(u.x), real_of(o.y) - real_of(u.y));
             (dx * dx + dy * dy <= REMEMBERED_REACH * REMEMBERED_REACH).then_some(r)
         };
-        let Some(target) = targets.nearest_enemy(state, h).or_else(remembered) else {
+        let idle = matches!(check, Check::Idle { .. });
+        let Some(target) = targets
+            .nearest_enemy(state, h)
+            .or_else(|| remembered().filter(|_| idle))
+        else {
             continue;
         };
         let Some(Object::Unit(o)) = state.objects.get(&target) else {

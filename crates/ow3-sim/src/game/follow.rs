@@ -794,7 +794,20 @@ fn decide(
                 follow.stuck = true;
                 return Steer::Stand(segment_goal);
             }
-            // The end of a path that did not get there: search again.
+            // The end of a path that did not get there: blocked, with the
+            // patience counter, and a new search at the next update
+            // (SPEC-0025, "Blocked units"; c-RXD-1: creep 9 at 5719).
+            if follow.final_goal {
+                count_block(follow, shared, walker, order, at);
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                follow.local.clear();
+            }
             follow.next = Next::Search;
             return Steer::Stand(segment_goal);
         }

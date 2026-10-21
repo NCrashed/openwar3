@@ -292,6 +292,8 @@ pub(super) fn create_unit(
         slowed_until: None,
         buffs: Vec::new(),
         weapon_ready: 0,
+        cooldown_end: 0,
+        cooldown_target: 0,
         orient_interp: data.orient_interp,
         life,
         mana,

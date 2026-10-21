@@ -223,6 +223,11 @@ pub struct Unit {
     buffs: Vec<(i32, i32, u64)>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
+    /// When the cooldown of its last swing expires, on the queue: a new
+    /// swing waits for it (c-RXR-1: grunt 15 at 12.2299929).
+    cooldown_end: u32,
+    /// The target of that swing.
+    cooldown_target: u32,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,

@@ -2142,7 +2142,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         let stands = if standing {
                             !(renewed && !in_range(here, lead, reach))
                         } else if real_of(start_gap) > real_of(FOLLOW_RANGE) {
-                            in_range(here, lead, reach)
+                            // A walking follower tests its goal point, as a
+                            // chase does (c-RTW-3: 828 stood at 5491, 294 from
+                            // its goal, 342 from 918).
+                            in_range(here, relative(m.target, min), reach)
                         } else {
                             let gap = sub(sub(distance(here, lead), own), other);
                             real_of(gap) <= real_of(distance(from, here))
@@ -2212,7 +2215,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // A swing already timed by the cooldown on this
                             // target goes on by its timer (`attack::hits`).
                             let timed = u.attack.is_some_and(|a| a.target == target);
-                            !timed && tick + point >= u.weapon_ready
+                            // A new attack (not a switch, which keeps the
+                            // renewal of the swing before) starts a swing that
+                            // waits for the cooldown on the queue
+                            // (`attack::begin`; c-RXR-1, grunt 15 in 2443);
+                            // otherwise the swing waits until the cooldown has
+                            // run out at an update (c-RXD-1, creeps 6 and 8
+                            // after their switches of 2007 and 2031).
+                            // PROVISIONAL: what tells the two apart.
+                            let fresh = u.cooldown_target != target && m.renew_at.is_none();
+                            !timed && (fresh || tick + point >= u.weapon_ready)
                         });
                         let (h, d) = heading_and_turn(&m, goal);
                         let gate_open = cooled && m.swing_gate.is_none_or(|from| tick >= from);
@@ -2306,6 +2318,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             .map(|_| target),
                         _ => None,
                     };
+                    // A follower's search ends touching its leader, as a
+                    // chase's (c-RTW-3: 828 at 5413).
+                    let chase = match m.order {
+                        Order::Follow { leader, .. } => {
+                            let (own, other) =
+                                (collision_of(state, h), collision_of(state, leader));
+                            let reach = mul(add(add(FOLLOW_RANGE, own), other), CELL);
+                            Some(chase_of(state, leader, reach))
+                        }
+                        _ => None,
+                    };
                     let walker = |order| follow::Walker {
                         handle: h,
                         here,
@@ -2313,7 +2336,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         class,
                         squared_speed,
                         cluster,
-                        chase: None,
+                        chase,
                         building,
                     };
                     // Round the obstacles of the pathing map (SPEC-0020), or

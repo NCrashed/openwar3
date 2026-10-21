@@ -363,7 +363,7 @@ fn group_walks_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    assert!(tick >= 5479, "first difference at tick {tick}");
+    assert!(tick >= 5503, "first difference at tick {tick}");
 }
 
 /// `c-RYP-1`: peasants harvesting lumber in a block of trees.

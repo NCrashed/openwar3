@@ -45,6 +45,8 @@ pub struct Attacking {
     /// update: its queue time plus `dmgpt1` (SPEC-0016). The hit comes in
     /// the tick that holds it.
     hit_at: Option<u32>,
+    /// The queue time at which that swing started.
+    swing_q: u32,
 }
 
 impl Attacking {
@@ -86,16 +88,26 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
         _ => return,
     };
     let damage_point = ticks(point);
-    let hit_at = add(state.timers.time(), point);
+    let now = state.timers.time();
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-        let ready = tick + damage_point < u.weapon_ready;
+        // A swing waits for the cooldown of the last one, also on another
+        // target (c-RXR-1: grunt 15, whose target died, swung at the
+        // expiry of that cooldown).
+        let swing_q = if f32::from_bits(u.cooldown_end) > f32::from_bits(now) {
+            u.cooldown_end
+        } else {
+            now
+        };
+        let hit_at = add(swing_q, point);
+        let wait = ticks(sub(swing_q, now));
         u.attack = Some(Attacking {
             target,
-            next: (tick + damage_point).max(u.weapon_ready),
+            next: (tick + wait + damage_point).max(u.weapon_ready),
             order_id,
             resume: None,
             renew_at: None,
-            hit_at: (!ready).then_some(hit_at),
+            hit_at: Some(hit_at),
+            swing_q,
         });
     }
     if !state.attacking.contains(&h) {
@@ -112,14 +124,21 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     let mut attackers = state.borrow().attacking.clone();
     {
         let s = state.borrow();
+        // Equal expiries go by the start of their timers, the swings.
         let key = |h: &u32| {
             s.unit(Some(*h))
                 .and_then(|u| u.attack)
                 .filter(|a| due(&s, a))
-                .and_then(|a| a.hit_at)
-                .map_or(f32::INFINITY, f32::from_bits)
+                .and_then(|a| {
+                    a.hit_at
+                        .map(|e| (f32::from_bits(e), f32::from_bits(a.swing_q)))
+                })
+                .unwrap_or((f32::INFINITY, 0.0))
         };
-        attackers.sort_by(|a, b| key(a).total_cmp(&key(b)));
+        attackers.sort_by(|a, b| {
+            let (a, b) = (key(a), key(b));
+            a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))
+        });
     }
     for h in attackers {
         // A stunned unit does not attack: its hit waits (SPEC-0037).
@@ -226,11 +245,17 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         // chase, at the first update from `D + cool -
                         // dmgpt` on (SPEC-0019).
                         let renew_at = Some((tick + ticks(cooldown)).saturating_sub(ticks(point)));
+                        // The next swing starts at the expiry of this one's
+                        // cooldown (SPEC-0016).
+                        let swing_q = add(a.swing_q, cooldown);
+                        u.cooldown_end = swing_q;
+                        u.cooldown_target = a.target;
                         u.attack = Some(Attacking {
                             next,
                             resume,
                             renew_at,
                             hit_at: a.hit_at.map(|e| add(e, cooldown)),
+                            swing_q,
                             ..a
                         });
                         u.weapon_ready = next;

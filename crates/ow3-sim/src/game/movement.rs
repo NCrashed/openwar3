@@ -2122,7 +2122,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // look-ahead check of its old path. The new goal is
                         // searched at the next update (SPEC-0019, "After
                         // the swing").
-                        let steer = if renewed && std::mem::take(&mut m.renew_stands) {
+                        // The stand does not turn the heading (SPEC-0019).
+                        let hold = renewed && std::mem::take(&mut m.renew_stands);
+                        let steer = if hold {
                             if m.velocity != [0, 0] {
                                 let old = follow::Walker {
                                     order: relative(old_goal, min),
@@ -2141,6 +2143,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         match steer {
                             follow::Steer::Walk(to) => {
                                 motion(&mut m, to, true, speed, limit, turn_rate, window);
+                            }
+                            follow::Steer::Stand(_) if hold => {
+                                m.velocity = [0, 0];
+                                m.walking = false;
                             }
                             follow::Steer::Stand(to) => {
                                 motion(&mut m, to, false, speed, limit, turn_rate, window);

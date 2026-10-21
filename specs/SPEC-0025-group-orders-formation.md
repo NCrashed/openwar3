@@ -405,6 +405,23 @@ first 20 updates, and after that it leaves the cluster where it got
 stuck. A member that stopped within 16 cells of its place leaves at
 once. (Read from the code, not tested.)
 
+**After an arrival.** The cluster's own path (its 5000 search) is made
+once, with the cluster, and kept. In the tick in which a member
+arrives (SPEC-0019, "Arrival at the member's place") it stands and its
+own path is dropped; `W` does not change in that tick (the cluster
+step comes before the members' steps). At the next cluster step `W`
+moves on by the rules above, and in the member's step of that tick its
+place is the new `W` plus its offset: having no path, it makes its own
+high-level search (limit 400, SPEC-0020 "Two searches") from its
+position to that place and then the local search to the segment goal
+on its own list. A cluster of one does the same: its `W` moves on at
+the first cluster step after its member arrived. Read in the game:
+`c-RXD-1` worker 3, `W` (417.5, 391.5) until its arrival in 3361, (448,
+384) from the cluster step of 3367, member search to (224, 192) and
+local search to (448, 384) in 3367; `c-RYP-1` peasant 4, `W` (353.5,
+375.5) until 847, (360, 380) from 853, member search to (180, 190) in
+853. No new 5000 search in either.
+
 When the cluster goes on to the next waypoint `W'`, the formation angle
 becomes `A = angle(sub(W'x, Wx), sub(W'y, Wy))` (from the old waypoint to
 the new one), `W` becomes `W'`, the members' marks and the stall count

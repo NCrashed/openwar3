@@ -2051,7 +2051,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // when the goal was last renewed, and is in reach when the
             // goal is.
             let mut in_reach = false;
-            let mut renewed = false;
             // The goal of R after a swing (SPEC-0019).
             let mut after_swing = false;
             // The goal before a renewal after a swing (SPEC-0019).
@@ -2071,7 +2070,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 // the search, the next update, which does not
                                 // count (SPEC-0019, "Schedule").
                                 m.chase = Some(countdown(here, relative(at, min)) + 1);
-                                renewed = true;
                             }
                             Some(left) if left > 0 => m.chase = Some(left - 1),
                             // The first search after the reaction delay;
@@ -2086,14 +2084,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     m.target = at;
                                 }
                                 m.chase = Some(countdown(here, relative(m.target, min)));
-                                renewed = true;
                             }
                             _ => {
                                 // A new goal; the paths follow it
                                 // (`game::follow`).
                                 m.target = at;
                                 m.chase = Some(countdown(here, relative(at, min)));
-                                renewed = true;
                             }
                         }
                         let other = match state.objects.get(&target) {

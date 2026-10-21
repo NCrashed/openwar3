@@ -96,6 +96,8 @@ pub struct Follow {
     /// within its order's reach at the next arrival test (SPEC-0025,
     /// "Blocked units").
     touching: bool,
+    /// The mark came from giving up at P = 1: arrived, it works there.
+    gave_up: bool,
     /// The cluster's list (the 5000 search, in blocks, from the start) and
     /// the index of its current waypoint W; the unit's own list goes to W
     /// (SPEC-0020, "Two searches"; SPEC-0025).
@@ -560,6 +562,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             made: false,
             patience: 0,
             touching: false,
+            gave_up: false,
             order: order_cells,
             cluster: plan.0,
             w: plan.1,
@@ -668,7 +671,7 @@ fn decide(
                 return Steer::Stand(place);
             }
             // At its target: there; else a new search at the next update.
-            if in_reach && follow.final_goal && follow.stop_at.is_none() {
+            if (in_reach || follow.gave_up) && follow.final_goal && follow.stop_at.is_none() {
                 return Steer::Arrived;
             }
             if follow.stop_at.is_some() {
@@ -780,7 +783,8 @@ fn decide(
             // stood on stopped and its order ended two updates later.
             // A worker walking to a building keeps searching: it goes in
             // or delivers only touching it (SPEC-0029).
-            if last == 0 && follow.final_goal && walker.building.is_none() {
+            if last == 0 && follow.final_goal && walker.building.is_none() && walker.tree.is_none()
+            {
                 if follow.stuck {
                     // Short of W the unit goes on with the next one.
                     if follow.stop_at.is_some() {
@@ -798,7 +802,6 @@ fn decide(
             // patience counter, and a new search at the next update
             // (SPEC-0025, "Blocked units"; c-RXD-1: creep 9 at 5719).
             if follow.final_goal {
-                count_block(follow, shared, walker, order, at);
                 shared.events.push(PathEvent {
                     tick,
                     kind: PathEventKind::Blocked,
@@ -806,7 +809,28 @@ fn decide(
                     b: None,
                     at: walker.here,
                 });
+                // At P = 1 a walk to a tree gives up: the mark of reach,
+                // standing and turning to the tree (SPEC-0025, case 2;
+                // c-RYP-1: peasant 4 at 1231).
+                if follow.patience == 1 && walker.tree.is_some() {
+                    follow.touching = true;
+                    follow.gave_up = true;
+                    return Steer::Stand(walker.order);
+                }
+                // Set and lowered in the same update (P = 2 -> 1 for a
+                // unit alone near its goal: peasant 4 at 1225).
+                let fresh = follow.patience == 0;
+                count_block(follow, shared, walker, order, at);
+                if fresh && follow.patience > 1 {
+                    follow.patience -= 1;
+                }
                 follow.local.clear();
+                follow.next = Next::Search;
+                return Steer::Stand(if walker.tree.is_some() {
+                    walker.order
+                } else {
+                    segment_goal
+                });
             }
             follow.next = Next::Search;
             return Steer::Stand(segment_goal);
@@ -847,12 +871,44 @@ fn decide(
             if let Some((reach, _, _)) = walker.arrive
                 && walker.tree.is_some()
                 && !follow.touching
-                // A path that cannot get it closer ends at the tree.
-                && follow.local.len() > 1
                 && !super::movement::in_range(walker.here, walker.order, reach)
                 && touches(&shared.building, at, class)
             {
                 follow.touching = true;
+                // A path that cannot get it closer: it works there.
+                // PROVISIONAL: the game's local search to a tree ends
+                // only on its occupancy cells (open, asked).
+                follow.gave_up = follow.local.len() <= 1;
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                return Steer::Stand(walker.order);
+            }
+            // Out of reach and not touching: blocked, with the patience
+            // counter; at P = 1 it gives up and gets the mark of reach
+            // (SPEC-0025, "Blocked units", case 2; c-RYP-1: peasant 4 at
+            // 1225 and 1231).
+            if let Some((reach, _, _)) = walker.arrive
+                && walker.tree.is_some()
+                && !follow.touching
+                && !super::movement::in_range(walker.here, walker.order, reach)
+            {
+                if follow.patience == 1 {
+                    follow.touching = true;
+                    follow.gave_up = true;
+                } else {
+                    let fresh = follow.patience == 0;
+                    count_block(follow, shared, walker, order, at);
+                    if fresh && follow.patience > 1 {
+                        follow.patience -= 1;
+                    }
+                    follow.local.clear();
+                    follow.next = Next::Search;
+                }
                 shared.events.push(PathEvent {
                     tick,
                     kind: PathEventKind::Blocked,

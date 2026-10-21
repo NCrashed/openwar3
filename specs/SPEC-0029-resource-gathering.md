@@ -194,6 +194,28 @@ test RUJ: three trips), the mine's gold is 0 as the peasant leaves it
 and the mine is gone; the peasant delivers its 10 gold and then stands
 with order 0.
 
+**Arriving at the tree.** When a lumber worker arrives at its place
+(the arrival test of SPEC-0019), the end of its walk is reported in
+one of two ways, depending on how it got there:
+- if its "within reach" mark came from the give-up case of the
+  patience counter (SPEC-0025, case 2), the walk ends as "target
+  reached": the harvest order completes and the work starts at once
+  (the first hit 0.5 s later), with no range test;
+- otherwise (an ordinary arrival, or the mark from touching the tree)
+  the walk ends as "stopped", and the harvest makes its own range
+  test: the distance from the worker to the tree's point against
+  `Rng1` of `Ahar` / 32 plus the worker's collision in cells (116 / 32
+  + 0.5 = 4.125 cells; the tree's size does not count). If it passes,
+  the work starts; if it fails and the worker is not yet in the
+  gathering cycle, a retry counter is set to 3, the worker enters the
+  cycle (below) and walks to the tree again (a new search at its next
+  update). A failure of a worker already in the cycle goes another
+  way (not read); each retry lowers the counter.
+Read in the game, `c-RYP-1`: peasant 4 arrived at tree 22 in tick 1243
+by the give-up mark, 4.4871 cells from the tree's point: work at once;
+peasant 5 arrived at tree 27 in tick 1309 by the touch mark, 4.4925
+cells (squared 20.18 > 17.02): test failed, searched again in 1315.
+
 **Entering the gathering cycle.** A gold worker enters the cycle at
 its first exit from a mine (below). A lumber worker enters it when it
 first arrives at its tree and starts work there (the arrival test of

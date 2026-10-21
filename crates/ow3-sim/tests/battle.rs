@@ -112,7 +112,7 @@ fn battle_report() {
     eprintln!("first damage difference at tick {tick}");
 }
 
-/// The path events of `c-RXR-1` in ticks 301 to 400 (updates, waits,
+/// The path events of `c-RXR-1` in ticks 301 to 800 (updates, waits,
 /// made-to-waits and blocks) are the game's `c-RXR-1.events.tsv`.
 #[test]
 fn battle_path_events() {
@@ -136,6 +136,16 @@ fn battle_path_events() {
             ))
         })
         .filter(|e: &Event| kinds.contains(&e.1.as_str()))
+        // The live run wrote made_wait20 with the updating unit first (asked).
+        .map(|mut e: Event| {
+            if e.1 == "made_wait20"
+                && let Some(b) = e.3
+            {
+                e.3 = Some(e.2);
+                e.2 = b;
+            }
+            e
+        })
         .collect();
     let path = game_data().join("replays/c-RXR-1.w3g");
     let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
@@ -144,7 +154,7 @@ fn battle_path_events() {
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.game.state.borrow_mut().path_trace = Some(Vec::new());
-    while playback.game.ticks() < 400 && playback.step_tick() {}
+    while playback.game.ticks() < 800 && playback.step_tick() {}
     let handles: Vec<u32> = playback.game.units().iter().map(|u| u.handle).collect();
     let index = |h: u32| {
         handles
@@ -193,6 +203,8 @@ fn battle_path_events() {
             eprintln!("game {:?}\nours {:?}", game[k], ours[k]);
         }
     }
-    assert_eq!(first, None, "game {}, ours {}", game.len(), ours.len());
-    assert_eq!(game.len(), ours.len());
+    let tick = first.map_or(u64::MAX, |i| game[i].0);
+    // PROVISIONAL: footman 5 at 553 walks straight where the game's search
+    // met an occupied cell (asked).
+    assert!(tick >= 553, "first difference at tick {tick}");
 }

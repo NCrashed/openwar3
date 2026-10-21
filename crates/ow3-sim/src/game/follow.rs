@@ -261,8 +261,7 @@ fn others(state: &State, h: u32) -> Others {
             Some(m) if m.velocity != [0, 0] => {
                 // Its speed as at the start of the updates of this tick.
                 let start = state.start_velocities.get(&o).copied();
-                let v = m.velocity;
-                let _ = start;
+                let v = start.filter(|v| *v != [0, 0]).unwrap_or(m.velocity);
                 (true, false, super::movement::held_at(state, o, m), v)
             }
             Some(m) if velocity(m) != [0, 0] => {

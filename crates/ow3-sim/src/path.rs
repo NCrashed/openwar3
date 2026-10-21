@@ -634,12 +634,10 @@ fn search(
                 if !(0..width).contains(&n.0) || !(0..height).contains(&n.1) {
                     continue;
                 }
-                // A chase touching its target ends here (SPEC-0019).
-                if touches(c, n) {
-                    end_near = Some(c);
-                    break;
-                }
-                if !grid.step(c, n, class) {
+                // The step's cells are tested first: a unit met there counts
+                // also when the step touches the target.
+                let stepped = grid.step(c, n, class);
+                if !stepped {
                     // The target's own cells are not an obstacle met.
                     let only_target = target.is_some_and(|(t, _)| {
                         step_cells(c, n, class)
@@ -649,6 +647,15 @@ fn search(
                     if !only_target {
                         clear = false;
                     }
+                }
+                // A chase touching its target ends here (SPEC-0019); the
+                // other neighbours of the cell are still tested, but none
+                // is added.
+                if touches(c, n) {
+                    end_near = Some(c);
+                    continue;
+                }
+                if !stepped || end_near.is_some() {
                     continue;
                 }
                 let cost = node.g + if dx != 0 && dy != 0 { 21 } else { 15 };

@@ -194,7 +194,7 @@ fn battle_path_events() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    // PROVISIONAL: footman 5 at 553 walks straight where the game's search
-    // met an occupied cell (asked).
-    assert!(tick >= 553, "first difference at tick {tick}");
+    // PROVISIONAL: the game's up to tick 595, where grunt 11 waits for 12
+    // (looked at next).
+    assert!(tick >= 595, "first difference at tick {tick}");
 }

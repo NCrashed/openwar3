@@ -478,6 +478,14 @@ fn player(state: &State, value: &Value) -> Option<i32> {
 }
 
 /// The state of the cell of point (`x`, `y`) for the player of `p`.
+/// Whether unit `h` stands in a cell visible to `player`.
+pub(super) fn unit_visible(state: &State, h: u32, player: i32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| state.heights.cell_of(u.x, u.y))
+        .is_some_and(|(i, j)| state.fog.state(player, i, j) == VISIBLE)
+}
+
 fn point_state(state: &State, x: u32, y: u32, p: &Value) -> u8 {
     match (player(state, p), state.heights.cell_of(x, y)) {
         (Some(p), Some((i, j))) => state.fog.state(p, i, j),
@@ -1016,3 +1024,4 @@ mod tests {
         }
     }
 }
+

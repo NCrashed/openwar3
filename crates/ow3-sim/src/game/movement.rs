@@ -2480,7 +2480,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     // The reach of a gather order on a tree and the direction of the
                     // step (SPEC-0019, "Arrival at the member's place").
                     let arrive = match m.order {
-                        Order::Gather { .. } if tree.is_some() => Some((GATHER_REACH, m.heading)),
+                        Order::Gather { .. } if tree.is_some() => {
+                            Some((GATHER_REACH, m.heading, false))
+                        }
+                        // A mine counts with its reach once it is visible to
+                        // the worker's player (SPEC-0019; c-RXD-1).
+                        Order::Gather { target }
+                            if state.unit(Some(h)).is_some_and(|u| {
+                                super::fog::unit_visible(state, target, u.owner)
+                            }) =>
+                        {
+                            Some((MINE_REACH, m.heading, true))
+                        }
                         _ => None,
                     };
                     let place = (cluster > 1)
@@ -2680,6 +2691,9 @@ const FOLLOWER_RENEWAL: u32 = 16;
 /// The reach of a gather order in cells: 132 / 32 (the gather range
 /// 116 of `Ahar` plus 16, read for a peasant; SPEC-0019).
 const GATHER_REACH: u32 = 0x4084_0000;
+/// The reach of a harvest order on a gold mine in cells: 66 / 32
+/// (`c-RXD-1`, SPEC-0019).
+const MINE_REACH: u32 = 0x4004_0000;
 
 /// The collision size of unit `h`, 0 for none.
 fn collision_of(state: &State, h: u32) -> u32 {

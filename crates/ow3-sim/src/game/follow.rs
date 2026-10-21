@@ -390,9 +390,10 @@ pub struct Walker {
     /// footprint").
     pub tree: Option<u32>,
     /// For an order with a range (gathering), the reach in cells and the
-    /// direction of the unit's step (its facing if it stands): arrival
+    /// direction of the unit's step (its facing if it stands), and whether
+    /// the place is the order point: arrival
     /// at its place (SPEC-0019, "Arrival at the member's place").
-    pub arrive: Option<(u32, u32)>,
+    pub arrive: Option<(u32, u32, bool)>,
     /// For a member of a cluster of more than one, its place as laid out
     /// now, in cells.
     pub place: Option<[u32; 2]>,
@@ -571,10 +572,14 @@ fn decide(
     // Arrival at its place: within the order's reach and turned to it;
     // it stands, keeps its heading, and searches again at its next update
     // (SPEC-0019; c-RYP-1 peasant 4 at 847).
-    // The order reach counts only before the last waypoint (the stall
-    // count of the cluster is 0 there; SPEC-0019, SPEC-0025).
-    if let Some((reach, direction)) = walker.arrive.filter(|_| !follow.final_goal) {
-        let place = to_world(follow.goal);
+    // The place is the target itself for a visible unit target (a gold
+    // mine), else the current waypoint (SPEC-0019).
+    if let Some((reach, direction, at_order)) = walker.arrive {
+        let place = if at_order {
+            walker.order
+        } else {
+            to_world(follow.goal)
+        };
         let (dx, dy) = (sub(place[0], walker.here[0]), sub(place[1], walker.here[1]));
         let off = super::facing::angle_difference(super::movement::angle(dx, dy), direction);
         if super::movement::in_range(walker.here, place, reach) {

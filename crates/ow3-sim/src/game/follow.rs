@@ -464,15 +464,8 @@ fn decide(
         grid,
         occupied: &others.standing,
     };
-    // A chase with a new goal has a new path, which waits for no one: at
-    // once when it waited for another unit, from the next update when
-    // another made it wait.
-    // PROVISIONAL: one case of each in c-RXD-1 (ticks 1771 and 2251).
+    // A chase with a new goal has a new path, which waits for no one.
     if walker.chase.is_some() && to_cells(walker.order) != follow.order {
-        if follow.made && follow.wait > 0 {
-            follow.wait = 0;
-            return Steer::Stand(to_world(follow.goal));
-        }
         follow.wait = 0;
     }
     if follow.wait > 0 {

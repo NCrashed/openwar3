@@ -2059,7 +2059,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             _ if renew_now => {
                                 m.renew_at = None;
                                 m.target = at;
-                                m.chase = Some(countdown(here, relative(at, min)));
+                                // A goal of a timer: the countdown starts at
+                                // the search, the next update, which does not
+                                // count (SPEC-0019, "Schedule").
+                                m.chase = Some(countdown(here, relative(at, min)) + 1);
                                 renewed = true;
                             }
                             Some(left) if left > 0 => m.chase = Some(left - 1),

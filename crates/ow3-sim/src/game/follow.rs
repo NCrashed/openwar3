@@ -356,6 +356,10 @@ struct Shared<'a> {
     group: Option<usize>,
     /// The red cells of the building walked to, if any.
     building: Vec<(i32, i32)>,
+    /// The cells of the tree walked to, for the touch test at the end of
+    /// a path; they do not end a local search (SPEC-0020: the tree's own
+    /// layer that closes its cells comes first in its cells).
+    tree: Vec<(i32, i32)>,
 }
 
 /// What a unit decided at an update, for comparing with the game's
@@ -572,6 +576,14 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         follow.take_segment(order_cells);
         follow
     });
+    let cycling = super::harvest::cycling(state, walker.handle);
+    let tree_cells = walker
+        .tree
+        .and_then(|t| match state.objects.get(&t) {
+            Some(super::Object::Destructable(d)) => Some(d.footprint.red().to_vec()),
+            _ => None,
+        })
+        .unwrap_or_default();
     let group = super::movement::group_of(state, walker.handle);
     let mut shared = Shared {
         budget: &mut state.budget,
@@ -579,21 +591,31 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         random: &mut state.random,
         events: Vec::new(),
         search_only,
-        // A walk to a tree ends touching it too (c-RYP-1: peasant 0 at
-        // 325 walked to the corner cell of its tree).
+        // A worker on its first walk ends its local search touching its
+        // tree; one in the gathering cycle does not (SPEC-0020, "Trees in
+        // the local search"; c-RYP-1: peasant 0 at 313, peasant 5 at 1315).
         building: footprint.map(|f| f.0).unwrap_or_else(|| {
-            walker
-                .tree
-                .and_then(|t| match state.objects.get(&t) {
-                    Some(super::Object::Destructable(d)) => Some(d.footprint.red().to_vec()),
-                    _ => None,
-                })
-                .unwrap_or_default()
+            if cycling {
+                Vec::new()
+            } else {
+                tree_cells.clone()
+            }
         }),
+        tree: tree_cells,
         group,
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
+    // At its tree the worker enters the gathering cycle (c-RYP-1:
+    // peasant 5 arrived in 1309, searched as a cycling worker in 1315).
+    // PROVISIONAL: inferred from that case, asked.
+    if decided == Steer::Hold
+        && walker.tree.is_some()
+        && follow.final_goal
+        && follow.stop_at.is_none()
+    {
+        super::harvest::start_cycling(state, walker.handle);
+    }
     // An arrived unit searches a new path at its next update.
     if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);
@@ -872,7 +894,7 @@ fn decide(
                 && walker.tree.is_some()
                 && !follow.touching
                 && !super::movement::in_range(walker.here, walker.order, reach)
-                && touches(&shared.building, at, class)
+                && touches(&shared.tree, at, class)
             {
                 follow.touching = true;
                 // A path that cannot get it closer: it works there.

@@ -964,6 +964,20 @@ pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
     Some((next, period, point))
 }
 
+/// Whether worker `h` is in the gathering cycle (it has been in a mine
+/// or at a tree once, SPEC-0029).
+pub(super) fn cycling(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.cycling)
+}
+
+/// Worker `h` enters the gathering cycle.
+pub(super) fn start_cycling(state: &mut State, h: u32) {
+    if let Some(mut g) = get(state, h) {
+        g.cycling = true;
+        set(state, h, Some(g));
+    }
+}
+
 /// What worker `h` carries, for the interface.
 pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
     get(state, h).and_then(|g| g.carry)

@@ -324,7 +324,7 @@ fn battle_agents_report() {
         }
         // The commits at orders and stops are not traced here.
         match ours.get(&(t, u)) {
-            Some(o) if o[..4] != g[..4] => {
+            Some(o) if o != g => {
                 eprintln!("unit {u} tick {t}: game {g:08x?} ours {o:08x?}");
                 first.insert(u, t);
             }

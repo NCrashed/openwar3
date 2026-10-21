@@ -55,6 +55,9 @@ pub struct Selected {
     /// The level a unit of the race `creeps` shows under its name
     /// (SPEC-0028, "Information panel content").
     pub level: Option<i32>,
+    /// A hero's level and its share of the way to the next one
+    /// (SPEC-0028, SPEC-0033).
+    pub hero: Option<(i64, f32)>,
 }
 
 /// A unit of a selected group, for the information panel.
@@ -177,6 +180,8 @@ const GROUP_STEP: f32 = 0.030_99;
 const GROUP_UPPER: f32 = 0.055_556;
 const GROUP_LOWER: f32 = 0.004_781;
 /// The progress bar of training and construction (SPEC-0028).
+/// The hero level bar (SPEC-0028).
+const HERO_BAR: Rect = [0.313_44, 0.085_94, 0.493_44, 0.101_56];
 const PROGRESS: Rect = [0.370_625, 0.065_938, 0.475_625, 0.075_938];
 /// The portrait (SPEC-0028).
 pub const PORTRAIT: Rect = [0.2075, 0.030_625, 0.2975, 0.116_23];
@@ -597,6 +602,29 @@ impl Hud {
     /// PROVISIONAL: the places of the icons are not specified; the bar's
     /// fill and border are the skins' `SimpleBuildTimeIndicator` and
     /// `SimpleBuildTimeIndicatorBorder`.
+    /// The hero level bar (SPEC-0028): the share of the way to the next
+    /// level filled, in its border.
+    fn level_bar(&self, share: f32, out: &mut Frame) {
+        let [x0, y0, x1, y1] = HERO_BAR;
+        let quad = |rect: Rect, uv: [f32; 4], texture: String| Quad {
+            rect,
+            uv,
+            texture,
+            colour: [1.0; 4],
+            blend: Blend::Alpha,
+        };
+        out.quads.push(quad(
+            [x0, y0, x0 + (x1 - x0) * share, y1],
+            [0.0, share, 0.0, 1.0],
+            self.interface.skin("SimpleXpBarConsole"),
+        ));
+        out.quads.push(quad(
+            [x0 - 0.001, y0 - 0.001, x1 + 0.001, y1 + 0.001],
+            [0.0, 1.0, 0.0, 1.0],
+            self.interface.skin("SimpleXpBarBorder"),
+        ));
+    }
+
     fn progress(&self, s: &Selected, out: &mut Frame) {
         let progress = s.progress.unwrap_or(0.0).clamp(0.0, 1.0);
         let [x0, y0, x1, y1] = PROGRESS;
@@ -792,13 +820,28 @@ impl Hud {
         } else {
             None
         };
-        // Under the name, a creep's level (SPEC-0028). PROVISIONAL: heroes,
-        // their `INFOPANEL_LEVEL_CLASS` line and level bar wait for heroes.
-        let level = s.level.map(|l| {
-            self.interface
-                .string("INFOPANEL_LEVEL")
-                .replacen("%u", &l.to_string(), 1)
-        });
+        // Under the name, a hero's level and class, on its level bar for
+        // the player's own hero, or a creep's level (SPEC-0028).
+        // PROVISIONAL: the colour of the bar's fill is not specified.
+        let level = match s.hero {
+            Some((l, share)) => {
+                let class = self.units.get(&code(s.type_id), "Name").unwrap_or("");
+                if s.own {
+                    self.level_bar(share, out);
+                }
+                Some(
+                    self.interface
+                        .string("INFOPANEL_LEVEL_CLASS")
+                        .replacen("%u", &l.to_string(), 1)
+                        .replacen("%s", class, 1),
+                )
+            }
+            None => s.level.map(|l| {
+                self.interface
+                    .string("INFOPANEL_LEVEL")
+                    .replacen("%u", &l.to_string(), 1)
+            }),
+        };
         let names = |n: &str| match n {
             "SimpleNameValue" | "SimpleBuildingNameValue" => Some(name.clone()),
             "SimpleClassValue" => level.clone(),

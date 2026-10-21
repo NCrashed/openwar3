@@ -1452,6 +1452,20 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// Hero `unit`'s level and its share of the way to the next level
+    /// (1 at the highest level), SPEC-0033.
+    pub fn hero_progress(&self, unit: u32) -> Option<(i64, f32)> {
+        let state = self.state.borrow();
+        let u = state.unit(Some(unit)).filter(|u| u.level > 0)?;
+        let rules = &state.combat.heroes;
+        if u.level >= rules.max_level {
+            return Some((u.level, 1.0));
+        }
+        let (from, to) = (rules.xp_for_level(u.level), rules.xp_for_level(u.level + 1));
+        let share = (u.xp - from) as f32 / (to - from).max(1) as f32;
+        Some((u.level, share.clamp(0.0, 1.0)))
+    }
+
     /// The missiles in flight (SPEC-0016).
     pub fn missiles(&self) -> Vec<MissileView> {
         attack::views(&self.state.borrow())
@@ -1512,17 +1526,35 @@ impl<'a> Game<'a> {
         let state = self.state.borrow();
         let u = state.unit(Some(h))?;
         let t = state.data.units.get(&u.type_id)?;
+        // A hero adds its primary attribute to the damage and its agility
+        // to the armor (SPEC-0034).
+        let hero = crate::data::is_hero(u.type_id);
+        let primary = if hero {
+            match t.primary_attribute {
+                1 => u.strength,
+                2 => u.agility,
+                3 => u.intelligence,
+                _ => 0,
+            }
+        } else {
+            0
+        };
         let weapon = t.weapon.as_ref().map(|w| {
             (
-                w.damage + w.dice,
-                w.damage + w.dice * w.sides,
+                primary + w.damage + w.dice,
+                primary + w.damage + w.dice * w.sides,
                 w.attack_type,
             )
         });
+        let armor = if hero {
+            state.combat.hero_armor(t.armor, ow3_math::i2r(u.agility))
+        } else {
+            t.armor
+        };
         Some(UnitStats {
             damage: weapon.map(|(lo, hi, _)| (lo, hi)),
             attack_type: weapon.map(|(_, _, a)| a),
-            armor: f32::from_bits(t.armor),
+            armor: f32::from_bits(armor),
             armor_type: t.armor_type,
             speed: f32::from_bits(t.speed),
             building: t.building,

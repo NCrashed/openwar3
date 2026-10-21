@@ -545,6 +545,7 @@ impl Sim {
                 .get(&u.type_id)
                 .filter(|t| t.race == "creeps")
                 .map(|t| t.level),
+            hero: self.game.hero_progress(handle),
         })
     }
 

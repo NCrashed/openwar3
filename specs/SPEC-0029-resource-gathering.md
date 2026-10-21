@@ -227,12 +227,16 @@ the worker's counted as free and an iteration limit (32 at first, then
 after each success the smaller of the limit and that search's removal
 count plus 16; a search that fails or hits the limit drops the
 candidate); the cost is the length of the found path, the sum over its
-legs of the integer square root of the squared leg length in
-high-level units (plus 2 for each leg ending at a node of a special
-kind), or the integer square root of the squared start-goal distance
-when both lie in one node. The first candidate with the smallest cost
-is kept (later equal costs do not replace it), and the worker gets a
-harvest order on it. `c-RYP-1` peasant 4 (read in the game): arrived at
+legs of `isqrt(4 * (dx^2 + dy^2))` with `dx`, `dy` the difference of
+the two nodes' coordinates in the high-level grid, i.e. the integer
+square root of the squared leg length in cells (a leg ending at a node
+of a special kind counts 2 instead; none occurred in the cases read),
+or the same for the start-goal distance when both lie in one node. The
+candidates are visited through the grid of 256 x 256 cells of
+SPEC-0019 ("Order of the responders"): rows from the bottom, each row
+from the left, and in each cell the tree created last first. The first
+candidate with the smallest cost is kept (later equal costs do not
+replace it), and the worker gets a harvest order on it. `c-RYP-1` peasant 4 (read in the game): arrived at
 tree 22 in 1243 out of reach, at 1343 about 30 candidates with costs 4
 to 32, the first with cost 4 was the tree at (358, 378); it turned to
 it at 1351 and started chopping it at 1357.
@@ -479,8 +483,8 @@ each peasant's model polled every 20 ms):
    carrying.
 5. Other races (orc peon and its burrows, undead acolytes and haunted
    mines, night elf wisps and entangled mines).
-6. The enumeration order of the trees in "Another tree" and what the
-   second search point is when none is found there.
+6. In "Another tree": the second search point when none is found, and
+   which nodes count 2.
 7. The gold trip speed bonus when the worker stops gathering, and its
    order against the other events of the entry tick.
 

@@ -43,6 +43,12 @@ fn log() -> Option<(Tracks, Vec<Damage>)> {
             }
             Some(&"d") => {
                 let target = w.get(4).and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+                // The log's tick counts the script's 0.005 s timer: a hit,
+                // a timer of the main queue, fires before it in its tick, a
+                // missile (troll headhunters) after it, at the end of the
+                // tick (SPEC-0016).
+                let missile = w.get(3) == Some(&"ohun");
+                let tick = if missile { tick } else { tick + 1 };
                 damage.push((tick, target, num(5).unwrap_or(0.0)));
             }
             _ => {}
@@ -73,10 +79,8 @@ fn battle_report() {
         for (i, u) in playback.game.units().iter().enumerate() {
             at.entry(i).or_default().insert(tick, [u.x, u.y]);
             let before = *life.entry(i).or_insert(u.life);
-            // The log's tick is the count of the script's 0.005 s timer,
-            // which in the tick of a hit fires after the hit's timer.
             if u.life < before - 0.001 {
-                damage.push((tick - 1, i, before - u.life));
+                damage.push((tick, i, before - u.life));
             }
             life.insert(i, u.life);
         }
@@ -108,10 +112,10 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the group of player 0 starts walking earlier than in
-    // the game (holds of SPEC-0025, asked), so the damage differs from
-    // the first hit on.
+    // PROVISIONAL: the first 18 hits match (grunt 11 renews its goal
+    // where the game does not, asked).
     eprintln!("first damage difference at tick {tick}");
+    assert!(first.is_none_or(|i| i >= 18), "first difference at hit {first:?}");
 }
 
 /// The path events of `c-RXR-1` in ticks 301 to 800 (updates, waits,

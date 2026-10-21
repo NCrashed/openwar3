@@ -74,6 +74,18 @@ fn battle_report() {
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.game.state.borrow_mut().hit_trace = Some(Vec::new());
+    // The expiry of the log's timer in each tick, read in the game.
+    let log_timer: BTreeMap<u64, f32> =
+        std::fs::read_to_string(game_data().join("replays/c-RXR-1.ticks.tsv"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| {
+                let w: Vec<&str> = l.split('\t').collect();
+                let bits = u32::from_str_radix(w.get(3)?, 16).ok()?;
+                Some((w.first()?.parse().ok()?, f32::from_bits(bits)))
+            })
+            .collect();
     let mut at: Tracks = BTreeMap::new();
     let mut life: BTreeMap<usize, f32> = BTreeMap::new();
     let mut damage: Vec<Damage> = Vec::new();
@@ -96,9 +108,10 @@ fn battle_report() {
                 // expires about 0.0001 after the start of the tick: a hit
                 // before it is logged in the tick before; a missile comes
                 // at the end of the tick (SPEC-0016).
-                let early = hits.iter().flatten().any(|&(t, e, end, target)| {
-                    let start = f32::from_bits(end) - 0.005;
-                    t == tick && target == u.handle && f32::from_bits(e) - start <= 0.0001007
+                let early = hits.iter().flatten().any(|&(t, e, _, target)| {
+                    t == tick
+                        && target == u.handle
+                        && log_timer.get(&tick).is_some_and(|&p| f32::from_bits(e) < p)
                 });
                 damage.push((if early { tick - 1 } else { tick }, i, before - u.life));
                 if !u.alive {

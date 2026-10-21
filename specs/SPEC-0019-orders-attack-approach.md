@@ -571,6 +571,18 @@ footman, 16 for the peasant).
   started walking in tick 5474, at a gap of 374 (positions in
   `c-RTW-3.positions.tsv`). It then stopped at gaps of 341.5, 290.7 and
   293.5 within the next 200 ticks, near the other footmen.
+  The rule behind this, read in the game for follower 828 of `c-RTW-3`
+  (`game-data/1.27b/replays/c-RTW-3.follower828.tsv`): the follower's
+  cluster renews its goal every 17 updates (countdown 16 .. 1, then the
+  renewal, as in a chase; a stop does not restart the count, only the
+  start of a new order with its new cluster does); at a renewal the goal
+  becomes the leader's position when it lies in another 64 square, and
+  only then is the gap tested: more than 300 to the goal, and the
+  follower searches and walks; otherwise it goes on standing. 828 stood
+  from tick 4279; at the renewals of 4903, 5005, 5107, 5209 and 5311 the
+  gaps to the new goals were 198, 97, 27, 63 and 185, at 5413 318.4 (it
+  searched and walked), and after its stop at the end of that path at
+  5491, at 5515 323.0 (searched again).
 
 Measured stops (footman following a footman, start gaps 300 and less;
 the same numbers with a peasant as the leader when the start gap is the

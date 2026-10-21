@@ -114,6 +114,13 @@ drawn with.
   by at most `turnRate` radians (footman 0.6 rad = 34.38 degrees per
   update). If the remaining difference is smaller, it becomes equal to
   the target direction. It turns the shorter way.
+- At an update that stops the unit (velocity 0), the stored heading is
+  the heading turned in this way, wrapped into `[0, 2 pi)` by the
+  `fmod` of SPEC-0004 (`2 pi` = `40c90fdb`, then `+ 2 pi` if negative);
+  it is not taken from the velocity. In replay `c-RXI-1` peasant 0
+  stopped at the mine in tick 1069: heading before `40c2b7cc`
+  (6.084936), turned by its `turnRate` 0.6 to `40d5eaff` (6.684936),
+  stored `3ecdb265` (a plain `sub(x, 2 pi)` would give `3ecdb240`).
 - The facing follows the heading by the facing turn rule of SPEC-0013
   (`step = min(w + s, m, B(r))` per update, with the `orientInterp`
   values and the braking table there). It is the same rule as for

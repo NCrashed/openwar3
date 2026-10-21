@@ -1,8 +1,8 @@
 //! The path agents of `c-RXI-1` (six peasants harvesting) and `c-RTW-3`
 //! (footmen walking in groups): every position commit read in the game
 //! (`<replay>.agents.tsv`), compared bit for bit with the simulation's.
-//! Reports only: the first commit of each unit that differs. Skipped
-//! without the game data.
+//! c-RXI-1 must match; the others report the first commit of each unit
+//! that differs. Skipped without the game data.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -81,6 +81,22 @@ fn our_commits(
 /// The first differing commit of each unit, printed with the commits
 /// before it.
 fn report(game: &Commits, ours: &Commits) -> BTreeMap<i32, u64> {
+    // OW3_AGENT="unit from to" lists both sides' commits of one unit.
+    if let Ok(v) = std::env::var("OW3_AGENT") {
+        let w: Vec<i64> = v
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if let [u, from, to] = w[..] {
+            let f = |a: &[u32; 7]| a.map(f32::from_bits);
+            for t in from as u64..=to as u64 {
+                let (g, o) = (game.get(&(t, u as i32)), ours.get(&(t, u as i32)));
+                if g.is_some() || o.is_some() {
+                    eprintln!("{t}: game {:?}\n{t}: ours {:?}", g.map(f), o.map(f));
+                }
+            }
+        }
+    }
     let mut first: BTreeMap<i32, u64> = BTreeMap::new();
     for (&(t, u), g) in game {
         if first.contains_key(&u) {
@@ -142,7 +158,9 @@ fn harvest_agents_report() {
             .position(|u| u.handle == h)
             .map_or(-1, |i| i as i32)
     });
-    eprintln!("first differences: {:?}", report(&game, &ours));
+    // Every commit of the path agents is the game's, bit for bit.
+    let first = report(&game, &ours);
+    assert!(first.is_empty(), "first differences: {first:?}");
 }
 
 #[test]

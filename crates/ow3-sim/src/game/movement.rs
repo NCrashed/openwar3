@@ -130,6 +130,18 @@ fn normal(angle: u32) -> u32 {
     a
 }
 
+/// The stored heading of an update, wrapped into `0..2 pi` when outside
+/// it by the `fmod` of SPEC-0004 (`c-RXI-1`: peasant 0 at 1069, 6.684936 -> 3ecdb265).
+fn wrapped(angle: u32) -> u32 {
+    if (0.0..real_of(TWO_PI)).contains(&real_of(angle)) {
+        return angle;
+    }
+    if real_of(angle) < 0.0 {
+        return add(angle, TWO_PI);
+    }
+    ow3_math::fmod(angle, TWO_PI)
+}
+
 /// What a unit was told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Order {
@@ -403,7 +415,7 @@ fn motion(
     };
     let wanted = m.velocity_before(h, speed);
     m.velocity = [0, 0];
-    m.heading = normal(h);
+    m.heading = wrapped(h);
     if moves {
         let [vx, vy] = wanted;
         let q = add(mul(vx, vx), mul(vy, vy));

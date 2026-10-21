@@ -155,12 +155,47 @@ When an enemy damages a unit that has no order (idle):
   the tick of the damage; the damaged unit draws first) and attack the
   attacker by the approach rule.
 
-The reach of the call depends on `CallForHelp` of `Units\MiscGame.txt`
-(600 in 1.27b; the map's copy is used, SPEC-0015): footmen up to about
-`CallForHelp + 175` from the damaged footman responded (with 600: 750 in
-all 16 directions, 776 in all directions around a victim at (16, -16),
-783 only on one side of a victim at (0, 0), 800 nowhere; with 300: 480
-yes, 485 no). The exact shape of the area is open (open question 3).
+**Call cooldown.** A damaged unit calls for help whether it is idle or
+busy (attacking or chasing), but at most once in 3.0 s: when it calls,
+a 3.0 s timer of that unit starts, and while it runs, damage to the
+unit makes no call and starts no new timer. In `c-RXR-1` grunt 13
+called at 24.4399948 and 27.4399948 (the 3.0 s timer of the first call
+expired in the same moment as the second hit, before it); its seven
+hits in between made no call, among them rifleman 8's at 24.1098976
+(tick 4823), which fell into the cooldown of an earlier call. Over all
+43 attempts between 23.0 and 27.46 s, the 26 that followed a call of
+the same unit in that window matched this rule. A second value of the
+timer, 0.5 s, exists for a unit state that was not identified.
+
+**Reach.** There are two kinds of call, with `CallForHelp` of
+`Units\MiscGame.txt` (600 in 1.27b; the map's copy is used, SPEC-0015)
+as their base:
+
+- the **damaged unit's call** (the one with the cooldown above): a
+  circle of radius `CallForHelp` around the damaged unit; a unit is
+  reached when its centre is within `CallForHelp` plus its own
+  collision size. Footman pairs (victim, one responder, script
+  damage, tests RZC to RZE): 615 to 631 answered, 634 to 665 did not
+  (collision 31); a ring of footmen at 750 and one at 640 did not
+  answer (test RZF). In `c-RXR-1` (tick 6479, rifleman 6 hitting grunt
+  10) the query, read in the game, had radius 600 around grunt 10 and
+  returned troll 18 at 611.1 but not troll 19 at 635.2 (collision 32);
+- the **impact call** of a missile: when the missile hits, a circle of
+  `CallForHelp + 150` around the impact point, with the units of all
+  players in it handed to the same response; again a unit counts when
+  its centre is within that radius plus its collision. In test RZG (a
+  glaive thrower attacking an idle footman, the layout of the
+  2026-10-18 retaliation test) the glaive's hit made this call with
+  radius 750 around the impact point and no damaged-unit call, and the
+  footmen at 750 and at (530, 530) answered. This explains the reach
+  measured in that earlier test with real attacks: 750 + 31 = 781
+  (750 in all 16 directions, 776 in all directions around a victim at
+  (16, -16), 783 only on one side of a victim at (0, 0), 800 nowhere;
+  with `CallForHelp` 300: 480 yes, 485 no, 300 + 150 + 31 = 481). The
+  150 is inferred from these values. Several kinds of missile and spell
+  impacts make this call.
+
+Instant and melee hits make only the damaged unit's call.
 
 **Order of the responders.** A call for help (a damaged unit, or an
 idle creep that acquires a target, SPEC-0030) visits the units around
@@ -610,6 +645,18 @@ An idle unit with a weapon attacks an enemy unit on its own:
   grunt 14 preferred footmen 4 and 5 (both attacking 14) to 3
   (attacking 13) and 2; in 592 grunt 13 took footman 3, which was
   attacking it, over 0, 2, 4 and 5.
+- **Remembered enemy.** Each unit remembers the attacker of the last call
+  for help that reached it (SPEC-0019 "Retaliation and call for help"),
+  also when it did not answer it because it was busy. When a check
+  finds no enemy within its radius, the unit takes that remembered
+  enemy if it is still a valid target, within 2000 of the unit, and
+  passes one more test that was not identified (probably that it can
+  be seen); the attack then goes as any acquisition (event, generator 9
+  draw, reaction delay). The memory is cleared when that unit becomes
+  an invalid target (for example dies). In `c-RXR-1` troll 16's check
+  of 32.0905838 (tick 6420), radius 500, found no enemy; it took
+  rifleman 9, 718 away, remembered from a call for help of grunt 15 at
+  30.5558720.
 - **Reaction delay.** After acquiring, the unit waits the reaction delay
   of attack orders (generator 9, `ReactionDelay`, see above), counted
   from the expiry of the check (the queue's time during the check, also
@@ -757,9 +804,10 @@ An idle unit with a weapon attacks an enemy unit on its own:
    once; earlier observations of an attacker following the target's
    current position (not reproduced in the chases of the verification
    below).
-3. The exact area of the call for help (the reach measured from the
-   damaged unit depended on the direction and on the victim's position
-   by up to about 15 units); which alliance flag is needed; the order of
+3. The 150 of the impact call (inferred, not read from data), whether
+   area spells make the impact call and whether it has a cooldown, and
+   whether the collision added is the responder's or the caller's (the
+   same in all tests); which alliance flag is needed; the order of
    the helpers' draws of generator 9; retaliation by units that are not
    idle; `minRange`; acquisition of air units and by buildings with
    weapons; whether the 0.5 s period depends on any data field;
@@ -787,6 +835,10 @@ An idle unit with a weapon attacks an enemy unit on its own:
    life of the candidates) and their order.
 ## Sources
 
+- Test maps RZC, RZD, RZE, RZF and RZG on 1.27b under Wine,
+  2026-10-21: pairs and rings of footmen around a footman damaged by a
+  script or by a glaive thrower; acquisitions logged, the calls'
+  queries (centre, radius, units returned) read in the running game.
 - Test map RXG on 1.27b under Wine, 2026-10-20: five layouts of nine
   kobolds, the middle one damaged by a script; `EVENT_UNIT_ACQUIRED_TARGET`
   logged, the call for help and its unit query read in the running game.

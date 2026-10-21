@@ -67,7 +67,7 @@ fn remainders_of_the_reference_replay() {
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-RTW-3.w3g",
-        "path events are the game's up to tick 5503 (tests/crowd.rs); then \
+        "path events are the game's up to tick 5539 (tests/crowd.rs); then \
          the simulation draws the script generator at turns 239 to 259 (the patience of blocked \
          units, SPEC-0025) where the game does not: not found yet",
     ),
@@ -88,8 +88,8 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXI-1.w3g",
-        "the walks are the game's up to tick 1327 (tests/crowd.rs); the place a worker comes \
-         out of a mine starts its walk later than in the game; \
+        "the walks are the game's to the end of the log (tests/crowd.rs); the turns that \
+         change objects differ from turn 126 on (134 in the game, 126 here), and \
          turn 195 is a timer of unknown cause (SPEC-0024)",
     ),
 ];

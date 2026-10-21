@@ -2187,7 +2187,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         let mut renewed = false;
                         match m.chase {
                             Some(left) if left > 0 => m.chase = Some(left - 1),
-                            _ => {
+                            // A renewal: the leader's position becomes the
+                            // goal only in another square of the 64 grid, and
+                            // the next renewal comes 17 updates later
+                            // (c-RTW-3, follower 828).
+                            Some(_) => {
+                                if grid64(lead) != grid64(relative(m.target, min)) {
+                                    m.target = at;
+                                }
+                                m.chase = Some(FOLLOWER_RENEWAL);
+                                renewed = true;
+                            }
+                            None => {
                                 m.target = at;
                                 m.chase = Some(countdown(here, lead));
                                 renewed = true;
@@ -2201,7 +2212,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // ticks after the gap passed 300 in the one case
                         // seen). PROVISIONAL: the renewal of the chase.
                         let stands = if standing {
-                            !(renewed && !in_range(here, lead, reach))
+                            !(renewed && !in_range(here, relative(m.target, min), reach))
                         } else if real_of(start_gap) > real_of(FOLLOW_RANGE) {
                             // A walking follower tests its goal point, as a
                             // chase does (c-RTW-3: 828 stood at 5491, 294 from
@@ -2215,12 +2226,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             follower_stands = true;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            // A follower that stops gets a new cluster two
-                            // updates later, and its renewals come every 17
-                            // updates from there (c-RTW-3: 828 stopped at
-                            // 4279, cluster at 4291, renewals at 4291 + 102
-                            // k). PROVISIONAL: one case, asked.
-                            if !standing {
+                            // The first stop of a follower that started far
+                            // away ends its first order: the follow proper
+                            // starts at the next update with a new cluster,
+                            // whose renewals come every 17 updates (c-RTW-3:
+                            // 828 stopped at 4279, cluster at 4291). Later
+                            // stops at the end of a path keep the count
+                            // (5491).
+                            if !standing && start_gap != add(FOLLOW_RANGE, 0x3F80_0000) {
                                 m.chase = Some(FOLLOWER_FIRST_RENEWAL);
                             }
                             // From now on by the follow range.
@@ -2610,6 +2623,8 @@ const FOLLOW_RANGE: u32 = 0x4396_0000;
 /// The countdown a follower gets when it stops in the follow range
 /// (`chase` updates until its next renewal; SPEC-0019).
 const FOLLOWER_FIRST_RENEWAL: u32 = 18;
+/// Updates from a follower's renewal to the next one, less one.
+const FOLLOWER_RENEWAL: u32 = 16;
 
 /// The collision size of unit `h`, 0 for none.
 fn collision_of(state: &State, h: u32) -> u32 {

@@ -222,13 +222,13 @@ fn crowd_chase_report() {
 
 /// `c-RXI-1`: the workers' walks between the mine and the town hall.
 ///
-/// PROVISIONAL: the events are the game's up to tick 10966 (looked at next).
+/// All the events of the log are the game's.
 #[test]
 fn gathering_walks_report() {
     let Some(first) = report("c-RXI-1", 11300) else {
         return;
     };
-    assert!(first >= 10966, "first difference at tick {first}");
+    assert_eq!(first, u64::MAX, "first difference at tick {first}");
 }
 
 /// Each creep takes its first path update in the tick of the game: the
@@ -363,7 +363,7 @@ fn group_walks_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    assert!(tick >= 5503, "first difference at tick {tick}");
+    assert!(tick >= 5539, "first difference at tick {tick}");
 }
 
 /// `c-RYP-1`: peasants harvesting lumber in a block of trees.

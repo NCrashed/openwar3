@@ -50,6 +50,8 @@ fn upkeep_tenths(used: i32) -> i32 {
 
 /// Ticks a worker stays inside a mine (1.0 s).
 const IN_MINE: u64 = 200;
+/// The time a worker stays inside a mine, in seconds (1.0).
+const IN_MINE_TIME: u32 = 0x3F80_0000;
 /// Ticks between two updates of a unit (SPEC-0018).
 const UPDATE: u64 = 6;
 /// Ticks from reaching a tree to the first hit, and from the hit that
@@ -95,7 +97,10 @@ pub struct Harvest {
 /// Who is inside a mine, until when, and who waits at it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Mine {
-    inside: Option<(u32, u64)>,
+    /// The worker going in or inside, the tick it goes in, and the queue
+    /// time it comes out (0 until it is in): a timer of 1.0 s from the
+    /// moment it went in (SPEC-0029).
+    inside: Option<(u32, u64, u32)>,
     waiting: Vec<u32>,
     /// Workers that start to wait at their next update, with its tick.
     starting: Vec<(u32, u64)>,
@@ -260,7 +265,7 @@ fn exit_place(state: &State, h: u32) -> Option<[u32; 2]> {
         state
             .mines
             .values()
-            .any(|m| m.inside.is_some_and(|(w, _)| w == o))
+            .any(|m| m.inside.is_some_and(|(w, _, _)| w == o))
     };
     let mut taken = std::collections::BTreeSet::new();
     for &o in &state.units {
@@ -563,7 +568,7 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
     if entry.inside.is_none() {
         // It goes in at the next update, freeing its walk an update
         // later (SPEC-0024).
-        entry.inside = Some((h, tick + UPDATE + IN_MINE));
+        entry.inside = Some((h, tick + UPDATE, 0));
         state.objects_change_in(tick + 2 * UPDATE);
     } else if !entry.waiting.contains(&h) {
         entry.waiting.push(h);
@@ -689,11 +694,20 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .values()
             .filter_map(|m| {
                 m.inside
-                    .filter(|&(_, t)| t == tick + IN_MINE)
-                    .map(|(w, _)| w)
+                    .filter(|&(_, t, leave)| t == tick && leave == 0)
+                    .map(|(w, _, _)| w)
             })
             .collect();
+        // It goes in at its update: the queue time of that update.
+        let leave = add(s.update_time, IN_MINE_TIME);
         for w in entering {
+            for m in s.mines.values_mut() {
+                if let Some((x, _, l)) = m.inside.as_mut()
+                    && *x == w
+                {
+                    *l = leave;
+                }
+            }
             // Its cells stay where it entered: the units on them are
             // pushed aside as by a worker that starts to wait (c-RXI-1
             // tick 3505).
@@ -702,18 +716,21 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             pace(&mut s, w);
         }
     }
-    let due: Vec<(u32, u32)> = {
+    let due: Vec<(u32, u32, u32)> = {
         let s = state.borrow();
+        let now = s.timers.time();
         s.mines
             .iter()
             .filter_map(|(&mine, m)| {
                 m.inside
-                    .filter(|&(_, t)| t <= s.ticks)
-                    .map(|(w, _)| (mine, w))
+                    .filter(|&(_, _, leave)| {
+                        leave != 0 && f32::from_bits(leave) <= f32::from_bits(now)
+                    })
+                    .map(|(w, _, leave)| (mine, w, leave))
             })
             .collect()
     };
-    for (mine, worker) in due {
+    for (mine, worker, left_at) in due {
         let empty = {
             let mut s = state.borrow_mut();
             let s = &mut *s;
@@ -766,7 +783,8 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 && let Some(i) = next
             {
                 let next = entry.waiting.remove(i);
-                entry.inside = Some((next, tick + IN_MINE));
+                // Its timer starts as the other one's fires.
+                entry.inside = Some((next, tick, add(left_at, IN_MINE_TIME)));
                 hide(s, next, true);
             }
             left <= 0
@@ -971,7 +989,7 @@ fn start_waiting(state: &mut State) {
             .filter(|m| m.inside.is_none());
         let goes_in = if let Some(mine) = free {
             mine.waiting.retain(|&x| x != w);
-            mine.inside = Some((w, tick + IN_MINE));
+            mine.inside = Some((w, tick, 0));
             true
         } else {
             false

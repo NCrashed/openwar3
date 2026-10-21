@@ -90,6 +90,10 @@ pub struct Follow {
     /// The patience counter of a blocked unit (SPEC-0025): 0 while its
     /// way is free.
     patience: u32,
+    /// The unit touched its target at the end of its path: it counts as
+    /// within its order's reach at the next arrival test (SPEC-0025,
+    /// "Blocked units").
+    touching: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -485,6 +489,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             wait: 0,
             made: false,
             patience: 0,
+            touching: false,
             order: order_cells,
         };
         follow.take_segment(order_cells);
@@ -580,11 +585,16 @@ fn decide(
         };
         let (dx, dy) = (sub(place[0], walker.here[0]), sub(place[1], walker.here[1]));
         let off = super::facing::angle_difference(super::movement::angle(dx, dy), direction);
-        if super::movement::in_range(walker.here, place, reach) {
+        let in_reach = super::movement::in_range(walker.here, place, reach);
+        if in_reach || follow.touching {
             // Not yet turned to it: it stands and turns this update
             // (c-RYP-1: peasant 5 at 1009, arrived at 1015).
             if real(off).abs() > 0.2 {
                 return Steer::Stand(place);
+            }
+            // At its target: there; else a new search at the next update.
+            if in_reach && follow.final_goal {
+                return Steer::Arrived;
             }
             return Steer::Hold;
         }
@@ -713,6 +723,27 @@ fn decide(
                 follow.local.clear();
                 return Steer::Stand(segment_goal);
             }
+            // A walk to a tree that ends out of reach but touching the
+            // tree: no patience, it stands and turns to the tree, counted
+            // as within reach (c-RYP-1: peasant 5 at 1297).
+            if let Some((reach, _, _)) = walker.arrive
+                && walker.tree.is_some()
+                && !follow.touching
+                // A path that cannot get it closer ends at the tree.
+                && follow.local.len() > 1
+                && !super::movement::in_range(walker.here, walker.order, reach)
+                && touches(&shared.building, at, class)
+            {
+                follow.touching = true;
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                return Steer::Stand(walker.order);
+            }
             // A walk to a building stands at the end of its path, where it
             // touched the building, before it goes in (SPEC-0029).
             if !shared.building.is_empty() {
@@ -814,6 +845,16 @@ fn decide(
     follow.next = Next::Search;
     follow.local.clear();
     Steer::Stand(segment_goal)
+}
+
+/// Whether a unit of `class` at `at` (cells) touches `cells`: one of its
+/// cells on one of them or next to it, also diagonally.
+fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
+    path::occupied_cells(at, class).iter().any(|&(x, y)| {
+        cells
+            .iter()
+            .any(|&(a, b)| (a - x).abs() <= 1 && (b - y).abs() <= 1)
+    })
 }
 
 /// One more block of a unit's path in a row: the patience counter

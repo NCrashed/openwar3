@@ -718,7 +718,8 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     }
     let due: Vec<(u32, u32, u32)> = {
         let s = state.borrow();
-        let now = s.timers.time();
+        // The end of this tick on the queue, Q(k + 1).
+        let now = add(s.move_clock, crate::timers::TICK);
         s.mines
             .iter()
             .filter_map(|(&mine, m)| {

@@ -33,6 +33,20 @@ pub const ORDER_RESUME_HARVESTING: i32 = 852_017;
 /// The player states of gold and lumber.
 const GOLD: i32 = 1;
 const LUMBER: i32 = 2;
+/// `PLAYER_STATE_RESOURCE_FOOD_USED`.
+const FOOD_USED: i32 = 5;
+
+/// The tenths of the gold a player keeps at a delivery with `used` food
+/// in use: all up to 50, 7 up to 80, 4 above (SPEC-0029, "Upkeep": 10,
+/// 7 and 4 at 41, 61 and 81 food). PROVISIONAL: the borders are the
+/// usual table, not measured; lumber was not tested.
+fn upkeep_tenths(used: i32) -> i32 {
+    match used {
+        ..=50 => 10,
+        51..=80 => 7,
+        _ => 4,
+    }
+}
 
 /// Ticks a worker stays inside a mine (1.0 s).
 const IN_MINE: u64 = 200;
@@ -818,6 +832,19 @@ fn deliver(state: &mut State, h: u32) {
             Resource::Gold => GOLD,
             Resource::Lumber => LUMBER,
         };
+        // Upkeep cuts the gold by the food the player uses (SPEC-0029).
+        let amount = match resource {
+            Resource::Gold => {
+                let used = state
+                    .setup
+                    .player_states
+                    .get(&(owner, FOOD_USED))
+                    .copied()
+                    .unwrap_or(0);
+                amount * upkeep_tenths(used) / 10
+            }
+            Resource::Lumber => amount,
+        };
         *state.setup.player_states.entry((owner, which)).or_default() += amount;
     }
     let target = g.target.filter(|&t| is_mine(state, t) || is_tree(state, t));
@@ -863,5 +890,22 @@ fn start_waiting(state: &mut State) {
     }
     for w in due {
         push_aside(state, w);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SPEC-0029, "Upkeep": 10, 7 and 4 gold of a trip of 10 with 41, 61
+    /// and 81 to 181 food used.
+    #[test]
+    fn upkeep() {
+        let kept = |used| 10 * upkeep_tenths(used) / 10;
+        assert_eq!(kept(41), 10);
+        assert_eq!(kept(61), 7);
+        for used in [81, 101, 141, 181] {
+            assert_eq!(kept(used), 4);
+        }
     }
 }

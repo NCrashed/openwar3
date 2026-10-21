@@ -1308,3 +1308,49 @@ fn critical_strike() {
     }
     assert!(crits > 0);
 }
+
+/// SPEC-0037, verification 1: a mountain king's storm bolt on a footman
+/// in range: 100 damage after the flight, armor not counted, and the
+/// footman's order reads 851973 for 5 s.
+#[test]
+fn storm_bolt() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hmkg', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2700, -2000, 180)\n    call SelectHeroSkill(a, 'AHtb')\n    call PauseUnit(t, true)",
+        "call IssueTargetOrder(a, \"thunderbolt\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 1300);
+    let hit = path
+        .windows(2)
+        .find(|w| w[0].1[1].life - w[1].1[1].life > 1.0)
+        .expect("no hit");
+    let damage = hit[0].1[1].life - hit[1].1[1].life;
+    assert!((damage - 100.0).abs() < 0.01, "{damage}");
+    let at = hit[1].0;
+    let order = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1[1].order;
+    assert_eq!(order(at + 1), 851_973);
+    assert_eq!(order(at + 990), 851_973);
+    assert_ne!(order(at + 1010), 851_973);
+}
+
+/// SPEC-0037, verification 2: thunder clap next to two footmen: 60
+/// damage each in the tick 80 ticks after the order.
+#[test]
+fn thunder_clap() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hmkg', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2850, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -3000, -1848, 270)\n    call SelectHeroSkill(a, 'AHtc')",
+        "call IssueImmediateOrder(a, \"thunderclap\")",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 120);
+    let at = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1.clone();
+    let (before, after) = (at(ORDER_TICK + 79), at(ORDER_TICK + 80));
+    for i in [1, 2] {
+        let damage = before[i].life - after[i].life;
+        assert!((damage - 60.0).abs() < 0.01, "{i}: {damage}");
+    }
+}

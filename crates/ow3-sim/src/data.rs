@@ -157,6 +157,10 @@ pub struct Ability {
     pub level_skip: i32,
     /// The numbers of each level, from level 1.
     pub per_level: Vec<AbilityLevel>,
+    /// `Missilespeed` and `MissileHoming` of its entry in
+    /// `Units\*AbilityFunc.txt` (SPEC-0037).
+    pub missile_speed: u32,
+    pub missile_homing: bool,
 }
 
 /// The numbers of a level of an ability: `CoolN`, `CostN`, `RngN` and
@@ -167,6 +171,12 @@ pub struct AbilityLevel {
     pub cost: i32,
     pub range: u32,
     pub data: [u32; 3],
+    /// `DurN`, `HeroDurN`, `AreaN` and `DataDN`, reals as bit patterns
+    /// (SPEC-0037).
+    pub duration: u32,
+    pub hero_duration: u32,
+    pub area: u32,
+    pub data_d: u32,
 }
 
 /// The pathing of a destructable type (`DestructableData.slk`,
@@ -786,7 +796,9 @@ impl ObjectData {
         .map(String::from)
         .to_vec();
         for level in 1..=4 {
-            for field in ["Cool", "Cost", "Rng", "DataA", "DataB", "DataC"] {
+            for field in [
+                "Cool", "Cost", "Rng", "DataA", "DataB", "DataC", "Dur", "HeroDur", "Area", "DataD",
+            ] {
                 ability_columns.push(format!("{field}{level}"));
             }
         }
@@ -811,15 +823,21 @@ impl ObjectData {
                     level_skip: cost(values[9].as_ref()),
                     per_level: (0..4)
                         .map(|l| {
-                            let at = 10 + 6 * l;
+                            let at = 10 + 10 * l;
                             AbilityLevel {
                                 cooldown: real(values[at].as_ref()),
                                 cost: cost(values[at + 1].as_ref()),
                                 range: real(values[at + 2].as_ref()),
                                 data: [3, 4, 5].map(|i| real(values[at + i].as_ref())),
+                                duration: real(values[at + 6].as_ref()),
+                                hero_duration: real(values[at + 7].as_ref()),
+                                area: real(values[at + 8].as_ref()),
+                                data_d: real(values[at + 9].as_ref()),
                             }
                         })
                         .collect(),
+                    missile_speed: 0,
+                    missile_homing: false,
                 },
             );
         }
@@ -1019,6 +1037,25 @@ impl ObjectData {
                 .insert(def.id, def.number(b"ihtp").unwrap_or(base_hp));
             let armor = data.item_armor.get(&def.base).copied().flatten();
             data.item_armor.insert(def.id, armor);
+        }
+        // The missiles of abilities (SPEC-0037).
+        let mut ability_functions = ow3_formats::profile::Profile::default();
+        for race in [
+            "Human", "Orc", "NightElf", "Undead", "Neutral", "Common", "Campaign", "Item",
+        ] {
+            if let Some(text) = archives.read_game_file(&format!("Units\\{race}AbilityFunc.txt")) {
+                ability_functions.add(&String::from_utf8_lossy(&text));
+            }
+        }
+        for (&id, ability) in data.abilities.iter_mut() {
+            let section = String::from_utf8_lossy(&id.to_be_bytes()).into_owned();
+            let first = |key: &str| {
+                ability_functions
+                    .get(&section, key)
+                    .and_then(|s| s.split(',').next().map(|v| v.trim().to_owned()))
+            };
+            ability.missile_speed = real(first("Missilespeed").as_ref());
+            ability.missile_homing = first("MissileHoming").is_some_and(|v| v == "1");
         }
         // The speed of missiles (SPEC-0016, "Missiles").
         let mut functions = ow3_formats::profile::Profile::default();

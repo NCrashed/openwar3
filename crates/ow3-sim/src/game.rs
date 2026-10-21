@@ -210,6 +210,10 @@ pub struct Unit {
     /// that procs on the swing under way, with its level (SPEC-0036).
     proc_counters: Vec<(i32, u32)>,
     procced: Option<(i32, i32)>,
+    /// Stunned until this tick, and its attack slowed until a tick by a
+    /// factor of its attack speed (SPEC-0037).
+    stunned_until: Option<u64>,
+    slowed_until: Option<(u64, u32)>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -1501,6 +1505,10 @@ impl<'a> Game<'a> {
                     walking: u.movement.is_some_and(|m| m.walking()),
                     target: u.movement.and_then(|m| m.target()),
                     order: queue::shown_order(&state, handle)
+                        .or(u
+                            .stunned_until
+                            .filter(|&t| state.ticks < t)
+                            .map(|_| cast::ORDER_STUNNED))
                         .or(u.casting.map(|c| c.order_id))
                         .unwrap_or_else(|| u.movement.map_or(0, |m| m.order_id())),
                     constructing: u.construction.is_some(),

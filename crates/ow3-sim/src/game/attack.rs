@@ -101,6 +101,23 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     fly(vm, state);
     let attackers = state.borrow().attacking.clone();
     for h in attackers {
+        // A stunned unit does not attack: its hit waits (SPEC-0037).
+        // PROVISIONAL: what a stun does to a swing under way is not
+        // measured.
+        {
+            let mut s = state.borrow_mut();
+            let s = &mut *s;
+            if super::cast::stunned(s, h) {
+                let tick = s.ticks;
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&h)
+                    && let Some(a) = u.attack.as_mut()
+                    && a.next <= tick
+                {
+                    a.next = tick + 1;
+                }
+                continue;
+            }
+        }
         // A swing after the first starts only with the target in reach;
         // else the attacker chases it (SPEC-0019, "Start of the attack":
         // a started swing always hits, but a new one needs the range).
@@ -169,6 +186,9 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
                     let primary = hero_primary(s, h);
                     let cooldown = hero_cooldown(s, h, weapon.cooldown);
+                    // A thunder clap slows the attacks (SPEC-0037).
+                    let cooldown =
+                        super::cast::attack_slow(s, h).map_or(cooldown, |f| mul(cooldown, f));
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     let (amount, bash) = proc_effect(s, h, amount);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
@@ -219,17 +239,15 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         };
         if let Some((target, amount, attack_type, area, bash)) = hit {
-            // Bash: its damage comes before the hit (SPEC-0036).
-            if let Some(extra) = bash {
-                super::widgets::damage_widget(
-                    vm,
-                    state,
-                    Some(h),
-                    Some(target),
-                    extra,
-                    attack_type,
-                    DAMAGE_TYPE_NORMAL,
-                );
+            // Bash: its damage comes before the hit, armor not counted
+            // (SPEC-0036, SPEC-0037), and the target is stunned.
+            if let Some((extra, unit_stun, hero_stun)) = bash {
+                super::widgets::damage_widget(vm, state, Some(h), Some(target), extra, 0, 0);
+                let mut s = state.borrow_mut();
+                if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                    let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
+                    super::cast::stun(&mut s, target, if hero { hero_stun } else { unit_stun });
+                }
             }
             strike(vm, state, h, target, amount, attack_type, area);
         }
@@ -427,6 +445,9 @@ pub struct Missile {
     amount: u32,
     attack_type: i32,
     area: Option<Area>,
+    /// A missile of an ability: the stun of its hit, for units and for
+    /// heroes, in ticks (SPEC-0037).
+    spell: Option<(u64, u64)>,
 }
 
 /// 0.1 s, the step of a homing missile, in ticks and as a real.
@@ -508,6 +529,7 @@ fn launch(
         amount,
         attack_type,
         area,
+        spell: None,
     })
 }
 
@@ -558,6 +580,10 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         arrived
     };
     for m in arrived {
+        if let Some(stun) = m.spell {
+            spell_hit(vm, state, m.attacker, m.target, m.amount, stun);
+            continue;
+        }
         match (m.artillery, &m.area) {
             // A shell hits the units round its point by their distances.
             (true, Some(area)) => {
@@ -695,7 +721,7 @@ fn roll_proc(state: &mut State, h: u32) {
 ///
 /// PROVISIONAL: the stun of bash and the effects of drunken brawler are
 /// not measured; the extra damage of bash takes the hit's attack type.
-fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<u32>) {
+fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<(u32, u64, u64)>) {
     let Some((ability, level)) = state.unit(Some(h)).and_then(|u| u.procced) else {
         return (amount, None);
     };
@@ -710,7 +736,14 @@ fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<u32>) {
     if data.code == i32::from_be_bytes(*b"AOcr") {
         (mul(amount, numbers.data[1]), None)
     } else if data.code == i32::from_be_bytes(*b"AHbh") {
-        (amount, Some(numbers.data[2]))
+        (
+            amount,
+            Some((
+                numbers.data[2],
+                ticks(numbers.duration),
+                ticks(numbers.hero_duration),
+            )),
+        )
     } else {
         (amount, None)
     }
@@ -748,5 +781,67 @@ fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
             div(cooldown, add(1.0f32.to_bits(), speed))
         }
         None => cooldown,
+    }
+}
+
+/// The missile of an ability of `h` launched now at `target` from the
+/// caster's centre: homing at `speed`, `amount` of spell damage and a stun
+/// of `stun` ticks (for units, for heroes) on its hit (SPEC-0037). `None`
+/// when the target is nearer than `speed * 0.1`: it is hit at once.
+pub(super) fn launch_spell(
+    state: &State,
+    h: u32,
+    target: u32,
+    amount: u32,
+    stun: (u64, u64),
+    speed: u32,
+) -> Option<Missile> {
+    let u = state.unit(Some(h))?;
+    let from = [u.x, u.y];
+    let to = super::movement::position_of(state, target)?;
+    let flight = distance(from, to);
+    let step = mul(speed, HOMING_STEP);
+    if f32::from_bits(flight) < f32::from_bits(step) {
+        return None;
+    }
+    let k = div(step, flight);
+    let at = [
+        add(from[0], mul(sub(to[0], from[0]), k)),
+        add(from[1], mul(sub(to[1], from[1]), k)),
+    ];
+    Some(Missile {
+        attacker: h,
+        target,
+        at,
+        point: to,
+        launched: state.move_clock,
+        expiry: state.move_clock,
+        homing: Some((step, state.ticks + HOMING_TICKS)),
+        artillery: false,
+        amount,
+        attack_type: 0,
+        area: None,
+        spell: Some(stun),
+    })
+}
+
+/// The hit of a spell of `h` on `target`: a damage event of 0 first, then
+/// `amount` of the spells attack type, which armor does not reduce, and
+/// the stun (SPEC-0037).
+pub(super) fn spell_hit(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: u32,
+    target: u32,
+    amount: u32,
+    stun: (u64, u64),
+) {
+    for damage in [0, amount] {
+        super::widgets::damage_widget(vm, state, Some(h), Some(target), damage, 0, 0);
+    }
+    let mut s = state.borrow_mut();
+    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+        let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
+        super::cast::stun(&mut s, target, if hero { stun.1 } else { stun.0 });
     }
 }

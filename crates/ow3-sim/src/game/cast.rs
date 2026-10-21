@@ -1,16 +1,25 @@
-//! Casting an ability on a unit (SPEC-0035, measured on Holy Light).
+//! Casting abilities (SPEC-0035, SPEC-0037), and stuns.
 //!
 //! An order of the ability's order string on a target in range (`Rng`
 //! of the ability's level plus both collision sizes, the range test of
 //! SPEC-0019) starts the cast at once; out of range the caster first
-//! walks into range (`game::movement`, `Order::Cast`). The effect comes
-//! `castpt` after the start: the mana is paid then and the cooldown starts
-//! there. The order stays `castbsw` after the effect, then ends. An order
-//! while the cooldown runs, or without the mana, does nothing.
+//! walks into range (`game::movement`, `Order::Cast`). An ability without
+//! a target starts at once. The effect comes `castpt` after the start:
+//! the mana is paid then and the cooldown starts there. The order stays
+//! `castbsw` after the effect, then ends. An order while the cooldown
+//! runs, or without the mana, does nothing.
 //!
-//! PROVISIONAL: only Holy Light on a friendly unit (a heal of `DataA`);
-//! turning before a cast, the reaction delay and what interrupts a cast
-//! are open (SPEC-0035, open questions 1 to 3).
+//! The effects: Holy Light heals a friendly unit by `DataA`; storm bolt
+//! launches a homing missile that does `DataA` of spell damage and stuns
+//! for `Dur` (`HeroDur` for heroes); thunder clap does `DataA` to the
+//! enemy ground units within `Area` and slows their attacks by `DataD`
+//! for `Dur`. A stunned unit stands, does not attack and its order reads
+//! 851973; the stun ends 2 ticks after its duration.
+//!
+//! PROVISIONAL: turning before a cast, the reaction delay and what
+//! interrupts a cast are open (SPEC-0035); the slow of movement by
+//! thunder clap is not measured and not done; the tick in which a stun
+//! ends is known to a tick (SPEC-0037, open question 3).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -20,10 +29,26 @@ use ow3_math::{add, mul};
 
 use super::movement::{self, CELL};
 use super::{Object, State};
+use crate::data::is_hero;
+
+/// What an ability is cast on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Aim {
+    Friend,
+    Enemy,
+    Nothing,
+}
 
 /// The abilities that can be cast, by their order string: the base
-/// ability and the order id.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32); 1] = [("holybolt", *b"AHhb", 852_092)];
+/// ability, the order id and what it is cast on.
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 3] = [
+    ("holybolt", *b"AHhb", 852_092, Aim::Friend),
+    ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
+    ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
+];
+
+/// The order id a stunned unit reads (SPEC-0037).
+pub const ORDER_STUNNED: i32 = 851_973;
 
 /// A cast in progress, or the ability a unit walks to cast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,18 +56,19 @@ pub struct Casting {
     pub(super) order_id: i32,
     ability: i32,
     level: i32,
-    target: u32,
+    target: Option<u32>,
     /// The ticks of the effect and of the end of the order; `None` while
     /// the caster walks into range.
     effect_at: Option<u64>,
     end_at: u64,
 }
 
-/// The ability of unit `h` that order `name` casts, with its level.
-fn ability_for(state: &State, h: u32, name: &str) -> Option<(i32, i32, i32)> {
-    let &(_, base, order_id) = ABILITY_ORDERS
+/// The ability of unit `h` that order `name` casts: the ability, its
+/// level, the order id and what it is cast on.
+fn ability_for(state: &State, h: u32, name: &str) -> Option<(i32, i32, i32, Aim)> {
+    let &(_, base, order_id, aim) = ABILITY_ORDERS
         .iter()
-        .find(|(n, _, _)| n.eq_ignore_ascii_case(name))?;
+        .find(|(n, _, _, _)| n.eq_ignore_ascii_case(name))?;
     let base = i32::from_be_bytes(base);
     let u = state.unit(Some(h))?;
     let data = state.data.units.get(&u.type_id)?;
@@ -53,7 +79,7 @@ fn ability_for(state: &State, h: u32, name: &str) -> Option<(i32, i32, i32)> {
         .filter(|&a| a == base || state.data.abilities.get(&a).is_some_and(|d| d.code == base))
         .map(|a| (a, super::heroes::ability_level(state, u, a)))
         .find(|&(_, level)| level > 0)
-        .map(|(a, level)| (a, level, order_id))
+        .map(|(a, level)| (a, level, order_id, aim))
 }
 
 /// The numbers of level `level` of `ability`.
@@ -81,35 +107,44 @@ pub(super) fn reach(state: &State, h: u32, target: u32) -> Option<u32> {
     Some(mul(add(add(range, collision(h)), collision(target)), CELL))
 }
 
+/// Whether `h` may cast `ability` of `level` now: not cooling down, with
+/// the mana, not stunned.
+fn ready(state: &State, h: u32, ability: i32, level: i32) -> bool {
+    let tick = state.ticks;
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let cooling = u.ready.iter().any(|&(a, at)| a == ability && at > tick);
+    let mana = f32::from_bits(u.mana.value());
+    !cooling && mana >= numbers(state, ability, level).cost as f32 && !stunned(state, h)
+}
+
 /// Order `name` of unit `h` on `target`: `None` when it is not the order
 /// of an ability, else whether the unit took it.
 pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Option<bool> {
-    let (ability, level, order_id) = match ability_for(state, h, name) {
-        Some(found) => found,
-        None if ABILITY_ORDERS
-            .iter()
-            .any(|(n, _, _)| n.eq_ignore_ascii_case(name)) =>
-        {
-            return Some(false);
-        }
-        None => return None,
+    let known = ABILITY_ORDERS
+        .iter()
+        .any(|(n, _, _, _)| n.eq_ignore_ascii_case(name));
+    let Some((ability, level, order_id, aim)) = ability_for(state, h, name) else {
+        return known.then_some(false);
     };
-    let tick = state.ticks;
-    let u = state.unit(Some(h))?;
-    let cooling = u.ready.iter().any(|&(a, at)| a == ability && at > tick);
-    let mana = f32::from_bits(u.mana.value());
-    let cost = numbers(state, ability, level).cost;
-    let friendly = state
-        .unit(Some(target))
-        .is_some_and(|t| t.alive && !movement::enemies(state, u.owner, t.owner));
-    if cooling || mana < cost as f32 || !friendly {
+    let owner = state.unit(Some(h))?.owner;
+    let fits = state.unit(Some(target)).is_some_and(|t| {
+        t.alive
+            && match aim {
+                Aim::Friend => !movement::enemies(state, owner, t.owner),
+                Aim::Enemy => movement::enemies(state, owner, t.owner),
+                Aim::Nothing => false,
+            }
+    });
+    if !fits || !ready(state, h, ability, level) {
         return Some(false);
     }
     let casting = Casting {
         order_id,
         ability,
         level,
-        target,
+        target: Some(target),
         effect_at: None,
         end_at: 0,
     };
@@ -125,6 +160,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         movement::position_of(state, target)?,
     );
     let min = [state.world_bounds[0], state.world_bounds[1]];
+    let tick = state.ticks;
     if movement::in_range(
         movement::relative(here, min),
         movement::relative(there, min),
@@ -141,6 +177,29 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         }
         return Some(false);
     }
+    Some(true)
+}
+
+/// Order `name` of unit `h` without a target: `None` when it is not the
+/// order of such an ability, else whether the unit took it.
+pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<bool> {
+    let (ability, level, order_id, aim) = ability_for(state, h, name)?;
+    if aim != Aim::Nothing || !ready(state, h, ability, level) {
+        return Some(false);
+    }
+    movement::stop(state, h);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.casting = Some(Casting {
+            order_id,
+            ability,
+            level,
+            target: None,
+            effect_at: None,
+            end_at: 0,
+        });
+    }
+    let tick = state.ticks;
+    start(state, h, tick);
     Some(true)
 }
 
@@ -164,22 +223,113 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
     }
 }
 
+/// Unit `h` is stunned for `ticks` from now, or longer if it already is
+/// (SPEC-0037): it stops at once.
+pub(super) fn stun(state: &mut State, h: u32, ticks: u64) {
+    let tick = state.ticks;
+    // The order came back 2 or 3 ticks after the duration.
+    let until = tick + ticks + 2;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.stunned_until = Some(u.stunned_until.map_or(until, |t| t.max(until)));
+    }
+    movement::stand_still(state, h);
+}
+
+/// Whether unit `h` is stunned now.
+pub(super) fn stunned(state: &State, h: u32) -> bool {
+    let tick = state.ticks;
+    state
+        .unit(Some(h))
+        .and_then(|u| u.stunned_until)
+        .is_some_and(|t| tick < t)
+}
+
+/// The factor by which `h`'s time between hits grows now: `1 / (1 - DataD)`
+/// of a thunder clap that slows it, if one does.
+pub(super) fn attack_slow(state: &State, h: u32) -> Option<u32> {
+    let tick = state.ticks;
+    state
+        .unit(Some(h))
+        .and_then(|u| u.slowed_until)
+        .filter(|&(until, _)| tick < until)
+        .map(|(_, factor)| factor)
+}
+
+/// What an effect does after the borrow of the state ends.
+enum Deferred {
+    /// The hit of a storm bolt launched next to its target.
+    SpellHit {
+        caster: u32,
+        target: u32,
+        amount: u32,
+        stun: (u64, u64),
+    },
+    /// Damage of a thunder clap.
+    Damage {
+        caster: u32,
+        target: u32,
+        amount: u32,
+    },
+}
+
 /// The effects and the ends of the casts of this tick.
-pub(super) fn tick(_vm: &mut Vm, state: &Rc<RefCell<State>>) {
-    let mut s = state.borrow_mut();
-    let s = &mut *s;
+pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let mut deferred = Vec::new();
+    {
+        let mut s = state.borrow_mut();
+        let s = &mut *s;
+        let tick = s.ticks;
+        let casting: Vec<(u32, Casting)> = s
+            .units
+            .iter()
+            .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
+            .collect();
+        for (h, c) in casting {
+            if c.effect_at == Some(tick) {
+                effect(s, h, &c, &mut deferred);
+            }
+            if c.effect_at.is_some()
+                && tick >= c.end_at
+                && let Some(Object::Unit(u)) = s.objects.get_mut(&h)
+            {
+                u.casting = None;
+            }
+        }
+    }
+    for d in deferred {
+        match d {
+            Deferred::SpellHit {
+                caster,
+                target,
+                amount,
+                stun,
+            } => super::attack::spell_hit(vm, state, caster, target, amount, stun),
+            Deferred::Damage {
+                caster,
+                target,
+                amount,
+            } => {
+                super::widgets::damage_widget(vm, state, Some(caster), Some(target), amount, 0, 0);
+            }
+        }
+    }
+}
+
+/// The effect of cast `c` of `h`; the mana is paid and the cooldown starts
+/// now.
+fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
     let tick = s.ticks;
-    let casting: Vec<(u32, Casting)> = s
-        .units
-        .iter()
-        .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
-        .collect();
-    for (h, c) in casting {
-        if c.effect_at == Some(tick) {
-            let n = numbers(s, c.ability, c.level);
-            // Holy Light: the target heals by DataA; the mana is paid and
-            // the cooldown starts now.
-            if let Some(Object::Unit(t)) = s.objects.get_mut(&c.target)
+    let n = numbers(s, c.ability, c.level);
+    let base = s
+        .data
+        .abilities
+        .get(&c.ability)
+        .map_or(c.ability, |a| a.code);
+    let duration =
+        |hero: bool| super::attack::ticks(if hero { n.hero_duration } else { n.duration });
+    match &base.to_be_bytes() {
+        b"AHhb" => {
+            if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))
                 && t.alive
             {
                 let life = add(t.life.value(), n.data[0]);
@@ -190,18 +340,74 @@ pub(super) fn tick(_vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 };
                 t.life.set(life);
             }
-            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-                let mana = ow3_math::sub(u.mana.value(), ow3_math::i2r(n.cost));
-                u.mana.set(mana);
-                u.ready.retain(|&(a, _)| a != c.ability);
-                u.ready
-                    .push((c.ability, tick + super::attack::ticks(n.cooldown)));
+        }
+        b"AHtb" => {
+            if let Some(target) = c.target {
+                let speed = s
+                    .data
+                    .abilities
+                    .get(&c.ability)
+                    .map_or(0, |a| a.missile_speed);
+                let stun = (duration(false), duration(true));
+                match super::attack::launch_spell(s, h, target, n.data[0], stun, speed) {
+                    Some(missile) => s.missiles.push(missile),
+                    None => deferred.push(Deferred::SpellHit {
+                        caster: h,
+                        target,
+                        amount: n.data[0],
+                        stun,
+                    }),
+                }
             }
         }
-        if c.effect_at.is_some() && tick >= c.end_at {
-            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-                u.casting = None;
+        b"AHtc" => {
+            let Some(u) = s.unit(Some(h)) else {
+                return;
+            };
+            let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+            let area = f32::from_bits(n.area);
+            // 1 / (1 - DataD): the factor of the time between hits.
+            let factor = ow3_math::div(1.0f32.to_bits(), ow3_math::sub(1.0f32.to_bits(), n.data_d));
+            let hit: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    s.unit(Some(o)).is_some_and(|t| {
+                        let ground = s
+                            .data
+                            .units
+                            .get(&t.type_id)
+                            .is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
+                        let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+                        t.alive
+                            && !t.hidden
+                            && ground
+                            && movement::enemies(s, owner, t.owner)
+                            && dx * dx + dy * dy <= area * area
+                    })
+                })
+                .collect();
+            for o in hit {
+                let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
+                let until = tick + duration(hero);
+                if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
+                    t.slowed_until = Some((until, factor));
+                }
+                deferred.push(Deferred::Damage {
+                    caster: h,
+                    target: o,
+                    amount: n.data[0],
+                });
             }
         }
+        _ => {}
+    }
+    if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+        let mana = ow3_math::sub(u.mana.value(), ow3_math::i2r(n.cost));
+        u.mana.set(mana);
+        u.ready.retain(|&(a, _)| a != c.ability);
+        u.ready
+            .push((c.ability, tick + super::attack::ticks(n.cooldown)));
     }
 }

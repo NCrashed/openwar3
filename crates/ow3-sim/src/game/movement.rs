@@ -1497,6 +1497,10 @@ fn react_until(state: &mut State, h: u32, end: u32) {
 }
 
 fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
+    // An ability without a target (SPEC-0037).
+    if let Some(taken) = super::cast::immediate_order(state, h, name) {
+        return taken;
+    }
     match name {
         "stop" | "holdposition" => halt(state, h),
         // PROVISIONAL: the game takes it and the current order reads 0
@@ -1567,6 +1571,19 @@ fn freeze(state: &mut State, h: u32) {
             m.stop_after_step = true;
             return;
         }
+        m.commit(clock);
+        m.velocity = [0, 0];
+        m.walking = false;
+    }
+}
+
+/// Unit `h` stands where it is now, keeping its order (a stun,
+/// SPEC-0037).
+pub(super) fn stand_still(state: &mut State, h: u32) {
+    let clock = state.move_clock;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
         m.commit(clock);
         m.velocity = [0, 0];
         m.walking = false;
@@ -1743,6 +1760,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     u.shown_order.map_or(0, |(id, _)| id)
                 }
                 Some(u) if u.attack_move.is_some() => ORDER_ATTACK,
+                Some(u) if u.stunned_until.is_some_and(|t| state.ticks < t) => {
+                    super::cast::ORDER_STUNNED
+                }
                 Some(u) if u.casting.is_some() => u.casting.map_or(0, |c| c.order_id),
                 Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
@@ -1888,6 +1908,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         m.next_update = tick + UPDATE;
         // The position is committed first (SPEC-0018).
         m.commit(state.move_clock);
+        // A stunned unit stands and does nothing (SPEC-0037).
+        if super::cast::stunned(state, h) {
+            m.velocity = [0, 0];
+            m.walking = false;
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.movement = Some(m);
+            }
+            still.push(h);
+            continue;
+        }
         let here = m.origin;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
@@ -2792,7 +2822,12 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             due.push((h, Check::Attacking { current }));
             continue;
         }
-        if u.attack.is_some() || u.movement.is_some_and(|m| m.ordered()) {
+        // Nor one that casts or is stunned (SPEC-0035, SPEC-0037).
+        if u.attack.is_some()
+            || u.movement.is_some_and(|m| m.ordered())
+            || u.casting.is_some()
+            || u.stunned_until.is_some_and(|t| tick < t)
+        {
             continue;
         }
         // A sleeping creep does not acquire (SPEC-0030).
@@ -3066,6 +3101,8 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 && u.attack.is_none()
                 && u.attack_move.is_none()
                 && u.movement.is_none_or(|m| !m.ordered())
+                && u.casting.is_none()
+                && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state
                     .data
                     .units

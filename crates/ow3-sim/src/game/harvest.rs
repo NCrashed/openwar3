@@ -272,8 +272,11 @@ fn exit_place(state: &State, h: u32) -> Option<[u32; 2]> {
         let Some(Object::Unit(w)) = state.objects.get(&o) else {
             continue;
         };
+        // Walking workers of the gathering cycle do not count; others,
+        // walking or not, do (c-RXI-1 3497, c-RXD-1 worker 0 at 4191).
         let moving = w.movement.is_some_and(|m| m.velocity != [0, 0]);
-        if o == h || !w.alive || moving || (w.hidden && !inside(o)) {
+        let cycling = w.harvest.is_some_and(|g| g.cycling);
+        if o == h || !w.alive || (moving && cycling) || (w.hidden && !inside(o)) {
             continue;
         }
         taken.extend(crate::path::occupied_cells(

@@ -3257,9 +3257,15 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     // A sleeping creep wakes in this tick with the sleeping creeps near it,
     // and answers; one going home does not answer (SPEC-0030).
     super::creeps::wake_on_hit(state, victim, attacker);
+    // A unit in its backswing takes the target only for show: no attack,
+    // no draw; it acquires at its check after the backswing (c-RXR-1:
+    // trolls 16 and 18 in 3689 and 3713).
+    let now = real_of(state.event_time.unwrap_or_else(|| state.timers.time()));
+    let swinging_back = |u: &super::Unit| real_of(u.backswing_end) > now;
     let answers = |h: u32| match state.objects.get(&h) {
         Some(Object::Unit(u)) => {
             u.alive
+                && !swinging_back(u)
                 && !u.paused
                 && !u.creep.sleeping
                 && !u.creep.returning
@@ -3291,6 +3297,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             _ => return None,
         };
         (u.alive
+            && !swinging_back(u)
             && !u.paused
             && !u.creep.returning
             && u.attack_move.is_none()

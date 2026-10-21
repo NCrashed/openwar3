@@ -258,7 +258,7 @@ fn battle_path_events() {
             eprintln!("game {:?}\nours {:?}", game[k], ours[k]);
         }
     }
-    let tick = first.map_or(u64::MAX, |i| game[i].0);
+    let tick = first.map_or(u64::MAX, |i| game[i].0.min(ours[i].0));
     // PROVISIONAL: the game's up to tick 4813 (looked at next).
     assert!(tick >= 4813, "first difference at tick {tick}");
 }

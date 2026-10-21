@@ -2218,6 +2218,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 let (cx, cy) = (mul(dx, CELL), mul(dy, CELL));
                 let distance = real_of(add(mul(cx, cx), mul(cy, cy)));
                 if let Order::Attack { target } = m.order {
+                    // At the expiry of a cooldown from a swing at another
+                    // target the unit is tested again with its target's
+                    // position then: in range and turned within 0.2 it
+                    // swings at once, else the approach starts again (stand,
+                    // search at the next update). (c-RXR-1: footman 1 in 2689,
+                    // footman 2 in 2629, grunt 10 in 4927; c-RXD-1: creep 8
+                    // at 10.7699.)
                     if in_reach && after_swing && m.renew_stands && !m.renew_cooldown {
                         // The goal after a swing comes after the updates
                         // of its tick: nothing more at this one (SPEC-0019).
@@ -2797,6 +2804,7 @@ const GUARD_ACCEPT: f32 = 50.0;
 /// walking back to their guard points.
 pub(super) fn attack_moves(state: &mut State) {
     let tick = state.ticks;
+    cooldown_expiries(state);
     let back: Vec<(u32, [u32; 2])> = state
         .units
         .iter()
@@ -3056,7 +3064,6 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             // end of its tick.
             let from = expiry.unwrap_or(add(state.move_clock, crate::timers::TICK));
             react_until(state, h, add(from, delay));
-            cooldown_renewal(state, h);
             acquired.push(h);
             // A creep calls its camp (SPEC-0030), in the order of
             // SPEC-0019.
@@ -3428,27 +3435,70 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     }
 }
 
-/// A new attack of unit `h` while the cooldown of its last swing runs:
-/// when the cooldown expires and the unit cannot swing yet, it takes its
-/// goal again and searches at its next update, standing there, as after
-/// a swing (SPEC-0019; c-RXR-1, footman 1 chasing grunt 11 after grunt
-/// 12 died: expiry 13.4399939, search at 13.4699125).
-fn cooldown_renewal(state: &mut State, h: u32) {
-    let end = add(state.move_clock, crate::timers::TICK);
+/// The cooldowns that expire in this tick for units attacking another
+/// target than that of their last swing: each unit is tested with its
+/// target's position now; in range of the attack and turned within 0.2
+/// radians it swings at the expiry, else its approach starts again: it
+/// stops and searches at its next update (SPEC-0019; c-RXR-1: footman 2
+/// in 2629, footman 1 in 2689, grunt 10 in 4927; c-RXD-1: creep 8 at
+/// 10.7699).
+fn cooldown_expiries(state: &mut State) {
+    let (start, end) = (
+        real_of(state.move_clock),
+        real_of(add(state.move_clock, crate::timers::TICK)),
+    );
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let due: Vec<(u32, u32, i32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state
+                .unit(Some(h))
+                .filter(|u| u.alive && u.attack.is_none())?;
+            let m = u.movement?;
+            let Order::Attack { target } = m.order else {
+                return None;
+            };
+            let e = real_of(u.cooldown_end);
+            (target != u.cooldown_target && e > start && e <= end)
+                .then_some((h, target, m.order_id))
+        })
+        .collect();
     let tick = state.ticks;
-    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
-        return;
-    };
-    let left = real_of(u.cooldown_end) - real_of(end);
-    if left <= 0.0 {
-        return;
-    }
-    // The tick whose queue interval holds the expiry.
-    let at = tick + (left / real_of(crate::timers::TICK)).ceil() as u64;
-    if let Some(m) = u.movement.as_mut() {
-        m.renew_at = Some(at);
-        m.renew_cooldown = true;
-        m.renew_stands = true;
+    for (h, target, order_id) in due {
+        let Some(at) = position_of(state, target).map(|p| relative(p, min)) else {
+            continue;
+        };
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
+        let Some(m) = u.movement else {
+            continue;
+        };
+        let data = state.data.units.get(&u.type_id);
+        let range =
+            super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
+        let other = collision_of(state, target);
+        let reach = add(
+            mul(range, CELL),
+            mul(add(data.map_or(0, |t| t.collision), other), CELL),
+        );
+        let here = relative([u.x, u.y], min);
+        let ready =
+            in_range(here, at, reach) && real_of(heading_and_turn(&m, at).1).abs() < ATTACK_ANGLE;
+        if ready {
+            freeze(state, h);
+            super::attack::begin(state, h, target, tick, order_id);
+        } else {
+            freeze(state, h);
+            state.paths.remove(&h);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+            {
+                m.walking = false;
+                m.velocity = [0, 0];
+            }
+        }
     }
 }
 

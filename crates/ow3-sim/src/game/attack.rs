@@ -89,11 +89,14 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
     };
     let damage_point = ticks(point);
     let now = state.timers.time();
+    // A cooldown expiring in this tick, after the start of the tick, also
+    // times the swing (`movement::cooldown_expiries`).
+    let start = state.move_clock;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         // A swing waits for the cooldown of the last one, also on another
         // target (c-RXR-1: grunt 15, whose target died, swung at the
         // expiry of that cooldown).
-        let swing_q = if f32::from_bits(u.cooldown_end) > f32::from_bits(now) {
+        let swing_q = if f32::from_bits(u.cooldown_end) > f32::from_bits(start) {
             u.cooldown_end
         } else {
             now

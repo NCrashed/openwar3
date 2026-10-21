@@ -420,7 +420,7 @@ impl Moving {
 }
 
 /// Where a widget stands.
-fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
+pub(super) fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
     match state.objects.get(&widget)? {
         Object::Unit(u) => Some([u.x, u.y]),
         Object::Destructable(d) => Some([d.x, d.y]),

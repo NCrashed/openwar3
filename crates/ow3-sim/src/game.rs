@@ -680,6 +680,8 @@ pub struct State {
     last_hour: f32,
     /// Units attacking, in the order their attacks began.
     attacking: Vec<u32>,
+    /// Missiles in flight, in the order of their launch (SPEC-0016).
+    missiles: Vec<attack::Missile>,
     /// Units with a move order, in the order given.
     moving: Vec<u32>,
     /// Interface strings for `GetLocalizedString` (SPEC-0010).
@@ -792,6 +794,7 @@ impl State {
             night: false,
             last_hour: f32::NAN,
             attacking: Vec::new(),
+            missiles: Vec::new(),
             moving: Vec::new(),
             localized: BTreeMap::new(),
             world_bounds: [0; 4],

@@ -188,6 +188,36 @@ fn approach() {
     }
 }
 
+/// SPEC-0016, "Missiles": an archer in range of a target straight ahead
+/// damages it a flight of `200 * (d - 62) / 900` ticks after its damage
+/// point, or in the tick after it when the launch point is nearer than
+/// 90. The swing starts in the same tick at each distance, so the
+/// differences of the first damage ticks are those of the flights.
+#[test]
+fn archer_missiles_fly() {
+    let first_damage = |d: i32| -> Option<u64> {
+        let units = format!(
+            "set a = CreateUnit(Player(0), 'earc', -3000, -2000, 0)\n    set t = CreateUnit(Player(15), 'hpea', {}, -2000, 180)",
+            -3000 + d
+        );
+        let mut game = game(&units, "call IssueTargetOrder(a, \"attack\", t)", |data| {
+            target_type(data, 16.0)
+        })?;
+        let path = run(&mut game, 1000);
+        path.iter()
+            .find(|(_, u)| u[1].life < u[1].max_life)
+            .map(|(t, _)| *t)
+    };
+    let (Some(near), Some(mid), Some(far)) =
+        (first_damage(140), first_damage(300), first_damage(500))
+    else {
+        return;
+    };
+    // 300: 52.9 ticks of flight, 500: 97.3; 140: none, one tick.
+    assert!((mid as i64 - near as i64 - 52).abs() <= 1, "{near} {mid}");
+    assert!((far as i64 - mid as i64 - 44).abs() <= 1, "{mid} {far}");
+}
+
 /// The turning table of SPEC-0019: a knight next to a target at `a`
 /// degrees from its heading, first damage in ticks after the order given
 /// in an update tick. The knight turns at the first update at or after

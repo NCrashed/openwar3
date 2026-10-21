@@ -102,6 +102,12 @@ pub struct UnitType {
     pub collision: u32,
     /// How far the unit looks for enemies on its own (`acquire`, SPEC-0019).
     pub acquire: u32,
+    /// Where its missiles start: `launchX` to the side and `launchY`
+    /// forward (`UnitWeapons.slk`), as reals.
+    pub launch: [u32; 2],
+    /// `Missilespeed` of its entry in `Units\*UnitFunc.txt`, as a real
+    /// (SPEC-0016).
+    pub missile_speed: u32,
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
     /// SPEC-0022), as a key of [`ObjectData::path_textures`].
     pub path_texture: Option<String>,
@@ -204,6 +210,32 @@ pub struct Weapon {
     pub targets: Vec<String>,
     /// Damage round the target, if any.
     pub area: Option<Area>,
+    /// `weapTp1`: how the damage reaches the target (SPEC-0016,
+    /// "Missiles").
+    pub kind: WeaponKind,
+}
+
+/// The weapon types of `weapTp1` that matter for the time of the damage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeaponKind {
+    /// `normal` and `instant`: damage at the damage point.
+    #[default]
+    Normal,
+    /// `missile` and the other missile types: a missile launched at the
+    /// damage point, the damage when it arrives.
+    Missile,
+    /// `artillery`: the same flight time (SPEC-0016).
+    Artillery,
+}
+
+impl WeaponKind {
+    fn parse(text: Option<&str>) -> WeaponKind {
+        match text.map(|t| t.trim().to_ascii_lowercase()).as_deref() {
+            Some("artillery" | "aline") => WeaponKind::Artillery,
+            Some("missile" | "msplash" | "mbounce" | "mline") => WeaponKind::Missile,
+            _ => WeaponKind::Normal,
+        }
+    }
 }
 
 /// The area damage of a weapon (SPEC-0016, "Area damage"): the full hit
@@ -519,12 +551,14 @@ impl ObjectData {
                 "Hfact",
                 "Qfact",
                 "splashTargs",
+                "weapTp",
             ]
             .map(|f| format!("{f}{n}"))
         };
         let mut columns: Vec<String> = vec!["acquire".into(), "weapsOn".into()];
         columns.extend(weapon_fields(1));
         columns.extend(weapon_fields(2));
+        columns.extend(["launchX".to_owned(), "launchY".to_owned()]);
         let columns: Vec<&str> = columns.iter().map(String::as_str).collect();
         for (id, values) in rows(
             archives,
@@ -542,7 +576,7 @@ impl ObjectData {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .unwrap_or(1);
             let weapon = |at: usize| -> Option<Weapon> {
-                let v = &values[at..at + 15];
+                let v = &values[at..at + 16];
                 let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
                 let float = |v: &Option<String>| f32::from_bits(real(v.as_ref()));
                 let attack_type = v[6].as_deref().and_then(attack_type)?;
@@ -565,9 +599,11 @@ impl ObjectData {
                     attack_type,
                     targets: classes(v[8].as_deref()),
                     area,
+                    kind: WeaponKind::parse(v[15].as_deref()),
                 })
             };
-            let (first, second) = (weapon(2), weapon(17));
+            unit.launch = [real(values[34].as_ref()), real(values[35].as_ref())];
+            let (first, second) = (weapon(2), weapon(18));
             (unit.weapon, unit.weapon2) = match on {
                 3 => (first, second),
                 2 => (second, None),
@@ -889,6 +925,19 @@ impl ObjectData {
                 .insert(def.id, def.number(b"ihtp").unwrap_or(base_hp));
             let armor = data.item_armor.get(&def.base).copied().flatten();
             data.item_armor.insert(def.id, armor);
+        }
+        // The speed of missiles (SPEC-0016, "Missiles").
+        let mut functions = ow3_formats::profile::Profile::default();
+        for race in ["Human", "Orc", "NightElf", "Undead", "Neutral", "Campaign"] {
+            if let Some(text) = archives.read_game_file(&format!("Units\\{race}UnitFunc.txt")) {
+                functions.add(&String::from_utf8_lossy(&text));
+            }
+        }
+        for (&id, unit) in data.units.iter_mut() {
+            let section = String::from_utf8_lossy(&id.to_be_bytes()).into_owned();
+            let speed = functions.get(&section, "Missilespeed");
+            let first = speed.and_then(|s| s.split(',').next().map(str::to_owned));
+            unit.missile_speed = real(first.as_ref());
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {

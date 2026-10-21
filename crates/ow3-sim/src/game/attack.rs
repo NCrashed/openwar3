@@ -20,8 +20,10 @@ use ow3_jass::vm::Vm;
 
 use super::{Object, State};
 use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
-use crate::data::{Area, Weapon, is_hero};
+use crate::data::{Area, Weapon, WeaponKind, is_hero};
 use crate::random::ATTACK_DICE;
+use ow3_math::natives::sqrt;
+use ow3_math::{add, div, mul, sub};
 
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +98,7 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
 
 /// The hits due at this tick, in the order the attacks began.
 pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    fly(vm, state);
     let attackers = state.borrow().attacking.clone();
     for h in attackers {
         // A swing after the first starts only with the target in reach;
@@ -169,7 +172,23 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         });
                         u.weapon_ready = next;
                     }
-                    Some((a.target, amount, weapon.attack_type, weapon.area))
+                    // A missile weapon launches at the damage point; the
+                    // damage comes when the missile arrives (SPEC-0016).
+                    if weapon.kind != WeaponKind::Normal
+                        && let Some(missile) = launch(
+                            s,
+                            h,
+                            a.target,
+                            amount,
+                            weapon.attack_type,
+                            weapon.area.clone(),
+                        )
+                    {
+                        s.missiles.push(missile);
+                        None
+                    } else {
+                        Some((a.target, amount, weapon.attack_type, weapon.area))
+                    }
                 }
                 Some(a) if a.next <= tick => {
                     // The target is gone.
@@ -182,48 +201,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         };
         if let Some((target, amount, attack_type, area)) = hit {
-            // The units round the target, before the target takes its hit.
-            let splashed = area
-                .as_ref()
-                .map(|area| splash(&state.borrow(), h, target, area, amount))
-                .unwrap_or_default();
-            super::widgets::damage_widget(
-                vm,
-                state,
-                Some(h),
-                Some(target),
-                amount,
-                attack_type,
-                DAMAGE_TYPE_NORMAL,
-            );
-            for (victim, share) in splashed {
-                super::widgets::damage_widget(
-                    vm,
-                    state,
-                    Some(h),
-                    Some(victim),
-                    share,
-                    attack_type,
-                    DAMAGE_TYPE_NORMAL,
-                );
-            }
-            // A kill on an attack-move: the unit walks on after its
-            // backswing (SPEC-0019).
-            let mut s = state.borrow_mut();
-            // The victim and its friends answer the hit (SPEC-0019).
-            if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-                super::movement::retaliate(&mut s, target, h);
-            }
-            if !standing(&s, target) {
-                let tick = s.ticks;
-                let backswing = match s.objects.get(&h) {
-                    Some(Object::Unit(u)) => {
-                        weapon_for(&s, u.type_id, Some(target)).map_or(1, |w| ticks(w.backswing))
-                    }
-                    _ => 1,
-                };
-                super::movement::killed(&mut s, h, tick, backswing);
-            }
+            strike(vm, state, h, target, amount, attack_type, area);
         }
         // One tick after the swing the attacker takes a goal again, also
         // with its target in reach, where it stands and turns to its path
@@ -323,4 +301,181 @@ fn splash(state: &State, h: u32, target: u32, area: &Area, amount: u32) -> Vec<(
         out.push((other, share));
     }
     out
+}
+
+/// The damage of a hit of `h` on `target`, by its swing or its missile:
+/// the units round the target first, then the target, and the answers
+/// to it (SPEC-0016, SPEC-0019).
+fn strike(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: u32,
+    target: u32,
+    amount: u32,
+    attack_type: i32,
+    area: Option<Area>,
+) {
+    // The units round the target, before the target takes its hit.
+    let splashed = area
+        .as_ref()
+        .map(|area| splash(&state.borrow(), h, target, area, amount))
+        .unwrap_or_default();
+    super::widgets::damage_widget(
+        vm,
+        state,
+        Some(h),
+        Some(target),
+        amount,
+        attack_type,
+        DAMAGE_TYPE_NORMAL,
+    );
+    for (victim, share) in splashed {
+        super::widgets::damage_widget(
+            vm,
+            state,
+            Some(h),
+            Some(victim),
+            share,
+            attack_type,
+            DAMAGE_TYPE_NORMAL,
+        );
+    }
+    // A kill on an attack-move: the unit walks on after its
+    // backswing (SPEC-0019).
+    let mut s = state.borrow_mut();
+    // The victim and its friends answer the hit (SPEC-0019).
+    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+        super::movement::retaliate(&mut s, target, h);
+    }
+    if !standing(&s, target) {
+        let tick = s.ticks;
+        let backswing = match s.objects.get(&h) {
+            Some(Object::Unit(u)) => {
+                weapon_for(&s, u.type_id, Some(target)).map_or(1, |w| ticks(w.backswing))
+            }
+            _ => 1,
+        };
+        super::movement::killed(&mut s, h, tick, backswing);
+    }
+}
+
+/// A missile in flight (SPEC-0016, "Missiles"): it moves `step` world
+/// units a tick towards the target's centre and strikes when it reaches
+/// it, or in tick `due` when it was launched too near to fly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Missile {
+    attacker: u32,
+    target: u32,
+    at: [u32; 2],
+    step: u32,
+    due: Option<u64>,
+    amount: u32,
+    attack_type: i32,
+    area: Option<Area>,
+}
+
+/// Below this distance from the launch point (90) the damage comes in the
+/// tick after the launch.
+const NO_FLIGHT: f32 = 90.0;
+
+/// The missile of `h` launched now at `target`, if its type has a missile
+/// speed. The launch point is `launchY` ahead and `launchX` to the side.
+///
+/// PROVISIONAL: "ahead" is taken as the direction to the target (the
+/// attacker faces it within 0.2 radians when it swings) and the side as
+/// its right; the dice are drawn at the launch. SPEC-0016 measured only
+/// targets straight ahead.
+fn launch(
+    state: &State,
+    h: u32,
+    target: u32,
+    amount: u32,
+    attack_type: i32,
+    area: Option<Area>,
+) -> Option<Missile> {
+    let u = state.unit(Some(h))?;
+    let data = state.data.units.get(&u.type_id)?;
+    if f32::from_bits(data.missile_speed) <= 0.0 {
+        return None;
+    }
+    let to = super::movement::position_of(state, target)?;
+    let (dx, dy) = (sub(to[0], u.x), sub(to[1], u.y));
+    let length = sqrt(add(mul(dx, dx), mul(dy, dy)));
+    let (fx, fy) = if f32::from_bits(length) > 0.0 {
+        (div(dx, length), div(dy, length))
+    } else {
+        (1.0f32.to_bits(), 0)
+    };
+    let [side, ahead] = data.launch;
+    // Forward (fx, fy) and to the right (fy, -fx).
+    let at = [
+        add(u.x, add(mul(fx, ahead), mul(fy, side))),
+        add(u.y, sub(mul(fy, ahead), mul(fx, side))),
+    ];
+    let (lx, ly) = (sub(to[0], at[0]), sub(to[1], at[1]));
+    let flight = f32::from_bits(sqrt(add(mul(lx, lx), mul(ly, ly))));
+    Some(Missile {
+        attacker: h,
+        target,
+        at,
+        step: div(data.missile_speed, 200.0f32.to_bits()),
+        due: (flight < NO_FLIGHT).then_some(state.ticks + 1),
+        amount,
+        attack_type,
+        area,
+    })
+}
+
+/// The missiles of this tick move on; those that arrive strike, in the
+/// order of their launch. A missile whose target is gone is lost.
+///
+/// PROVISIONAL: how a missile follows a target that moves fast past the
+/// attacker, and what one does when its target dies, is open (SPEC-0016,
+/// open question 9).
+fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let arrived = {
+        let mut s = state.borrow_mut();
+        let s = &mut *s;
+        let tick = s.ticks;
+        let mut arrived = Vec::new();
+        let mut flying = Vec::with_capacity(s.missiles.len());
+        for mut m in std::mem::take(&mut s.missiles) {
+            if !standing(s, m.target) {
+                continue;
+            }
+            if let Some(due) = m.due {
+                if due <= tick {
+                    arrived.push(m);
+                } else {
+                    flying.push(m);
+                }
+                continue;
+            }
+            let Some(to) = super::movement::position_of(s, m.target) else {
+                continue;
+            };
+            let (dx, dy) = (sub(to[0], m.at[0]), sub(to[1], m.at[1]));
+            let length = sqrt(add(mul(dx, dx), mul(dy, dy)));
+            if f32::from_bits(length) <= f32::from_bits(m.step) {
+                arrived.push(m);
+                continue;
+            }
+            let scale = div(m.step, length);
+            m.at = [add(m.at[0], mul(dx, scale)), add(m.at[1], mul(dy, scale))];
+            flying.push(m);
+        }
+        s.missiles = flying;
+        arrived
+    };
+    for m in arrived {
+        strike(
+            vm,
+            state,
+            m.attacker,
+            m.target,
+            m.amount,
+            m.attack_type,
+            m.area,
+        );
+    }
 }

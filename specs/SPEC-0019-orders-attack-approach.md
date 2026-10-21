@@ -396,11 +396,13 @@ time to time:
   (Footman behind a wall: the waypoint was taken over at 134.8 from it,
   not at 142.9 one update before.) This holds for the waypoints before
   the goal only; the last point of the chase path is walked to its end.
-  A worker walking to a mine does the same with a reach between 65.0
-  and 70.7 (replay `c-RXD-1`, worker 5: waypoint (1584, 112) of its walk
-  to the mine taken over at 65.0, stand at that update, the new path
-  from the next; at 70.7 one update earlier it walked on); the exact
-  number for workers is open (66, the peasant's `rangeN2`, fits).
+  A worker walking to a mine does the same with a reach between 64.97
+  and 70.67 (replay `c-RXD-1`, worker 5, read in the game: waypoint
+  (1584, 112) of its walk to the mine, at the update of tick 3583 the
+  worker was 2.0302 cells = 64.97 from it and stood; at 70.67 one update
+  earlier it walked on; at its next update a new search, high-level and
+  local, went from its position to the mine); the exact number for
+  workers is open (66, the peasant's `rangeN2`, fits).
 - **A new goal and the existing path.** At a renewal the target's
   position becomes the new goal only if it lies in another cell of the
   64 grid of the high-level search (cells of 64 x 64 counted from the

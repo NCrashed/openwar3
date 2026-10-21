@@ -182,20 +182,23 @@ the high-level search twice in a row on the same start and goal: first
 with iteration limit 5000, then with limit 400; their removals are
 counted in different budget tables (SPEC-0021, "High-level budgets").
 For a worker going to a tree, the goal point is the tree's position,
-and the tree's own footprint does not block this search: blocks of the
-tree that are blocked in the state tables are found as nodes on the
-way to the goal and as the goal itself (level 0 at the edge, level 1 for the goal square). In
-`c-RYP-1` tick 307 (state tables and every removal read in the game,
-`game-data/1.27b/replays/c-RYP-1.hlsearch-307.tsv`): the tree block
-covers blocks x 176..181, y 188..195, all blocked; peasant 5's
-5000-limit search went (176, 196) level 2, (179, 195) level 0, goal
-(180, 195) level 1 in 5 removals, peasant 4's (182, 188) level 1,
-(181, 189) level 0, goal (180, 190) level 1 in 11; peasant 3's tree
-lies inside the block, its goal was never reached, and the search ran
-until its heap was empty, 2516 removals. The 400-limit searches took 3
-removals each, and peasant 3's path list came from its 400 search.
-How far the freed footprint reaches and how the larger squares are
-changed for it was not read.
+and for the search the 3 x 3 level-0 blocks centred on the block of
+that point count as free, whatever covers them; the larger squares are
+taken from this changed level 0 by the usual rule. This was read in
+the state tables as each search saw them (`c-RYP-1` tick 307, the tree
+block covering blocks x 176..181, y 188..195, all blocked before):
+peasant 5 (tree at block (180, 195)): blocks x 179..181, y 194..195
+free, level-1 square (90, 97) free, (89, 97) mixed; its 5000-limit
+search went (176, 196) level 2, (179, 195) level 0, goal (180, 195)
+level 1 in 5 removals. Peasant 4 (block (180, 190)): blocks x 179..181,
+y 189..191 free; goal (180, 190) level 1 in 11 removals. Peasant 3
+(block (179, 192), inside the tree block): blocks x 178..180,
+y 191..193 free but enclosed; its search ran until its heap was empty,
+2516 removals. The 400-limit searches took 3 removals each, and
+peasant 3's path list came from its 400 search. All removals:
+`game-data/1.27b/replays/c-RYP-1.hlsearch-307.tsv`. Whether the 3 x 3
+depends on the target's size (both trees here are alike) was not
+tested.
 
 **Neighbours of a level-0 node** at position `(x, y)`: try the side
 neighbours in the order below (south, east, north, west), each found as

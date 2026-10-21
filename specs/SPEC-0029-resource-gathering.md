@@ -224,6 +224,22 @@ free, and peasant 5 went on from its centre (-1104, 80) (the log shows
 the new position in tick 1118). Other workers started waiting in ticks 871 (two),
 1075, 1105 and 1177 with nobody on their cells: nothing moved.
 
+**Going in pushes others aside too.** When a worker goes into the mine,
+the units whose footprints overlap its footprint are moved in the same
+way. `c-RXI-1`: peasant 3 came out in tick 3497 at cells (351.12,
+385.53); peasant 2 reached the free mine standing on the same place
+(3499), and when it went in (3505) peasant 3 was moved to (350.5,
+383.5). (Found by the implementer in the agents file of that replay,
+one case.)
+
+**A worker reaching a busy mine decides at its next update.** A worker
+that reaches the mine while another is inside stands; at its next
+update it goes in if the mine is free by then, and otherwise starts to
+wait; only workers already waiting are taken in when the mine becomes
+free. `c-RXI-1`: peasant 4 reached the mine in tick 6001 with peasant 5
+inside; peasant 5 came out in 6003, and peasant 4 went in at its update
+of 6007, not in 6003. (From the log of that replay, one case.)
+
 **Coming out.** A worker that comes out of the mine starts a new walk
 (to the town hall) as for a new order: it stands at its updates while
 it turns towards its path (SPEC-0019, "Stop, hold position and new

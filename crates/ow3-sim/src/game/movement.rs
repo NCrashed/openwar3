@@ -3013,6 +3013,14 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             due.push((expiry, seq, h, Check::AttackMove { expiry }));
             continue;
         }
+        // A unit on attack-move that attacks a target checks for a better
+        // one as any attacker (c-RXR-1: rifleman 8 took grunt 15 in 5603).
+        if u.attack_move.is_some()
+            && let (Some(expiry), Some((current, _))) = (expired, target)
+        {
+            due.push((expiry, seq, h, Check::Attacking { current }));
+            continue;
+        }
         if let Some(a) = u.attack_move.as_mut() {
             if real_of(a.next_check) <= real_of(next_clock) {
                 let expiry = a.next_check;
@@ -3146,7 +3154,16 @@ fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
         return false;
     };
     freeze(state, h);
-    if !order(state, h, Order::Attack { target: better }, 0, at) {
+    // An attack-move keeps its order id.
+    let order_id = state
+        .unit(Some(h))
+        .and_then(|u| {
+            u.movement
+                .map(|m| m.order_id)
+                .or(u.attack.map(|a| a.order_id))
+        })
+        .unwrap_or(0);
+    if !order(state, h, Order::Attack { target: better }, order_id, at) {
         return false;
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)

@@ -156,10 +156,10 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 270 hits match (looked at next).
+    // PROVISIONAL: the first 305 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
     assert!(
-        first.is_none_or(|i| i >= 270),
+        first.is_none_or(|i| i >= 305),
         "first difference at hit {first:?}"
     );
 }
@@ -259,8 +259,8 @@ fn battle_path_events() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0.min(ours[i].0));
-    // PROVISIONAL: the game's up to tick 6421 (looked at next).
-    assert!(tick >= 6421, "first difference at tick {tick}");
+    // PROVISIONAL: the game's up to tick 6481 (looked at next).
+    assert!(tick >= 6481, "first difference at tick {tick}");
 }
 
 /// The motion of the units of `c-RXR-1` at their updates, bit for bit

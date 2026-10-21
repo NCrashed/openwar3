@@ -1092,6 +1092,39 @@ pub fn high_level_cost(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> u32 
     high_level_limited(grid, s, g, class, 5000).map_or(0, |f| f.iterations)
 }
 
+/// The cost of a high-level path from `s` to `g` (cells) for choosing
+/// among targets (SPEC-0029, "Another tree"): the search with iteration
+/// limit `limit`; `None` when it fails or hits the limit, else its
+/// removals and the path's length, the sum over its legs of the integer
+/// square root of their squared length in blocks.
+///
+/// PROVISIONAL: the extra 2 for legs ending at nodes of a special kind is
+/// left out (which kind was not read).
+pub fn high_level_path_cost(
+    grid: &Grid,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+) -> Option<(u32, u32)> {
+    let (found, chain) = high_level_chain(grid, s, g, class, limit)?;
+    if !found.reached || found.iterations >= limit {
+        return None;
+    }
+    let isqrt = |dx: i32, dy: i32| ((dx * dx + dy * dy) as u64).isqrt() as u32;
+    let cost = if chain.len() <= 2 && chain.first().map(|c| c.0) == chain.last().map(|c| c.0) {
+        let b = |p: [u32; 2]| [(floor(p[0]) >> 1), (floor(p[1]) >> 1)];
+        let (a, z) = (b(s), b(g));
+        isqrt(z[0] - a[0], z[1] - a[1])
+    } else {
+        chain
+            .windows(2)
+            .map(|w| isqrt(w[1].1.0 - w[0].1.0, w[1].1.1 - w[0].1.1))
+            .sum()
+    };
+    Some((found.iterations, cost))
+}
+
 /// The cluster search of a path, with the limit 5000 (SPEC-0020, "Two
 /// searches"): its list gives the unit's own searches their goals.
 pub fn high_level_cluster(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Found> {

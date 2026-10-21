@@ -58,6 +58,15 @@ const UPDATE: u64 = 6;
 /// fills the load to the walk back (measured in test RUF).
 const FIRST_HIT: u64 = 99;
 const AFTER_LAST_HIT: u64 = 114;
+/// Ticks from a work start out of reach to the check that takes another
+/// tree (0.5 s), and from that check to the first hit on it.
+const SWITCH_CHECK: u64 = 100;
+/// The reach of the harvest of a tree, squared, in cells: (116 / 32 +
+/// 0.5) squared (SPEC-0029, "Arriving at the tree").
+const TREE_REACH_SQUARED: f32 = 17.015625;
+/// The radius round the current tree in which another is looked for
+/// (`Area1` of `Ahar`).
+const OTHER_TREES: f32 = 900.0;
 
 /// Ability codes: harvest, the gold of a mine, the returns of gold and
 /// lumber and of lumber only.
@@ -82,6 +91,9 @@ pub struct Harvest {
     /// full load.
     next_hit: Option<u64>,
     back_at: Option<u64>,
+    /// The work started out of reach of its tree: the tick of the check
+    /// that takes another tree (SPEC-0029, "Another tree").
+    switch_at: Option<u64>,
     /// Out of a mine once and gathering since: its cells block only the
     /// placing of buildings (SPEC-0029, "Workers in the gathering cycle
     /// do not block each other").
@@ -516,9 +528,18 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target);
         } else if is_tree(&s, target) {
-            if let Some(mut g) = get(&s, h) {
-                let tick = s.ticks;
-                g.next_hit = Some(tick + FIRST_HIT);
+            let tick = s.ticks;
+            let near = within_reach(&s, h, target);
+            if let Some(mut g) = get(&s, h)
+                && g.next_hit.is_none()
+            {
+                // Out of its reach the work starts anyway, and 0.5 s later
+                // another tree is taken (SPEC-0029; c-RYP-1: peasant 4).
+                if near {
+                    g.next_hit = Some(tick + FIRST_HIT);
+                } else {
+                    g.switch_at = Some(tick + SWITCH_CHECK);
+                }
                 set(&mut s, h, Some(g));
             }
         } else {
@@ -832,6 +853,11 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             walk_back(&mut s, h);
             continue;
         }
+        if g.switch_at == Some(tick) {
+            let mut s = state.borrow_mut();
+            take_another_tree(&mut s, h, tick);
+            continue;
+        }
         if g.next_hit != Some(tick) {
             continue;
         }
@@ -975,6 +1001,106 @@ pub(super) fn start_cycling(state: &mut State, h: u32) {
     if let Some(mut g) = get(state, h) {
         g.cycling = true;
         set(state, h, Some(g));
+    }
+}
+
+/// Whether worker `h` is within the harvest's reach of tree `tree`.
+fn within_reach(state: &State, h: u32, tree: u32) -> bool {
+    let (Some(u), Some([tx, ty])) = (state.unit(Some(h)), position(state, tree)) else {
+        return false;
+    };
+    let d = |a: u32, b: u32| (f32::from_bits(a) - f32::from_bits(b)) / 32.0;
+    let (dx, dy) = (d(u.x, tx), d(u.y, ty));
+    dx * dx + dy * dy <= TREE_REACH_SQUARED
+}
+
+/// Worker `h`, working out of reach of its tree, takes another: of the
+/// trees within 900 of the current one, the first with the smallest cost
+/// of a high-level path from the worker, each searched with its own cells
+/// free and an iteration limit of 32, then of the best removals plus 16
+/// (SPEC-0029, "Another tree").
+///
+/// PROVISIONAL: the trees are visited in the order of their handles.
+fn take_another_tree(state: &mut State, h: u32, tick: u64) {
+    let Some(g) = get(state, h) else {
+        return;
+    };
+    let Some(current) = g.target else {
+        return;
+    };
+    let (Some(u), Some([cx, cy])) = (state.unit(Some(h)), position(state, current)) else {
+        return;
+    };
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cells = |p: [u32; 2]| {
+        let r = relative(p, min);
+        [mul(r[0], CELL), mul(r[1], CELL)]
+    };
+    let at = cells([u.x, u.y]);
+    let class = state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0, |t| crate::path::size_class(t.collision));
+    let mut trees: Vec<u32> = state
+        .objects
+        .iter()
+        .filter(|&(&t, _)| t != current && is_tree(state, t))
+        .filter(|&(_, o)| match o {
+            Object::Destructable(d) => {
+                let (dx, dy) = (
+                    f32::from_bits(d.x) - f32::from_bits(cx),
+                    f32::from_bits(d.y) - f32::from_bits(cy),
+                );
+                dx * dx + dy * dy <= OTHER_TREES * OTHER_TREES
+            }
+            _ => false,
+        })
+        .map(|(&t, _)| t)
+        .collect();
+    // Row by row from the bottom, each row from the left (c-RYP-1: the
+    // third tree visited was (358, 378), as in the game).
+    trees.sort_by_key(|t| {
+        position(state, *t).map_or((u32::MAX, u32::MAX), |[x, y]| {
+            let k = |v: u32| (f32::from_bits(v) + 1.0e6) as u32;
+            (k(y), k(x))
+        })
+    });
+    let mut limit = 32;
+    let mut best: Option<(u32, u32)> = None;
+    for t in trees {
+        let Some(Object::Destructable(d)) = state.objects.get(&t) else {
+            continue;
+        };
+        let goal = cells([d.x, d.y]);
+        let Some(grid) = state.grid.as_mut() else {
+            return;
+        };
+        // The tree's blocks free, as for a walk to a tree (SPEC-0020).
+        let found = grid.with_free_around(goal, |g| {
+            crate::path::high_level_path_cost(g, at, goal, class, limit)
+        });
+        // PROVISIONAL: the 2 of the leg to a node of the special kind,
+        // taken as the goal node (it gives the game's cost 4 for the tree
+        // taken by peasant 4 of c-RYP-1, and its two later ties).
+        if let Some((removals, cost)) = found.map(|(r, c)| (r, c + 2)) {
+            limit = limit.min(removals + 16);
+            if best.is_none_or(|(_, c)| cost < c) {
+                best = Some((t, cost));
+            }
+        }
+    }
+    let Some((tree, _)) = best else {
+        return;
+    };
+    if let Some(mut g) = get(state, h) {
+        g.switch_at = None;
+        g.target = Some(tree);
+        g.next_hit = Some(tick + SWITCH_CHECK);
+        set(state, h, Some(g));
+    }
+    if let Some(at) = position(state, tree) {
+        movement::harvest_order(state, h, Order::Gather { target: tree }, ORDER_HARVEST, at);
     }
 }
 

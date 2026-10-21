@@ -689,7 +689,7 @@ fn damage_unit(
             data.armor
         };
         // Devotion aura (SPEC-0038).
-        let armor = ow3_math::add(armor, super::auras::armor(&state, &unit));
+        let armor = ow3_math::add(armor, super::auras::armor(&state, unit));
         let damage = state
             .combat
             .damage(amount, armor, data.armor_type, attack_type, damage_type);

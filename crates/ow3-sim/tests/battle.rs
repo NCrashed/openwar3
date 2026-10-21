@@ -121,6 +121,7 @@ fn battle_report() {
             life.insert(i, u.life);
         }
     }
+    let mut misses = 0;
     for (unit, list) in &logged {
         let miss = list.iter().find(|(t, p)| {
             at.get(unit)
@@ -130,6 +131,7 @@ fn battle_report() {
         if let Some((t, p)) = miss {
             let q = at.get(unit).and_then(|a| a.get(t));
             eprintln!("unit {unit}: first miss at {t}: game {p:?}, ours {q:?}");
+            misses += 1;
         }
     }
     // Within a tick the log lists the hits by time, here by unit.
@@ -156,10 +158,13 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 305 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
+    assert_eq!(misses, 0, "positions that differ from the log");
+    // The log ends at its last tick; the game goes on after it.
+    let end = game_damage.last().map_or(0, |d| d.0);
+    let logged = damage.iter().filter(|d| d.0 <= end).count();
     assert!(
-        first.is_none_or(|i| i >= 305),
+        first.is_none() && logged == game_damage.len(),
         "first difference at hit {first:?}"
     );
 }
@@ -259,8 +264,10 @@ fn battle_path_events() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0.min(ours[i].0));
-    // PROVISIONAL: the game's up to tick 6559 (looked at next).
-    assert!(tick >= 6559, "first difference at tick {tick}");
+    assert!(
+        tick == u64::MAX && game.len() == ours.len(),
+        "first difference at tick {tick}"
+    );
 }
 
 /// The motion of the units of `c-RXR-1` at their updates, bit for bit
@@ -324,4 +331,5 @@ fn battle_agents_report() {
             _ => {}
         }
     }
+    assert!(first.is_empty(), "units that differ: {first:?}");
 }

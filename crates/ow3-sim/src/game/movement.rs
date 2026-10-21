@@ -3368,7 +3368,9 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
             Some(Order::Attack { target }) => Some(target),
             _ => None,
         });
-    let Some(target) = target else {
+    // Only while that attack goes on: a target that died counts as none
+    // (c-RXR-1: rifleman 7 after its kill of grunt 13, rated at 6420).
+    let Some(target) = target.filter(|&t| state.unit(Some(t)).is_some_and(|t| t.alive)) else {
         return 2;
     };
     if target == h {
@@ -3382,8 +3384,6 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
     }
 }
 
-/// How much farther than `CallForHelp` idle units hear a call for help
-/// (SPEC-0019: about 175; 180 fits all the distances measured).
 /// What a missile's impact adds to CallForHelp for its call (SPEC-0019).
 const IMPACT_REACH: f32 = 150.0;
 /// Seconds after a call for help in which the caller makes no other.

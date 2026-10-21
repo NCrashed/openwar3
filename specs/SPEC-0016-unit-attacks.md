@@ -128,7 +128,15 @@ damages at its damage point like a melee one (above).
     for all ten arrows the flight time set at the launch was the plane
     distance from the launch point to the target's launch-time position
     divided by the speed, and the damage came when that timer expired,
-    with no later correction;
+    with no later correction. The timer's start is the time of the
+    launch tick's start, `Q(k)` (the movement clock, SPEC-0002), not
+    the queue time of the launch callback: its expiry is `add(Q(k),
+    div(L, Missilespeed))`, and the missile hits in the missile part at
+    the end of the first tick whose end time `Q(k + 1)` is at least that
+    (`c-RXR-1`, troll 16's launch in tick 4131 at q 20.6499920, Q(4131)
+    20.6475353, `L / speed` 0.348333031: expiry 20.9958683, hit at the
+    end of tick 4200 at 20.9974766; from q it would have been tick
+    4201);
   - **homing** (`MissileHoming=1`: heroes, casters, towers, the storm
     bolt of SPEC-0037, ...): the missile moves in steps of 0.1 s. At
     the launch and at the end of every step it measures `L` again, to

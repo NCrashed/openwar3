@@ -87,6 +87,10 @@ pub(super) fn update_time(state: &mut State) -> Option<u32> {
     }
     state.update_time = next;
     state.update_now = true;
+    // The update cycles are numbered from 1 (SPEC-0018).
+    state.update_cycle += 1;
+    let cycle = state.update_cycle;
+    state.budget.cycle(cycle);
     Some(next)
 }
 

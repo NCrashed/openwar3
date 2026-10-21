@@ -708,6 +708,8 @@ pub struct State {
     update_time: u32,
     /// This tick is an update tick (SPEC-0018).
     update_now: bool,
+    /// The number of the last update cycle, 1 for the first (SPEC-0018).
+    update_cycle: u64,
     /// Orders of a player are being given, between two ticks: a unit they
     /// stop moves in the next tick first (SPEC-0019).
     player_orders: bool,
@@ -815,6 +817,7 @@ impl State {
             move_clock: 0,
             update_time: 0,
             update_now: false,
+            update_cycle: 0,
             player_orders: false,
             start_velocities: std::collections::BTreeMap::new(),
             budget: follow::Budget::default(),

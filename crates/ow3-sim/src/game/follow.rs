@@ -43,7 +43,6 @@ const LONG_SEARCH: u32 = 64;
 const HOLD: u64 = 60;
 /// Iterations of local searches per window (SPEC-0021).
 const BUDGET: u32 = 1100;
-const WINDOW: u64 = 2;
 /// Updates a unit waits for a moving one, and makes a slower one wait.
 const WAIT: u32 = 5;
 const MADE_TO_WAIT: u32 = 20;
@@ -119,14 +118,13 @@ pub struct Budget {
 }
 
 impl Budget {
-    fn used(&mut self, tick: u64) -> u32 {
-        if self.window != tick / WINDOW {
-            *self = Budget {
-                window: tick / WINDOW,
-                used: 0,
-            };
+    /// The count starts again before every second update cycle, those
+    /// with an odd number (SPEC-0021, "The window is two update cycles").
+    pub(super) fn cycle(&mut self, number: u64) {
+        if number % 2 == 1 {
+            self.window = number;
+            self.used = 0;
         }
-        self.used
     }
 }
 
@@ -511,7 +509,7 @@ fn decide(
         if tick < follow.hold_until {
             return Steer::Stand(segment_goal);
         }
-        if shared.budget.used(tick) > BUDGET {
+        if shared.budget.used > BUDGET {
             // Queued for a later window, without the hold.
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
@@ -539,7 +537,12 @@ fn decide(
             ),
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
-        shared.budget.used += found.iterations;
+        // A search that hits the limit costs one more.
+        shared.budget.used += if found.iterations >= LOCAL_LIMIT {
+            LOCAL_LIMIT + 1
+        } else {
+            found.iterations
+        };
         if shared.budget.used >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }

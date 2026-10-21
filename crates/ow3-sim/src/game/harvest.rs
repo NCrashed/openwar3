@@ -214,6 +214,76 @@ fn get(state: &State, h: u32) -> Option<Harvest> {
     state.unit(Some(h)).and_then(|u| u.harvest)
 }
 
+/// Where worker `h` comes out of a mine (SPEC-0029, "Where a worker comes
+/// out"): `None` at its entry point when its footprint there is free,
+/// else the centre of the first free cell on the rings round the entry
+/// cell. Free cells are passable and not covered by a standing unit,
+/// waiting workers and the worker inside a mine included.
+fn exit_place(state: &State, h: u32) -> Option<[u32; 2]> {
+    let grid = state.grid.as_ref()?;
+    let u = state.unit(Some(h))?;
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let class_of = |type_id: i32| {
+        state
+            .data
+            .units
+            .get(&type_id)
+            .map_or(0, |t| crate::path::size_class(t.collision))
+    };
+    let cells = |p: [u32; 2]| {
+        let r = relative(p, min);
+        [mul(r[0], CELL), mul(r[1], CELL)]
+    };
+    let inside = |o: u32| {
+        state
+            .mines
+            .values()
+            .any(|m| m.inside.is_some_and(|(w, _)| w == o))
+    };
+    let mut taken = std::collections::BTreeSet::new();
+    for &o in &state.units {
+        let Some(Object::Unit(w)) = state.objects.get(&o) else {
+            continue;
+        };
+        let moving = w.movement.is_some_and(|m| m.velocity != [0, 0]);
+        if o == h || !w.alive || moving || (w.hidden && !inside(o)) {
+            continue;
+        }
+        taken.extend(crate::path::occupied_cells(
+            cells([w.x, w.y]),
+            class_of(w.type_id),
+        ));
+    }
+    let class = class_of(u.type_id);
+    let free = |(x, y): (i32, i32)| {
+        let at = [(x as f32 + 0.5).to_bits(), (y as f32 + 0.5).to_bits()];
+        crate::path::occupied_cells(at, class)
+            .iter()
+            .all(|&(a, b)| grid.passable(a, b) && !taken.contains(&(a, b)))
+    };
+    let (cx, cy) = crate::path::cell_of(cells([u.x, u.y]));
+    if free((cx, cy)) {
+        return None;
+    }
+    for n in 1..=32 {
+        let (l, r, b, t) = (cx - n, cx + n, cy - n, cy + n);
+        // Bottom row, right column, top row and left column, round.
+        let ring = (l + 1..=r)
+            .map(|x| (x, b))
+            .chain((b + 1..=t).map(|y| (r, y)))
+            .chain((l..r).rev().map(|x| (x, t)))
+            .chain((b..t).rev().map(|y| (l, y)));
+        for cell in ring {
+            if free(cell) {
+                let world =
+                    |c: i32, m: u32| (f32::from_bits(m) + (c as f32 + 0.5) * 32.0).to_bits();
+                return Some([world(cell.0, min[0]), world(cell.1, min[1])]);
+            }
+        }
+    }
+    None
+}
+
 /// Whether worker `h` is in the gathering cycle, out of a mine once:
 /// no unit's way sees it (SPEC-0029).
 pub(super) fn passes_through(state: &State, h: u32) -> bool {
@@ -495,6 +565,15 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let mut s = state.borrow_mut();
             let s = &mut *s;
             hide(s, worker, false);
+            if let Some(at) = exit_place(s, worker) {
+                let min = [s.world_bounds[0], s.world_bounds[1]];
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&worker) {
+                    [u.x, u.y] = at;
+                    if let Some(m) = u.movement.as_mut() {
+                        m.origin = relative(at, min);
+                    }
+                }
+            }
             let gold = gathering(s, worker).map_or(0, |g| g.gold);
             let left = match s.objects.get_mut(&mine) {
                 Some(Object::Unit(m)) => {

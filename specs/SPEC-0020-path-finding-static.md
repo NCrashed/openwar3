@@ -178,9 +178,19 @@ block of the goal point. If both are the same node, the list is just
 `goal, start`.
 
 **Two searches, and a target's footprint.** A path to a target runs
-the high-level search twice in a row on the same start and goal: first
-with iteration limit 5000, then with limit 400; their removals are
-counted in different budget tables (SPEC-0021, "High-level budgets").
+the high-level search twice in a row: first the cluster's search with
+iteration limit 5000, from the start to the target point, then the
+unit's own search with limit 400, from its position to the segment goal
+(step 1) taken on the cluster's list; their removals are counted in
+different budget tables (SPEC-0021, "High-level budgets"). The unit
+then walks the list of its own 400 search: its segment goals for the
+local searches are taken on that list, not on the cluster's. Replay
+`c-RXD-1`, creep 7 at 4561 (open ground): the cluster's list was start,
+(215.75, 193.75), (207.75, 193.75), (199.75, 200.75), goal (191.0625,
+200.125); its segment goal (199.75, 200.75) (legs 1.29, 8.0, 10.63);
+the unit's 400 search to that point went through (207.75, 200.75)
+instead (4 removals), and its local search went to (207.75, 200.75)
+(legs 1.29, 10.63 on its own list), (415.5, 401.5) in cells.
 For a worker going to a tree, the goal point is the tree's position,
 and for the search the 3 x 3 level-0 blocks centred on the block of
 that point count as free, whatever covers them; the larger squares are

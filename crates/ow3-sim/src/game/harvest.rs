@@ -246,7 +246,7 @@ fn get(state: &State, h: u32) -> Option<Harvest> {
 /// else the centre of the first free cell on the rings round the entry
 /// cell. Free cells are passable and not covered by a standing unit,
 /// waiting workers and the worker inside a mine included.
-fn exit_place(state: &State, h: u32) -> Option<[u32; 2]> {
+fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
     let grid = state.grid.as_ref()?;
     let u = state.unit(Some(h))?;
     let min = [state.world_bounds[0], state.world_bounds[1]];
@@ -272,11 +272,15 @@ fn exit_place(state: &State, h: u32) -> Option<[u32; 2]> {
         let Some(Object::Unit(w)) = state.objects.get(&o) else {
             continue;
         };
-        // Walking workers of the gathering cycle do not count; others,
-        // walking or not, do (c-RXI-1 3497, c-RXD-1 worker 0 at 4191).
+        // Coming out, the units count as for a local search: workers of
+        // the gathering cycle only while they wait (c-RXI-1 3497, c-RXD-1
+        // worker 0 at 4191). Pushing aside, walking units do not count
+        // (c-RXD-1 worker 1 at 4249). SPEC-0029.
         let moving = w.movement.is_some_and(|m| m.velocity != [0, 0]);
-        let cycling = w.harvest.is_some_and(|g| g.cycling);
-        if o == h || !w.alive || (moving && cycling) || (w.hidden && !inside(o)) {
+        let waits = waiting(state).any(|x| x == o);
+        let cycling = w.harvest.is_some_and(|g| g.cycling) && !waits;
+        let left_out = if push { moving } else { cycling };
+        if o == h || !w.alive || left_out || (w.hidden && !inside(o)) {
             continue;
         }
         taken.extend(crate::path::occupied_cells(
@@ -667,7 +671,7 @@ fn push_aside(state: &mut State, h: u32) {
         .filter(|&o| cells_of(state, o).iter().any(|c| mine.contains(c)))
         .collect();
     for o in on {
-        if let Some(at) = exit_place(state, o)
+        if let Some(at) = exit_place(state, o, true)
             && let Some(Object::Unit(u)) = state.objects.get_mut(&o)
         {
             [u.x, u.y] = at;
@@ -746,7 +750,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             {
                 m.heading = u.facing;
             }
-            if let Some(at) = exit_place(s, worker) {
+            if let Some(at) = exit_place(s, worker, false) {
                 let min = [s.world_bounds[0], s.world_bounds[1]];
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&worker) {
                     [u.x, u.y] = at;

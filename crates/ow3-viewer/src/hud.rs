@@ -541,7 +541,12 @@ impl Hud {
         let buttons = UPPER;
         self.interface
             .lay_out("UpperButtonBarFrame", buttons, &plain, &mut out);
-        let upkeep = self.interface.string("UPKEEP_NONE");
+        // The upkeep by the food in use (SPEC-0029, "Upkeep").
+        let upkeep = self.interface.string(match resources.food_used {
+            ..=50 => "UPKEEP_NONE",
+            51..=80 => "UPKEEP_LOW",
+            _ => "UPKEEP_HIGH",
+        });
         let texts = |name: &str| match name {
             "ResourceBarGoldText" => Some(resources.gold.to_string()),
             "ResourceBarLumberText" => Some(resources.lumber.to_string()),

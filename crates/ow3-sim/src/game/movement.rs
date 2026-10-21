@@ -2492,6 +2492,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 .is_some_and(|u| super::fog::unit_visible(state, target, u.owner));
                             Some((if visible { MINE_REACH } else { ARRIVAL }, m.heading, false))
                         }
+                        // The walk back to the town hall, reach 6.0 (c-RXD-1,
+                        // SPEC-0019).
+                        Order::Return { .. } => Some((HALL_REACH, m.heading, false)),
                         _ => None,
                     };
                     let place = (cluster > 1)
@@ -2691,6 +2694,9 @@ const FOLLOWER_RENEWAL: u32 = 16;
 /// The reach of a gather order in cells: 132 / 32 (the gather range
 /// 116 of `Ahar` plus 16, read for a peasant; SPEC-0019).
 const GATHER_REACH: u32 = 0x4084_0000;
+/// The reach of the walk back with a load in cells: 192 / 32 (`c-RXD-1`,
+/// SPEC-0019).
+const HALL_REACH: u32 = 0x40C0_0000;
 /// The reach of a harvest order on a gold mine in cells: 66 / 32
 /// (`c-RXD-1`, SPEC-0019).
 const MINE_REACH: u32 = 0x4004_0000;

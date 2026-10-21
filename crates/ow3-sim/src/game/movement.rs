@@ -544,8 +544,13 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     for cluster in &mut state.clusters {
         cluster.keep(|m| m != h);
     }
-    // A new path is searched at the next update (SPEC-0020).
-    state.paths.remove(&h);
+    // A new path is searched at the next update (SPEC-0020); in the new
+    // layout of a queued group the members keep theirs until their places
+    // are laid out (SPEC-0025, "When a member searches again").
+    if !state.regrouping {
+        state.paths.remove(&h);
+        state.member_places.remove(&h);
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = Some(moving);
         u.attack = None;
@@ -950,9 +955,22 @@ fn cluster_path(state: &State, from: [u32; 2], goal: [u32; 2], class: u8) -> Vec
 /// its offset.
 fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
     let w = cluster.waypoints[cluster.current];
+    // The square of 2 x 2 cells of a place.
+    let square = |p: [u32; 2]| p.map(|c| (real_of(c) as i32) >> 1);
     for (&h, o) in cluster.members.iter().zip(&cluster.offsets) {
-        let to = [add(w[0], o[0]), add(w[1], o[1])];
-        let to = absolute(mul_both(to, CELLS_TO_WORLD), min);
+        let place = [add(w[0], o[0]), add(w[1], o[1])];
+        // A member whose new place lies in the square of the place of its
+        // last search keeps its path and that place (SPEC-0025, "When a
+        // member searches again"; c-RTW-3 tick 5539).
+        if state
+            .member_places
+            .get(&h)
+            .is_some_and(|&old| square(old) == square(place))
+        {
+            continue;
+        }
+        state.member_places.insert(h, place);
+        let to = absolute(mul_both(place, CELLS_TO_WORLD), min);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
         {

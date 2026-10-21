@@ -783,6 +783,9 @@ pub struct State {
     /// for it: tick, unit, committed position and velocity (world units
     /// relative to the corner), stored heading.
     pub agent_trace: Option<Vec<AgentRecord>>,
+    /// The place of each group member's last search, in cells
+    /// (SPEC-0025, "When a member searches again").
+    member_places: BTreeMap<u32, [u32; 2]>,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -905,6 +908,7 @@ impl State {
             path_trace: None,
             hit_trace: None,
             agent_trace: None,
+            member_places: BTreeMap::new(),
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

@@ -565,6 +565,13 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let mut s = state.borrow_mut();
             let s = &mut *s;
             hide(s, worker, false);
+            // Its walk out starts from the facing it had when it went in
+            // (SPEC-0029, "Coming out").
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&worker)
+                && let Some(m) = u.movement.as_mut()
+            {
+                m.heading = u.facing;
+            }
             if let Some(at) = exit_place(s, worker) {
                 let min = [s.world_bounds[0], s.world_bounds[1]];
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&worker) {

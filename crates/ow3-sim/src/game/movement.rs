@@ -2122,21 +2122,29 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // look-ahead check of its old path. The new goal is
                         // searched at the next update (SPEC-0019, "After
                         // the swing").
-                        // The stand does not turn the heading (SPEC-0019).
-                        let hold = renewed && std::mem::take(&mut m.renew_stands);
-                        let steer = if hold {
-                            if m.velocity != [0, 0] {
+                        // A standing attacker's stand does not turn its
+                        // heading; a walking one turns as its look-ahead
+                        // check of the old path says (SPEC-0019).
+                        let renewing = renewed && std::mem::take(&mut m.renew_stands);
+                        let hold = renewing && m.velocity == [0, 0];
+                        let steer = if renewing {
+                            let mut stand = goal;
+                            if !hold {
                                 let old = follow::Walker {
                                     order: relative(old_goal, min),
                                     ..walker
                                 };
-                                follow::steer(state, &old, tick);
+                                if let follow::Steer::Walk(to) | follow::Steer::Stand(to) =
+                                    follow::steer(state, &old, tick)
+                                {
+                                    stand = to;
+                                }
                             }
                             // A new goal, first among the units handled
                             // from the next tick (SPEC-0021).
                             state.orders_given += 1;
                             m.given = state.orders_given;
-                            follow::Steer::Stand(goal)
+                            follow::Steer::Stand(stand)
                         } else {
                             follow::steer(state, &walker, tick)
                         };

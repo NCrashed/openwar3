@@ -192,8 +192,8 @@ as their base:
   (750 in all 16 directions, 776 in all directions around a victim at
   (16, -16), 783 only on one side of a victim at (0, 0), 800 nowhere;
   with `CallForHelp` 300: 480 yes, 485 no, 300 + 150 + 31 = 481). The
-  150 is inferred from these values. Several kinds of missile and spell
-  impacts make this call.
+  150 is inferred from these values. Several missile and spell impact
+  routines make this call.
 
 Instant and melee hits make only the damaged unit's call.
 
@@ -207,10 +207,14 @@ the point (x - c, y - c), its position less its collision size `c`
 (the tests used collision 31; 31 and 32 cannot be told apart). The
 caller itself is skipped, and each responder that acquires the target
 fires `EVENT_UNIT_ACQUIRED_TARGET` and draws its reaction delay in this
-order, after the caller's own draw. Each responder then calls for help
-itself in the same way (a chain), so units out of the caller's reach
-but within a responder's are reached in the same tick, after all the
-caller's responders.
+order, after the caller's own draw. A responding creep calls for help
+itself in the same way, since an idle creep that acquires a target
+calls (SPEC-0030); this makes a chain, so creeps out of the caller's
+reach but within a responder's are reached in the same tick, after all
+the caller's responders (test RXG, kobolds: each responder's call read
+in the game, radius 600 around itself). Player units that answer a
+call make no call of their own (`c-RXR-1` tick 6479: none of the six
+responders entered the call, so troll 19 was not reached through them).
 
 Measured with script damage on a kobold among eight kobolds 300 to 400
 away (test RXG, five layouts: a circle created clockwise and

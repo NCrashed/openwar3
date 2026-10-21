@@ -177,6 +177,26 @@ the search gives no list (not tested). The goal node is found from the
 block of the goal point. If both are the same node, the list is just
 `goal, start`.
 
+**Two searches, and a target's footprint.** A path to a target runs
+the high-level search twice in a row on the same start and goal: first
+with iteration limit 5000, then with limit 400; their removals are
+counted in different budget tables (SPEC-0021, "High-level budgets").
+For a worker going to a tree, the goal point is the tree's position,
+and the tree's own footprint does not block this search: blocks of the
+tree that are blocked in the state tables are found as nodes on the
+way to the goal and as the goal itself (level 0 at the edge, level 1 for the goal square). In
+`c-RYP-1` tick 307 (state tables and every removal read in the game,
+`game-data/1.27b/replays/c-RYP-1.hlsearch-307.tsv`): the tree block
+covers blocks x 176..181, y 188..195, all blocked; peasant 5's
+5000-limit search went (176, 196) level 2, (179, 195) level 0, goal
+(180, 195) level 1 in 5 removals, peasant 4's (182, 188) level 1,
+(181, 189) level 0, goal (180, 190) level 1 in 11; peasant 3's tree
+lies inside the block, its goal was never reached, and the search ran
+until its heap was empty, 2516 removals. The 400-limit searches took 3
+removals each, and peasant 3's path list came from its 400 search.
+How far the freed footprint reaches and how the larger squares are
+changed for it was not read.
+
 **Neighbours of a level-0 node** at position `(x, y)`: try the side
 neighbours in the order below (south, east, north, west), each found as
 a node from that block at level 0; then each diagonal only if both of
@@ -350,9 +370,9 @@ first one that cannot be seen.
 
 ## Open questions
 
-1. Which iteration limit the high-level search uses: the unit's path
-   object held 400 and a second path object 5000; in the tests both
-   gave the same lists.
+1. The two high-level searches (limits 5000 and 400, above): which
+   one's list is used when both succeed, and why the second one found
+   a list for peasant 3 in 3 removals where the first failed.
 2. (Resolved: collision 0, see step 2.)
 3. What happens when a unit is blocked again soon after a block: the
    game keeps a per-path counter, set at the first block to 2 or to 7

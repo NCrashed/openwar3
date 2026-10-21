@@ -458,7 +458,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order,
             order_id,
             target,
-            restart: m.walking || m.restart,
+            restart: (m.walking && !state.regrouping) || m.restart,
             reaction: None,
             reaction_end: None,
             goal_taken: false,
@@ -588,18 +588,27 @@ pub(super) fn group_point_order(
     for &h in units {
         super::queue::clear(state, h);
     }
-    regroup(state, units, name, target)
+    regroup(state, units, name, target, true)
 }
 
 /// The group order of [`group_point_order`] without touching the members'
 /// queues: also the new layout of a queued group order each time one more
-/// member starts it (SPEC-0031, "Groups").
-pub(super) fn regroup(state: &mut State, units: &[u32], name: &str, target: [u32; 2]) -> bool {
+/// member starts it (SPEC-0031, "Groups"), where the members walking on
+/// do not stop (`stop` false).
+pub(super) fn regroup(
+    state: &mut State,
+    units: &[u32],
+    name: &str,
+    target: [u32; 2],
+    stop: bool,
+) -> bool {
+    state.regrouping = !stop;
     let taken: Vec<u32> = units
         .iter()
         .copied()
-        .filter(|&h| point_order_taken(state, h, name, target).0)
+        .filter(|&h| point_order_taken(state, h, name, target, stop).0)
         .collect();
+    state.regrouping = false;
     let positions: Vec<[u32; 2]> = taken
         .iter()
         .map(|&h| position_of(state, h).unwrap_or([0, 0]))
@@ -1302,11 +1311,17 @@ fn is_building(state: &State, h: u32) -> bool {
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     // An order without Shift empties the queue (SPEC-0031).
     super::queue::clear(state, h);
-    point_order_taken(state, h, name, target).1
+    point_order_taken(state, h, name, target, true).1
 }
 
 /// A point order: whether the unit took it, and what the native returns.
-fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> (bool, bool) {
+fn point_order_taken(
+    state: &mut State,
+    h: u32,
+    name: &str,
+    target: [u32; 2],
+    stop: bool,
+) -> (bool, bool) {
     // A building takes `setrally` and `smart` on the ground as its rally
     // point (SPEC-0027).
     if (name == "setrally" || name == "smart") && is_building(state, h) {
@@ -1316,7 +1331,7 @@ fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) ->
         return (true, true);
     }
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
-    if matches!(name, "move" | "attack" | "patrol" | "smart") {
+    if stop && matches!(name, "move" | "attack" | "patrol" | "smart") {
         freeze(state, h);
     }
     let (taken, done) = match (name, here) {
@@ -2131,6 +2146,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             follower_stands = true;
                             m.walking = false;
                             m.velocity = [0, 0];
+                            // A follower that stops gets a new cluster two
+                            // updates later, and its renewals come every 17
+                            // updates from there (c-RTW-3: 828 stopped at
+                            // 4279, cluster at 4291, renewals at 4291 + 102
+                            // k). PROVISIONAL: one case, asked.
+                            if !standing {
+                                m.chase = Some(FOLLOWER_FIRST_RENEWAL);
+                            }
                             // From now on by the follow range.
                             m.order = Order::Follow {
                                 leader,
@@ -2146,6 +2169,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 standing: false,
                             };
                             m.restart = true;
+                        }
+                        // A standing follower that walks again searches a new
+                        // path at this update (c-RTW-3: 828 at 5413).
+                        if standing && renewed && !stands {
+                            state.paths.remove(&h);
                         }
                     }
                     None => {
@@ -2442,6 +2470,9 @@ fn follow_order(state: &mut State, h: u32, target: u32, order_id: i32) -> bool {
 
 /// The follow range of `move` or `smart` on an allied unit (SPEC-0019).
 const FOLLOW_RANGE: u32 = 0x4396_0000;
+/// The countdown a follower gets when it stops in the follow range
+/// (`chase` updates until its next renewal; SPEC-0019).
+const FOLLOWER_FIRST_RENEWAL: u32 = 18;
 
 /// The collision size of unit `h`, 0 for none.
 fn collision_of(state: &State, h: u32) -> u32 {

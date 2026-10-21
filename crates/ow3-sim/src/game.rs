@@ -758,6 +758,9 @@ pub struct State {
     /// latest first (SPEC-0031, "Groups"), by the number in
     /// `queue::Queued::Group`.
     queued_groups: Vec<Vec<u32>>,
+    /// A queued group order is being laid out again: its members walking
+    /// on take their new places without a stop.
+    regrouping: bool,
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
@@ -859,6 +862,7 @@ impl State {
             orders_given: 0,
             group_orders: BTreeSet::new(),
             queued_groups: Vec::new(),
+            regrouping: false,
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),

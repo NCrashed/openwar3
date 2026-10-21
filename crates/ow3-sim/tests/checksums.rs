@@ -67,7 +67,7 @@ fn remainders_of_the_reference_replay() {
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-RTW-3.w3g",
-        "path events are the game's up to tick 5413 (tests/crowd.rs); then \
+        "path events are the game's up to tick 5473 (tests/crowd.rs); then \
          the simulation draws the script generator at turns 239 to 259 (the patience of blocked \
          units, SPEC-0025) where the game does not: not found yet",
     ),

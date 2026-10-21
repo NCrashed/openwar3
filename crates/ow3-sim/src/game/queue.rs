@@ -126,7 +126,7 @@ fn start(state: &mut State, h: u32, order: Queued) -> bool {
             if started.len() == 1 {
                 movement::point_order(state, h, name, target)
             } else {
-                movement::regroup(state, &started, name, target)
+                movement::regroup(state, &started, name, target, false)
             }
         }
     };

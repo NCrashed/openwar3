@@ -310,6 +310,23 @@ units in spite of a fresh path, each of them followed by a new search;
 `P = 2` reaches case 2 at the second such update, 7 or 8 at the seventh
 or eighth. The counter is in updates of the unit (every 6 ticks).
 
+The same counter, with the same steps 1 to 3, is used when the unit
+comes within 0.49 cells of the last point of its local path (a path
+that reaches its goal, not a partial one) while it has not arrived
+(SPEC-0019, "Arrival at the member's place", tested against the place
+as it is now). This happens to a member that kept its old path because
+its new place lies in the same 2 x 2 square ("When a member searches
+again"): it walks to its old place and is then counted as blocked
+there. Replay `c-RTW-3`, member 900: at 5539 its place moved from
+(394.5697, 363.7980) to (394.9372, 362.9210) cells (same square, old
+path kept, its last point the old place); at 5545 it was at (394.3108,
+363.7770), 0.2597 from the old place and 1.0607 from the new one: not
+arrived, end of path reached, so blocked: `P` set (7 or 8, script
+generator; the cluster has more than one member) and lowered by one in
+the same update, local path dropped, standing. At 5551 and 5557 it was
+blocked again in the same way (`P` 6 -> 5 -> 4), the last search
+leading to its old place again.
+
 Measured (`c-RSM-2.w3g`): member 1 is blocked at the update with clock
 5.609832 by member 2, which stands waiting for its 5 updates; `P`
 becomes 7 and member 1 stands. At the next update (5.639830) it makes a

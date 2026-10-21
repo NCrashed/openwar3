@@ -760,6 +760,9 @@ pub struct State {
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
+    /// Members that left their groups in this tick: each gets a cluster
+    /// of its own after the updates (SPEC-0025).
+    leaving: Vec<u32>,
     /// Timers of the engine on the movement clock, by expiry and start
     /// (SPEC-0027).
     engine_timers: BTreeMap<(u32, u64), training::EngineTimer>,
@@ -856,6 +859,7 @@ impl State {
             group_orders: BTreeSet::new(),
             starting: Vec::new(),
             marked: std::collections::BTreeSet::new(),
+            leaving: Vec::new(),
             engine_timers: BTreeMap::new(),
             engine_started: 0,
             in_tick: false,

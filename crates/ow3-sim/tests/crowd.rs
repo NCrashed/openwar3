@@ -360,5 +360,5 @@ fn group_walks_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    assert!(tick >= 4885, "first difference at tick {tick}");
+    assert!(tick >= 5371, "first difference at tick {tick}");
 }

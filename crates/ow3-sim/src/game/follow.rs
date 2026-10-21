@@ -212,6 +212,8 @@ struct Other {
     moving: bool,
     squared_speed: u32,
     class: u8,
+    /// Its group cluster, if it has one.
+    group: Option<usize>,
 }
 
 /// The cells other units occupy, seen from one unit.
@@ -256,7 +258,13 @@ fn others(state: &State, h: u32) -> Others {
         };
         // A unit stopped this tick stands for the searches (`stands`).
         let (moving, stands, position, velocity) = match &u.movement {
-            Some(m) if m.velocity != [0, 0] => (true, false, m.origin, m.velocity),
+            Some(m) if m.velocity != [0, 0] => {
+                // Its speed as at the start of the updates of this tick.
+                let start = state.start_velocities.get(&o).copied();
+                let v = m.velocity;
+                let _ = start;
+                (true, false, super::movement::held_at(state, o, m), v)
+            }
             Some(m) if velocity(m) != [0, 0] => {
                 let here = super::movement::relative([u.x, u.y], min);
                 (true, true, here, velocity(m))
@@ -281,6 +289,7 @@ fn others(state: &State, h: u32) -> Others {
                 moving,
                 squared_speed: squared_speed(velocity),
                 class,
+                group: super::movement::group_of(state, o),
             },
         );
     }
@@ -296,6 +305,8 @@ struct Shared<'a> {
     events: Vec<PathEvent>,
     /// Only the search, no step.
     search_only: bool,
+    /// The group cluster of the unit deciding, if it has one.
+    group: Option<usize>,
     /// The red cells of the building walked to, if any.
     building: Vec<(i32, i32)>,
 }
@@ -419,6 +430,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         follow.take_segment(order_cells);
         follow
     });
+    let group = super::movement::group_of(state, walker.handle);
     let mut shared = Shared {
         budget: &mut state.budget,
         paths: &mut state.paths,
@@ -426,6 +438,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         events: Vec::new(),
         search_only,
         building: footprint.map(|f| f.0).unwrap_or_default(),
+        group,
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
@@ -638,6 +651,9 @@ fn decide(
                 continue;
             }
             let faster = real(other.squared_speed) >= real(walker.squared_speed);
+            // A unit of the same group cluster is waited for, whatever
+            // its speed (SPEC-0021).
+            let same_group = other.group.is_some() && other.group == shared.group;
             let event = |kind, a, b| PathEvent {
                 tick,
                 kind,
@@ -646,7 +662,7 @@ fn decide(
                 at: walker.here,
             };
             match shared.paths.get_mut(&b) {
-                Some(path) if !faster && other.class == class => {
+                Some(path) if !same_group && !faster && other.class == class => {
                     path.wait = MADE_TO_WAIT;
                     path.made = true;
                     shared

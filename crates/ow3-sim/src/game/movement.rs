@@ -1806,6 +1806,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 .map(|m| (h, m.velocity))
         })
         .collect();
+    state.start_origins = state
+        .moving
+        .iter()
+        .filter_map(|&h| {
+            state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                // Only the units due to update in this tick.
+                .filter(|m| state.update_now && m.next_update <= tick)
+                .map(|m| (h, m.origin))
+        })
+        .collect();
+    state.updated.clear();
     let mut moving = std::mem::take(&mut state.moving);
     let key = |h: &u32| {
         let given = match state.objects.get(h) {
@@ -2338,6 +2351,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             u.movement = Some(m);
             still.push(h);
         }
+        state.updated.insert(h);
         if let Some(target) = begin_attack {
             super::attack::begin(state, h, target, tick, m.order_id);
         }
@@ -3057,6 +3071,33 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     }
 }
 
+/// The index of the group cluster (more than one member) of unit `h`.
+pub(super) fn group_of(state: &State, h: u32) -> Option<usize> {
+    state
+        .clusters
+        .iter()
+        .position(|c| c.members.len() > 1 && c.members.contains(&h))
+}
+
+/// Where moving unit `h` holds its cells during the updates of this tick:
+/// at its last update, but for a member of a group whose cluster has not
+/// had all its updates yet, at its update before (SPEC-0021, "Occupied
+/// cells").
+pub(super) fn held_at(state: &State, h: u32, m: &Moving) -> [u32; 2] {
+    let pending = state
+        .clusters
+        .iter()
+        .find(|c| c.members.len() > 1 && c.members.contains(&h))
+        .is_some_and(|c| {
+            c.members
+                .iter()
+                .any(|x| state.start_origins.contains_key(x) && !state.updated.contains(x))
+        });
+    match state.start_origins.get(&h) {
+        Some(&before) if pending => before,
+        _ => m.origin,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

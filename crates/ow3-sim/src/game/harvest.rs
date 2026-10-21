@@ -292,6 +292,11 @@ pub(super) fn passes_through(state: &State, h: u32) -> bool {
     get(state, h).is_some_and(|g| g.cycling)
 }
 
+/// The workers waiting at the mines, in the order of the mines.
+pub(super) fn waiting(state: &State) -> impl Iterator<Item = u32> + '_ {
+    state.mines.values().flat_map(|m| m.waiting.iter().copied())
+}
+
 /// Sends worker `h` to its mine or tree, or with a load from elsewhere
 /// first to deliver it.
 fn walk_to_work(state: &mut State, h: u32) -> bool {

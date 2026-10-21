@@ -234,8 +234,21 @@ fn others(state: &State, h: u32) -> Others {
         by_cell: HashMap::new(),
         units: HashMap::new(),
     };
-    // Nor does such a worker see any unit (SPEC-0029).
+    // Nor does such a worker see any unit (SPEC-0029), but for its searches
+    // the workers waiting at a mine are in the way (c-RXI-1: worker 4's
+    // search of 1279 touched two of them).
     if super::harvest::passes_through(state, h) {
+        for o in super::harvest::waiting(state) {
+            let Some(u) = state.unit(Some(o)) else {
+                continue;
+            };
+            let class =
+                path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
+            let at = super::movement::relative([u.x, u.y], min);
+            others
+                .standing
+                .extend(path::occupied_cells(to_cells(at), class));
+        }
         return others;
     }
     for &o in &state.units {

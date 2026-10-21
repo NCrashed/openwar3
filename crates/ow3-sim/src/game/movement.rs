@@ -2875,6 +2875,16 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         if u.paused {
             continue;
         }
+        // A unit on attack-move whose target died acquires at the check
+        // restarted by the death (c-RXR-1: footman 2 took grunt 13 in 2581).
+        if u.attack_move.is_some()
+            && let Some(expiry) = expired
+            && std::mem::take(&mut u.after_death)
+            && target.is_none()
+        {
+            due.push((expiry, seq, h, Check::AttackMove { expiry }));
+            continue;
+        }
         if let Some(a) = u.attack_move.as_mut() {
             if real_of(a.next_check) <= real_of(next_clock) {
                 let expiry = a.next_check;
@@ -3321,14 +3331,13 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
 /// 0.01 s, the delay of the checks of the attackers of a unit that died.
 const AFTER_DEATH: u32 = 0x3C23_D70A;
 
-/// Unit `dead` died, killed by `killer`: each other unit attacking it
-/// gets its acquisition check timer started again to expire 0.01 s
-/// later, in the order in which they took it as their target, with no
-/// draw; those that took it on their own stop (c-RXR-1: the attackers of
-/// footman 4 in 2360, killed by troll 16).
-///
-/// PROVISIONAL: that the killer is left out (its own check came later).
-pub(super) fn target_died(state: &mut State, dead: u32, killer: Option<u32>) {
+/// Unit `dead` died: the attack of each unit attacking it ends, and its
+/// acquisition check timer is started again to expire 0.01 s after the
+/// death, or after the end of its backswing if it is in one, in the order
+/// in which they took it as their target, with no draw; those that took
+/// it on their own stop (c-RXR-1: the attackers of footman 4 in 2360 and
+/// of grunt 12 in 2579).
+pub(super) fn target_died(state: &mut State, dead: u32) {
     let now = state.event_time.unwrap_or_else(|| state.timers.time());
     let mut attackers: Vec<(u64, u32, bool)> = state
         .units
@@ -3343,7 +3352,7 @@ pub(super) fn target_died(state: &mut State, dead: u32, killer: Option<u32>) {
                 },
                 _ => return None,
             };
-            (target == dead && Some(h) != killer && u.acquire_phase != super::NO_PHASE)
+            (target == dead && u.acquire_phase != super::NO_PHASE)
                 .then(|| (u.movement.map_or(0, |m| m.given), h, order_id == 0))
         })
         .collect();
@@ -3352,8 +3361,14 @@ pub(super) fn target_died(state: &mut State, dead: u32, killer: Option<u32>) {
         state.acquire_starts += 1;
         let seq = state.acquire_starts;
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-            u.next_acquire = add(now, AFTER_DEATH);
+            let from = if f32::from_bits(u.backswing_end) > f32::from_bits(now) {
+                u.backswing_end
+            } else {
+                now
+            };
+            u.next_acquire = add(from, AFTER_DEATH);
             u.acquire_seq = seq;
+            u.after_death = true;
             if own {
                 u.attack = None;
             }

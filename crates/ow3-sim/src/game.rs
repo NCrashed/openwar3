@@ -193,6 +193,8 @@ pub struct Unit {
     /// The number of the start of that timer, for the order of checks with
     /// the same expiry.
     acquire_seq: u64,
+    /// Its check was restarted by the death of its target.
+    after_death: bool,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0
@@ -228,6 +230,8 @@ pub struct Unit {
     cooldown_end: u32,
     /// The target of that swing.
     cooldown_target: u32,
+    /// When the backswing of its last hit ends, on the queue.
+    backswing_end: u32,
     /// `orientInterp` of the type.
     orient_interp: u8,
     life: Regenerating,

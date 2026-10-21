@@ -250,6 +250,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         let swing_q = add(a.swing_q, cooldown);
                         u.cooldown_end = swing_q;
                         u.cooldown_target = a.target;
+                        u.backswing_end = add(a.hit_at.unwrap_or(0), weapon.backswing);
                         u.attack = Some(Attacking {
                             next,
                             resume,

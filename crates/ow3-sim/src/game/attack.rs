@@ -255,7 +255,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                             next,
                             resume,
                             renew_at,
-                            hit_at: a.hit_at.map(|e| add(e, cooldown)),
+                            hit_at: Some(add(swing_q, point)),
                             swing_q,
                             ..a
                         });
@@ -272,7 +272,9 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                             weapon.attack_type,
                             weapon.area.clone(),
                             weapon.kind == WeaponKind::Artillery,
-                            a.hit_at.unwrap_or(s.move_clock),
+                            // The flight counts from the start of the tick
+                            // (c-RXR-1: troll 16, launch 4131).
+                            s.move_clock,
                         )
                     {
                         s.missiles.push(missile);
@@ -517,6 +519,8 @@ pub struct Missile {
 
 /// 0.1 s, the step of a homing missile, in ticks and as a real.
 const HOMING_TICKS: u64 = 20;
+/// The least delay of a timer, 0.0001 s (SPEC-0002).
+const MIN_DELAY: u32 = 0x38D1_B717;
 const HOMING_STEP: u32 = 0x3DCC_CCCD;
 
 /// The plane distance from `a` to `b` (world units, engine reals).
@@ -534,8 +538,7 @@ fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
 /// attacker faces it within 0.2 radians when it swings) and the side as
 /// its right (SPEC-0016 measured only targets straight ahead).
 ///
-/// `launched` is the time of the launch on the timer queue: the expiry of
-/// the damage point timer.
+/// `launched` is the movement clock at the start of the launch tick.
 #[allow(clippy::too_many_arguments)]
 fn launch(
     state: &State,
@@ -588,7 +591,9 @@ fn launch(
         at,
         point: to,
         launched,
-        expiry: add(launched, div(flight, speed)),
+        // The timer of the movers adds its least delay, 0.0001 (c-RXR-1:
+        // troll 18, impact 2715).
+        expiry: add(add(launched, div(flight, speed)), MIN_DELAY),
         homing,
         artillery,
         amount,

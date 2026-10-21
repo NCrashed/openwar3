@@ -181,7 +181,8 @@ fn knight_hits() {
     let knight = &data.units[&i32::from_be_bytes(*b"hkni")];
     let weapon = knight.weapon.as_ref().unwrap();
     assert_eq!((weapon.damage, weapon.dice, weapon.sides), (25, 2, 5));
-    assert_eq!(f32::from_bits(weapon.cooldown), 1.5);
+    // Read as the engine reads decimal text: 1.5 to within an ulp.
+    assert!((f32::from_bits(weapon.cooldown) - 1.5).abs() < 1e-6);
     // The table of SPEC-0016: six hits of each attacker after its own
     // SetRandomSeed(777).
     for (code, expected) in [
@@ -242,5 +243,6 @@ fn knight_hits() {
         .weapon
         .clone()
         .unwrap();
-    assert_eq!((weapon.damage, f32::from_bits(weapon.cooldown)), (28, 1.4));
+    assert_eq!(weapon.damage, 28);
+    assert!((f32::from_bits(weapon.cooldown) - 1.4).abs() < 1e-6);
 }

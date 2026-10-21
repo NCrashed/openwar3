@@ -449,10 +449,13 @@ fn rows(
     Ok(out)
 }
 
+/// A real of the game's data, read as the engine reads decimal text (c-RXR-1:
+/// grunt cool1 1.6 is 0x3FCCCCCE, backSw1 0.64 is 0x3F23D70B).
 fn real(text: Option<&String>) -> u32 {
-    text.and_then(|t| t.parse::<f32>().ok())
-        .unwrap_or(0.0)
-        .to_bits()
+    match text.map(|t| t.trim()) {
+        Some(t) if t.parse::<f32>().is_ok() => ow3_math::s2r(t),
+        _ => 0,
+    }
 }
 
 /// A type the map changes or adds, with the values it sets (the last one

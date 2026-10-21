@@ -782,6 +782,9 @@ pub struct State {
     /// (SPEC-0029).
     mines: BTreeMap<u32, harvest::Mine>,
     harvest_reached: Vec<(u32, u32, bool)>,
+    /// Workers that deliver at their next update, with its tick
+    /// (SPEC-0029).
+    deliveries: Vec<(u32, u64)>,
     /// How many times the game's internal objects that the turn
     /// checksums count (`C` and `D` of SPEC-0024) changed, and the ticks
     /// and the queue times of the changes to come.
@@ -871,6 +874,7 @@ impl State {
             constructions: Vec::new(),
             mines: BTreeMap::new(),
             harvest_reached: Vec::new(),
+            deliveries: Vec::new(),
             objects_changed: 0,
             object_ticks: Vec::new(),
             object_timers: Vec::new(),

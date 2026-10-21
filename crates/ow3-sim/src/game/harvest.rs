@@ -451,7 +451,29 @@ pub(super) fn reached(state: &State, h: u32, here: [u32; 2], target: u32) -> boo
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
-    let reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
+    let mut reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
+    // A worker that reached its drop-off delivers at its next update
+    // (SPEC-0029: it stands at the end of its path, and gives its load at
+    // the update after; c-RXI-1, peasant 5 stood at 1843, delivered at 1849
+    // and walked from 1855).
+    {
+        let mut s = state.borrow_mut();
+        let tick = s.ticks;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut s.deliveries)
+            .into_iter()
+            .partition(|&(_, at)| at <= tick);
+        s.deliveries = later;
+        for (h, target, delivering) in std::mem::take(&mut reached) {
+            if delivering {
+                s.deliveries.push((h, tick + UPDATE));
+            } else {
+                reached.push((h, target, delivering));
+            }
+        }
+        let mut now: Vec<(u32, u32, bool)> = due.into_iter().map(|(h, _)| (h, 0, true)).collect();
+        now.append(&mut reached);
+        reached = now;
+    }
     for (h, target, delivering) in reached {
         let mut s = state.borrow_mut();
         if delivering {

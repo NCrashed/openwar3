@@ -2023,7 +2023,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
-                        let target_now = relative(at, min);
                         let renew_now = m.renew_at.is_some_and(|r| tick >= r);
                         match m.chase {
                             // The new goal after a swing (SPEC-0019).
@@ -2066,7 +2065,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // range (SPEC-0019).
                         full_reach = add(reach, mul(other, CELL));
                         in_reach = in_range(here, relative(m.target, min), full_reach);
-                        let _ = target_now;
                     }
                     _ => {
                         m.arrived = true;

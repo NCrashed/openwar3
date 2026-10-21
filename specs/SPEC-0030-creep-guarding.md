@@ -59,7 +59,13 @@ very knight it chased (which turned back and attacked it 2.5 s after
 it passed 600) all left the time from passing 600 to turning back at
 1052 to 1080 ticks. On the way home it does not answer attacks (a
 kobold shot by a rifleman every 1.5 s kept its `move` order until it
-was home) and fights again once it is home. Measured, by the distance from home logged every 4 ticks
+was home) and fights again once it is home. A call for help from a
+creep of its camp (SPEC-0019) does reach it on the way home, though:
+it answers and attacks at once. Replay `c-RXD-1` (read in the game):
+creep 8 reached home in tick 5917 (its order ended), its acquisition
+check of 5919 took worker 2 and called for help, and creeps 6, 7 and 9,
+still walking home, answered the call in that same tick (in the order
+8, 6, 7, 9) and attacked worker 2. Measured, by the distance from home logged every 4 ticks
 (ticks counted by the test's 0.005 s periodic timer from the start of
 the test, game tick = count + 202):
 

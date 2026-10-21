@@ -646,20 +646,12 @@ checksum turns are not followed until the walks above match.
 
 ## Gathering (`game::harvest`, `game::movement`, SPEC-0029)
 
-Workers on a gold mine next to the town hall look clumsier here than in
-the game: they bump into each other and into the waiting ones, walk
-round them and lose time, as if in the game workers that gather did not
-block each other. Needed:
+Answered in SPEC-0029: workers in the gathering cycle neither block nor
+see other units, where a worker comes out of a busy mine, and its turn
+at the exit. Still needed:
 
-- **Collisions of gathering workers.** Do workers with order `harvest`
-  or `resumeharvesting` block other units, and are they blocked, in the
-  local search, the look-ahead check and the high-level search
-  (SPEC-0020, SPEC-0021)? Only towards other gathering workers, towards
-  all units, or only near the mine and the drop-off? Does it change for
-  a worker that carries a load?
-- **Workers waiting at a busy mine.** Where exactly they stand, whether
-  they block the ones coming and going, and how the one leaving is put
-  out (SPEC-0029 says "a free cell nearby" when its place is taken).
+- **Workers waiting at a busy mine.** Where exactly they stand while
+  they wait (here where their walk ended, touching the mine).
 - **The path to the mine and back.** Is it the usual walk of SPEC-0018
   and SPEC-0020 to the mine's or drop-off's position, or a goal of its
   own (the nearest cell touching the building, a point on its side)?
@@ -669,49 +661,12 @@ block each other. Needed:
   `Attack`, the hit at the weapon's damage point; the model also has
   `Attack Lumber`, `Stand Lumber`, `Stand Ready Lumber`), and what a
   worker waiting at a mine or standing with a load plays.
-
-Until answered: gathering workers walk, block and are blocked like any
-unit.
-
-Seen in `c-RXI-1` (first difference of its path events, tick 1075):
-peasant 5 comes out of the mine at (-1050.18, 48.29) while peasant 2
-walks east on y = 49; in the game neither waits nor is blocked and at
-tick 1099 the two overlap (6.6 apart), here 5 waits for 2 and 2 is
-blocked by 5. Also needed:
-
-- **Leaving the mine.** The free cell a worker is put on when its entry
-  point is taken (SPEC-0029, open question 1): the displaced exits of
-  `c-RXI-1` are cell centres west of the entry points, (-1104, 48) for
-  an entry at (-1052.06, -17.07), (-1072, -16) and (-1072, -80) for
-  others. When the entry point counts as taken, and the order of the
-  search. Here the worker comes out where it went in.
-- **The first updates after leaving.** Peasant 5 has four updates
-  standing at the exit (1075 to 1093) and moves at 1094: a fixed wait
-  or a turn?
+- **A worker moved aside.** In `c-RXI-1` peasant 5, walking back with
+  gold, is put at the centre of cell (349, 386) in tick 1118 and walks
+  on from there (asked).
 
 A worker whose walk to its building cannot get closer keeps searching
 here; it goes in or delivers only touching the building.
-
-## New orders while walking (`game::movement`, SPEC-0019)
-
-In `c-RTW-3` footman 825 walks on patrol (851991) and gets `smart` to a
-point at tick 3111: in the game it stops in that tick, here it walks on
-to its next update (3116) as a new `move` while walking does. Needed:
-which orders stop a walking unit at once and which wait for its next
-update (a move after patrol, attack-move, follow; smart on a point or
-a unit), and when it moves again (29 ticks for a turn of about 175
-degrees in the game, 25 here).
-
-## Chases after a swing (`game::attack`, SPEC-0019)
-
-- A better target taken while the cooldown runs (`c-RXD-1`, kobold 8
-  at tick 2007, in its backswing) keeps the new goal with a stand at
-  the first update from D + cool - dmgpt of the last hit; this gives the
-  game's events at 2155 and 2161. Is that the rule?
-- Creep 9 of `c-RXD-1` hits at 1967 with its target out of reach at the
-  damage point; its stand would come at 2161, where the game has a
-  walking update (look-ahead, `made_wait20` of creep 7, blocked). Its
-  swings and hits before 2161 are needed.
 
 ## Order confirmation (the viewer)
 

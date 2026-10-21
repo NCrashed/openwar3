@@ -130,13 +130,17 @@ damages at its damage point like a melee one (above).
     divided by the speed, and the damage came when that timer expired,
     with no later correction. The timer's start is the time of the
     launch tick's start, `Q(k)` (the movement clock, SPEC-0002), not
-    the queue time of the launch callback: its expiry is `add(Q(k),
-    div(L, Missilespeed))`, and the missile hits in the missile part at
-    the end of the first tick whose end time `Q(k + 1)` is at least that
-    (`c-RXR-1`, troll 16's launch in tick 4131 at q 20.6499920, Q(4131)
-    20.6475353, `L / speed` 0.348333031: expiry 20.9958683, hit at the
-    end of tick 4200 at 20.9974766; from q it would have been tick
-    4201);
+    the queue time of the launch callback, and the impact comes 0.0001
+    s (the queue's minimum delay) after the flight time: its expiry is
+    `add(add(Q(k), div(L, Missilespeed)), 0.0001)`, and the missile
+    hits in the missile part at the end of the first tick whose end
+    time `Q(k + 1)` is at least that. In `c-RXR-1` troll 18 launched in
+    tick 2631 (Q(2631) = `41526176`, `L / speed` = `3ed6f926`): the
+    impact ran at the expiry `415919a7` (13.5687628), above Q(2715) =
+    `4159197e`, so at the end of tick 2715 (without the 0.0001 it would
+    have been 2714); troll 16's launch in tick 4131 (q 20.6499920,
+    Q(4131) 20.6475353, 0.348333031) hit at the expiry `41a7f7bd`, at
+    the end of tick 4200 (from q it would have been 4201);
   - **homing** (`MissileHoming=1`: heroes, casters, towers, the storm
     bolt of SPEC-0037, ...): the missile moves in steps of 0.1 s. At
     the launch and at the end of every step it measures `L` again, to

@@ -72,6 +72,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          units, SPEC-0025) where the game does not: not found yet",
     ),
     (
+        "c-RXR-1.w3g",
+        "the battle reference (melee, rifles, missiles): the game changes state at turn 16 \
+         where the simulation does not, and later turns differ; looked at next",
+    ),
+    (
         "c-RXD-1.w3g",
         "harvesting changes the game's state at turns where the simulation has nothing (the \
          objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks), and a creep \

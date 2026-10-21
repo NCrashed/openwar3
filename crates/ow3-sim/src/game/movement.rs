@@ -2805,6 +2805,26 @@ pub(super) fn attack_moves(state: &mut State) {
             (u.guard_return == Some(tick)).then_some((h, u.home))
         })
         .collect();
+    // Switches found during a backswing take effect at its end.
+    let end = real_of(add(state.move_clock, crate::timers::TICK));
+    let switching: Vec<(u32, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| u.alive)?;
+            let better = u.pending_switch?;
+            (real_of(u.backswing_end) <= end).then_some((h, better))
+        })
+        .collect();
+    for (h, better) in switching {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.pending_switch = None;
+        }
+        let alive = state.unit(Some(better)).is_some_and(|u| u.alive);
+        if alive {
+            switch_target(state, h, better);
+        }
+    }
     for (h, home) in back {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
@@ -2991,14 +3011,25 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     due.sort_by(|a, b| real_of(a.0).total_cmp(&real_of(b.0)).then(a.1.cmp(&b.1)));
     let targets = Targets::new(state);
     let mut acquired = Vec::new();
-    for (_, _, h, check) in due {
+    for (due_at, _, h, check) in due {
         // A better target than the one attacked: taken at once, without a
         // reaction delay or a call for help (SPEC-0019).
         if let Check::Attacking { current, .. } = check {
-            if let Some(better) = targets.better_than(state, h, current)
-                && switch_target(state, h, better)
-            {
-                acquired.push(h);
+            if let Some(better) = targets.better_than(state, h, current) {
+                // In its backswing the unit takes the target, and the attack
+                // switches at the end of the backswing (c-RXD-1: creep 8 in
+                // 2007).
+                let swinging_back = state
+                    .unit(Some(h))
+                    .is_some_and(|u| real_of(u.backswing_end) > real_of(due_at));
+                if swinging_back {
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                        u.pending_switch = Some(better);
+                    }
+                    acquired.push(h);
+                } else if switch_target(state, h, better) {
+                    acquired.push(h);
+                }
             }
             continue;
         }

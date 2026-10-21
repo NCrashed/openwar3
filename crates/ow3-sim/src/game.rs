@@ -198,6 +198,9 @@ pub struct Unit {
     /// The tick at which it walks back to its guard point, the place it
     /// was created at, after an attack it took on its own ended.
     guard_return: Option<u64>,
+    /// A better target found by a check during its backswing: the attack
+    /// switches to it at the end of the backswing.
+    pending_switch: Option<u32>,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0

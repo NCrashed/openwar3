@@ -701,12 +701,14 @@ An idle unit with a weapon attacks an enemy unit on its own:
   its 0.01 s check took 10 with a reaction delay of 0.146777.
 - **Cooldown expiry during a chase.** When the cooldown of the last
   swing expires while the unit chases a target it cannot hit yet, the
-  approach is restarted: at its next update the unit searches again
-  towards the target and stands for that update. Footman 1 in
-  `c-RXR-1` chased grunt 11 from its search at 13.2299147; its old
-  cooldown expired at 13.4399939, at its update of 13.4699125 it
-  searched again (same goal) and stood, walked on from the next update
-  and swung at 13.5899115 (hit in tick 2819). One case read.
+  approach is restarted: the unit stops at once (no motion until its
+  next update) and at its next update it searches again towards the
+  target and walks on at once. Footman 1 in `c-RXR-1` chased grunt 11
+  from its search in tick 2647; its update of 2689 moved it, its old
+  cooldown expired at 13.4399939 in tick 2689 after the update batch,
+  it did not move in ticks 2690 to 2695, searched again (same goal) at
+  its update of 2695 and moved from 2696; it swung at 13.5899115 (hit
+  in tick 2819). One case read.
 - **A new target and the old cooldown.** The cooldown of the last
   swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
   in range, it did not move) ended its reaction delay at 11.9424612,

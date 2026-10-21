@@ -678,6 +678,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
   attack-move also takes up its move to the point again at that moment
   (a new search towards the point at its next update, which may come
   before the check).
+  An idle unit that acquired the target takes up the walk back to its
+  guard point (the place where it stood or was placed; the stored entry
+  held that point and the value 50) in the same way: grunt 14 in
+  `c-RXR-1` lost its target in its backswing, the backswing ended at
+  24.0499172 (tick 4811), at its update of tick 4813 it searched
+  towards its start point (400, 150), and the 0.01 s check later in
+  that tick gave it footman 2 (reaction delay 0.156090).
   Measured in `c-RXR-1`:
   - footman 4 died in the missile part of tick 2360 (now 11.7990208);
     grunts 14, 15 and trolls 19, 18 had their checks at 11.8090200

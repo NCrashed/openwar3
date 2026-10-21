@@ -38,6 +38,9 @@ pub struct Creep {
     checks_next: Option<u32>,
     /// The queue time its return timer expires.
     return_time: Option<u32>,
+    /// The order in which the creeps' timers were started: timers with
+    /// equal expiries fire in that order (c-RXD-1: 7, 8, 6, 9).
+    started: u64,
     /// It walks home and does not fight.
     pub(super) returning: bool,
     /// It sleeps.
@@ -106,6 +109,8 @@ pub(super) fn enter_fight(state: &mut State, h: u32, at: u32) {
         && u.creep.return_time.is_none()
     {
         u.creep.checks_next = Some(at);
+        state.creep_timers += 1;
+        u.creep.started = state.creep_timers;
     }
 }
 
@@ -217,9 +222,16 @@ pub(super) fn call_for_help(
 pub(super) fn tick(state: &mut State) {
     let guard = f32::from_bits(state.combat.guard_distance);
     // Timers of the queue: they fire in the tick whose interval holds
-    // their expiry (c-RXD-1: the return of tick 4558).
+    // their expiry (c-RXD-1: the return of tick 4557), equal ones in the
+    // order they were started.
     let end = f32::from_bits(add(state.move_clock, crate::timers::TICK));
-    let units = state.units.clone();
+    let mut units = state.units.clone();
+    units.sort_by_key(|&h| {
+        state.unit(Some(h)).map_or((u32::MAX, 0), |u| {
+            let next = u.creep.return_time.or(u.creep.checks_next);
+            (next.unwrap_or(u32::MAX), u.creep.started)
+        })
+    });
     for h in units {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;

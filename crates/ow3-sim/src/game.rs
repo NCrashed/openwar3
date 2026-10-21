@@ -788,6 +788,8 @@ pub struct State {
     member_places: BTreeMap<u32, [u32; 2]>,
     /// Each member's place as laid out now, in cells.
     member_now: BTreeMap<u32, [u32; 2]>,
+    /// Creep timers started so far (SPEC-0030).
+    pub(super) creep_timers: u64,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -912,6 +914,7 @@ impl State {
             agent_trace: None,
             member_places: BTreeMap::new(),
             member_now: BTreeMap::new(),
+            creep_timers: 0,
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

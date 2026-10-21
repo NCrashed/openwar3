@@ -84,7 +84,7 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "c-RXD-1.w3g",
         "harvesting changes the game's state at turns where the simulation has nothing (the \
          objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks), and the path \
-         events differ from tick 4561 on (tests/crowd.rs)",
+         events differ from tick 4579 on (tests/crowd.rs)",
     ),
     (
         "c-RXI-1.w3g",

@@ -477,7 +477,9 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order,
             order_id,
             target,
-            heading: u.facing,
+            // The stored heading of a unit whose facing still turns to it
+            // (c-RXR-1: troll 16 kept 2.535097 through its attacks).
+            heading: u.movement.map_or(u.facing, |m| m.heading),
             next_update: next_update_after(tick),
             walking: false,
             origin: relative([u.x, u.y], min),

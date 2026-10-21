@@ -410,10 +410,10 @@ time to time:
   its target, a test of the target against the walking unit's player
   is made (read in part; it behaves as "the target is not visible to
   that player", which is presumably what it is). While the test passes
-  the count goes up by one per update and the cluster walks on the
-  waypoints of its own path; when it fails (or the target is not a
-  unit: a tree, a point) the count is 0 and the cluster goes to the
-  target itself as usual. A unit with a flag not seen set counts as
+  the count goes up by one per update; when it fails (or the target is
+  not a unit: a tree, a point) the count is 0. The count changes only
+  the reach: the places follow the waypoints of the cluster's path in
+  both cases, the target's point being the last one. A unit with a flag not seen set counts as
   within reach always. An arrived unit gets speed 0 at that update,
   keeps its heading, and its path is
   dropped; at its next update it searches again, high level and local,
@@ -441,14 +441,19 @@ time to time:
   and its place was (353.5, 379.5) cells, the waypoint (176.75,
   189.75). The count was 1, 2, 3, ... from the first update to the
   update at clock 16.7982 (count 510), and the test used 0.49 at every
-  update read; at clock 16.8282 the count was 0 and the cluster's goal
-  the mine's point (448, 384) cells, the worker then 27.4 cells (876)
-  from it. On its walk back to the town hall the count was 0 and the
-  order reach 6.0 cells (192). In the first walks of the six workers
+  update read; at clock 16.8282 the count was 0 (the current waypoint
+  was the mine's point (448, 384) cells already before), the worker
+  then 27.4 cells (876) from it. On its walk back to the town hall the
+  count was 0 and the
+  order reach 6.0 cells (192). Worker 5 on a later walk to the mine
+  (mine visible, count 0, reach 2.0625), place the cluster waypoint
+  (433.5, 387.5) cells: at 3577 2.2083 from it, walked on; at 3583
+  2.0302 (angle 0): arrived; at 3589 the waypoint was the mine's point
+  (448, 384) and it searched. In the first walks of the six workers
   (clock 4.56 to 4.74, around tick 937) the reach used was 0.49
   throughout. The earlier reading of a reach of about 66 to the
   current path point (`c-RXD-1` worker 5 at 3583) was a misreading of
-  this test and should be checked again with this rule.
+  this test (it is the arrival of worker 5 at 3583 above).
 - **A new goal and the existing path.** At a renewal the target's
   position becomes the new goal only if it lies in another cell of the
   64 grid of the high-level search (cells of 64 x 64 counted from the

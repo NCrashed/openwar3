@@ -2332,20 +2332,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             } else {
                                 follow::Steer::Walk(goal)
                             };
-                        } else if let Some(place) = control
-                            .contains_key(&h)
-                            .then(|| leave_group(state, h, here))
-                            .flatten()
-                        {
-                            // A member at the end of its path short of its
-                            // place leaves the group and walks there alone,
-                            // from its next update, in a new cluster made
-                            // after the updates (SPEC-0025).
-                            m.walking = false;
-                            m.velocity = [0, 0];
-                            m.target = place;
-                            state.paths.remove(&h);
-                            state.leaving.push(h);
                         } else if place_on_way {
                             m.walking = false;
                             m.velocity = [0, 0];
@@ -2426,17 +2412,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     }
 
     state.marked.clear();
-    // Those that left their groups get clusters of their own, newest
-    // first in the next tick (SPEC-0025).
-    for h in std::mem::take(&mut state.leaving) {
-        state.orders_given += 1;
-        let given = state.orders_given;
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-            && let Some(m) = u.movement.as_mut()
-        {
-            m.given = given;
-        }
-    }
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
 }
@@ -3254,26 +3229,4 @@ mod tests {
             assert!((f - e).abs() < 2e-7, "{found:?}");
         }
     }
-}
-
-/// Member `h` of a group cluster, at `here` (relative world units), leaves
-/// it when it is short of its place, the group's goal plus its offset:
-/// the place in world units (SPEC-0025).
-fn leave_group(state: &mut State, h: u32, here: [u32; 2]) -> Option<[u32; 2]> {
-    let min = [state.world_bounds[0], state.world_bounds[1]];
-    let cluster = state
-        .clusters
-        .iter_mut()
-        .find(|c| c.members.len() > 1 && c.members.contains(&h))?;
-    let i = cluster.members.iter().position(|&m| m == h)?;
-    let offset = *cluster.offsets.get(i)?;
-    let goal = mul_both(relative(cluster.goal, min), CELL);
-    let place = [add(goal[0], offset[0]), add(goal[1], offset[1])];
-    let at = mul_both(here, CELL);
-    let (dx, dy) = (sub(place[0], at[0]), sub(place[1], at[1]));
-    if real_of(add(mul(dx, dx), mul(dy, dy))) <= real_of(mul(ARRIVAL, ARRIVAL)) {
-        return None;
-    }
-    cluster.keep(|m| m != h);
-    Some(absolute(mul_both(place, CELLS_TO_WORLD), min))
 }

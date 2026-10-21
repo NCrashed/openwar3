@@ -692,6 +692,14 @@ An idle unit with a weapon attacks an enemy unit on its own:
     end of its backswing, 13.0899944 (tick 2619), and its check at
     13.0999937 took grunt 11; riflemen 7, 9 and 8 acquired 2 ticks
     after their backswings ended (2631, 2655, 2703).
+- **Cooldown expiry during a chase.** When the cooldown of the last
+  swing expires while the unit chases a target it cannot hit yet, the
+  approach is restarted: at its next update the unit searches again
+  towards the target and stands for that update. Footman 1 in
+  `c-RXR-1` chased grunt 11 from its search at 13.2299147; its old
+  cooldown expired at 13.4399939, at its update of 13.4699125 it
+  searched again (same goal) and stood, walked on from the next update
+  and swung at 13.5899115 (hit in tick 2819). One case read.
 - **A new target and the old cooldown.** The cooldown of the last
   swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
   in range, it did not move) ended its reaction delay at 11.9424612,

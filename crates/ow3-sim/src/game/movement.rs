@@ -1341,6 +1341,12 @@ fn point_order_taken(
         }
         ("attack", _) => {
             let done = order(state, h, Order::Point, ORDER_ATTACK, target);
+            // The order, its attack ability's entries and the path
+            // objects are made, and some freed, in this tick (SPEC-0024;
+            // c-RXR-1, tick 301).
+            if done {
+                state.objects_change();
+            }
             (done, done)
         }
         ("patrol", Some(home)) => {

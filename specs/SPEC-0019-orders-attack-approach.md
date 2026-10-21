@@ -396,13 +396,27 @@ time to time:
   (Footman behind a wall: the waypoint was taken over at 134.8 from it,
   not at 142.9 one update before.) This holds for the waypoints before
   the goal only; the last point of the chase path is walked to its end.
-  A worker walking to a mine does the same with a reach between 64.97
-  and 70.67 (replay `c-RXD-1`, worker 5, read in the game: waypoint
-  (1584, 112) of its walk to the mine, at the update of tick 3583 the
-  worker was 2.0302 cells = 64.97 from it and stood; at 70.67 one update
-  earlier it walked on; at its next update a new search, high-level and
-  local, went from its position to the mine); the exact number for
-  workers is open (66, the peasant's `rangeN2`, fits).
+- **Arrival at the member's place.** At each member step (also for a
+  single unit, which is a cluster of one) the unit counts as arrived
+  when both hold: its distance from its place (the cluster's current
+  waypoint plus its offset, SPEC-0025) is at most its order reach, and
+  the direction from it to the place differs by at most 0.2 rad from
+  the direction of the step it is about to make (its facing if it does
+  not move; the difference wrapped to `-pi .. pi`). The order reach is
+  the order's range in cells (range / 32), but at least 0.49; a unit
+  with a flag not seen set counts as within reach always. An arrived
+  unit gets speed 0 at that update, keeps its heading, and its path is
+  dropped; at its next update it searches again, high level and local,
+  from its position to its target. Replay `c-RYP-1`, peasant 4 on its
+  way to a tree, read in the game: order reach 4.125 cells (132, which
+  is the gather range `Rng1` 116 of `Ahar` plus 16; where the 16 comes
+  from, presumably the peasant's collision size, was not read), place
+  (353.5, 375.5) cells (the segment goal of the cluster path). At 841
+  it was 4.1681 from the place (angle 0.1712): walked on; at 847 3.9928
+  (angle 0.1787): stood, and at 853 it searched to the tree's point
+  (360, 380). The earlier reading of a reach of about 66 to the current
+  path point (`c-RXD-1` worker 5 at 3583) was a misreading of this test
+  and should be checked again with this rule.
 - **A new goal and the existing path.** At a renewal the target's
   position becomes the new goal only if it lies in another cell of the
   64 grid of the high-level search (cells of 64 x 64 counted from the

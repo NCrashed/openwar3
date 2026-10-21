@@ -111,3 +111,88 @@ fn battle_report() {
     // the first hit on.
     eprintln!("first damage difference at tick {tick}");
 }
+
+/// The path events of `c-RXR-1` in ticks 301 to 400 (updates, waits,
+/// made-to-waits and blocks) are the game's `c-RXR-1.events.tsv`.
+#[test]
+fn battle_path_events() {
+    let Ok(text) = std::fs::read_to_string(game_data().join("replays/c-RXR-1.events.tsv")) else {
+        return;
+    };
+    let kinds = ["update", "wait4", "made_wait20", "blocked"];
+    type Event = (u64, String, i64, Option<i64>, [f32; 2]);
+    let mut game: Vec<Event> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split('\t').collect();
+            let num = |i: usize| w.get(i).and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            Some((
+                w.first()?.parse().ok()?,
+                (*w.get(1)?).to_owned(),
+                w.get(2)?.parse().ok()?,
+                w.get(3).and_then(|s| s.parse().ok()),
+                [num(4), num(5)],
+            ))
+        })
+        .filter(|e: &Event| kinds.contains(&e.1.as_str()))
+        .collect();
+    let path = game_data().join("replays/c-RXR-1.w3g");
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.game.state.borrow_mut().path_trace = Some(Vec::new());
+    while playback.game.ticks() < 400 && playback.step_tick() {}
+    let handles: Vec<u32> = playback.game.units().iter().map(|u| u.handle).collect();
+    let index = |h: u32| {
+        handles
+            .iter()
+            .position(|&x| x == h)
+            .map_or(-1, |i| i as i64)
+    };
+    let state = playback.game.state.borrow();
+    let [x0, y0, _, _] = state.world_bounds.map(f32::from_bits);
+    use ow3_sim::game::follow::PathEventKind;
+    let mut ours: Vec<Event> = state
+        .path_trace
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|e| {
+            let kind = match e.kind {
+                PathEventKind::Update => "update",
+                PathEventKind::Wait => "wait4",
+                PathEventKind::MadeWait => "made_wait20",
+                PathEventKind::Blocked => "blocked",
+            };
+            let [x, y] = e.at.map(f32::from_bits);
+            (
+                e.tick,
+                kind.to_owned(),
+                index(e.a),
+                e.b.map(index),
+                [x + x0, y + y0],
+            )
+        })
+        .collect();
+    game.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    ours.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    let same = |a: &Event, b: &Event| {
+        a.0 == b.0
+            && a.1 == b.1
+            && a.2 == b.2
+            && (a.1 == "update" || a.3 == b.3)
+            && (a.1 != "update"
+                || ((a.4[0] - b.4[0]).abs() < 0.04 && (a.4[1] - b.4[1]).abs() < 0.04))
+    };
+    let first = game.iter().zip(&ours).position(|(a, b)| !same(a, b));
+    if let Some(i) = first {
+        for k in i.saturating_sub(2)..(i + 6).min(game.len()).min(ours.len()) {
+            eprintln!("game {:?}\nours {:?}", game[k], ours[k]);
+        }
+    }
+    assert_eq!(first, None, "game {}, ours {}", game.len(), ours.len());
+    assert_eq!(game.len(), ours.len());
+}

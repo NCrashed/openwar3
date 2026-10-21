@@ -311,8 +311,9 @@ units in spite of a fresh path, each of them followed by a new search;
 or eighth. The counter is in updates of the unit (every 6 ticks).
 
 The same counter, with the same steps 1 to 3, is used when the unit
-comes within 0.49 cells of the last point of its local path (a path
-that reaches its goal, not a partial one) while it has not arrived
+comes within 0.49 cells of the last point of its local path (one that
+does not end at an intermediate waypoint, SPEC-0020 step 3: complete or
+partial) while it has not arrived
 (SPEC-0019, "Arrival at the member's place", tested against the place
 as it is now). This happens to a member that kept its old path because
 its new place lies in the same 2 x 2 square ("When a member searches
@@ -344,6 +345,16 @@ tree's point). At 1303 within reach by the mark, angle -0.2877: stood
 and turned the rest, heading 5.3902. At 1309 angle 0: arrived (speed 0,
 path dropped, mark cleared). At 1315, 4.4925 > 4.125 and no mark: a
 new search to the tree's point, local path to (358.5, 393.5).
+
+A partial path ends the same way. `c-RXD-1` creep 9 walking home to
+(387.125, 402.75): its local path of 4561 had failed at the iteration
+limit and ended at its closest cell (388.5, 402.5). At 5713 its position
+after the step was 0.72 from that point; at 5719 0.4666 (arrival test:
+1.862 from home, not arrived): blocked, not touching a target, so `P`
+set (by the rule 2: one unit, near its goal; the value was not read)
+and lowered in the same update, path
+dropped, standing; at 5725 a new local search from (388.9479, 402.3693)
+to home, 2 points.
 
 Measured (`c-RSM-2.w3g`): member 1 is blocked at the update with clock
 5.609832 by member 2, which stands waiting for its 5 updates; `P`

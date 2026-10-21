@@ -348,9 +348,11 @@ the high-level search from its position to the order point. Then:
      the waypoint check did not fire (not seen since). If
      it is the order point, the order ends (SPEC-0018 arrival). If it is
      the end of a local path that did not reach its goal (the search
-     ended at the closest node), the unit stands still for this update
-     and searches again from its position to the same segment goal at
-     the next update.
+     ended at the closest node), or the unit has not arrived at its
+     place there (SPEC-0019), it counts as blocked: the patience counter
+     of SPEC-0025 ("Blocked units") applies, the unit stands still for
+     this update and searches again from its position at the next
+     update (`c-RXD-1` creep 9 at 5719).
    - **Look-ahead check**: take the cell of the unit, `c0` (of its
      position at this update, that is the position stored at its
      previous update plus its velocity times the elapsed time,

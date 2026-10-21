@@ -195,6 +195,9 @@ pub struct Unit {
     acquire_seq: u64,
     /// Its check was restarted by the death of its target.
     after_death: bool,
+    /// The tick at which it walks back to its guard point, the place it
+    /// was created at, after an attack it took on its own ended.
+    guard_return: Option<u64>,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0

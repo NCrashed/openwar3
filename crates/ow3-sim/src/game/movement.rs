@@ -240,6 +240,12 @@ pub struct Moving {
 }
 
 impl Moving {
+    /// It walks back to its guard point (`attack_moves`): as idle for
+    /// acquisitions and calls for help.
+    fn going_back(&self) -> bool {
+        self.order == Order::Point && self.order_id == 0
+    }
+
     /// Whether the order is still on.
     pub fn ordered(&self) -> bool {
         !self.arrived
@@ -2784,9 +2790,35 @@ pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
     }
 }
 
-/// Attack-moves going on after a kill, and ending at their point.
+/// Within this distance of its guard point a unit does not walk back.
+const GUARD_ACCEPT: f32 = 50.0;
+
+/// Attack-moves going on after a kill, and ending at their point; units
+/// walking back to their guard points.
 pub(super) fn attack_moves(state: &mut State) {
     let tick = state.ticks;
+    let back: Vec<(u32, [u32; 2])> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| u.alive)?;
+            (u.guard_return == Some(tick)).then_some((h, u.home))
+        })
+        .collect();
+    for (h, home) in back {
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        u.guard_return = None;
+        let idle = u.attack.is_none() && u.movement.is_none_or(|m| !m.ordered());
+        let (dx, dy) = (
+            real_of(u.x) - real_of(home[0]),
+            real_of(u.y) - real_of(home[1]),
+        );
+        if idle && dx * dx + dy * dy > GUARD_ACCEPT * GUARD_ACCEPT {
+            order(state, h, Order::Point, 0, home);
+        }
+    }
     let units: Vec<(u32, AttackMove)> = state
         .units
         .iter()
@@ -2936,7 +2968,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
         // Nor one that casts or is stunned (SPEC-0035, SPEC-0037).
         if u.attack.is_some()
-            || u.movement.is_some_and(|m| m.ordered())
+            || u.movement.is_some_and(|m| m.ordered() && !m.going_back())
             || u.casting.is_some()
             || u.stunned_until.is_some_and(|t| tick < t)
         {
@@ -3273,7 +3305,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
                 && !u.creep.returning
                 && u.attack.is_none()
                 && u.attack_move.is_none()
-                && u.movement.is_none_or(|m| !m.ordered())
+                && u.movement.is_none_or(|m| !m.ordered() || m.going_back())
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state
@@ -3437,6 +3469,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 && a.resume_at.is_none()
             {
                 a.resume_at = Some(at);
+            }
+            // Below an attack it took on its own lies the walk back to its
+            // guard point (c-RXR-1: grunt 14 at 4813). PROVISIONAL: the
+            // 50 it accepts; creeps go home by SPEC-0030.
+            if own && u.owner != super::creeps::CREEPS {
+                u.guard_return = Some(at);
             }
             u.acquire_seq = seq;
             u.after_death = true;

@@ -92,13 +92,25 @@ member. A group `move` (flags 8) and a queued group `move` (flags 9) to
 a point 400 further: each member, when it arrived at its place of the
 first order (SPEC-0025), stood for one update and walked on to its place
 of the second order, each at its own time (the four footmen passed at
-ticks 13676, 13736, 13742 and 13790). The places of the queued order are
-laid out by SPEC-0025 **as if the members stood at their places of the
-previous order**: with those places as the members' positions (for the
-mean `C`, the leader and the projection), the four footmen ended within
-8 to 15 of the predicted points (about their arrival distance); with
-their positions at the time the queued order was given, the prediction
-was off by 32 to 52.
+ticks 13676, 13736, 13742 and 13790).
+
+Every member's queued order has the point of the click as its target.
+The members do not start it together: each starts it when its own
+previous order ends, and each time one more member starts it the game
+lays the group out again (SPEC-0025) from the members that have started
+it so far, with their positions at that moment, and makes a new
+movement cluster for them with the click point as its goal; the
+members already under way change to their new places. Read in the game
+(replay `c-RTW-3`, a queued group `smart` to a point for seven footmen,
+cluster goals and member offsets at every update): the first footman to
+finish the first order walked to the click point itself (a group of
+one, offset 0), the second made a group of two (offsets +-(2.3155,
+-1.8076) cells), and so on until the seventh made the final layout of
+all seven, 174 ticks after the first. In the test of the four footmen
+above the final layouts came close to the one obtained "as if the
+members stood at their places of the previous order" (within 8 to 15),
+probably because the late members were still near their places when the last one
+started.
 
 ## Edge cases
 

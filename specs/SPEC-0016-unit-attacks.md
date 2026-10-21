@@ -54,6 +54,15 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
 - Consecutive hits on a target that does not move are exactly `cool1`
   apart (1.5 s for the custom knight, measured from game time at each
   damage event).
+- Each swing starts a cooldown timer of `cool1` and a hit timer of
+  `dmgpt1`, both from the queue time at the swing start (SPEC-0002).
+  When the attacker can swing again (target in range and faced), the
+  next swing starts inside the cooldown timer's callback, at the
+  cooldown's expiry, not at an update. Rifleman 7 in `c-RXR-1`: first
+  swing at 3.2699974 (an update), cooldown expiry 4.7699971, second
+  swing at that time with its hit timer at 4.9399971 (the damage in the
+  tick whose queue interval holds it). The cooldown is kept when the
+  target changes (SPEC-0019, "A new target and the old cooldown").
 - When the first hit comes is SPEC-0019: after the random reaction
   delay (one output of game generator 9) the attack begins at an update
   once the attacker is in range and turned towards the target, and the
@@ -61,6 +70,91 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
   exactly one output of game generator 9 (the delay) and two of
   generator 2 (the dice) were drawn, and nothing else (generator states
   read from process memory for 7 seeds).
+
+### Missiles
+
+A weapon of type `missile` (`weapTp1`, the archer `earc`) does not
+damage at its damage point: at `dmgpt1` after the start of the swing it
+launches a missile whose speed is `Missilespeed` of the unit's entry in
+`Units\*UnitFunc.txt` (archer 900, troll headhunter 1200, blood mage
+900; `Missilearc` 0.15 for these), and the damage comes when it arrives.
+
+- The flight time is `L / Missilespeed` seconds, `L` the distance from
+  the launch point to the target's centre; the launch point is the
+  attacker's position moved by `launchY` forward along its facing and
+  `launchX` to the side (`Units\UnitWeapons.slk`; archer 62 and 11). So
+  for a target straight ahead at centre distance `d` the damage tick is
+  the launch tick (the swing start + `dmgpt1`, 144 or 145 ticks for the archer's 0.72 s) + about
+  `200 * (d - 62) / 900` ticks.
+- When `L` is below 90 there is no flight: the damage comes in the tick
+  of the launch.
+- The damage dice (`dice1` outputs of game generator 2, above) are drawn
+  at the launch, not at the impact, and the launch draws one more output
+  of generator 2 right after them (for the missile itself; the hit
+  amount does not use it): an archer (`dice1` 1) and a troll headhunter
+  (`dice1` 1) each made two draws at each launch, a rifleman (`instant`,
+  `dice1` 2) its two dice only (replay `c-RXR-1`, ticks 713 to 787, and
+  test RXM). In test RXM the draws of the five
+  archers' first shots came in ticks 457, 463, 475, 493 and 499, the
+  ticks of their damage points (swing starts 312, 318, 330, 348, 354
+  plus 145), while the damage came in ticks 543, 504, 475, 590 and 563
+  (the archer at 150, with no flight, in 475 itself).
+
+Measured (tests RXM, RXN: archers attacking a paused peasant straight
+ahead, ticks of `EVENT_UNIT_ATTACKED`, which fires at the start of the
+swing, and of the damage event; six hits each): damage minus swing start
+145 or 144 ticks at centre distances 100, 140, 150 and 151; 165/164 at
+152 to 155, then 166, 167, 168, 169, 175, 181, 186, 198, 209, 231 and 242
+at 160, 163, 166, 170, 200, 225, 250, 300, 350, 450 and 500, all within
+one tick of the formula (the first hits of each run one tick later than
+the last, by the drift of the clock). An `instant` weapon (rifleman)
+damages at its damage point like a melee one (above).
+- The flight is an engine timer (SPEC-0002) started at the launch.
+  `L` is measured in the plane, from the launch point to the target's
+  centre at the moment of the launch. What happens next depends on
+  `MissileHoming` of the unit's (or ability's) entry in
+  `Units\*Func.txt`:
+  - **not homing** (units without the field, such as the archer and
+    the troll headhunter): one timer of `L / Missilespeed`; when it expires the
+    missile hits its target wherever the target is by then. Test RXO
+    (archers 300 from peasants walking away, across and towards them):
+    for all ten arrows the flight time set at the launch was the plane
+    distance from the launch point to the target's launch-time position
+    divided by the speed, and the damage came when that timer expired,
+    with no later correction;
+  - **homing** (`MissileHoming=1`: heroes, casters, towers, the storm
+    bolt of SPEC-0037, ...): the missile moves in steps of 0.1 s. At
+    the launch and at the end of every step it measures `L` again, to
+    the target's current centre; if `L` is below `Missilespeed * 0.1` it
+    hits (a timer of 0.0001 s, so in that tick or the next), otherwise
+    it moves `Missilespeed * 0.1` straight towards that point and the
+    next step ends 0.1 s later. Test RYD (storm bolts, speed 1000, the
+    targets walking towards the caster): launched at 1.9 s, steps ended
+    at 2.0 and 2.1 s, each 100 (3.125 cells) further; one bolt was
+    186 from its target at the launch, 58 after the first step and hit
+    at 2.0 s, the other 302 at the launch, 172 after the first step, 47
+    after the second, and hit right after 2.1 s.
+  The rule "below 90 no flight" above is the same test (`L` below
+  `Missilespeed * 0.1`) made at the launch.
+- Artillery (`weapTp1` artillery, mortar team `hmtm`: `dmgpt1` 1.0 s,
+  `Missilespeed` 900, `Missilearc` 0.35, `launchY` 25, `launchX` 30)
+  follows the same flight time, measured along the ground: against
+  paused peasants at centre distances 300, 500, 700, 900 and 1100 the
+  damage came 262, 305, 350, 394 and 439 ticks after the swing start
+  (test RXP; 200 + `200 * L / 900` gives 261.5, 305.9, 350.4, 394.8,
+  439.3); the arc does not lengthen it.
+- Artillery does not follow its target: the shell flies to the
+  target's position at the launch and does its area damage (below,
+  "Area damage") there. Test RXS: mortar teams 1000 from peasants
+  walking across and away at 190; the peasants were 211.8 and 249.8
+  from their positions at the launch when the shells came down, and got
+  2.75 and 2.70 (`Qfact1` 0.1 of about 27, the outer zone up to
+  `Qarea1` 250).
+- A missile whose target dies or is removed while it flies does no
+  damage, to the target or to anyone else (test RXS: archers 500 from
+  paused peasants, `KillUnit` and `RemoveUnit` 0.8 s after the start
+  of the swing, between the launch and the arrival; no damage event,
+  also not for a second peasant 60 behind the target).
 
 ### Second weapon
 
@@ -138,8 +232,7 @@ or behind the target took nothing more.
 ## Edge cases
 
 - A melee weapon (`weapTp1` `normal`) applies its damage at the damage
-  event time; no projectile was involved in the tests. The rifleman
-  (`instant`) behaved the same.
+  event time. The rifleman (`instant`) behaved the same.
 
 ## Open questions
 
@@ -159,6 +252,8 @@ or behind the target took nothing more.
    line, its order and timing, why the glaive thrower with `Repb` did not
    spill, bounces with more targets (`targCount`, upgrade `Remg`) and the
    choice of the bounce target.
+9. The launch point of a homing missile and the height (`launchZ`,
+   `impactZ`, `Missilearc`), which do not change `L` in the tests.
 
 ## Sources
 

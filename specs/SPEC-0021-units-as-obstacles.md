@@ -22,9 +22,36 @@ units of collision 0, 8, 16, 24, 31, 32, 40, 48 and 64, each at six
 positions with different fractions of a cell: in all 54 cases the
 occupied cells were exactly the footprint at the cell of the position.
 
-For a walking unit, the position that counts is its position at its
-own last update: a unit that has not had its update yet in the current
-tick still occupies the cells of its previous update.
+For a walking unit the cells that count are the footprint at its
+position at the last moment its cells were moved, which is:
+
+- for a unit alone in its cluster (SPEC-0021, "Searches of many units in
+  the same tick"; a single unit's `move`, attack or gathering walk), right
+  after its own update: in the rest of that tick and until its next
+  update it occupies the footprint at its new position;
+- for a member of a group cluster (SPEC-0025), only after the updates of
+  all members of the cluster: during those updates every member still
+  occupies the footprint of its previous update, also the members that
+  have already had their update in this tick, and it also still counts
+  as moving or standing by its velocity of its previous update (replay
+  `c-RTW-3` tick 5473: footman 918 started to walk at its update, which
+  came before 900's in the same cluster; at 900's check 918 still had
+  velocity 0, counted as standing, and 900 was blocked instead of
+  waiting).
+
+(The grid lists a moved unit also on the cells of its previous
+footprint until its next move, but the checks of this spec look only at
+its current footprint.) Read in the game, the pathing grid at every
+look-ahead check: `c-RXI-1` tick 853, peasant 2 (alone in its cluster)
+moved from cell (346, 385) to (347, 385) at its update; at the next
+unit's check of that tick the grid listed it on x 345..347, and at
+peasant 3's check in 859 the cell (345, 385) tested by that check was
+not counted (no wait, as in the game), while x 346..347 counted.
+Replay `c-RTW-3` tick 4885, a group of seven footmen: footman 900 had
+its update before footman 918, and at 918's check and at every later
+check of the group in that tick 900 still occupied x 376..377,
+y 376..377 (its footprint of 4879), so 918 waited 5 updates for it as
+in the game.
 
 A unit with a nonzero velocity counts as **moving**. A unit that stands
 still, also one that waits during a walk, has velocity 0 and counts as
@@ -50,6 +77,13 @@ failing cells are examined in turn. Units that stand are skipped here
 (they only make the check fail), and so are units that are themselves
 waiting for another unit at that moment. For a moving unit `B`:
 
+- if `B` is in the same cluster as `A` (SPEC-0025), **`A` waits** as
+  below, whatever the speeds and classes (replay `c-RTW-3`, ticks 4855
+  to 5317: eleven such cases in a group of footmen, `A` waited in all,
+  also when `A` was faster by the last digit, 71.1893 against 71.1892
+  per update in cell units at 4885). A flag of the cluster turns this
+  off, then the rules below apply to members as well; when it is set
+  is open (it was clear in all cases measured);
 - if `B`'s squared speed is at least `A`'s (both as
   `add(mul(vy, vy), mul(vx, vx))` of the velocities at the start of the
   update, SPEC-0004), or `B`'s size class differs from `A`'s, then **`A`
@@ -144,13 +178,38 @@ asks for a search while the budget is used up is put at the end of a
 queue and its unit stands for that update (turning towards its segment
 goal). When the budget is free again the paths of the queue get their
 searches in queue order. A path that had to queue also loses the
-search-throttle wait of SPEC-0020. In the test below the next window
-started at the next update of the units; the exact window length was
-not measured (the budget table read from memory has the counter reset
-every second call of a per-tick routine).
+search-throttle wait of SPEC-0020.
+
+**The window is two update cycles.** The count of used iterations is
+set to 0 before every second update cycle: before the cycles with an
+odd number `m` (the update cycle `m` of SPEC-0018, ticks `6 m + 1` while
+the updates have not drifted), so a window holds the updates of cycles
+`m` and `m + 1` for odd `m`. A search that hits the iteration limit
+costs 701 (the limit 700 plus the last removal). Read in the game (the
+budget table at every search, `c-RXR-1`: ten units given attack-move in
+tick 301, all searching first in tick 307, cycle 51): the counts went
+0, 87, 228, 400, 542, 1243 in 307, the next five paths were refused
+there and again in 313 (still 1243), the count was 0 in 319 (two of
+them searched, 701 each, 1402, three refused), 1402 in 325, 0 in 331
+(two more), 1402 in 337, 0 in 343 (the last one). So the units started
+in pairs two updates apart (first motion 308, 320, 332, 344), the order
+of the queue being the order of their first refusals.
 
 The throttle of SPEC-0020 compares the iterations of the whole window
 (not only the unit's own search) with 64.
+
+**High-level budgets.** The high-level searches of SPEC-0020 have
+budget tables of their own, kept the same way (iterations used, a
+budget, an iteration limit): limit 5000 / budget 800, 2000 / 300 and
+400 / 900. A path whose high-level search finds the budget used up is
+refused like a local one, for the whole tick. Read in replay
+`c-RYP-1` (six peasants ordered to harvest, first searches in tick 307,
+cycle 51): the 2000 / 300 table went 0 -> 5 -> 16 -> 2532 for peasants
+5, 4 and 3 (peasant 3's high-level search cost 2516) and the other
+three peasants were refused although the local table stood at 299 of
+1100; the 400 / 900 table took 3 per search. In tick 313 (cycle 52)
+the 2000 / 300 table was back at 0 and the other three searched (6,
+13, 16), while the local table was not reset (299 -> 689), as above.
 
 ### Groups
 
@@ -178,20 +237,26 @@ tested: the check is free and nobody waits.
 - A unit of another size class is never made to wait; the unit that
   detects it waits instead (footman meeting a knight head-on waited
   twice for 5 updates, the knight walked round it).
+- A unit that dies stops occupying its cells in the tick of its death:
+  from that moment no check counts it, and its cells leave the grid in
+  the next tick (replay `c-RXR-1`, footman 4 killed by a troll's hit in
+  tick 2360 of the log: its cells were marked as not counting at the
+  start of the next tick handler and gone one tick later).
 
 ## Open questions
 
-1. The length of the budget window and the budgets of the high-level
-   search (static analysis: three further budget tables with 800, 300
-   and 900 iterations).
-2. In one memory read a walking unit occupied the union of the
-   footprints at its last update and at its current position; the
-   trajectories fit the footprint at the last update only. The exact
-   moment the cells change is open.
+1. The high-level budgets: which search uses which table, when each
+   is reset (the 2000 / 300 one was reset between cycles 51 and 52),
+   and how one high-level search can cost 2516 with a limit of 2000.
+2. When exactly a group cluster moves its members' cells (after its
+   last member's update, or later in the tick), and the cells of a unit
+   that starts or stops walking.
 3. A unit blocked again soon after a block (the counter of SPEC-0020,
    open question 3), and units that keep blocking each other.
 4. Units of other players, air units, buildings, and units that are
    pushed aside.
+5. When the cluster flag that makes members of one cluster compare
+   speeds (instead of the examining member always waiting) is set.
 
 ## Sources
 

@@ -70,13 +70,22 @@ The `...ById` natives behave like the named ones with that id:
   does not change after the call (order given at an arbitrary tick, also
   between two updates). The current order reads 0 afterwards in both
   cases.
-- **A new `move` while walking** takes effect at the unit's next update.
-  The unit goes on walking until then; at that update it does not move
-  for one tick and then follows the start rule of SPEC-0018 from its
-  current heading. Re-issuing the same `move` costs just that one tick.
-  A footman walking east that got a `move` to a point behind it
-  (180 degrees) stood for 25 ticks while turning, one to a point at about
-  92 degrees for 7 ticks.
+- **A new point order while walking** (`move`, `smart`, `patrol` or
+  attack to a point), whatever order the unit was carrying out (`move`,
+  `patrol`, attack-move, `smart` on a point, following a unit), stops
+  the unit at once: its position does not change after the tick of the
+  order. At its next update it starts on the new order as from
+  standing: the start rule of SPEC-0018 from its current heading, so it
+  stands while it turns and then walks. Measured (test RXL, nine
+  footmen walking east, script orders in tick 603, between two
+  updates; updates in ticks `6 m + 1`): all nine stopped in 603; with a
+  `move` back (180 degrees) all moved again from their update of 631
+  (positions from 632, 29 ticks after the order), with a `move` 4 to 25
+  degrees off their way from their update of 607; orders in tick 601,
+  an update tick (given after the updates of that tick), gave the same.
+  The same in the replay `c-RTW-3`: a footman on `patrol` given `smart`
+  on a point behind it in tick 3111 stopped in 3111 and walked from
+  3140.
 - **A new `move` to a point within the arrival distance** ends the order
   at that next update, without motion.
 - A `move` after `holdposition` behaves like a `move` given to an idle
@@ -136,7 +145,12 @@ When an enemy damages a unit that has no order (idle):
   alliances allow it (player 2 passive toward player 0 with help
   request and help response set in both directions; with help response
   alone they did not). Walking units (with a `move` order) and peasants
-  did not respond, nor did units that already had a target;
+  did not respond; units that already had a target in range did not
+  respond either, but one whose target was out of its range did and
+  switched at once to the attacker (no reaction delay; replay
+  `c-RXR-1` tick 827: troll 16, chasing rifleman 7 far away, answered
+  grunt 14's call against footman 4 and swung at its next update),
+  presumably by the rating of "Checks while attacking";
 - all of them then wait their reaction delay (generator 9, counted from
   the tick of the damage; the damaged unit draws first) and attack the
   attacker by the approach rule.
@@ -341,10 +355,23 @@ time to time:
   by the look-ahead, the attacker stands still for that update, and it
   gets a new path from its position along the rest of the chase path.
   (Footman behind a wall: the waypoint was taken over at 134.8 from it,
-  not at 142.9 one update before.)
-- **A new goal and the existing path.** When a new goal is taken and it
-  is the same point as before (a target that does not move), nothing
-  changes. Otherwise the chase path is searched again; if its current
+  not at 142.9 one update before.) This holds for the waypoints before
+  the goal only; the last point of the chase path is walked to its end.
+  A worker walking to a mine does the same with a reach between 65.0
+  and 70.7 (replay `c-RXD-1`, worker 5: waypoint (1584, 112) of its walk
+  to the mine taken over at 65.0, stand at that update, the new path
+  from the next; at 70.7 one update earlier it walked on); the exact
+  number for workers is open (66, the peasant's `rangeN2`, fits).
+- **A new goal and the existing path.** At a renewal the target's
+  position becomes the new goal only if it lies in another cell of the
+  64 grid of the high-level search (cells of 64 x 64 counted from the
+  map's lower left corner) than the old goal; in the same cell the old
+  goal stays and nothing changes (no search). Test RYV: chased paused
+  footmen moved across the chase by 20, 40, 50, 56, 60, 64, 70 and 90
+  before the first renewal: all but the one moved by 20 (which stayed
+  in its cell) were taken as new goals with a search; replay `c-RXR-1`
+  tick 799: grunt 11's old goal (74.816, 43.008) and its target at
+  (123.412, 44.088), 48.6 apart but in the same cell: no new goal. Otherwise the chase path is searched again; if its current
   waypoint is the same point as the attacker's current waypoint, the
   attacker keeps its own path, else it gets a new one at once.
 - **Start in a block that is not free.** When the attacker stands next
@@ -404,7 +431,33 @@ time to time:
   0.38 s, `D + 194`; damage 1913, 1955, 1961 and 1967 for creeps 6, 7,
   8 and 9, updates in ticks `6 m + 1`) at 2107, 2149, 2155 and 2161,
   read in the game: all ten by this rule ("66 ticks after the first
-  motion" fits the footmen only through their numbers). The count runs
+  motion" fits the footmen only through their numbers). In terms of
+  the timer queue: the swing starts in an update batch at queue time
+  `U_s` (SPEC-0018, "Order within an update tick"), and the cooldown is
+  an engine timer started there with expiry `add(U_s, cool1)`. It fires
+  in the tick whose interval holds it, ordered with that tick's update
+  batch by time (SPEC-0002). With `cool1` a multiple of 0.03 the batch
+  that comes `cool1 / 0.03` updates later is a little earlier than the
+  expiry (45 steps of `P` are 1.3499880 against 1.35 for the kobolds),
+  so the timer fires just after that batch, in the same tick: creep 6
+  of `c-RXD-1`, swing in the batch of tick 1837, cooldown at q =
+  10.529950142 after the batch of tick 2107 at q = 10.529938698. That
+  tick is `R`. At the timer the attacker takes the target's position
+  (its agent position after the target's own update of that tick, if
+  any) as its new goal; the attacker's update of `R` has already run:
+  an attacker that was walking had its look-ahead check there as at any
+  walking update (with its waits and blocks, SPEC-0021); one that was
+  standing did nothing. The search for the new goal comes at its next
+  update, `R + 6`, and it walks (or turns towards its path) from that
+  update. When the expiry falls before the batch of its tick (possible
+  for an interval that is not a multiple of 0.03, such as a hero's
+  attack interval of SPEC-0034), the goal comes before the update of
+  that tick and the search at that update; this case was not
+  measured. Read in the game: c-CH1 row 1, look-ahead at
+  598 with the old velocity, search at 604 (test ticks); creep 9 of
+  `c-RXD-1`, look-ahead at 2161 (it made creep 7 wait 20 updates and was
+  blocked), search at 2167; creep 7, standing, nothing at 2149, search
+  at 2155 towards peasant 3's position at 2149. The count runs
   whether the attacker walks or not: creep 7 ended its backswing in
   tick 2075 with its target still within the range test of the new
   goal point, stood (its cooldown had not run out), and walked only
@@ -463,6 +516,13 @@ footman, 16 for the peasant).
   goal point and takes a new one from time to time as in a chase (about
   every 102 ticks, see "Chasing a moving target"); when the leader
   stopped, the follower stopped at a gap of 295.5, by the follow range.
+- **The follower's search** ends as a chase search does: at the first
+  expanded cell from which a step test touches the leader's footprint
+  (above, "Chasing a moving target"). In `c-RTW-3` follower 828 searched
+  in tick 5413 from cell (382.815, 374.304) towards 918 at (391.964,
+  366.712): 14 removals, no unpassable cell, end at cell (389, 367),
+  whose centre (389.5, 367.5) is the end of its path; it walked straight
+  to that point.
 - **A standing follower** does not start again as soon as the gap grows
   past 300. In `c-RTW-3` footman 825 followed footman 915 and stood at
   a gap of 295.6 (from tick 4279); 915 then walked past it with a group (gap
@@ -536,23 +596,42 @@ An idle unit with a weapon attacks an enemy unit on its own:
   one with the smaller y, and with equal y the one with the smaller x
   (tested with targets 300 away in the eight directions, independent of
   the order of creation).
+  Before the distance comes what the enemy is doing: an enemy that is
+  attacking the unit itself is preferred to one attacking another unit
+  of the unit's side (its player or an ally), and that one to an enemy
+  that attacks nobody; only between enemies of the same rank does the
+  nearer one win. "Attacking" means the enemy has a unit as the target
+  of its current attack (an attack order or an acquired target); a
+  unit on attack-move that has not acquired anything attacks nobody.
+  Measured in `c-RXR-1` (the rating of every candidate read in the
+  game, nine acquisitions in ticks 503..592, all as this rule): in
+  556 grunt 11 had footmen 2 (513.4 away, attack-moving), 0 (547.5)
+  and 3 (549.0, attacking grunt 13) in range and took 3; in 544
+  grunt 14 preferred footmen 4 and 5 (both attacking 14) to 3
+  (attacking 13) and 2; in 592 grunt 13 took footman 3, which was
+  attacking it, over 0, 2, 4 and 5.
 - **Reaction delay.** After acquiring, the unit waits the reaction delay
   of attack orders (generator 9, `ReactionDelay`, see above), counted
   from the expiry of the check (the queue's time during the check, also
   for the units that answer its call for help), with the draws of
   generator 9 in the order of the acquisitions. The end of the delay is
   again a timer: in the tick whose queue interval holds it (as for the
-  checks) the unit takes the target as its goal, with the target's
-  position read in that tick, and gets a new cluster (SPEC-0021,
-  "Searches of many units in the same tick"). At its first update after
-  that it searches its path to that position and starts to act (turn,
-  walk): 60 of 60 footmen. In `c-RXD-1` the delays of creeps 7, 8, 6
-  and 9 were 0.1221, 0.0626, 0.2499 and 0.0406 s from 7.779825, so they
-  ended at 7.901925, 7.842425, 8.029725 and 7.820425, in ticks 1581,
-  1569, 1607 and 1565; the creeps searched at their updates of ticks
-  1585, 1573, 1609 and 1567, each towards the position of its target
-  (peasant 5) in the tick its delay ended (x = -376.586, -387.984,
-  -351.890 and -391.784), read in the game.
+  checks) the unit takes the target as its goal and gets a new cluster
+  (SPEC-0021, "Searches of many units in the same tick"). At its first
+  update after that it searches its path and starts to act (turn,
+  walk): 60 of 60 footmen. The search goes to the target's position as
+  it is at the moment of the search, which is the target's position at
+  its own last update (SPEC-0018): a target whose update comes later in
+  the same tick is still at its previous update position. In `c-RXD-1`
+  the delays of creeps 7, 8, 6 and 9 were 0.1221, 0.0626, 0.2499 and
+  0.0406 s from 7.779825, so they ended at 7.901925, 7.842425, 8.029725
+  and 7.820425, in ticks 1581, 1569, 1607 and 1565; the creeps searched
+  at their updates of ticks 1585, 1573, 1609 and 1567 (before the
+  update of their target, peasant 5, in that tick) towards x =
+  -376.586, -387.984, -351.890 and -391.784, read in the game. In
+  `c-RXR-1` grunt 11's delay ended in tick 591; at 595 it was the first
+  unit handled and searched towards footman 3's position of its update
+  589, (-62.816, 40.032), not its position of tick 591.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
 - **Checks while attacking.** The checks go on while the unit attacks
@@ -584,6 +663,28 @@ An idle unit with a weapon attacks an enemy unit on its own:
   239 for peasant 3 at 214 (both out of range). Only peasants were
   rated in these tests; the rating has further parts (kinds of units,
   units attacking, life) that were not measured (open question 10).
+- **When the target dies.** At the moment a unit dies (for a missile
+  hit, in the missile part at the end of the tick, SPEC-0016), each
+  unit that was attacking it because of an acquisition or a call for
+  help has its acquisition check timer restarted with 0.01 s, and the
+  unit stops (its attack ends; it is idle at the check). No generator
+  draw is made at the death. The killer itself was not among them in
+  the case read (its next check was its own periodic one; whether this
+  is because it is the killer or because its missile was in flight is
+  open). The check that follows is an ordinary one: it restarts the
+  check timer with its period, rates the enemies (above) and the new
+  attack has its generator 9 draw and its reaction delay. Measured in
+  `c-RXR-1`: footman 4 died in the missile part of tick 2360 (now =
+  11.7990208); grunts 14, 15 and trolls 19, 18 had their checks at
+  11.8090200 (tick 2363), in that order, took footmen 5, 5, 5 and 3,
+  with reaction delays 0.0129, 0.1334, 0.1020 and 0.2035 s from that
+  time.
+- **A new target and the old cooldown.** The cooldown of the last
+  swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
+  in range, it did not move) ended its reaction delay at 11.9424612,
+  but its swing at footman 5 started in the callback of its old
+  cooldown at 12.2299929 (the last swing at footman 4 at 10.6299929
+  plus `cool1` 1.6), the hit at 12.5599929.
 
 ## Edge cases
 

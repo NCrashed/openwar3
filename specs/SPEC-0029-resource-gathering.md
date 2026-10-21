@@ -136,15 +136,136 @@ hidden); when the one inside leaves, the next one enters in the same
 tick, in the order in which they reached the mine (test RUJ: three
 peasants from the west, north and east entered in the order of their
 arrival, ticks 430, 630, 831). With five peasants ordered in the same
-tick (test RUF) the mine lost 10 gold every 200 ticks. A peasant leaves
-the mine at the point where it entered; when another peasant stood
-there, it was put at the centre of a free cell nearby instead
-(entered at (-6162.17, -5957.45), left at (-6192, -5936)).
+tick (test RUF) the mine lost 10 gold every 200 ticks.
+
+**Where a worker comes out.** With `(cx, cy)` the cell of the point
+where the worker entered:
+
+1. If its footprint (SPEC-0020, class 1: cells `cx-1 .. cx`,
+   `cy-1 .. cy`) at that cell is free, it comes out exactly at the
+   point where it entered.
+2. Otherwise rings `n = 1, 2, ...` (up to 32) around that cell are
+   tried, with `L = cx - n`, `R = cx + n`, `B = cy - n`, `T = cy + n`,
+   in this order: the bottom row `(L + 1, B)` to `(R, B)`, the right
+   column `(R, B + 1)` to `(R, T)`, the top row `(R - 1, T)` down to
+   `(L, T)`, the left column `(L, T - 1)` down to `(L, B)` (the order
+   of SPEC-0027 that starts with the bottom side). The first cell whose
+   footprint is free is taken, and the worker comes out at its centre.
+
+A footprint is free when its cells are passable (the mine's red cells
+are not) and not covered by the footprint of a unit standing there; a
+worker waiting at the mine and the worker inside it (at the place where
+it entered) both count. Read in the game (`c-RXI-1`: the searched point,
+the order of the sides and the result of the search): peasant 4 entered
+at (-1052.06, -17.07) (cell (351, 383)), and when it came out in tick
+1271 peasant 1 stood on that cell, peasant 2 on (351, 385) and peasant 0
+was inside the mine at (351, 381); ring 1 has no free cell, ring 2
+gives (349, 385), and it came out at (-1104, 48). Peasants 5 (tick 2866)
+and 3 (tick 5380) entered at cell (351, 385) where the worker that had
+just entered the mine stood; ring 1 has no free cell, ring 2 gives
+(350, 383) first, and both came out at (-1072, -16). (Test RUF: entered
+at (-6162.17, -5957.45), came out at (-6192, -5936).) Whether workers
+of the gathering cycle (which block nothing, above) count for this was
+not tested.
 
 **An empty mine.** When the last gold is taken (the mine had 30 in
 test RUJ: three trips), the mine's gold is 0 as the peasant leaves it
 and the mine is gone; the peasant delivers its 10 gold and then stands
 with order 0.
+
+**Workers in the gathering cycle do not block each other.** A
+worker's cells (SPEC-0021, "Occupied cells") block other ground units
+until it first comes out of a mine; from that moment on, while it goes
+on gathering (walking to the town hall with its load, giving it,
+walking back to the mine, waiting at the mine), its cells block only
+the placing of buildings and no unit's local search, seeing a point or
+look-ahead check. Nor does such a worker see other units in its own
+checks: peasant 5 of `c-RXI-1`, out of the mine in tick 1071, had no
+wait at its update of 1075 although peasant 2, still on its first walk
+(blocking), was next to it, and from 1094 to 1108 it walked through
+peasant 2 (down to 2.3 apart, both walking) without any wait or block.
+So workers that have been in the mine once walk through each other and
+through every other unit's way, with one exception: a worker WAITING at
+the mine marks its cells so that the local search of a gathering
+worker meets them as unpassable (`c-RXI-1` tick 1279: worker 4,
+walking back to the hall, searched along the row past two waiting
+peasants; the search touched their cells (350, 383) and (350, 384), so
+it took the second-last point of its path first, SPEC-0020 step 2,
+instead of walking straight to the end); a worker on its first walk to the mine,
+or one waiting there for the first time, still blocks like any unit
+(and sees others). Whether a gathering worker sees units other than
+workers (creeps, soldiers) was not tested. A worker inside the mine keeps its cells where it
+entered (they count when the place of a worker coming out is chosen,
+below), but blocks nothing while hidden. Read in the game (`c-RXI-1`,
+the bits of the cells' entries for the six peasants every 6 ticks from
+tick 850 to 1560 and at 19 s): first walk and first wait blocking;
+blocking only buildings from the update after the first exit (peasant 5
+out in tick 1071, peasant 4 in 1271, peasant 0 in 1471); all six so at
+19 s. In the log, after tick 1003 no worker of `c-RXI-1` waited for or
+was blocked by another, and 1745 times two walking workers were closer
+than 32 (down to 0.12, a worker going to the mine and one coming back).
+What ends this state (another order, a mine that is gone) was not
+tested.
+
+**A worker that starts waiting pushes others aside.** A worker that
+reaches an occupied mine stands, and at its next update it starts to
+wait (its cells now block as those of a standing unit). At that moment
+every unit whose footprint overlaps the waiting worker's footprint is
+moved to the nearest free place, found by the search of "Where a worker
+comes out" (rings around the moved unit's own cell, the centre of the
+first free cell). `c-RXI-1`: peasant 2 reached the occupied mine and
+stood (its last step in tick 1111), and at its update in tick 1117 it
+started to wait on cells x 350..351, y 384..385. Peasant 5 (in the
+gathering cycle, walking west with gold, cells x 349..351, y 384..385)
+overlapped it and was moved: from its cell (350, 385) the ring 1 cells
+(350, 384), (351, 384), (351, 385) (peasant 2), (351, 386), (350, 386)
+(a worker waiting at x 350..351, y 386..387) were taken, (349, 386) was
+free, and peasant 5 went on from its centre (-1104, 80) (the log shows
+the new position in tick 1118). Other workers started waiting in ticks 871 (two),
+1075, 1105 and 1177 with nobody on their cells: nothing moved.
+
+**Coming out.** A worker that comes out of the mine starts a new walk
+(to the town hall) as for a new order: it stands at its updates while
+it turns towards its path (SPEC-0019, "Stop, hold position and new
+orders while walking") and then walks; peasant 5 came out in tick 1071
+facing the mine, stood at its updates 1075 to 1093 and moved from
+1094, already turned by about 52 degrees.
+
+### Speed on gold trips
+
+A worker gathering gold has its movement speed adjusted each time it
+enters a mine, so that its trip fits the mine's cycle. Each worker
+keeps a 10 s timer, its current speed bonus `b`, the time of its last
+trip `W` and the bonus `bW` it had during that trip (all 0 at the
+start; the timer not running). With `M` the mine's mining duration
+(`DataB` of `Agld`, 1.0) and `K = 5.0`, at the moment the worker goes
+into the mine (SPEC-0004 operations):
+
+1. `r` = the remaining time of the timer (0 if it never ran or has
+   expired); `t = sub(sub(10, r), M)`: the time since its last entry
+   less the time it spent inside.
+2. If `r > 0`, `M < 10` and `t > 0`:
+   - `s = mul(t, add(b, 1))`, `n = 1.0`;
+   - if `W != 0`: `s = add(s, mul(W, add(bW, 1)))`, `n = add(n, 1)`;
+   - `q = div(s, mul(n, sub(K, M)))`, clamped to `[0.5, 1.2]`;
+   - the new bonus is `b' = sub(q, 1)`; then `W = t`, `bW = b`.
+
+   Otherwise `b' = 0`, `W = 0`, `bW = 0`.
+3. The unit's speed changes at once from `spd * (1 + b)` to
+   `spd * (1 + b')`, and `b = b'`.
+4. The timer is restarted with 10 s.
+
+`s / n` is the average of the last one or two trips, each scaled to
+the base speed; `q > 1` means the trips are longer than the `K - M` =
+4 s the rule aims at, so far mines make the workers faster (up to 1.2
+times `spd`) and near ones slower (down to 0.5 times).
+
+Measured in replay `c-RXI-1` (six peasants, trips of about 8 s), the
+values of every entry read in the game: worker 5 entered at 4.350 s
+(first entry, `b` 0), 13.319 s (`t` 7.96992, `q` 1.99 -> 1.2: its
+speed 190 -> 228, 1.14 per tick from its next walk) and 21.117 s (`s`
+= 6.799768 * 1.2 + 7.96992 = 16.12964, `q` 2.016 -> 1.2). A worker
+whose last entry was more than 10 s earlier goes back to bonus 0.
 
 ### Where the resources go
 
@@ -152,6 +273,15 @@ The peasant takes them to the building that takes that resource and
 is nearest **along the path**: with one town hall 896 from the mine
 behind a wall and another 1344 from it in the open, the gold went to
 the one in the open; without the wall, to the nearer one (test RUJ).
+
+**Upkeep.** The gold a worker delivers (10) is cut by the player's
+upkeep at the moment of the delivery, by the food the player uses
+(units over the food cap count as well): 10 with 41 food used, 7 with
+61, 4 with 81, 101, ... 181 (test RYS: one peasant mining while 10 more
+footmen were created every 8 s; deliveries 10, 10, 10, 10, 10, 7, 7, 4,
+4, ...). The steps of upkeep (by the
+usual table: up to 50 food none, 51 to 80 low, from 81 high) were not
+measured at their borders, and lumber was not tested.
 
 ### New orders while carrying
 
@@ -175,6 +305,27 @@ takes the carried gold back (test RUJ).
    grew by 10.
 4. It goes back to the same tree and goes on (next hits 338 and 350
    ticks after the delivery for the two peasants of the test).
+
+**The harvest swing.** The lumber hits follow the timing of an attack
+with the worker's second weapon (`Custom_V1\Units\UnitWeapons.slk`,
+peasant: `targs2` tree, `cool2` 1.1, `dmgpt2` 0.433), and the walk to the
+tree is a chase of SPEC-0019 whose search goal is the tree's centre. The
+walk ends at the first update at which the worker's centre is within
+`Rng` of `Ahar` (116) plus its collision size (16) of the tree's centre:
+in `c-RYP-1` peasants 0, 1 and 5 stopped 128.4, 131.1 and 130.0 from
+their trees, the worker's step being 8.4 per update. The first hit
+comes 99 ticks after the stop, then one every 220 ticks; after the
+10th the worker leaves 114 ticks later with order 852017.
+
+**An ordered tree out of reach.** Three peasants of `c-RYP-1` (and four
+of test RYQ, each ordered to the middle tree of a 3 x 3 block) were
+ordered to trees inside the block. Each searched towards its tree
+again at its updates while blocked at the edge of the block, then,
+without a draw of any generator, took another tree of the block and
+harvested it (from its place or after a short walk), the first hit 207
+to 249 ticks after it had stopped; on its later trips it came back to
+that tree. Which tree it takes is open (not always the nearest one:
+RYQ peasant 0 took a tree 123 away although three were nearer).
 
 When a tree has no life left it dies; a peasant that is not full yet
 goes on at the nearest other tree (test RUJ: a tree with 3 life, then
@@ -215,8 +366,7 @@ each peasant's model polled every 20 ms):
 ## Open questions
 
 1. Whether the rule for trees adds the peasant's collision size or a
-   fixed 16, and the search for the free cell when a peasant leaves a
-   mine where another one stands.
+   fixed 16.
 2. Which peasant enters a busy mine next.
 3. How "nearest along the path" is measured (the high-level search of
    SPEC-0020 or another), and the next tree when several are at the
@@ -226,6 +376,9 @@ each peasant's model polled every 20 ms):
    carrying.
 5. Other races (orc peon and its burrows, undead acolytes and haunted
    mines, night elf wisps and entangled mines).
+6. The tree a worker takes when its ordered tree cannot be reached.
+7. The gold trip speed bonus when the worker stops gathering, and its
+   order against the other events of the entry tick.
 
 ## Sources
 
@@ -247,6 +400,9 @@ each peasant's model polled every 20 ms):
   every change of order or hidden state.
 - `Units\AbilityData.slk`, `Units\UnitAbilities.slk`,
   `Units\DestructableData.slk`.
+- Replay `c-RXI-1` (map c-RXJ run live), 2026-10-21: the timer, the
+  trip times, the sums and the bonus of every mine entry to 28 s, and
+  the speed of worker 5's path agent, read in the running game.
 
 ## Verification
 

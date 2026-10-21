@@ -203,6 +203,9 @@ pub struct Unit {
     pending_switch: Option<u32>,
     /// Until when (queue time) damage to it makes no call for help.
     call_until: u32,
+    /// The attacker of the last call for help that reached it, answered or
+    /// not: taken by a check that finds no enemy in range (SPEC-0019).
+    remembered: Option<u32>,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0

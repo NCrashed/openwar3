@@ -3080,7 +3080,20 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             }
             continue;
         }
-        let Some(target) = targets.nearest_enemy(state, h) else {
+        // With no enemy in range, the attacker of the last call for help
+        // that reached the unit, within 2000 (c-RXR-1: troll 16 took
+        // rifleman 9 at 718 in 6420). PROVISIONAL: a further test (likely
+        // that it can be seen) is not known.
+        let remembered = || {
+            let u = state.unit(Some(h))?;
+            let r = u.remembered?;
+            let o = state
+                .unit(Some(r))
+                .filter(|o| o.alive && enemies(state, u.owner, o.owner))?;
+            let (dx, dy) = (real_of(o.x) - real_of(u.x), real_of(o.y) - real_of(u.y));
+            (dx * dx + dy * dy <= REMEMBERED_REACH * REMEMBERED_REACH).then_some(r)
+        };
+        let Some(target) = targets.nearest_enemy(state, h).or_else(remembered) else {
             continue;
         };
         let Some(Object::Unit(o)) = state.objects.get(&target) else {
@@ -3349,6 +3362,8 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
 const CALL_REACH: f32 = 180.0;
 /// Seconds after a call for help in which the caller makes no other.
 const CALL_COOLDOWN: f32 = 3.0;
+/// How far a remembered attacker of a call for help is taken.
+const REMEMBERED_REACH: f32 = 2000.0;
 
 /// The hit of `attacker` on `victim` (SPEC-0019, "Retaliation and call
 /// for help"): an idle victim acquires the attacker whatever the distance,
@@ -3435,6 +3450,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
         .is_some_and(|v| now >= real_of(v.call_until));
     let reach = real_of(state.combat.call_for_help) + CALL_REACH;
     let mut responders = vec![victim];
+    let mut reached = vec![victim];
     let mut next = 0;
     while next < responders.len() {
         if !calls {
@@ -3445,6 +3461,17 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
             _ => (x, y),
         };
         next += 1;
+        // Every unit the call reaches remembers the attacker.
+        reached.extend(state.units.iter().copied().filter(|&h| {
+            let Some(Object::Unit(u)) = state.objects.get(&h) else {
+                return false;
+            };
+            let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
+            u.alive
+                && h != attacker
+                && dx * dx + dy * dy <= reach * reach
+                && state.setup.helps(u.owner, owner)
+        }));
         let near: Vec<u32> = state
             .units
             .iter()
@@ -3473,6 +3500,13 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
         .collect();
     if calls && let Some(Object::Unit(v)) = state.objects.get_mut(&victim) {
         v.call_until = (now + CALL_COOLDOWN).to_bits();
+    }
+    if calls {
+        for &h in &reached {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.remembered = Some(attacker);
+            }
+        }
     }
     for h in responders {
         if switching.contains(&h) {

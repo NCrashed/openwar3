@@ -206,6 +206,10 @@ pub struct Unit {
     ready: Vec<(i32, u64)>,
     /// The ability it casts or walks to cast (SPEC-0035).
     casting: Option<cast::Casting>,
+    /// The counters of its chance-on-attack abilities, and the ability
+    /// that procs on the swing under way, with its level (SPEC-0036).
+    proc_counters: Vec<(i32, u32)>,
+    procced: Option<(i32, i32)>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.

@@ -285,6 +285,8 @@ pub(super) fn create_unit(
         spent: 0,
         ready: Vec::new(),
         casting: None,
+        proc_counters: Vec::new(),
+        procced: None,
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,

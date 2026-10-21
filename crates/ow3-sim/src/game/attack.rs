@@ -138,6 +138,23 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 continue;
             }
         }
+        // A swing starts: the roll of a chance-on-attack ability
+        // (SPEC-0036).
+        {
+            let mut s = state.borrow_mut();
+            let s = &mut *s;
+            let tick = s.ticks;
+            let starts = s.unit(Some(h)).and_then(|u| u.attack).is_some_and(|a| {
+                let point = s
+                    .unit(Some(h))
+                    .and_then(|u| weapon_for(s, u.type_id, Some(a.target)))
+                    .map_or(1, |w| ticks(w.damage_point));
+                a.next.saturating_sub(point) == tick
+            });
+            if starts {
+                roll_proc(s, h);
+            }
+        }
         // The hit, if one is due: target, amount and attack type.
         let hit = {
             let mut s = state.borrow_mut();
@@ -153,6 +170,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let primary = hero_primary(s, h);
                     let cooldown = hero_cooldown(s, h, weapon.cooldown);
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
+                    let (amount, bash) = proc_effect(s, h, amount);
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         let next = a.next + ticks(cooldown);
                         let end = tick + ticks(weapon.backswing);
@@ -187,7 +205,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         s.missiles.push(missile);
                         None
                     } else {
-                        Some((a.target, amount, weapon.attack_type, weapon.area))
+                        Some((a.target, amount, weapon.attack_type, weapon.area, bash))
                     }
                 }
                 Some(a) if a.next <= tick => {
@@ -200,7 +218,19 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 _ => None,
             }
         };
-        if let Some((target, amount, attack_type, area)) = hit {
+        if let Some((target, amount, attack_type, area, bash)) = hit {
+            // Bash: its damage comes before the hit (SPEC-0036).
+            if let Some(extra) = bash {
+                super::widgets::damage_widget(
+                    vm,
+                    state,
+                    Some(h),
+                    Some(target),
+                    extra,
+                    attack_type,
+                    DAMAGE_TYPE_NORMAL,
+                );
+            }
             strike(vm, state, h, target, amount, attack_type, area);
         }
         // One tick after the swing the attacker takes a goal again, also
@@ -567,5 +597,96 @@ fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
             div(cooldown, add(1.0f32.to_bits(), speed))
         }
         None => cooldown,
+    }
+}
+
+/// The chance-on-attack abilities by their base codes: critical strike,
+/// bash, drunken brawler (SPEC-0036).
+const PROC_ABILITIES: [[u8; 4]; 3] = [*b"AOcr", *b"AHbh", *b"ANdb"];
+
+/// The chance factors of the pseudo-random distribution by the chance in
+/// steps of 5 percent (SPEC-0036, table `C`).
+const PROC_TABLE: [f32; 21] = [
+    0.0, 0.0038, 0.0147, 0.0320, 0.0547, 0.0819, 0.1126, 0.1461, 0.1815, 0.2184, 0.2562, 0.2953,
+    0.3333, 0.3781, 0.4203, 0.4607, 0.5, 0.5799, 0.6666, 0.7706, 1.0,
+];
+
+/// The chance-on-attack ability of unit `h`, its base code and level.
+fn proc_ability(state: &State, h: u32) -> Option<(i32, i32, i32)> {
+    let u = state.unit(Some(h))?;
+    let t = state.data.units.get(&u.type_id)?;
+    t.abilities
+        .iter()
+        .chain(&t.hero_abilities)
+        .copied()
+        .find_map(|a| {
+            let base = state.data.abilities.get(&a).map_or(a, |d| d.code);
+            let known = PROC_ABILITIES
+                .iter()
+                .any(|p| i32::from_be_bytes(*p) == base);
+            let level = super::heroes::ability_level(state, u, a);
+            (known && level > 0).then_some((a, base, level))
+        })
+}
+
+/// The roll of unit `h`'s chance-on-attack ability at the start of a
+/// swing (SPEC-0036): `C[i] * N` against one draw of game generator 3.
+fn roll_proc(state: &mut State, h: u32) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.procced = None;
+    }
+    let Some((ability, _, level)) = proc_ability(state, h) else {
+        return;
+    };
+    let chance = state
+        .data
+        .abilities
+        .get(&ability)
+        .and_then(|a| a.per_level.get((level - 1).max(0) as usize))
+        .map_or(0, |l| l.data[0]);
+    let i = ow3_math::r2i(add(mul(chance, 0.2f32.to_bits()), 0.5f32.to_bits())).clamp(0, 20);
+    let n = state
+        .unit(Some(h))
+        .and_then(|u| u.proc_counters.iter().find(|(a, _)| *a == ability))
+        .map_or(1, |&(_, n)| n);
+    let c = mul(PROC_TABLE[i as usize].to_bits(), ow3_math::i2r(n as i32));
+    let x = state.game_random[crate::random::ATTACK_PROC].fraction();
+    let procs = f32::from_bits(c) >= f32::from_bits(x);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        let next = if procs { 1 } else { n + 1 };
+        match u.proc_counters.iter_mut().find(|(a, _)| *a == ability) {
+            Some(entry) => entry.1 = next,
+            None => u.proc_counters.push((ability, next)),
+        }
+        if procs {
+            u.procced = Some((ability, level));
+        }
+    }
+}
+
+/// What the proc of `h`'s swing does to its hit of `amount`: the amount
+/// times `DataB` for a critical strike, and a damage of `DataC` before
+/// the hit for bash (SPEC-0036).
+///
+/// PROVISIONAL: the stun of bash and the effects of drunken brawler are
+/// not measured; the extra damage of bash takes the hit's attack type.
+fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<u32>) {
+    let Some((ability, level)) = state.unit(Some(h)).and_then(|u| u.procced) else {
+        return (amount, None);
+    };
+    let Some(data) = state.data.abilities.get(&ability) else {
+        return (amount, None);
+    };
+    let numbers = data
+        .per_level
+        .get((level - 1).max(0) as usize)
+        .copied()
+        .unwrap_or_default();
+    if data.code == i32::from_be_bytes(*b"AOcr") {
+        (mul(amount, numbers.data[1]), None)
+    } else if data.code == i32::from_be_bytes(*b"AHbh") {
+        (amount, Some(numbers.data[2]))
+    } else {
+        (amount, None)
     }
 }

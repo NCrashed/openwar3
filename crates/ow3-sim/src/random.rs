@@ -45,6 +45,8 @@ pub struct Random {
 pub const GAME_GENERATORS: usize = 45;
 /// The game generator that rolls the damage dice of attacks (SPEC-0016).
 pub const ATTACK_DICE: usize = 2;
+/// The game generator of the chance-on-attack abilities (SPEC-0036).
+pub const ATTACK_PROC: usize = 3;
 /// The game generator that draws the reaction delay of attack orders
 /// (SPEC-0019).
 pub const REACTION: usize = 9;

@@ -1271,3 +1271,40 @@ fn holy_light_out_of_range() {
     assert!((gap - 860.7).abs() < 1.0, "{gap}");
     assert_eq!(healed - last_step, 99);
 }
+
+/// SPEC-0036: a blademaster of level 1 with critical strike against a
+/// paused peasant: every hit does the normal 27 to 49 (AGI 23 + 2 + 2d12)
+/// or twice that, and
+/// the crits come, never more than 32 swings apart.
+#[test]
+fn critical_strike() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Obla', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hpea', -2900, -2000, 180)\n    call SelectHeroSkill(a, 'AOcr')\n    call PauseUnit(t, true)",
+        "call IssueTargetOrder(a, \"attack\", t)",
+        |data| target_type(data, 16.0),
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 8000);
+    let hits: Vec<f32> = path
+        .windows(2)
+        .map(|w| w[0].1[1].life - w[1].1[1].life)
+        .filter(|d| *d > 1.0)
+        .collect();
+    assert!(hits.len() > 30, "{} hits", hits.len());
+    let mut since = 0;
+    let mut crits = 0;
+    for d in &hits {
+        let d = d.round() as i32;
+        if d >= 54 {
+            assert!(d % 2 == 0 && d <= 98, "{d}");
+            crits += 1;
+            since = 0;
+        } else {
+            assert!((27..=49).contains(&d), "{d}");
+            since += 1;
+            assert!(since < 32, "32 swings without a crit");
+        }
+    }
+    assert!(crits > 0);
+}

@@ -149,6 +149,32 @@ stops when it is within its arrival radius of that point (SPEC-0018),
 so a group comes to rest roughly in the formation's shape around the
 order point.
 
+**When a member searches again.** A member's place is recomputed at
+every cluster update, but the member does not search a new path each
+time. It keeps the place of its last search, and at each of its member
+steps it compares the new place with that one in squares of 2 x 2
+cells (64 x 64): both points in cell coordinates, each coordinate
+truncated to an integer and halved by an arithmetic shift right by 1.
+If both squares are equal, nothing changes: the member keeps its path
+and its old place (the next comparison is again against the place of
+the last search, so small moves add up until one crosses a square
+border). If they differ, the member takes the new place and searches
+to it (the throttle of SPEC-0020 then applies as usual). A member that
+has no place yet (just joined) always searches. Read in `c-RTW-3`,
+all member steps of 5521, 5527, 5533, 5539 and 5545 (35): each search
+came exactly where the squares differed. For example at 5539 member
+936 went from (398.2733, 370.1612) to (398.6408, 369.2842) cells, y
+square 185 -> 184, and searched; 864 went from (387.4362, 365.6202) to
+(387.8037, 364.7432), squares (193, 182) both times, and kept its path.
+
+The test has a second part that was not exercised in these data: when
+the squares differ, the member searches only if two per-path times are
+both at least 10 cluster update cycles old; otherwise it keeps its path
+and its old place. Both times were 0 in all the steps read, and which
+events set them was not read. A change of the cluster's goal serial
+(a new goal for the cluster) makes the member search whatever the
+squares are.
+
 ### Members that wait for their rank to pass
 
 At every update of a cluster with more than one member, before the

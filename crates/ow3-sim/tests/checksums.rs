@@ -84,7 +84,7 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXI-1.w3g",
-        "the walks are the game's up to tick 1123 (tests/crowd.rs); the place a worker comes \
+        "the walks are the game's up to tick 1327 (tests/crowd.rs); the place a worker comes \
          out of a mine starts its walk later than in the game; \
          turn 195 is a timer of unknown cause (SPEC-0024)",
     ),

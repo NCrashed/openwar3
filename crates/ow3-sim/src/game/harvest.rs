@@ -77,6 +77,8 @@ pub struct Harvest {
 pub struct Mine {
     inside: Option<(u32, u64)>,
     waiting: Vec<u32>,
+    /// Workers that start to wait at their next update, with its tick.
+    starting: Vec<(u32, u64)>,
 }
 
 /// The numbers of the harvest ability of a worker's type: gold per trip,
@@ -469,6 +471,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         }
     }
     forget_others(&mut state.borrow_mut());
+    start_waiting(&mut state.borrow_mut());
     leave_mines(vm, state);
     hit_trees(vm, state);
 }
@@ -517,8 +520,54 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         state.objects_change_in(tick + 2 * UPDATE);
     } else if !entry.waiting.contains(&h) {
         entry.waiting.push(h);
+        // It starts to wait at its next update (SPEC-0029).
+        entry.starting.push((h, tick + UPDATE));
         state.objects_change_in(tick + UPDATE);
         state.objects_change_in(tick + 2 * UPDATE);
+    }
+}
+
+/// A worker that starts to wait at a busy mine holds its cells for every
+/// unit: the units on them are put at the nearest free place by the
+/// search of a worker coming out of a mine (SPEC-0029).
+fn push_aside(state: &mut State, h: u32) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cells_of = |state: &State, o: u32| -> Vec<(i32, i32)> {
+        let Some(u) = state.unit(Some(o)) else {
+            return Vec::new();
+        };
+        let class = state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(0, |t| crate::path::size_class(t.collision));
+        let r = relative([u.x, u.y], min);
+        crate::path::occupied_cells([mul(r[0], CELL), mul(r[1], CELL)], class)
+    };
+    let mine = cells_of(state, h);
+    let on: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&o| o != h)
+        .filter(|&o| {
+            state.unit(Some(o)).is_some_and(|u| {
+                u.alive
+                    && !u.hidden
+                    && !state.data.units.get(&u.type_id).is_some_and(|t| t.building)
+            })
+        })
+        .filter(|&o| cells_of(state, o).iter().any(|c| mine.contains(c)))
+        .collect();
+    for o in on {
+        if let Some(at) = exit_place(state, o)
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&o)
+        {
+            [u.x, u.y] = at;
+            if let Some(m) = u.movement.as_mut() {
+                m.origin = relative(at, min);
+            }
+        }
     }
 }
 
@@ -770,4 +819,22 @@ pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
 /// What worker `h` carries, for the interface.
 pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
     get(state, h).and_then(|g| g.carry)
+}
+
+/// The workers that start to wait at a busy mine in this tick push aside
+/// the units on their cells.
+fn start_waiting(state: &mut State) {
+    let tick = state.ticks;
+    let mut due = Vec::new();
+    for mine in state.mines.values_mut() {
+        mine.starting.retain(|&(w, t)| {
+            if t == tick {
+                due.push(w);
+            }
+            t > tick
+        });
+    }
+    for w in due {
+        push_aside(state, w);
+    }
 }

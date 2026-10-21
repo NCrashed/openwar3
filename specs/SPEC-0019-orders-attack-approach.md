@@ -619,19 +619,28 @@ An idle unit with a weapon attacks an enemy unit on its own:
   checks) the unit takes the target as its goal and gets a new cluster
   (SPEC-0021, "Searches of many units in the same tick"). At its first
   update after that it searches its path and starts to act (turn,
-  walk): 60 of 60 footmen. The search goes to the target's position as
-  it is at the moment of the search, which is the target's position at
-  its own last update (SPEC-0018): a target whose update comes later in
-  the same tick is still at its previous update position. In `c-RXD-1`
-  the delays of creeps 7, 8, 6 and 9 were 0.1221, 0.0626, 0.2499 and
-  0.0406 s from 7.779825, so they ended at 7.901925, 7.842425, 8.029725
-  and 7.820425, in ticks 1581, 1569, 1607 and 1565; the creeps searched
-  at their updates of ticks 1585, 1573, 1609 and 1567 (before the
-  update of their target, peasant 5, in that tick) towards x =
-  -376.586, -387.984, -351.890 and -391.784, read in the game. In
-  `c-RXR-1` grunt 11's delay ended in tick 591; at 595 it was the first
-  unit handled and searched towards footman 3's position of its update
-  589, (-62.816, 40.032), not its position of tick 591.
+  walk): 60 of 60 footmen. The goal taken at the end of the delay is
+  the target's position at the start of that tick: its last committed
+  position (SPEC-0018, the commit at its own last update) moved on by
+  its velocity for the time since, `x + vx * (Q(k) - Q(c))` with `Q(c)`
+  the start of the tick of that commit; for a standing target this is
+  its position. At the unit's first update the cluster's countdown is
+  at its renewal, and the rule of "A new goal and the existing path"
+  applies with the target's position at the start of that tick (the
+  goal is replaced only if it lies in another 64 square). In `c-RXR-1`
+  grunt 15's delay ended in tick 622 (q 3.1087813): its goal was
+  footman 4's commit of tick 619 moved on to Q(622), cells (383.55365,
+  387.46287); at its first update (625) footman 4 was still in the
+  same 64 square and the search went to that goal. Grunt 11's delay
+  ended in tick 591; at its first update (595) footman 3 had moved
+  into the next 64 square (x 381.868 at the start of 591, 382.037 at
+  the start of 595, in cells), so it searched towards (-62.83, 40.04),
+  footman 3's position at the start of 595. In `c-RXD-1` the delays of
+  creeps 7, 8, 6 and 9 were 0.1221, 0.0626, 0.2499 and 0.0406 s from
+  7.779825, so they ended at 7.901925, 7.842425, 8.029725 and
+  7.820425, in ticks 1581, 1569, 1607 and 1565; the creeps searched at
+  their updates of ticks 1585, 1573, 1609 and 1567 towards x =
+  -376.586, -387.984, -351.890 and -391.784, read in the game.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
 - **Checks while attacking.** The checks go on while the unit attacks

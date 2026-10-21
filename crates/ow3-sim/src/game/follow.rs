@@ -94,6 +94,16 @@ pub struct Follow {
     /// within its order's reach at the next arrival test (SPEC-0025,
     /// "Blocked units").
     touching: bool,
+    /// The cluster's list (the 5000 search, in blocks, from the start) and
+    /// the index of its current waypoint W; the unit's own list goes to W
+    /// (SPEC-0020, "Two searches"; SPEC-0025).
+    cluster: Vec<[u32; 2]>,
+    w: usize,
+    /// W in cells when it is not the order point.
+    stop_at: Option<[u32; 2]>,
+    /// The unit arrived at W: at its next update W moves on and it
+    /// searches its own list to the new W.
+    advance: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,6 +209,7 @@ impl Follow {
     /// Step 1: the first waypoint from the current one at which the legs
     /// add up to 10 blocks, else the order point.
     fn take_segment(&mut self, order: [u32; 2]) {
+        let order = self.stop_at.unwrap_or(order);
         let (index, goal) = next_segment(&self.waypoints, self.current);
         if let Some(j) = index {
             self.current = j;
@@ -437,6 +448,43 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         .and_then(|b| state.unit(Some(b)))
         .and_then(|b| b.footprint.as_ref())
         .map(|f| (f.red().to_vec(), f.green().to_vec()));
+    // After an arrival at W: W moves on along the cluster's list and the
+    // unit searches its own list to it (SPEC-0025).
+    if let (Some(grid), Some(f)) = (state.grid.as_mut(), state.paths.get_mut(&walker.handle))
+        && f.advance
+    {
+        let (j, w) = next_segment(&f.cluster, f.w);
+        if let Some(j) = j {
+            f.w = j;
+        }
+        f.stop_at = w;
+        let place = w.unwrap_or(order_cells);
+        // The building walked to does not block it (SPEC-0029).
+        if let Some((red, green)) = &footprint {
+            grid.stamp(red, green, false);
+        }
+        let found = member_search(
+            grid,
+            at,
+            place,
+            order_cells,
+            walker.class,
+            walker.tree.is_some(),
+        );
+        if let Some((red, green)) = &footprint {
+            grid.stamp(red, green, true);
+        }
+        let (waypoints, reached) =
+            found.map_or_else(|| (Vec::new(), false), |f| (f.points, f.reached));
+        f.waypoints = waypoints;
+        f.reached = reached;
+        f.current = 0;
+        f.local.clear();
+        f.next = Next::Search;
+        f.touching = false;
+        f.advance = false;
+        f.take_segment(order_cells);
+    }
     let fresh = !state.paths.contains_key(&walker.handle);
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
@@ -451,9 +499,29 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     // path comes from the second (SPEC-0020, "Two searches, and a
     // target's footprint"). For a tree the blocks around it are free.
     let class = walker.class;
+    // A unit alone keeps its cluster's list and walks its own list to the
+    // cluster's current waypoint (c-RXD-1: creep 7 at 4561).
+    let alone = walker.chase.is_none() && walker.place.is_none() && walker.cluster <= 1;
+    let mut plan: (Vec<[u32; 2]>, usize, Option<[u32; 2]>) = (Vec::new(), 0, None);
     let high = fresh.then(|| {
         let grid = state.grid.as_mut().unwrap();
-        let (cost, found) = if walker.tree.is_some() {
+        let (cost, found) = if alone {
+            let tree = walker.tree.is_some();
+            let (cost, cluster) = if tree {
+                path::high_level_to_target(grid, at, order_cells, class)
+            } else {
+                (
+                    path::high_level_cost(grid, at, order_cells, class),
+                    path::high_level_cluster(grid, at, order_cells, class),
+                )
+            };
+            let list = cluster.map(|f| f.points).unwrap_or_default();
+            let (j, w) = next_segment(&list, 0);
+            let place = w.unwrap_or(order_cells);
+            let found = member_search(grid, at, place, order_cells, class, tree);
+            plan = (list, j.unwrap_or(0), w);
+            (cost, found)
+        } else if walker.tree.is_some() {
             path::high_level_to_target(grid, at, order_cells, class)
         } else {
             (
@@ -491,6 +559,10 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             patience: 0,
             touching: false,
             order: order_cells,
+            cluster: plan.0,
+            w: plan.1,
+            stop_at: plan.2,
+            advance: false,
         };
         follow.take_segment(order_cells);
         follow
@@ -518,7 +590,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
     // An arrived unit searches a new path at its next update.
-    if decided != Steer::Hold {
+    if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);
     }
     if let Some(trace) = &mut state.path_trace {
@@ -578,10 +650,11 @@ fn decide(
     // The place is the target itself for a visible unit target (a gold
     // mine), else the current waypoint (SPEC-0019).
     if let Some((reach, direction, at_order)) = walker.arrive {
-        let place = if at_order {
-            walker.order
-        } else {
-            to_world(follow.goal)
+        // The place: W of the cluster's list, or the order point.
+        let place = match follow.stop_at {
+            Some(w) if !at_order => to_world(w),
+            _ if at_order => walker.order,
+            _ => to_world(follow.goal),
         };
         let (dx, dy) = (sub(place[0], walker.here[0]), sub(place[1], walker.here[1]));
         let off = super::facing::angle_difference(super::movement::angle(dx, dy), direction);
@@ -593,8 +666,12 @@ fn decide(
                 return Steer::Stand(place);
             }
             // At its target: there; else a new search at the next update.
-            if in_reach && follow.final_goal {
+            if in_reach && follow.final_goal && follow.stop_at.is_none() {
                 return Steer::Arrived;
+            }
+            if follow.stop_at.is_some() {
+                follow.advance = true;
+                follow.local.clear();
             }
             return Steer::Hold;
         }
@@ -690,6 +767,13 @@ fn decide(
             // or delivers only touching it (SPEC-0029).
             if last == 0 && follow.final_goal && walker.building.is_none() {
                 if follow.stuck {
+                    // Short of W the unit goes on with the next one.
+                    if follow.stop_at.is_some() {
+                        follow.advance = true;
+                        follow.stuck = false;
+                        follow.local.clear();
+                        return Steer::Hold;
+                    }
                     return Steer::Arrived;
                 }
                 follow.stuck = true;
@@ -700,6 +784,12 @@ fn decide(
             return Steer::Stand(segment_goal);
         }
         if follow.final_goal {
+            // The end of its own list at W: it arrived there.
+            if follow.stop_at.is_some() {
+                follow.advance = true;
+                follow.local.clear();
+                return Steer::Hold;
+            }
             // A member at the end of its path to an old place, its place
             // now elsewhere, counts as blocked (SPEC-0025, "Blocked units";
             // c-RTW-3: 900 at 5545).
@@ -855,6 +945,23 @@ fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
             .iter()
             .any(|&(a, b)| (a - x).abs() <= 1 && (b - y).abs() <= 1)
     })
+}
+
+/// The unit's own high-level search (limit 400) from `at` to `place`
+/// (cells), for a walk to a tree with the blocks round the tree free.
+fn member_search(
+    grid: &mut Grid,
+    at: [u32; 2],
+    place: [u32; 2],
+    order: [u32; 2],
+    class: u8,
+    tree: bool,
+) -> Option<path::Found> {
+    if tree {
+        grid.with_free_around(order, |g| path::high_level(g, at, place, class))
+    } else {
+        path::high_level(grid, at, place, class)
+    }
 }
 
 /// One more block of a unit's path in a row: the patience counter

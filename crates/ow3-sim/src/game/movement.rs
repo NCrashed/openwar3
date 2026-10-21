@@ -1357,6 +1357,11 @@ pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
     let done = order(state, h, Order::Point, ORDER_MOVE, home);
     if done {
         set_attack_move(state, h, None);
+        // A switch found in its last backswing is dropped (c-RXD-1: creep
+        // 7 went home in 4557 and took no target at 4577).
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.pending_switch = None;
+        }
     }
     done
 }
@@ -3134,6 +3139,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             u.acquire_seq = starts;
         }
         if u.paused {
+            continue;
+        }
+        // A creep walking home takes no target (SPEC-0030; c-RXD-1: creep
+        // 7 at 4577).
+        if u.creep.returning {
             continue;
         }
         // A unit on attack-move whose target died acquires at the check

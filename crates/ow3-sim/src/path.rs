@@ -1092,6 +1092,12 @@ pub fn high_level_cost(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> u32 
     high_level_limited(grid, s, g, class, 5000).map_or(0, |f| f.iterations)
 }
 
+/// The cluster search of a path, with the limit 5000 (SPEC-0020, "Two
+/// searches"): its list gives the unit's own searches their goals.
+pub fn high_level_cluster(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> Option<Found> {
+    high_level_limited(grid, s, g, class, 5000)
+}
+
 /// The high-level search with iteration limit `limit`.
 fn high_level_limited(
     grid: &Grid,

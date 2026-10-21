@@ -41,6 +41,10 @@ pub struct Attacking {
     /// first update from this tick on: the cooldown less the damage point
     /// after the last hit (SPEC-0019, "After the swing").
     pub(super) renew_at: Option<u64>,
+    /// The expiry of the damage-point timer of a swing started at an
+    /// update: its queue time plus `dmgpt1` (SPEC-0016). The hit comes in
+    /// the tick that holds it.
+    hit_at: Option<u32>,
 }
 
 impl Attacking {
@@ -76,19 +80,23 @@ pub(super) fn standing(state: &State, target: u32) -> bool {
 /// Unit `h` starts hitting `target` at tick `tick`: the first hit comes its
 /// weapon's damage point later (SPEC-0019).
 pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id: i32) {
-    let damage_point = match state.objects.get(&h) {
+    let point = match state.objects.get(&h) {
         Some(Object::Unit(u)) => {
-            weapon_for(state, u.type_id, Some(target)).map_or(1, |w| ticks(w.damage_point))
+            weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.damage_point)
         }
         _ => return,
     };
+    let damage_point = ticks(point);
+    let hit_at = add(state.timers.time(), point);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        let ready = tick + damage_point < u.weapon_ready;
         u.attack = Some(Attacking {
             target,
             next: (tick + damage_point).max(u.weapon_ready),
             order_id,
             resume: None,
             renew_at: None,
+            hit_at: (!ready).then_some(hit_at),
         });
     }
     if !state.attacking.contains(&h) {
@@ -182,7 +190,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 _ => (0, None),
             };
             match attack {
-                Some(a) if a.next <= tick && standing(s, a.target) => {
+                Some(a) if due(s, &a) && standing(s, a.target) => {
                     let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
                     let primary = hero_primary(s, h);
                     let cooldown = hero_cooldown(s, h, weapon.cooldown);
@@ -205,6 +213,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                             next,
                             resume,
                             renew_at,
+                            hit_at: a.hit_at.map(|e| add(e, cooldown)),
                             ..a
                         });
                         u.weapon_ready = next;
@@ -228,7 +237,7 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         Some((a.target, amount, weapon.attack_type, weapon.area, bash))
                     }
                 }
-                Some(a) if a.next <= tick => {
+                Some(a) if due(s, &a) => {
                     // The target is gone.
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         u.attack = None;
@@ -843,5 +852,15 @@ pub(super) fn spell_hit(
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
         let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
         super::cast::stun(&mut s, target, if hero { stun.1 } else { stun.0 });
+    }
+}
+
+/// Whether the hit of attack `a` is due in this tick: by the expiry of
+/// its damage-point timer against the queue's time at the end of the tick,
+/// else by its tick.
+fn due(state: &State, a: &Attacking) -> bool {
+    match a.hit_at {
+        Some(at) => f32::from_bits(at) <= f32::from_bits(state.timers.time()),
+        None => a.next <= state.ticks,
     }
 }

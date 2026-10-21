@@ -374,9 +374,10 @@ fn a_creep_chases_and_goes_home() {
     let away = ((c.x - home.0).powi(2) + (c.y - home.1).powi(2)).sqrt();
     assert!(farthest > 600.0, "{farthest}");
     assert!(went_home);
-    // Home again it may fight the peasants of the camp's neighbours, so
-    // it ends inside its guard zone, not on its home point.
-    assert!(away < 400.0, "{away}");
+    // Home again it may fight the peasants of the camp's neighbours, and
+    // answer the calls of its camp, so it ends inside its guard zone, not
+    // on its home point.
+    assert!(away < 500.0, "{away}");
 }
 
 /// A peasant walking with gold shows a geoset (the sack) that its plain

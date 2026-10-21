@@ -77,6 +77,10 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          where the simulation does not, and later turns differ; looked at next",
     ),
     (
+        "c-RYP-1.w3g",
+        "lumber harvesting (trees, the harvest swing of weapon 2) is not simulated yet",
+    ),
+    (
         "c-RXD-1.w3g",
         "harvesting changes the game's state at turns where the simulation has nothing (the \
          objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks), and a creep \

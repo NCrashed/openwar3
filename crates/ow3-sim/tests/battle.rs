@@ -73,8 +73,10 @@ fn battle_report() {
         for (i, u) in playback.game.units().iter().enumerate() {
             at.entry(i).or_default().insert(tick, [u.x, u.y]);
             let before = *life.entry(i).or_insert(u.life);
+            // The log's tick is the count of the script's 0.005 s timer,
+            // which in the tick of a hit fires after the hit's timer.
             if u.life < before - 0.001 {
-                damage.push((tick, i, before - u.life));
+                damage.push((tick - 1, i, before - u.life));
             }
             life.insert(i, u.life);
         }
@@ -177,6 +179,18 @@ fn battle_path_events() {
             )
         })
         .collect();
+    // The game's file gives -1 for units it had not matched yet: they are
+    // ours that update in the same tick at the same place.
+    for e in game.iter_mut().filter(|e| e.2 == -1 && e.1 == "update") {
+        if let Some(o) = ours.iter().find(|o| {
+            o.0 == e.0
+                && o.1 == e.1
+                && (o.4[0] - e.4[0]).abs() < 0.04
+                && (o.4[1] - e.4[1]).abs() < 0.04
+        }) {
+            e.2 = o.2;
+        }
+    }
     game.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
     ours.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
     let same = |a: &Event, b: &Event| {
@@ -194,6 +208,6 @@ fn battle_path_events() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game[i].0);
-    // PROVISIONAL: the game's up to tick 703 (looked at next).
-    assert!(tick >= 703, "first difference at tick {tick}");
+    // PROVISIONAL: the game's up to tick 793 (looked at next).
+    assert!(tick >= 793, "first difference at tick {tick}");
 }

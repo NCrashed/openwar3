@@ -434,6 +434,21 @@ impl Moving {
     }
 }
 
+/// Where unit `h` is at the start of this tick: its last commit moved on by
+/// its velocity to the movement clock (SPEC-0019, the goal of a chase).
+fn tick_start_position(state: &State, h: u32) -> Option<[u32; 2]> {
+    match state.objects.get(&h)? {
+        Object::Unit(u) => {
+            let min = [state.world_bounds[0], state.world_bounds[1]];
+            Some(
+                u.movement
+                    .map_or([u.x, u.y], |m| absolute(m.position(state.move_clock), min)),
+            )
+        }
+        _ => position_of(state, h),
+    }
+}
+
 /// Where a widget stands.
 pub(super) fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
     match state.objects.get(&widget)? {
@@ -1584,6 +1599,10 @@ fn freeze(state: &mut State, h: u32) {
         m.commit(clock);
         m.velocity = [0, 0];
         m.walking = false;
+        let record = (state.ticks, h, m.origin, m.velocity, m.heading);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push(record);
+        }
     }
 }
 
@@ -2069,7 +2088,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let old_goal = m.target;
             let mut full_reach = reach;
             if let Order::Attack { target } = m.order {
-                match position_of(state, target) {
+                // The target where it is at the start of this tick (SPEC-0019).
+                match tick_start_position(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
                         let renew_now = m.renew_at.is_some_and(|r| tick >= r);
                         match m.chase {
@@ -2087,12 +2107,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // The first search after the reaction delay;
                             // the renewal counts from here.
                             _ if std::mem::take(&mut m.goal_taken) => {
-                                // An idle unit's goal is where the target is
-                                // when the search is made; an attack-move keeps
-                                // the one of the end of its reaction delay
-                                // (SPEC-0019).
-                                // PROVISIONAL: one case of each in c-RXR-1.
-                                if m.order_id == 0 {
+                                // At the first update, a renewal: the 64 grid rule
+                                // (c-RXR-1: grunt 11 renewed at 595, grunt 15 kept
+                                // its goal at 625).
+                                if grid64(relative(at, min)) != grid64(relative(m.target, min)) {
                                     m.target = at;
                                 }
                                 m.chase = Some(countdown(here, relative(m.target, min)));
@@ -2648,9 +2666,9 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
             },
             _ => continue,
         };
-        // The goal is where the target stands now.
+        // The goal is where the target is at the start of this tick (SPEC-0019).
         if timed
-            && let Some(at) = position_of(state, target)
+            && let Some(at) = tick_start_position(state, target)
             && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
         {
@@ -3056,6 +3074,9 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             Check::AttackMove { expiry } => (ORDER_ATTACK, Some(expiry)),
             Check::Attacking { .. } => continue,
         };
+        // A walking unit stops for its reaction delay (c-RXR-1: footman 2
+        // in 2581).
+        freeze(state, h);
         if order(state, h, Order::Attack { target }, order_id, at) {
             let delay = mul(
                 state.game_random[REACTION].fraction(),

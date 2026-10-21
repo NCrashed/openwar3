@@ -3703,7 +3703,7 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
             );
             react(state, h, tick, delay, tick);
             // A creep that answers enters the fight (SPEC-0030).
-            super::creeps::enter_fight(state, h);
+            super::creeps::enter_fight(state, h, state.move_clock);
         }
     }
 }

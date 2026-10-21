@@ -25,9 +25,8 @@ use super::{Object, State};
 /// `Player(12)`, the neutral hostile player.
 pub const CREEPS: i32 = 12;
 
-/// Ticks between two guard checks (2.0 s) and of the return timer
-/// (`GuardReturnTime`, 5.0 s, as ticks of 0.005 s).
-const CHECK_TICKS: u64 = 400;
+/// The period of the guard checks (2.0 s).
+const CHECK_PERIOD: u32 = 0x4000_0000;
 /// The radius in which a hit wakes sleeping creeps (831.5 woke, 833 did
 /// not; SPEC-0030).
 const WAKE_RADIUS: f32 = 832.0;
@@ -35,10 +34,10 @@ const WAKE_RADIUS: f32 = 832.0;
 /// What a creep keeps beyond other units.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Creep {
-    /// The tick its guard checks count from, while they go on.
-    checks_from: Option<u64>,
-    /// The tick its return timer ends.
-    return_at: Option<u64>,
+    /// The queue time of its next guard check, while they go on.
+    checks_next: Option<u32>,
+    /// The queue time its return timer expires.
+    return_time: Option<u32>,
     /// It walks home and does not fight.
     pub(super) returning: bool,
     /// It sleeps.
@@ -97,17 +96,16 @@ pub(super) fn night_changed(state: &mut State) {
     }
 }
 
-/// Creep `h` enters a fight: its guard checks start, the first in this
-/// tick, unless they go on already or it is on its way home.
-pub(super) fn enter_fight(state: &mut State, h: u32) {
-    let tick = state.ticks;
+/// Creep `h` enters a fight at queue time `at`: its guard checks start,
+/// the first at `at`, unless they go on already or it is on its way home.
+pub(super) fn enter_fight(state: &mut State, h: u32, at: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.owner == CREEPS
         && !u.creep.returning
-        && u.creep.checks_from.is_none()
-        && u.creep.return_at.is_none()
+        && u.creep.checks_next.is_none()
+        && u.creep.return_time.is_none()
     {
-        u.creep.checks_from = Some(tick);
+        u.creep.checks_next = Some(at);
     }
 }
 
@@ -145,7 +143,7 @@ pub(super) fn wake_on_hit(state: &mut State, victim: u32, attacker: u32) {
     }
     for h in others {
         movement::join_fight(state, h, attacker, None);
-        enter_fight(state, h);
+        enter_fight(state, h, state.move_clock);
     }
 }
 
@@ -194,7 +192,9 @@ pub(super) fn call_for_help(
     if !is_creep(state, caller) {
         return Vec::new();
     }
-    enter_fight(state, caller);
+    // The caller's check, or this tick.
+    let at = from.unwrap_or(state.move_clock);
+    enter_fight(state, caller, at);
     let mut came = Vec::new();
     let mut callers = std::collections::VecDeque::from([caller]);
     while let Some(c) = callers.pop_front() {
@@ -204,7 +204,7 @@ pub(super) fn call_for_help(
             .collect();
         for h in movement::call_order(state, near) {
             if movement::join_fight(state, h, target, from) {
-                enter_fight(state, h);
+                enter_fight(state, h, at);
                 came.push(h);
                 callers.push_back(h);
             }
@@ -215,10 +215,10 @@ pub(super) fn call_for_help(
 
 /// The creeps of this tick: guard checks, return timers, creeps home.
 pub(super) fn tick(state: &mut State) {
-    let tick = state.ticks;
     let guard = f32::from_bits(state.combat.guard_distance);
-    let return_ticks =
-        (f64::from(f32::from_bits(state.combat.guard_return_time)) * 200.0).round() as u64;
+    // Timers of the queue: they fire in the tick whose interval holds
+    // their expiry (c-RXD-1: the return of tick 4558).
+    let end = f32::from_bits(add(state.move_clock, crate::timers::TICK));
     let units = state.units.clone();
     for h in units {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
@@ -235,13 +235,13 @@ pub(super) fn tick(state: &mut State) {
             }
             continue;
         }
-        if creep.return_at == Some(tick) {
+        if creep.return_time.is_some_and(|t| f32::from_bits(t) <= end) {
             go_home(state, h);
             continue;
         }
         // A guard check: outside the zone, the return timer starts.
-        if let Some(from) = creep.checks_from
-            && (tick - from) % CHECK_TICKS == 0
+        if let Some(e) = creep.checks_next
+            && f32::from_bits(e) <= end
         {
             let collision = state
                 .data
@@ -251,12 +251,15 @@ pub(super) fn tick(state: &mut State) {
             let zone = guard + collision;
             let (dx, dy) = (sub(u.x, u.home[0]), sub(u.y, u.home[1]));
             let away = f32::from_bits(add(mul(dx, dx), mul(dy, dy))) > zone * zone;
-            if away {
-                set(state, h, |c| {
-                    c.checks_from = None;
-                    c.return_at = Some(tick + return_ticks);
-                });
-            }
+            let back = state.combat.guard_return_time;
+            set(state, h, |c| {
+                if away {
+                    c.checks_next = None;
+                    c.return_time = Some(add(e, back));
+                } else {
+                    c.checks_next = Some(add(e, CHECK_PERIOD));
+                }
+            });
         }
     }
 }
@@ -274,7 +277,7 @@ fn go_home(state: &mut State, h: u32) {
     };
     let walks = movement::move_home(state, h, home);
     set(state, h, |c| {
-        c.return_at = None;
+        c.return_time = None;
         c.returning = walks;
     });
 }

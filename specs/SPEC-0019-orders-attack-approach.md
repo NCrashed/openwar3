@@ -404,14 +404,18 @@ time to time:
   the direction of the step it is about to make (its facing if it does
   not move; the difference wrapped to `-pi .. pi`). The reach is the
   order reach (the order's range in cells, range / 32, but at least
-  0.49) only while the cluster's stall count (SPEC-0025, "Following the
-  cluster's path") is 0; otherwise it is 0.49. Since the stall count
-  goes up at every update at the cluster's last waypoint (it is 1 from
-  the first update there), the order reach counts only at the waypoints
-  before the last one, where the count stays 0 for a cluster of one; at
-  the last waypoint every unit must come within 0.49 of its place. A
-  unit with a flag not seen set counts as within reach always. An arrived
-  unit gets speed 0 at that update, keeps its heading, and its path is
+  0.49) only while the cluster's target count below is 0; otherwise it
+  is 0.49.
+  The target count: at each cluster update whose order has a unit as
+  its target, a test of the target against the walking unit's player
+  is made (read in part; it behaves as "the target is not visible to
+  that player", which is presumably what it is). While the test passes
+  the count goes up by one per update and the cluster walks on the
+  waypoints of its own path; when it fails (or the target is not a
+  unit: a tree, a point) the count is 0 and the cluster goes to the
+  target itself as usual. A unit with a flag not seen set counts as
+  within reach always. An arrived unit gets speed 0 at that update,
+  keeps its heading, and its path is
   dropped; at its next update it searches again, high level and local,
   from its position to its target. Replay `c-RYP-1`, peasant 4 on its
   way to a tree, read in the game: order reach 4.125 cells (132, which
@@ -420,15 +424,23 @@ time to time:
   (353.5, 375.5) cells (the segment goal of the cluster path). At 841
   it was 4.1681 from the place (angle 0.1712): walked on; at 847 3.9928
   (angle 0.1787): stood, and at 853 it searched to the tree's point
-  (360, 380); the cluster's stall count was 0 at all its updates. In
-  replay `c-RXD-1` the six workers walking to the mine at the start
-  have the order reach 2.0625 cells (66) set by their harvest order,
-  but their clusters are at their last (only) waypoint, stall count 1,
-  2, 3, ... from the first update, and the test used 0.49 at every
-  update read (clock 4.56 to 4.74, around tick 937). The earlier
-  reading of a reach of about 66 to the current path point (`c-RXD-1`
-  worker 5 at 3583) was a misreading of this test and should be
-  checked again with this rule.
+  (360, 380); its target is a tree, so the count was 0 all along. In
+  replay `c-RXD-1` worker 0's harvest order sets an order reach of
+  2.0625 cells (66). At its first update its cluster path (goal first,
+  in units of 2 cells) was (224, 192) = the mine, (216.75, 192.75),
+  (208.75, 189.75), (200.75, 189.75), (192.75, 189.75), (184.75,
+  189.75), (176.75, 189.75), (168.75, 189.75), start (165.438, 189.0),
+  and its place was (353.5, 379.5) cells, the waypoint (176.75,
+  189.75). The count was 1, 2, 3, ... from the first update to the
+  update at clock 16.7982 (count 510), and the test used 0.49 at every
+  update read; at clock 16.8282 the count was 0 and the cluster's goal
+  the mine's point (448, 384) cells, the worker then 27.4 cells (876)
+  from it. On its walk back to the town hall the count was 0 and the
+  order reach 6.0 cells (192). In the first walks of the six workers
+  (clock 4.56 to 4.74, around tick 937) the reach used was 0.49
+  throughout. The earlier reading of a reach of about 66 to the
+  current path point (`c-RXD-1` worker 5 at 3583) was a misreading of
+  this test and should be checked again with this rule.
 - **A new goal and the existing path.** At a renewal the target's
   position becomes the new goal only if it lies in another cell of the
   64 grid of the high-level search (cells of 64 x 64 counted from the

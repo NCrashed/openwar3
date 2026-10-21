@@ -2921,7 +2921,7 @@ impl Targets {
             .get(&t.type_id)
             .map_or(0.0, |d| real_of(d.collision));
         let mine = rate(current, real_of(t.x), real_of(t.y), collision);
-        let mut best = (current, mine);
+        let mut best = (current, mine, threat(state, h, current));
         for &(ox, oy, collision, other_owner, _, other) in &self.list {
             if other == current || !enemies(state, owner, other_owner) {
                 continue;
@@ -2933,16 +2933,17 @@ impl Targets {
                 continue;
             }
             let (in_range, distance) = rate(other, ox, oy, collision);
+            let rank = threat(state, h, other);
             let (best_in, best_distance) = best.1;
             let better = if in_range != best_in {
                 in_range
             } else if in_range && best.0 == current {
                 false
             } else {
-                distance < best_distance
+                (rank, distance) < (best.2, best_distance)
             };
             if better {
-                best = (other, (in_range, distance));
+                best = (other, (in_range, distance), rank);
             }
         }
         (best.0 != current).then_some(best.0)
@@ -2962,8 +2963,8 @@ impl Targets {
         let from = self
             .list
             .partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
-        // (structure, squared distance, y, x, handle).
-        let mut best: Option<(bool, f32, f32, f32, u32)> = None;
+        // (structure, threat, squared distance, y, x, handle).
+        let mut best: Option<(bool, u8, f32, f32, f32, u32)> = None;
         for &(ox, oy, collision, other_owner, structure, other) in &self.list[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
@@ -2976,14 +2977,45 @@ impl Targets {
                 continue;
             }
             let distance = dx * dx + dy * dy;
-            let key = (structure, distance, oy, ox, other);
-            if distance <= limit * limit
-                && best.is_none_or(|b| (key.0, key.1, key.2, key.3) < (b.0, b.1, b.2, b.3))
+            if distance > limit * limit {
+                continue;
+            }
+            let key = (structure, threat(state, h, other), distance, oy, ox, other);
+            if best.is_none_or(|b| (key.0, key.1, key.2, key.3, key.4) < (b.0, b.1, b.2, b.3, b.4))
             {
                 best = Some(key);
             }
         }
-        best.map(|b| b.4)
+        best.map(|b| b.5)
+    }
+}
+
+/// What enemy `other` does as unit `h` rates it (SPEC-0019, "Choice of
+/// target"): 0 when it attacks `h`, 1 when it attacks another unit of
+/// `h`'s player or an ally, 2 when it attacks nobody (an attack-move
+/// without a target counts as nobody).
+fn threat(state: &State, h: u32, other: u32) -> u8 {
+    let Some(o) = state.unit(Some(other)) else {
+        return 2;
+    };
+    let target = o
+        .attack
+        .map(|a| a.target)
+        .or(match o.movement.map(|m| m.order) {
+            Some(Order::Attack { target }) => Some(target),
+            _ => None,
+        });
+    let Some(target) = target else {
+        return 2;
+    };
+    if target == h {
+        return 0;
+    }
+    let mine = state.unit(Some(h)).map(|u| u.owner);
+    let theirs = state.unit(Some(target)).map(|t| t.owner);
+    match (mine, theirs) {
+        (Some(a), Some(b)) if a == b || state.setup.is_ally(a, b) => 1,
+        _ => 2,
     }
 }
 

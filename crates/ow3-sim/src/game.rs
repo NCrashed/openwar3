@@ -769,6 +769,10 @@ pub struct State {
     /// tick, the queue time of the hit (its damage point timer's expiry),
     /// the queue time at the end of the tick and the target.
     pub hit_trace: Option<Vec<(u64, u32, u32, u32)>>,
+    /// The motion state of each unit after its updates, when a test asks
+    /// for it: tick, unit, committed position and velocity (world units
+    /// relative to the corner), stored heading.
+    pub agent_trace: Option<Vec<(u64, u32, [u32; 2], [u32; 2], u32)>>,
     /// Groups ordered together whose formation is laid out at their first
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
@@ -890,6 +894,7 @@ impl State {
             paths: std::collections::BTreeMap::new(),
             path_trace: None,
             hit_trace: None,
+            agent_trace: None,
             clusters: Vec::new(),
             orders_given: 0,
             group_orders: BTreeSet::new(),

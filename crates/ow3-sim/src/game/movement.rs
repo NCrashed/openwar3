@@ -2484,6 +2484,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
         }
         state.updated.insert(h);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push((tick, h, m.origin, m.velocity, m.heading));
+        }
         if let Some(target) = begin_attack {
             super::attack::begin(state, h, target, tick, m.order_id);
         }

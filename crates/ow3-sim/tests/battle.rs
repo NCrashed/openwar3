@@ -262,3 +262,66 @@ fn battle_path_events() {
     // PROVISIONAL: the game's up to tick 4969 (looked at next).
     assert!(tick >= 4969, "first difference at tick {tick}");
 }
+
+/// The motion of the units of `c-RXR-1` at their updates, bit for bit
+/// against the game's `c-RXR-1.agents.tsv` (position and velocity in
+/// cells, stored heading): per unit, the first update that differs.
+#[test]
+fn battle_agents_report() {
+    let Ok(text) = std::fs::read_to_string(game_data().join("replays/c-RXR-1.agents.tsv")) else {
+        return;
+    };
+    let hex = |s: &str| u32::from_str_radix(s, 16).ok();
+    // (tick, unit) -> (x, y, vx, vy, heading).
+    let mut game: BTreeMap<(u64, usize), [u32; 5]> = BTreeMap::new();
+    for l in text.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = l.split('\t').collect();
+        let (Some(tick), Some(unit)) = (w[0].parse().ok(), w[2].parse().ok()) else {
+            continue;
+        };
+        let v: Vec<u32> = w[3..8].iter().filter_map(|s| hex(s)).collect();
+        if v.len() == 5 {
+            game.insert((tick, unit), [v[0], v[1], v[2], v[3], v[4]]);
+        }
+    }
+    let path = game_data().join("replays/c-RXR-1.w3g");
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.game.state.borrow_mut().agent_trace = Some(Vec::new());
+    while playback.game.ticks() < 8160 && playback.step_tick() {}
+    let handles: Vec<u32> = playback.game.units().iter().map(|u| u.handle).collect();
+    let cells = |v: u32| (f32::from_bits(v) / 32.0).to_bits();
+    let ours: BTreeMap<(u64, usize), [u32; 5]> = playback
+        .game
+        .state
+        .borrow()
+        .agent_trace
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|&(t, h, p, v, heading)| {
+            let i = handles.iter().position(|&x| x == h)?;
+            Some((
+                (t, i),
+                [cells(p[0]), cells(p[1]), cells(v[0]), cells(v[1]), heading],
+            ))
+        })
+        .collect();
+    let mut first: BTreeMap<usize, u64> = BTreeMap::new();
+    for (&(t, u), g) in &game {
+        if first.contains_key(&u) {
+            continue;
+        }
+        // The commits at orders and stops are not traced here.
+        match ours.get(&(t, u)) {
+            Some(o) if o[..4] != g[..4] => {
+                eprintln!("unit {u} tick {t}: game {g:08x?} ours {o:08x?}");
+                first.insert(u, t);
+            }
+            _ => {}
+        }
+    }
+}

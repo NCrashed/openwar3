@@ -244,8 +244,9 @@ fn get(state: &State, h: u32) -> Option<Harvest> {
 /// Where worker `h` comes out of a mine (SPEC-0029, "Where a worker comes
 /// out"): `None` at its entry point when its footprint there is free,
 /// else the centre of the first free cell on the rings round the entry
-/// cell. Free cells are passable and not covered by a standing unit,
-/// waiting workers and the worker inside a mine included.
+/// cell. Free cells are passable and not covered by the cells of the
+/// units that count (`push`: a unit pushed aside by a worker that starts
+/// to wait), at their last commits.
 fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
     let grid = state.grid.as_ref()?;
     let u = state.unit(Some(h))?;
@@ -261,12 +262,6 @@ fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
         let r = relative(p, min);
         [mul(r[0], CELL), mul(r[1], CELL)]
     };
-    let inside = |o: u32| {
-        state
-            .mines
-            .values()
-            .any(|m| m.inside.is_some_and(|(w, _, _)| w == o))
-    };
     let mut taken = std::collections::BTreeSet::new();
     for &o in &state.units {
         let Some(Object::Unit(w)) = state.objects.get(&o) else {
@@ -280,13 +275,14 @@ fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
         let waits = waiting(state).any(|x| x == o);
         let cycling = w.harvest.is_some_and(|g| g.cycling) && !waits;
         let left_out = if push { moving } else { cycling };
-        if o == h || !w.alive || left_out || (w.hidden && !inside(o)) {
+        if o == h || !w.alive || left_out || w.hidden {
             continue;
         }
-        taken.extend(crate::path::occupied_cells(
-            cells([w.x, w.y]),
-            class_of(w.type_id),
-        ));
+        // Its cells at its last commit.
+        let at = w.movement.map_or([w.x, w.y], |m| {
+            [add(m.origin[0], min[0]), add(m.origin[1], min[1])]
+        });
+        taken.extend(crate::path::occupied_cells(cells(at), class_of(w.type_id)));
     }
     let class = class_of(u.type_id);
     let free = |(x, y): (i32, i32)| {

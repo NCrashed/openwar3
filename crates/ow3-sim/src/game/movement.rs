@@ -1863,6 +1863,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // A member of a group may be held or slowed (SPEC-0025); its own
         // limit stays.
         let limit = data.map_or(0, |t| t.speed);
+        // Endurance and unholy aura (SPEC-0038).
+        let limit = match state.unit(Some(h)) {
+            Some(u) if !u.buffs.is_empty() => mul(limit, super::auras::speed_factor(state, u)),
+            _ => limit,
+        };
         let cluster = control.get(&h).map_or(1, |c| c.size);
         // A member at its place short of the last waypoint waits there.
         let place_on_way = control.get(&h).is_some_and(|c| !c.last);

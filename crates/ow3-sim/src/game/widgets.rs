@@ -289,6 +289,7 @@ pub(super) fn create_unit(
         procced: None,
         stunned_until: None,
         slowed_until: None,
+        buffs: Vec::new(),
         weapon_ready: 0,
         orient_interp: data.orient_interp,
         life,
@@ -687,6 +688,8 @@ fn damage_unit(
         } else {
             data.armor
         };
+        // Devotion aura (SPEC-0038).
+        let armor = ow3_math::add(armor, super::auras::armor(&state, &unit));
         let damage = state
             .combat
             .damage(amount, armor, data.armor_type, attack_type, damage_type);

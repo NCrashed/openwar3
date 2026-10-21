@@ -49,6 +49,7 @@ pub use attack::MissileView;
 pub use boards::Button;
 pub use creeps::CREEPS;
 mod attack;
+mod auras;
 mod creeps;
 mod enumerate;
 mod facing;
@@ -214,6 +215,9 @@ pub struct Unit {
     /// factor of its attack speed (SPEC-0037).
     stunned_until: Option<u64>,
     slowed_until: Option<(u64, u32)>,
+    /// The aura buffs it has: the aura ability, its level and the tick of
+    /// the last check that found it in reach (SPEC-0038).
+    buffs: Vec<(i32, i32, u64)>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// `orientInterp` of the type.
@@ -1380,6 +1384,8 @@ impl<'a> Game<'a> {
         }
         self.state.borrow_mut().timers.end_tick(tick);
         movement::attack_moves(&mut self.state.borrow_mut());
+        // The checks of the auras (SPEC-0038).
+        auras::tick(&mut self.state.borrow_mut());
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);

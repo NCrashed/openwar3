@@ -155,6 +155,8 @@ pub struct Ability {
     pub levels: i32,
     pub req_level: i32,
     pub level_skip: i32,
+    /// The buff it gives (`BuffID`), SPEC-0038.
+    pub buff: i32,
     /// The numbers of each level, from level 1.
     pub per_level: Vec<AbilityLevel>,
     /// `Missilespeed` and `MissileHoming` of its entry in
@@ -792,6 +794,7 @@ impl ObjectData {
             "levels",
             "reqLevel",
             "levelSkip",
+            "BuffID",
         ]
         .map(String::from)
         .to_vec();
@@ -821,9 +824,10 @@ impl ObjectData {
                     levels: cost(values[7].as_ref()),
                     req_level: cost(values[8].as_ref()),
                     level_skip: cost(values[9].as_ref()),
+                    buff: code(values[10].as_ref()),
                     per_level: (0..4)
                         .map(|l| {
-                            let at = 10 + 10 * l;
+                            let at = 11 + 10 * l;
                             AbilityLevel {
                                 cooldown: real(values[at].as_ref()),
                                 cost: cost(values[at + 1].as_ref()),

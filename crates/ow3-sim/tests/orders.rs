@@ -1354,3 +1354,20 @@ fn thunder_clap() {
         assert!((damage - 60.0).abs() < 0.01, "{i}: {damage}");
     }
 }
+
+/// SPEC-0038, verification 2: a footman walking through a tauren
+/// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
+#[test]
+fn endurance_aura() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)\n    set t = CreateUnit(Player(0), 'Otch', -2600, -1800, 0)\n    call SelectHeroSkill(t, 'AOae')",
+        "call IssuePointOrder(a, \"move\", -1000, -2000)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, 700);
+    let step = |t: usize| path[t + 1].1[0].x - path[t].1[0].x;
+    let last = path.len() - 2;
+    assert!((step(last) - 1.485).abs() < 0.002, "{}", step(last));
+}

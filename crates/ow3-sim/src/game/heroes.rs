@@ -164,6 +164,10 @@ pub(super) fn skill_points(state: &State, u: &super::Unit) -> i32 {
 /// The level of `ability` of unit `u`: what a hero learned, else 1 for an
 /// ability of its type, else 0.
 pub(super) fn ability_level(state: &State, u: &super::Unit, ability: i32) -> i32 {
+    // The buff of an aura (SPEC-0038).
+    if super::auras::has_buff(state, u, ability) {
+        return 1;
+    }
     if let Some(&(_, level)) = u.skills.iter().find(|(a, _)| *a == ability) {
         return level;
     }

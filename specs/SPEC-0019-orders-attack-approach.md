@@ -692,6 +692,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
     end of its backswing, 13.0899944 (tick 2619), and its check at
     13.0999937 took grunt 11; riflemen 7, 9 and 8 acquired 2 ticks
     after their backswings ended (2631, 2655, 2703).
+  During such a backswing the unit's periodic check and calls for help
+  still choose targets (`EVENT_UNIT_ACQUIRED_TARGET` fires) without a
+  reaction delay, but its attack starts only from the check after the
+  backswing: rifleman 6, the killer of grunt 12, took grunt 10 at its
+  periodic check at 13.5099993 (tick 2703) and grunt 13 by a call for
+  help at 13.5299950 (2707), and after its backswing ended (13.5899954)
+  its 0.01 s check took 10 with a reaction delay of 0.146777.
 - **Cooldown expiry during a chase.** When the cooldown of the last
   swing expires while the unit chases a target it cannot hit yet, the
   approach is restarted: at its next update the unit searches again

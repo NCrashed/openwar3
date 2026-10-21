@@ -171,9 +171,9 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
                 u.alive
                     && u.owner == CREEPS
                     && !u.creep.sleeping
-                    && !u.creep.returning
                     && u.attack.is_none()
-                    && u.movement.is_none_or(|m| !m.ordered())
+                    // Creeps on their way home come too (c-RXD-1).
+                    && (u.creep.returning || u.movement.is_none_or(|m| !m.ordered()))
                     && dx * dx + dy * dy <= reach * reach
             }
             _ => false,
@@ -208,6 +208,9 @@ pub(super) fn call_for_help(
             .filter(|h| *h != caller && !came.contains(h))
             .collect();
         for h in movement::call_order(state, near) {
+            // A creep on its way home comes too (SPEC-0030; c-RXD-1: 6, 7
+            // and 9 at 5919).
+            set(state, h, |c| c.returning = false);
             if movement::join_fight(state, h, target, from) {
                 enter_fight(state, h, at);
                 came.push(h);
@@ -244,6 +247,16 @@ pub(super) fn tick(state: &mut State) {
         if creep.returning {
             if !ordered {
                 set(state, h, |c| c.returning = false);
+                // Home again: its acquisition check restarts 0.01 s later
+                // (c-RXD-1: creep 8 home in 5917, check in 5919).
+                // (It arrived in the tick before this one.)
+                let at = add(
+                    sub(state.move_clock, crate::timers::TICK),
+                    movement::AFTER_DEATH,
+                );
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.next_acquire = at;
+                }
             }
             continue;
         }

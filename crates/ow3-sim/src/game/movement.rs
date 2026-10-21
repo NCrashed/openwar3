@@ -3759,7 +3759,7 @@ fn cooldown_expiries(state: &mut State) {
 }
 
 /// 0.01 s, the delay of the checks of the attackers of a unit that died.
-const AFTER_DEATH: u32 = 0x3C23_D70A;
+pub(super) const AFTER_DEATH: u32 = 0x3C23_D70A;
 
 /// Unit `dead` died: the attack of each unit attacking it ends, and its
 /// acquisition check timer is started again to expire 0.01 s after the

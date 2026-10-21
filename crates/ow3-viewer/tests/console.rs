@@ -376,8 +376,8 @@ fn a_creep_chases_and_goes_home() {
     assert!(went_home);
     // Home again it may fight the peasants of the camp's neighbours, and
     // answer the calls of its camp, so it ends inside its guard zone, not
-    // on its home point.
-    assert!(away < 500.0, "{away}");
+    // on its home point (GuardDistance 600, SPEC-0030).
+    assert!(away < 600.0, "{away}");
 }
 
 /// A peasant walking with gold shows a geoset (the sack) that its plain

@@ -157,17 +157,15 @@ pub fn squared_speed(v: [u32; 2]) -> u32 {
 /// Step 1 of SPEC-0020: from waypoint `current`, the first waypoint at
 /// which the legs add up to 10 blocks, with its index. The goal is `None`
 /// for the order point: when no waypoint is far enough (the index is then
-/// `None` too) or when that waypoint is the last of a list that got there.
-fn next_segment(
-    waypoints: &[[u32; 2]],
-    reached: bool,
-    current: usize,
-) -> (Option<usize>, Option<[u32; 2]>) {
+/// `None` too) or when that waypoint is the last of the list, also of a
+/// list that ends at the closest node of a failed search (c-RYP-1:
+/// peasant 3 at 1141).
+fn next_segment(waypoints: &[[u32; 2]], current: usize) -> (Option<usize>, Option<[u32; 2]>) {
     let mut sum = 0u32;
     for j in current + 1..waypoints.len() {
         sum = add(sum, path::length(waypoints[j - 1], waypoints[j]));
         if real(sum) >= SEGMENT {
-            let last = reached && j == waypoints.len() - 1;
+            let last = j == waypoints.len() - 1;
             return (
                 Some(j),
                 (!last).then(|| path::blocks_to_cells(waypoints[j])),
@@ -184,7 +182,7 @@ pub fn segment_goals(grid: &Grid, from: [u32; 2], order: [u32; 2], class: u8) ->
     let mut goals = Vec::new();
     if let Some(found) = path::high_level(grid, from, order, class) {
         let mut current = 0;
-        while let (Some(j), Some(goal)) = next_segment(&found.points, found.reached, current) {
+        while let (Some(j), Some(goal)) = next_segment(&found.points, current) {
             goals.push(goal);
             current = j;
         }
@@ -197,7 +195,7 @@ impl Follow {
     /// Step 1: the first waypoint from the current one at which the legs
     /// add up to 10 blocks, else the order point.
     fn take_segment(&mut self, order: [u32; 2]) {
-        let (index, goal) = next_segment(&self.waypoints, self.reached, self.current);
+        let (index, goal) = next_segment(&self.waypoints, self.current);
         if let Some(j) = index {
             self.current = j;
         }

@@ -201,6 +201,8 @@ pub struct Unit {
     /// A better target found by a check during its backswing: the attack
     /// switches to it at the end of the backswing.
     pending_switch: Option<u32>,
+    /// Until when (queue time) damage to it makes no call for help.
+    call_until: u32,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0
@@ -1439,6 +1441,11 @@ impl<'a> Game<'a> {
         movement::attack_moves(&mut self.state.borrow_mut());
         // The checks of the auras (SPEC-0038).
         auras::tick(&mut self.state.borrow_mut());
+        // The hits that come before the first check of the tick.
+        let first = movement::first_check(&self.state.borrow());
+        if first.is_some() {
+            attack::hits_before(&mut self.vm, &self.state, first);
+        }
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);

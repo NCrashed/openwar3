@@ -2938,6 +2938,21 @@ enum Check {
 /// from the check's tick, its order staying `attack`. Gives the units that
 /// acquired a target and those that answered their calls for help, in
 /// that order.
+/// The earliest expiry of the acquisition checks due in this tick.
+pub(super) fn first_check(state: &State) -> Option<u32> {
+    let next_clock = real_of(add(state.move_clock, crate::timers::TICK));
+    state
+        .units
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)).filter(|u| u.alive))
+        .flat_map(|u| {
+            let own = (u.acquire_phase != super::NO_PHASE).then_some(u.next_acquire);
+            own.into_iter().chain(u.attack_move.map(|a| a.next_check))
+        })
+        .filter(|&e| real_of(e) <= next_clock)
+        .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)))
+}
+
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     let tick = state.ticks;
     let next_clock = add(state.move_clock, crate::timers::TICK);
@@ -3329,6 +3344,8 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
 /// How much farther than `CallForHelp` idle units hear a call for help
 /// (SPEC-0019: about 175; 180 fits all the distances measured).
 const CALL_REACH: f32 = 180.0;
+/// Seconds after a call for help in which the caller makes no other.
+const CALL_COOLDOWN: f32 = 3.0;
 
 /// The hit of `attacker` on `victim` (SPEC-0019, "Retaliation and call
 /// for help"): an idle victim acquires the attacker whatever the distance,
@@ -3407,10 +3424,19 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
     // headhunters answered grunt 12, which was attacking, in tick 688),
     // then each unit that answers calls in turn, in the order of the grid
     // (SPEC-0019, "Order of the responders").
+    // A call starts a 3.0 s timer of the victim; while it runs, damage to
+    // it makes no call (c-RXR-1: grunt 13 in 4823). PROVISIONAL: the
+    // chain's callers are not held by their own timers.
+    let calls = state
+        .unit(Some(victim))
+        .is_some_and(|v| now >= real_of(v.call_until));
     let reach = real_of(state.combat.call_for_help) + CALL_REACH;
     let mut responders = vec![victim];
     let mut next = 0;
     while next < responders.len() {
+        if !calls {
+            break;
+        }
         let (cx, cy) = match state.unit(Some(responders[next])) {
             Some(c) if next > 0 => (real_of(c.x), real_of(c.y)),
             _ => (x, y),
@@ -3442,6 +3468,9 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32) {
         .copied()
         .filter(|&h| switches(h))
         .collect();
+    if calls && let Some(Object::Unit(v)) = state.objects.get_mut(&victim) {
+        v.call_until = (now + CALL_COOLDOWN).to_bits();
+    }
     for h in responders {
         if switching.contains(&h) {
             switch_target(state, h, attacker);

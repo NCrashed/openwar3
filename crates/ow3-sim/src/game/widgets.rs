@@ -279,6 +279,7 @@ pub(super) fn create_unit(
         after_death: false,
         guard_return: None,
         pending_switch: None,
+        call_until: 0,
         paused: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,

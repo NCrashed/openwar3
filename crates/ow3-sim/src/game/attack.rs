@@ -121,6 +121,14 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
 /// The hits due at this tick, in the order the attacks began.
 pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     fly(vm, state);
+    hits_before(vm, state, None);
+}
+
+/// The hits due in this tick that expire before `limit` (all with `None`):
+/// the timers of the main queue before the acquisition checks of the tick
+/// (c-RXR-1: rifleman 7's hit and the call for help it made came before
+/// grunt 14's check in 5489).
+pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option<u32>) {
     // The hits are timers of the queue: those due in this tick come in the
     // order of their expiries, before the rest (c-RXR-1, 1979: footman 1
     // before rifleman 6).
@@ -144,6 +152,18 @@ pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         });
     }
     for h in attackers {
+        if let Some(limit) = limit {
+            let s = state.borrow();
+            let early = s
+                .unit(Some(h))
+                .and_then(|u| u.attack)
+                .filter(|a| due(&s, a))
+                .and_then(|a| a.hit_at)
+                .is_some_and(|e| f32::from_bits(e) < f32::from_bits(limit));
+            if !early {
+                continue;
+            }
+        }
         // A stunned unit does not attack: its hit waits (SPEC-0037).
         // PROVISIONAL: what a stun does to a swing under way is not
         // measured.

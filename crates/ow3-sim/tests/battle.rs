@@ -129,10 +129,10 @@ fn battle_report() {
         }
     }
     let tick = first.map_or(u64::MAX, |i| game_damage[i].0);
-    // PROVISIONAL: the first 83 hits match (looked at next).
+    // PROVISIONAL: the first 94 hits match (looked at next).
     eprintln!("first damage difference at tick {tick}");
     assert!(
-        first.is_none_or(|i| i >= 83),
+        first.is_none_or(|i| i >= 94),
         "first difference at hit {first:?}"
     );
 }

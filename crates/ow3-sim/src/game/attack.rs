@@ -106,7 +106,21 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
 /// The hits due at this tick, in the order the attacks began.
 pub(super) fn hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     fly(vm, state);
-    let attackers = state.borrow().attacking.clone();
+    // The hits are timers of the queue: those due in this tick come in the
+    // order of their expiries, before the rest (c-RXR-1, 1979: footman 1
+    // before rifleman 6).
+    let mut attackers = state.borrow().attacking.clone();
+    {
+        let s = state.borrow();
+        let key = |h: &u32| {
+            s.unit(Some(*h))
+                .and_then(|u| u.attack)
+                .filter(|a| due(&s, a))
+                .and_then(|a| a.hit_at)
+                .map_or(f32::INFINITY, f32::from_bits)
+        };
+        attackers.sort_by(|a, b| key(a).total_cmp(&key(b)));
+    }
     for h in attackers {
         // A stunned unit does not attack: its hit waits (SPEC-0037).
         // PROVISIONAL: what a stun does to a swing under way is not

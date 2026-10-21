@@ -61,6 +61,9 @@ const AFTER_LAST_HIT: u64 = 114;
 /// Ticks from a work start out of reach to the check that takes another
 /// tree (0.5 s), and from that check to the first hit on it.
 const SWITCH_CHECK: u64 = 100;
+/// Ticks from the arrival at a tree to the first hit of a worker in the
+/// gathering cycle (0.433 s).
+const SWING_POINT: u64 = 86;
 /// The reach of the harvest of a tree, squared, in cells: (116 / 32 +
 /// 0.5) squared (SPEC-0029, "Arriving at the tree").
 const TREE_REACH_SQUARED: f32 = 17.015625;
@@ -536,7 +539,11 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 // Out of its reach the work starts anyway, and 0.5 s later
                 // another tree is taken (SPEC-0029; c-RYP-1: peasant 4).
                 if near {
-                    g.next_hit = Some(tick + FIRST_HIT);
+                    // A worker in the gathering cycle arrives by the test of
+                    // its walk and swings at once: the swing point 0.433 s
+                    // later (c-RYP-1: peasant 5, 1351 -> 1437).
+                    let first = if g.cycling { SWING_POINT } else { FIRST_HIT };
+                    g.next_hit = Some(tick + first);
                 } else {
                     g.switch_at = Some(tick + SWITCH_CHECK);
                 }

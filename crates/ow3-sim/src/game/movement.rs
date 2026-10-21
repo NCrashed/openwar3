@@ -1143,6 +1143,11 @@ fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
     }
 }
 
+/// Whether `target` is a destructable (a tree to gather).
+fn is_tree_target(state: &State, target: u32) -> bool {
+    matches!(state.objects.get(&target), Some(Object::Destructable(_)))
+}
+
 /// Unit `m` turns to `target`: its heading points at its position, which
 /// its facing follows.
 fn face_target(state: &State, m: &mut Moving, target: u32, min: [u32; 2]) {
@@ -2108,7 +2113,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         if let Order::Gather { target } | Order::Return { building: target } = m.order
             && !waiting
-            && if building_target(target) {
+            // A worker in the gathering cycle reaches its tree by the arrival
+            // test of its walk (SPEC-0019, SPEC-0029; c-RYP-1: peasant 5
+            // turned at 1339 and 1345 and arrived at 1351); one on its first
+            // walk when within reach (peasant 0 at 991).
+            && if building_target(target)
+                || (is_tree_target(state, target) && super::harvest::cycling(state, h))
+            {
                 m.arrived
             } else {
                 super::harvest::reached(state, h, here, target)

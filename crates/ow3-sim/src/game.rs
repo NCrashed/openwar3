@@ -702,6 +702,9 @@ pub struct State {
     /// Orders of a player are being given, between two ticks: a unit they
     /// stop moves in the next tick first (SPEC-0019).
     player_orders: bool,
+    /// The velocities of the moving units at the start of the updates of
+    /// this tick: who counts as moving for a look-ahead check (SPEC-0021).
+    start_velocities: std::collections::BTreeMap<u32, [u32; 2]>,
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
@@ -804,6 +807,7 @@ impl State {
             update_time: 0,
             update_now: false,
             player_orders: false,
+            start_velocities: std::collections::BTreeMap::new(),
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_trace: None,

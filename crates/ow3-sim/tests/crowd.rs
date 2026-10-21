@@ -263,3 +263,102 @@ fn crowd_chase_order_of_updates() {
     };
     assert_eq!(order(&ours.events), order(&game));
 }
+
+/// `c-RTW-3` after the group `smart` of turn 233 (ticks 4806 to 5600):
+/// the path events of the footmen against the game's
+/// `c-RTW-3.events.tsv`, units by their creation numbers. The tick of the
+/// first event that differs.
+///
+/// PROVISIONAL: the events are the game's up to the tick asserted (looked
+/// at next).
+#[test]
+fn group_walks_report() {
+    let dir = game_data().join("replays");
+    let path = dir.join("c-RTW-3.w3g");
+    if !path.exists() {
+        return;
+    }
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    let ids = ow3_sim::replay::read_object_ids(
+        &std::fs::read_to_string(dir.join("c-RTW-3.units.txt")).unwrap(),
+    );
+    playback.set_object_ids(ids.clone());
+    playback.game.state.borrow_mut().path_trace = Some(Vec::new());
+    while playback.game.ticks() < 5600 && playback.step_tick() {}
+    // The creation number of each handle: the nth unit of its type.
+    let units = playback.game.units();
+    let creation = |h: u32| -> i32 {
+        let Some(u) = units.iter().find(|u| u.handle == h) else {
+            return -1;
+        };
+        let nth = units
+            .iter()
+            .filter(|v| v.type_id == u.type_id)
+            .position(|v| v.handle == h)
+            .unwrap();
+        let mut of_type: Vec<u32> = ids
+            .iter()
+            .filter(|&&(_, t)| t == u.type_id)
+            .map(|&(n, _)| n)
+            .collect();
+        of_type.sort_unstable();
+        of_type.get(nth).map_or(-1, |&n| n as i32)
+    };
+    let state = playback.game.state.borrow();
+    let [x0, y0, _, _] = state.world_bounds.map(f32::from_bits);
+    let kinds = ["update", "wait4", "made_wait20", "blocked"];
+    let mut ours: Vec<Logged> = state
+        .path_trace
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .filter(|e| e.tick >= 4806)
+        .map(|e: &PathEvent| {
+            let kind = match e.kind {
+                PathEventKind::Update => "update",
+                PathEventKind::Wait => "wait4",
+                PathEventKind::MadeWait => "made_wait20",
+                PathEventKind::Blocked => "blocked",
+            };
+            let [x, y] = e.at.map(f32::from_bits);
+            (
+                e.tick,
+                kind.to_owned(),
+                creation(e.a),
+                e.b.map(creation),
+                [x + x0, y + y0],
+            )
+        })
+        .collect();
+    let mut game: Vec<Logged> = events(&dir.join("c-RTW-3.events.tsv"))
+        .into_iter()
+        .filter(|e| kinds.contains(&e.1.as_str()))
+        .collect();
+    ours.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    game.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    let same = |a: &Logged, b: &Logged| {
+        a.0 == b.0
+            && a.1 == b.1
+            && a.2 == b.2
+            && (a.1 == "update" || a.3 == b.3)
+            && (a.1 != "update"
+                || ((a.4[0] - b.4[0]).abs() < 0.04 && (a.4[1] - b.4[1]).abs() < 0.04))
+    };
+    let first = game.iter().zip(&ours).position(|(a, b)| !same(a, b));
+    eprintln!(
+        "events: game {}, ours {}; first difference at {first:?}",
+        game.len(),
+        ours.len()
+    );
+    if let Some(i) = first {
+        for k in i.saturating_sub(3)..(i + 8).min(game.len()).min(ours.len()) {
+            eprintln!("game {:?}\nours {:?}", game[k], ours[k]);
+        }
+    }
+    let tick = first.map_or(u64::MAX, |i| game[i].0);
+    assert!(tick >= 4885, "first difference at tick {tick}");
+}

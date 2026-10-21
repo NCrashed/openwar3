@@ -248,13 +248,29 @@ fn others(state: &State, h: u32) -> Others {
             continue;
         }
         let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
-        let (moving, position, velocity) = match &u.movement {
-            Some(m) if m.velocity != [0, 0] => (true, m.origin, m.velocity),
-            _ => (false, super::movement::relative([u.x, u.y], min), [0, 0]),
+        // Moving also when it stopped at its own update earlier in this
+        // tick, with the velocity it had then.
+        let velocity = |m: &super::movement::Moving| match state.start_velocities.get(&o) {
+            Some(&start) if m.velocity == [0, 0] => start,
+            _ => m.velocity,
+        };
+        // A unit stopped this tick stands for the searches (`stands`).
+        let (moving, stands, position, velocity) = match &u.movement {
+            Some(m) if m.velocity != [0, 0] => (true, false, m.origin, m.velocity),
+            Some(m) if velocity(m) != [0, 0] => {
+                let here = super::movement::relative([u.x, u.y], min);
+                (true, true, here, velocity(m))
+            }
+            _ => (
+                false,
+                true,
+                super::movement::relative([u.x, u.y], min),
+                [0, 0],
+            ),
         };
         for cell in path::occupied_cells(to_cells(position), class) {
             // Marked group members are passed by as moving ones are.
-            if !moving && !state.marked.contains(&o) {
+            if stands && !state.marked.contains(&o) {
                 others.standing.insert(cell);
             }
             others.by_cell.entry(cell).or_default().push(o);

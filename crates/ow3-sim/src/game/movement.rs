@@ -1773,6 +1773,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     // Units updating in the same tick go by their orders, the newest first,
     // and the members of a group in the order of its cluster (SPEC-0021,
     // "Searches of many units in the same tick"; SPEC-0025).
+    state.start_velocities = state
+        .moving
+        .iter()
+        .filter_map(|&h| {
+            state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .map(|m| (h, m.velocity))
+        })
+        .collect();
     let mut moving = std::mem::take(&mut state.moving);
     let key = |h: &u32| {
         let given = match state.objects.get(h) {

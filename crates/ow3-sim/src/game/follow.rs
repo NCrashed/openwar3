@@ -232,6 +232,10 @@ fn others(state: &State, h: u32) -> Others {
         by_cell: HashMap::new(),
         units: HashMap::new(),
     };
+    // Nor does such a worker see any unit (SPEC-0029).
+    if super::harvest::passes_through(state, h) {
+        return others;
+    }
     for &o in &state.units {
         if o == h {
             continue;
@@ -239,7 +243,8 @@ fn others(state: &State, h: u32) -> Others {
         let Some(Object::Unit(u)) = state.objects.get(&o) else {
             continue;
         };
-        if !u.alive || u.hidden {
+        // A worker in the gathering cycle is seen by no one (SPEC-0029).
+        if !u.alive || u.hidden || super::harvest::passes_through(state, o) {
             continue;
         }
         let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));

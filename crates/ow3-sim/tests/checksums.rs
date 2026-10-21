@@ -67,7 +67,7 @@ fn remainders_of_the_reference_replay() {
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-RTW-3.w3g",
-        "the follow of turn 190 ends as recorded (turn 207); after the group order of turn 233 \
+        "positions are the game's up to tick 4886, after the group order of turn 233; then \
          the simulation draws the script generator at turns 239 to 259 (the patience of blocked \
          units, SPEC-0025) where the game does not: not found yet",
     ),
@@ -79,8 +79,8 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXI-1.w3g",
-        "the workers block each other more on their first way to the mine than in the game (draws \
-         of the script generator at turns 38, 39 and 42 for the game's 37) and reach it later; \
+        "the walks are the game's up to tick 1099 (tests/crowd.rs); the place a worker comes \
+         out of a busy mine is not done yet (SPEC-0029); \
          turn 195 is a timer of unknown cause (SPEC-0024)",
     ),
 ];

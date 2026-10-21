@@ -197,6 +197,9 @@ pub struct Moving {
     restart: bool,
     /// The first tick of motion after a restart is lost.
     skip: bool,
+    /// A point order of a player stopped it: it stops after the motion
+    /// of the next tick (SPEC-0019).
+    stop_after_step: bool,
     /// The tick the reaction delay counts from, the delay in seconds and
     /// the earliest tick of the update that may act: the unit acts on the
     /// order from its first update after both.
@@ -474,6 +477,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             arrived: false,
             restart: false,
             skip: false,
+            stop_after_step: false,
             reaction: None,
             reaction_end: None,
             goal_taken: false,
@@ -1319,6 +1323,9 @@ fn point_order_taken(state: &mut State, h: u32, name: &str, target: [u32; 2]) ->
         return (true, true);
     }
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
+    if matches!(name, "move" | "attack" | "patrol" | "smart") {
+        freeze(state, h);
+    }
     let (taken, done) = match (name, here) {
         ("move", _) => {
             let done = order(state, h, Order::Point, ORDER_MOVE, target);
@@ -1524,6 +1531,27 @@ pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
     }
 }
 
+/// A new point order stops a walking unit at once; it starts again as
+/// from standing at its next update (SPEC-0019, "Stop, hold position and
+/// new orders while walking").
+fn freeze(state: &mut State, h: u32) {
+    let (clock, later) = (state.move_clock, state.player_orders);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+        && m.walking
+    {
+        // A player's order, given between two ticks, comes after the
+        // motion of the next one.
+        if later {
+            m.stop_after_step = true;
+            return;
+        }
+        m.commit(clock);
+        m.velocity = [0, 0];
+        m.walking = false;
+    }
+}
+
 /// `stop` and `holdposition`: the unit stands where it is now.
 fn halt(state: &mut State, h: u32) -> bool {
     state.paths.remove(&h);
@@ -1718,7 +1746,7 @@ pub(super) fn step(state: &mut State) {
         let Some(Object::Unit(u)) = state.objects.get_mut(h) else {
             continue;
         };
-        let Some(m) = u.movement.as_ref() else {
+        let Some(m) = u.movement.as_mut() else {
             continue;
         };
         if m.velocity == [0, 0] {
@@ -1727,6 +1755,13 @@ pub(super) fn step(state: &mut State) {
         let [x, y] = absolute(m.position(clock), min);
         u.x = x;
         u.y = y;
+        if std::mem::take(&mut m.stop_after_step) {
+            m.commit(clock);
+            m.velocity = [0, 0];
+            m.walking = false;
+            // It starts as from standing.
+            m.restart = false;
+        }
     }
 }
 
@@ -1914,6 +1949,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // goal is.
             let mut in_reach = false;
             let mut renewed = false;
+            // The goal before a renewal after a swing (SPEC-0019).
+            let old_goal = m.target;
             let mut full_reach = reach;
             if let Order::Attack { target } = m.order {
                 match position_of(state, target) {
@@ -2081,10 +2118,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             building: None,
                         };
                         // The new goal after a swing comes with an update
-                        // standing, its path searched without a step or a
-                        // look ahead (SPEC-0019).
+                        // standing; a walking attacker first makes the
+                        // look-ahead check of its old path. The new goal is
+                        // searched at the next update (SPEC-0019, "After
+                        // the swing").
                         let steer = if renewed && std::mem::take(&mut m.renew_stands) {
-                            follow::search(state, &walker, tick);
+                            if m.velocity != [0, 0] {
+                                let old = follow::Walker {
+                                    order: relative(old_goal, min),
+                                    ..walker
+                                };
+                                follow::steer(state, &old, tick);
+                            }
                             // A new goal, first among the units handled
                             // from the next tick (SPEC-0021).
                             state.orders_given += 1;

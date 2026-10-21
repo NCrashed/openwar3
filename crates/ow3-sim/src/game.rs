@@ -696,6 +696,9 @@ pub struct State {
     update_time: u32,
     /// This tick is an update tick (SPEC-0018).
     update_now: bool,
+    /// Orders of a player are being given, between two ticks: a unit they
+    /// stop moves in the next tick first (SPEC-0019).
+    player_orders: bool,
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
@@ -796,6 +799,7 @@ impl State {
             move_clock: 0,
             update_time: 0,
             update_now: false,
+            player_orders: false,
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_trace: None,
@@ -1528,7 +1532,11 @@ impl<'a> Game<'a> {
     /// would; each returns what the native returns.
     pub fn issue_point_order(&mut self, unit: u32, order: &str, x: f32, y: f32) -> bool {
         let target = [x.to_bits(), y.to_bits()];
-        movement::point_order(&mut self.state.borrow_mut(), unit, order, target)
+        let mut state = self.state.borrow_mut();
+        state.player_orders = true;
+        let done = movement::point_order(&mut state, unit, order, target);
+        state.player_orders = false;
+        done
     }
 
     /// A point order given to `units` together, as a player gives it to
@@ -1536,7 +1544,11 @@ impl<'a> Game<'a> {
     /// it.
     pub fn issue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) -> bool {
         let target = [x.to_bits(), y.to_bits()];
-        movement::group_point_order(&mut self.state.borrow_mut(), units, order, target)
+        let mut state = self.state.borrow_mut();
+        state.player_orders = true;
+        let done = movement::group_point_order(&mut state, units, order, target);
+        state.player_orders = false;
+        done
     }
 
     /// Orders given with Shift (SPEC-0031): queued behind the unit's

@@ -305,6 +305,10 @@ fn point_order_to_a_location() {
     assert!(a.last().unwrap().1[0].x > -2900.0);
 }
 
+/// SPEC-0019, "Stop, hold position and new orders while walking": the
+/// same `move` again stops the footman at once; given in an update tick
+/// (163 here), it stands until its next update (169) and walks from
+/// there in the same direction, 6 ticks lost.
 #[test]
 fn same_move_again() {
     let units = "set a = CreateUnit(Player(0), 'hfoo', -3000, -2000, 0)";
@@ -318,7 +322,7 @@ fn same_move_again() {
     let b = run(&mut two, 400);
     let last = |p: &[(u64, Vec<UnitView>)]| p.last().unwrap().1[0].x;
     let lost = (last(&a) - last(&b)) / 1.35;
-    assert!((lost - 1.0).abs() < 0.05, "{lost} ticks");
+    assert!((lost - 6.0).abs() < 0.05, "{lost} ticks");
 }
 
 /// Acquisition of SPEC-0019: an idle footman takes an enemy footman at 562

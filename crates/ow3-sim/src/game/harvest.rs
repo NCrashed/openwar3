@@ -66,6 +66,10 @@ pub struct Harvest {
     /// full load.
     next_hit: Option<u64>,
     back_at: Option<u64>,
+    /// Out of a mine once and gathering since: its cells block only the
+    /// placing of buildings (SPEC-0029, "Workers in the gathering cycle
+    /// do not block each other").
+    cycling: bool,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -208,6 +212,12 @@ fn set(state: &mut State, h: u32, g: Option<Harvest>) {
 
 fn get(state: &State, h: u32) -> Option<Harvest> {
     state.unit(Some(h)).and_then(|u| u.harvest)
+}
+
+/// Whether worker `h` is in the gathering cycle, out of a mine once:
+/// no unit's way sees it (SPEC-0029).
+pub(super) fn passes_through(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.cycling)
 }
 
 /// Sends worker `h` to its mine or tree, or with a load from elsewhere
@@ -411,6 +421,9 @@ fn forget_others(state: &mut State) {
         g.target = None;
         g.next_hit = None;
         g.back_at = None;
+        // PROVISIONAL: what ends the gathering cycle was not tested
+        // (SPEC-0029); here any other order does.
+        g.cycling = false;
         set(state, h, Some(g));
         for mine in state.mines.values_mut() {
             mine.waiting.retain(|&w| w != h);
@@ -489,6 +502,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     m.resources -= taken;
                     if let Some(mut g) = get(s, worker) {
                         g.carry = Some((Resource::Gold, taken));
+                        g.cycling = true;
                         set(s, worker, Some(g));
                     }
                     s.unit(Some(mine)).map_or(0, |m| m.resources)

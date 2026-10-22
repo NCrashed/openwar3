@@ -234,6 +234,8 @@ pub struct Unit {
     /// Stunned until this tick, and its attack slowed until a tick by a
     /// factor of its attack speed (SPEC-0037).
     stunned_until: Option<u64>,
+    /// The queue time at which its order comes back after the stun.
+    stun_back: Option<u32>,
     slowed_until: Option<(u64, u32)>,
     /// The aura buffs it has: the aura ability, its level and the tick of
     /// the last check that found it in reach (SPEC-0038).
@@ -799,6 +801,9 @@ pub struct State {
     /// The backswing-end checks of attackers that switched targets in
     /// their backswing: (tick, attacker, new target).
     pub(super) attack_checks: Vec<(u64, u32, u32)>,
+    /// Heroes that gained a level, once a level, whose level events have
+    /// not run yet.
+    pub(super) leveled: Vec<u32>,
     /// Entries into cells of the grid of calls for help so far.
     pub(super) call_entries: u64,
     /// Groups ordered together whose formation is laid out at their first
@@ -928,6 +933,7 @@ impl State {
             member_now: BTreeMap::new(),
             creep_timers: 0,
             attack_checks: Vec::new(),
+            leveled: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),
             orders_given: 0,
@@ -1475,6 +1481,8 @@ impl<'a> Game<'a> {
             attack::hits_before(&mut self.vm, &self.state, first);
         }
         let acquired = movement::acquisitions(&mut self.state.borrow_mut());
+        // Reaction delays that end after the first check.
+        movement::after_checks(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
         attack::hits(&mut self.vm, &self.state);
         // Casts of abilities (SPEC-0035).

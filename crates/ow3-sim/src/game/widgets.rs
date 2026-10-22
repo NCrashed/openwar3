@@ -45,6 +45,8 @@ const BUILDING_OBJECTS: u32 = 0x3F99_999A;
 const EVENT_UNIT_DAMAGED: i32 = 52;
 const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
 const EVENT_UNIT_DEATH: i32 = 53;
+const EVENT_UNIT_HERO_LEVEL: i32 = 78;
+const EVENT_PLAYER_HERO_LEVEL: i32 = 41;
 const EVENT_WIDGET_DEATH: i32 = 89;
 const UNIT_STATE_LIFE: i32 = 0;
 const UNIT_STATE_MAX_LIFE: i32 = 1;
@@ -295,6 +297,7 @@ pub(super) fn create_unit(
         proc_counters: Vec::new(),
         procced: None,
         stunned_until: None,
+        stun_back: None,
         slowed_until: None,
         buffs: Vec::new(),
         weapon_ready: 0,
@@ -512,9 +515,79 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
             fire_trigger(vm, state, trigger, context);
         }
     }
+    // The levels its experience gave (SPEC-0034).
+    hero_levels(vm, state);
     // Queues waiting for food go on (SPEC-0027).
     if let Some((owner, _)) = owner {
         super::training::food_freed(vm, state, owner);
+    }
+}
+
+/// Runs the level events of the heroes that gained levels: for each level
+/// the `EVENT_UNIT_HERO_LEVEL` triggers of the hero, then the
+/// `EVENT_PLAYER_HERO_LEVEL` triggers of its owner whose filter passes
+/// with the hero as `GetFilterUnit` (SPEC-0034).
+///
+/// PROVISIONAL: the order of the two kinds, and of these events against
+/// the death events of the unit whose experience gave the level.
+pub(super) fn hero_levels(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    loop {
+        let (h, registrations, owner) = {
+            let mut s = state.borrow_mut();
+            if s.leveled.is_empty() {
+                return;
+            }
+            let h = s.leveled.remove(0);
+            let owner = s.unit(Some(h)).map(|u| u.owner);
+            let owner = owner.map(|id| (id, s.player_handle(id)));
+            (h, s.events.clone(), owner)
+        };
+        let context = Context {
+            triggering_unit: Some(h),
+            triggering_widget: Some(h),
+            ..Context::default()
+        };
+        for registration in &registrations {
+            if let Registration::Unit {
+                trigger,
+                unit,
+                event: EVENT_UNIT_HERO_LEVEL,
+            } = *registration
+                && unit == h
+            {
+                let context = Context {
+                    event_id: Some(EVENT_UNIT_HERO_LEVEL),
+                    ..context
+                };
+                fire_trigger(vm, state, trigger, context);
+            }
+        }
+        for registration in &registrations {
+            if let Registration::PlayerUnit {
+                trigger,
+                player,
+                event: EVENT_PLAYER_HERO_LEVEL,
+                filter,
+            } = *registration
+                && let Some((id, player_handle)) = owner
+                && id == player
+            {
+                let filter_context = Context {
+                    filter_unit: Some(h),
+                    triggering_player: Some(player_handle),
+                    event_id: Some(EVENT_PLAYER_HERO_LEVEL),
+                    ..Context::default()
+                };
+                if test_boolexpr(vm, state, filter, filter_context) {
+                    let context = Context {
+                        event_id: Some(EVENT_PLAYER_HERO_LEVEL),
+                        triggering_player: Some(player_handle),
+                        ..context
+                    };
+                    fire_trigger(vm, state, trigger, context);
+                }
+            }
+        }
     }
 }
 
@@ -1699,6 +1772,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     for declaration in [
         "constant native GetTriggerUnit takes nothing returns unit",
         "constant native GetDyingUnit takes nothing returns unit",
+        "constant native GetLevelingUnit takes nothing returns unit",
         "constant native GetConstructingStructure takes nothing returns unit",
         "constant native GetConstructedStructure takes nothing returns unit",
     ] {

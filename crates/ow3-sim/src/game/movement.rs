@@ -2978,7 +2978,27 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
 /// their time `U` as `until` (the ends up to it, all of the tick without
 /// updates), and after them with `None` (the
 /// ends up to the clock of the next tick, SPEC-0018).
+///
+/// The ends are timers of the queue as the acquisition checks are: those
+/// up to the end of the tick that come after its first check end after
+/// the checks (`after_checks`; c-RZH-1: footman 4's check took creep 10
+/// in 5261 before footman 5's delay ended, so 5 updated first in 5263).
 pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) {
+    let check = if until.is_none() {
+        first_check(state)
+    } else {
+        None
+    };
+    ends_before(state, until, first, check);
+}
+
+/// The reaction delays of this tick that end after its first acquisition
+/// check (`reaction_ends`).
+pub(super) fn after_checks(state: &mut State) {
+    ends_before(state, None, false, None);
+}
+
+fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option<u32>) {
     let (tick, clock) = (state.ticks, state.move_clock);
     let limit = until.unwrap_or_else(|| add(clock, crate::timers::TICK));
     // The ends of the timed delays in the order of their expiries (c-RXR-1:
@@ -2990,7 +3010,10 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
             Some(Object::Unit(u)) => {
                 let m = u.movement?;
                 let ends = match (m.reaction_end, m.reaction) {
-                    (Some(end), _) => real_of(end) <= real_of(limit),
+                    (Some(end), _) => {
+                        real_of(end) <= real_of(limit)
+                            && check.is_none_or(|c| real_of(end) < real_of(c))
+                    }
                     (None, Some((from, delay, earliest))) if first => {
                         let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
                         tick >= earliest && real_of(waited) >= real_of(delay)
@@ -3337,9 +3360,11 @@ fn stun_ends(state: &mut State) {
         let Some(u) = state.unit(Some(h)) else {
             continue;
         };
+        // The order comes back at the stun's own time (SPEC-0037).
+        let now = u.stun_back.unwrap_or(now);
         if let Some(a) = u.attack_move {
             point_order_taken(state, h, "attack", a.point, true);
-            // Its first check 0.01 s after this tick's clock.
+            // Its first check 0.01 s after the order came back.
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                 && let Some(a) = u.attack_move.as_mut()
             {

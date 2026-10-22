@@ -68,6 +68,11 @@ fn set_level(state: &mut State, h: u32, level: i64) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.level = level;
     }
+    // Its level events, one a level (SPEC-0034).
+    // PROVISIONAL: one event a level when it gains several at once.
+    for _ in old..level {
+        state.leveled.push(h);
+    }
 }
 
 /// Hero `h` has `xp` experience, no less than it had and no more than the
@@ -266,6 +271,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             if let Some(h) = handle(&args[0]) {
                 set_xp(&mut state.borrow_mut(), h, i64::from(integer(&args[1])));
+                super::widgets::hero_levels(vm, state);
             }
             Ok(None)
         }
@@ -279,6 +285,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 let mut s = state.borrow_mut();
                 let xp = s.unit(Some(h)).map_or(0, |u| u.xp);
                 set_xp(&mut s, h, xp + i64::from(integer(&args[1])));
+                drop(s);
+                super::widgets::hero_levels(vm, state);
             }
             Ok(None)
         }
@@ -294,6 +302,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 let level = i64::from(integer(&args[1])).min(s.combat.heroes.max_level);
                 let xp = s.combat.heroes.xp_for_level(level);
                 set_xp(&mut s, h, xp);
+                drop(s);
+                super::widgets::hero_levels(vm, state);
             }
             Ok(None)
         }

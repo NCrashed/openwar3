@@ -14,12 +14,11 @@
 //! for `Dur` (`HeroDur` for heroes); thunder clap does `DataA` to the
 //! enemy ground units within `Area` and slows their attacks by `DataD`
 //! for `Dur`. A stunned unit stands, does not attack and its order reads
-//! 851973; the stun ends 2 ticks after its duration.
+//! 851973; its order comes back 0.01 s after the end of its duration.
 //!
 //! PROVISIONAL: turning before a cast, the reaction delay and what
 //! interrupts a cast are open (SPEC-0035); the slow of movement by
-//! thunder clap is not measured and not done; the tick in which a stun
-//! ends is known to a tick (SPEC-0037, open question 3).
+//! thunder clap is not measured and not done.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -46,6 +45,9 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 3] = [
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
 ];
+
+/// The time from the end of a stun to its order coming back (0.01 s).
+const STUN_BACK: u32 = 0x3C23_D70A;
 
 /// The order id a stunned unit reads (SPEC-0037).
 pub const ORDER_STUNNED: i32 = 851_973;
@@ -234,14 +236,22 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
     }
 }
 
-/// Unit `h` is stunned for `ticks` from now, or longer if it already is
-/// (SPEC-0037): it stops at once.
-pub(super) fn stun(state: &mut State, h: u32, ticks: u64) {
-    let tick = state.ticks;
-    // The order came back 2 or 3 ticks after the duration.
-    let until = tick + ticks + 2;
-    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-        u.stunned_until = Some(u.stunned_until.map_or(until, |t| t.max(until)));
+/// Unit `h` is stunned for `duration` seconds from the queue time `at`, or
+/// longer if it already is (SPEC-0037): it stops at once. The stun ends
+/// on a timer of the queue, and its order comes back on a timer of 0.01 s
+/// from that expiry, in the tick whose end that time does not pass.
+pub(super) fn stun(state: &mut State, h: u32, duration: u32, at: u32) {
+    let back = add(add(at, duration), STUN_BACK);
+    let (mut tick, mut clock) = (state.ticks, state.move_clock);
+    while f32::from_bits(back) > f32::from_bits(add(clock, crate::timers::TICK)) {
+        clock = add(clock, crate::timers::TICK);
+        tick += 1;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && u.stunned_until.is_none_or(|t| t <= tick)
+    {
+        u.stunned_until = Some(tick);
+        u.stun_back = Some(back);
     }
     movement::stand_still(state, h);
     // Its order goes on after the stun with a new path (c-RXD-1: worker 5
@@ -276,7 +286,7 @@ enum Deferred {
         caster: u32,
         target: u32,
         amount: u32,
-        stun: (u64, u64),
+        stun: (u32, u32),
     },
     /// Damage of a thunder clap.
     Damage {
@@ -336,8 +346,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
         .abilities
         .get(&c.ability)
         .map_or(c.ability, |a| a.code);
-    let duration =
-        |hero: bool| super::attack::ticks(if hero { n.hero_duration } else { n.duration });
+    let seconds = |hero: bool| if hero { n.hero_duration } else { n.duration };
+    let duration = |hero: bool| super::attack::ticks(seconds(hero));
     match &base.to_be_bytes() {
         b"AHhb" => {
             if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))
@@ -359,7 +369,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                     .abilities
                     .get(&c.ability)
                     .map_or(0, |a| a.missile_speed);
-                let stun = (duration(false), duration(true));
+                let stun = (seconds(false), seconds(true));
                 match super::attack::launch_spell(s, h, target, n.data[0], stun, speed) {
                     Some(missile) => s.missiles.push(missile),
                     None => deferred.push(Deferred::SpellHit {

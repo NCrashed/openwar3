@@ -437,6 +437,28 @@ time to time:
   usual (SPEC-0020, step 2: straight only if the search met no
   unpassable cell). The target is moving, so it is not an obstacle for
   the search (SPEC-0021).
+- **The goal follows the target at cluster updates.** When a chase
+  takes a goal (a renewal, a backswing-end check out of range), the goal
+  is the target's position by SPEC-0018 at that tick. At each later
+  update of the attacker's cluster (also the first one, right after the
+  order) the target's current position (SPEC-0018, after the target's
+  own update of that tick if it has one) is compared with the goal by
+  2 x 2 squares: `floor(x) >> 1` and `floor(y) >> 1` in path cells. If
+  both are equal, the goal stays. If either differs, the goal becomes
+  the target's current position, provided the path code's pass counter
+  has advanced by more than 9 since each of two stamps of the cluster
+  (how often that counter steps and when the stamps are set is not
+  read; a new order's cluster passed two ticks after the order, creep 6
+  below). Otherwise it stays for now (open question). The member's place follows the new goal at once (it is the
+  place of that update's member step). Read in the game, `c-RXD-1`:
+  creep 6's backswing-end check at 6293 took unit 2 at (386.0105,
+  387.49948) (`43c10158`, `43c1bfef`); at the cluster's first update at
+  6295 unit 2 (after its own update of 6295) stood at (385.95114,
+  387.49915), square x 192 against 193: the goal became that point
+  (`43c0f9bf`, `43c1bfe4`), and creep 6 turned to it (3.744548 at 6307).
+  Creep 9's check at 3659 took unit 3 at (425.5160, 389.5788); at 3661
+  unit 3 was at (425.5730, 389.5657), the same square: the goal stayed
+  (and with it creep 9's turns up to 3703).
 - **Waypoints of the chase path** are reached by the range test: at an
   update at which the attacker is within `rangeN1 + c_a + c_t` (the
   range test above) of the current waypoint, the next waypoint is taken

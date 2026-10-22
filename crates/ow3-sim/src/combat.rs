@@ -56,6 +56,9 @@ pub struct Combat {
     pub creep_call_for_help: u32,
     pub guard_distance: u32,
     pub guard_return_time: u32,
+    /// Within this of its home a creep's return timer restarts at a call
+    /// (`MaxGuardDistance`, SPEC-0030).
+    pub max_guard_distance: u32,
     /// Hero experience and attributes (SPEC-0033, SPEC-0034).
     pub heroes: Heroes,
 }
@@ -72,6 +75,7 @@ impl Default for Combat {
             creep_call_for_help: s2r("600"),
             guard_distance: s2r("600"),
             guard_return_time: s2r("5"),
+            max_guard_distance: s2r("1000"),
             heroes: Heroes::default(),
         }
     }
@@ -102,6 +106,7 @@ impl Combat {
                 "CreepCallForHelp" => combat.creep_call_for_help = s2r(value),
                 "GuardDistance" => combat.guard_distance = s2r(value),
                 "GuardReturnTime" => combat.guard_return_time = s2r(value),
+                "MaxGuardDistance" => combat.max_guard_distance = s2r(value),
                 _ if combat.heroes.set(key, value) => {}
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {

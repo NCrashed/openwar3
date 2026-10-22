@@ -209,6 +209,7 @@ pub(super) fn call_for_help(
     }
     // The caller's check, or this tick.
     let at = from.unwrap_or(state.move_clock);
+    restart_returns(state, caller, at);
     enter_fight(state, caller, at);
     let mut came = Vec::new();
     let mut callers = std::collections::VecDeque::from([caller]);
@@ -250,6 +251,39 @@ pub(super) fn call_for_help(
         }
     }
     came
+}
+
+/// A call by `caller` reaches every creep of its camp: one whose return is
+/// in progress and that stands within `MaxGuardDistance` of its home gets
+/// its return timer restarted (SPEC-0030, "Calls restart the return
+/// timer"; c-RXD-1: creeps 6 and 7 at 6667, 6763 and 6787, giving up at
+/// 7788).
+fn restart_returns(state: &mut State, caller: u32, at: u32) {
+    let Some(c) = state.unit(Some(caller)) else {
+        return;
+    };
+    let reach = f32::from_bits(state.combat.creep_call_for_help);
+    let far = f32::from_bits(state.combat.max_guard_distance);
+    let back = state.combat.guard_return_time;
+    let (x, y) = (f32::from_bits(c.x), f32::from_bits(c.y));
+    for h in state.units.clone() {
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
+        let (hx, hy) = (
+            f32::from_bits(u.x) - f32::from_bits(u.home[0]),
+            f32::from_bits(u.y) - f32::from_bits(u.home[1]),
+        );
+        if u.alive
+            && u.owner == CREEPS
+            && u.creep.homebound
+            && dx * dx + dy * dy <= reach * reach
+            && hx * hx + hy * hy <= far * far
+        {
+            u.creep.return_time = Some(add(at, back));
+        }
+    }
 }
 
 /// The creeps of this tick: guard checks, return timers, creeps home.

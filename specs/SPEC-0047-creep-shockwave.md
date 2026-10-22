@@ -46,7 +46,11 @@ following hold:
    now. In particular it has the mana and is not casting already.
 2. **Enough enemies.** Count the enemy units whose distance from the
    attacker's position is smaller than `150 + collision`, with each
-   unit's own collision size; the attacker counts itself. The spell
+   unit's own collision size; the attacker counts itself.
+   Invulnerable units are not counted (the spell's targets exclude
+   them): in `c-RZJ-1` the Paladin under Divine Shield (4801 .. 7801)
+   was left out at 6029 (89 from footman 2, count 1) and at 6371 (168
+   from footman 6, count 4: footmen 6, 7, 4 and 3). The spell
    is cast if the count is at least the **threshold**:
    - 2, if the victim is the creep itself and its life is below 400;
    - 3 otherwise.

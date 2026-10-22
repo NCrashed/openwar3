@@ -504,7 +504,13 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
             let Some(e) = state.unit(Some(o)) else {
                 return false;
             };
-            if !e.alive || e.hidden || !movement::enemies(state, owner, e.owner) {
+            // Invulnerable units do not count (SPEC-0047; c-RZJ-1: the
+            // shielded Paladin at 6029).
+            if !e.alive
+                || e.hidden
+                || !movement::enemies(state, owner, e.owner)
+                || super::cast::invulnerable(state, o)
+            {
                 return false;
             }
             let collision = state.data.units.get(&e.type_id).map_or(0, |t| t.collision);

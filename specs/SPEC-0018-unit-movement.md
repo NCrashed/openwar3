@@ -143,6 +143,23 @@ SPEC-0013 observation that `turnRate` did not change the turn speed of
 
 ### When the unit starts to move
 
+**The first update of a new movement.** A new movement (an order, a
+face or chase movement of an attack, a walk to a guard point) is
+committed when it is given, outside the update batch. Its first member
+step comes at the next update batch after that tick, whatever the unit
+did before (walking, standing with a finished movement, or idle with
+no movement at all). The batches follow the cycle of update ticks
+(order within an update tick, above), so the gap from the order to
+the first step is 1 to 6 ticks. Read in the game:
+- `c-RXD-1` creep 8: idle since its walk home ended at 5917 (no
+  movement); attack order at 5964; first step at 5965.
+- creep 8: chase from the backswing-end check at 7254; first step at 7256.
+- creep 8: switch at 2007; first step at 2011.
+- creep 6: chase at 6293; first step at 6295.
+- creep 9: chase at 3659; first step at 3661.
+- `c-RSL-1` attacking footman: face movement at 2181, its previous
+  movement having ended at 1981; first step at 2185.
+
 Let `D` be the direction from the unit to the target and `H_k` the
 heading after update `k` (`H_0` is the unit's facing when the order is
 given). If `|D - H_k| < propWin` (in degrees), the unit moves from

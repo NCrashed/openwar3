@@ -333,6 +333,30 @@ creeps 6, 7, 8, 9):
 - creep 9: damage 1967, backswing end 2087: out of range, the chase
   goes on (walking from 2089).
 
+**Before a swing.** One routine decides whether the swing starts. It
+runs when the cooldown expires and when a movement of the attack ends
+(a face movement or a chase arriving in range: the member's arrival,
+turned within 0.2 rad of its place). In order:
+1. the cooldown is still running: nothing happens;
+2. the target is not visible: chase;
+3. the range test above fails: chase (a new goal);
+4. the angle test: if the target's current position lies more than
+   `AttackHalfAngle` off the unit's heading, the unit gets a face
+   movement towards that position; `AttackHalfAngle` is a game constant,
+   0.5 rad (read in the game);
+5. otherwise the swing starts.
+The 0.2 rad of the member's arrival only ends the movement. The swing
+itself needs 0.5. Read in the game, `c-RXD-1`, creep 8 attacking unit
+5, which walks:
+- 7010: the cooldown renewal finds unit 5 in range, so a face movement.
+- 7016 .. 7040: it turns to that place, reaching 3.795862.
+- 7046: the face movement ends. Unit 5 now lies about 0.506 off, more
+  than 0.5, so another face movement (place = unit 5 at 7046) and no
+  swing.
+- 7052: one turn step to 3.295862.
+The exact measure of the angle test (the stored heading as here, or
+the model facing) was not separated.
+
 ### Reaction delay
 
 When a unit takes an attack order it first waits a random **reaction

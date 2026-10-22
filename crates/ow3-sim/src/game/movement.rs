@@ -3988,19 +3988,27 @@ fn cooldown_expiries(state: &mut State) {
             mul(add(data.map_or(0, |t| t.collision), other), CELL),
         );
         let here = relative([u.x, u.y], min);
-        let ready =
-            in_range(here, at, reach) && real_of(heading_and_turn(&m, at).1).abs() < ATTACK_ANGLE;
-        if ready {
-            freeze(state, h);
+        // The routine before a swing (SPEC-0019): in range and within
+        // AttackHalfAngle the swing starts; in range further off, a face
+        // movement; out of range, a chase, its goal the target at this
+        // tick (c-RXD-1: creep 9 at 6859).
+        let in_reach = in_range(here, at, reach);
+        let turned = real_of(heading_and_turn(&m, at).1).abs() <= ATTACK_HALF_ANGLE;
+        freeze(state, h);
+        if in_reach && turned {
             super::attack::begin(state, h, target, tick, order_id);
         } else {
-            freeze(state, h);
+            let goal = tick_start_position(state, target);
             state.paths.remove(&h);
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                 && let Some(m) = u.movement.as_mut()
             {
                 m.walking = false;
                 m.velocity = [0, 0];
+                if let Some(goal) = goal {
+                    m.target = goal;
+                }
+                m.follow_check = !in_reach;
             }
         }
     }

@@ -142,7 +142,23 @@ walk home. Read in the game, `c-RXD-1` (homes in world units: creep 6
   home;
 - the last restart (6787, q 33.9292488) expired at tick 7788;
 - creeps 6 and 7 got stop commits at 7788 and walked home from 7790.
-Their guard checks (every 2 s) do not stop or restart this timer. The creeps that answer
+Their guard checks (every 2 s) do not stop or restart this timer.
+
+**What restarts the guard checks.** The guard check is a periodic
+2.0 s timer. Its phase is set anew (first check 2.0 s later) when:
+- the creep's walk home ends;
+- the creep enters a fight from having no target: its own acquisition
+  check takes a target, or it answers a call;
+- the creep's target dies (also for the killer).
+A switch to another target while already attacking does not restart
+it. Read in the game, `c-RXD-1`, creep 8:
+- restarts at 5917 (home), 5919 (its check takes unit 2), 6665 (unit 3
+  dies) and 6667 (its check takes unit 1, q 33.3292503);
+- no restart at its switches of 6419, 6619 and 6968;
+- the checks of 6667 + 2 s * k found it out of its zone at k = 3: return
+  timer started at 7868 (q 39.3292503), give-up at 8869.
+Creep 9: restarts at 5919 (answering the call), 6665 (its own kill of
+unit 3) and 6787 (its check takes unit 1). The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

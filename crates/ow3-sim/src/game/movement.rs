@@ -2907,6 +2907,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let facing_done = u.facing == heading;
         if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;
+            // An attack-move that arrived at its place ends there; a group
+            // member stays at its place in the formation (playtest item 9:
+            // the group bunched on the point when its members walked on).
+            if m.order == Order::Point {
+                u.attack_move = None;
+            }
         } else {
             u.movement = Some(m);
             still.push(h);

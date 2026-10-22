@@ -214,12 +214,14 @@ pub(super) fn call_for_help(
     enter_fight(state, caller, at);
     let mut came = Vec::new();
     let mut callers = std::collections::VecDeque::from([caller]);
+    let mut reached = Vec::new();
     while let Some(c) = callers.pop_front() {
         let near: Vec<u32> = camp(state, c)
             .into_iter()
             .filter(|h| *h != caller && !came.contains(h))
             .collect();
         for h in movement::call_order(state, near) {
+            reached.push(h);
             // A creep on its way home comes too (SPEC-0030; c-RXD-1: 6, 7
             // and 9 at 5919).
             set(state, h, |c| c.returning = false);
@@ -255,6 +257,11 @@ pub(super) fn call_for_help(
                 callers.push_back(h);
             }
         }
+    }
+    // The creeps the call reached may cast their spells, after they took
+    // the target (SPEC-0047).
+    for h in reached {
+        consider_spell(state, h, caller, target);
     }
     came
 }
@@ -409,5 +416,80 @@ pub(super) fn after_stun(state: &mut State, h: u32, now: u32) {
     {
         u.creep.return_time = Some(add(now, back));
         u.creep.checks_next = Some(add(now, CHECK_PERIOD));
+    }
+}
+
+/// Creep spells (SPEC-0047): at a hit on creep `h` or a call for help
+/// that reaches it, with `victim` the creep hit or calling and `attacker`
+/// the enemy, a creep with Shockwave casts it on the attacker when the
+/// spell is ready, no other creep of its player is casting, and at least
+/// 3 enemies (2 when the victim is the creep itself, below 400 life)
+/// stand nearer the attacker than the spell's area plus their collision,
+/// the attacker counted.
+///
+/// PROVISIONAL: the per-player limit is taken as "no other unit of the
+/// player casting" (SPEC-0047, open question 1); the cast range is not
+/// checked.
+pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u32) {
+    if !is_creep(state, h) {
+        return;
+    }
+    let Some(u) = state.unit(Some(h)).filter(|u| u.alive) else {
+        return;
+    };
+    let owner = u.owner;
+    let life = f32::from_bits(u.life.value());
+    let shockwave = i32::from_be_bytes(*b"AOsh");
+    let Some(ability) = state.data.units.get(&u.type_id).and_then(|t| {
+        t.abilities.iter().copied().find(|a| {
+            state
+                .data
+                .abilities
+                .get(a)
+                .is_some_and(|d| d.code == shockwave)
+        })
+    }) else {
+        return;
+    };
+    if !super::cast::creep_ready(state, h, ability, 1) {
+        return;
+    }
+    let busy = state.units.iter().any(|&o| {
+        o != h
+            && state
+                .unit(Some(o))
+                .is_some_and(|o| o.alive && o.owner == owner && o.casting.is_some())
+    });
+    if busy {
+        return;
+    }
+    let Some(at) = state.unit(Some(attacker)).map(|a| [a.x, a.y]) else {
+        return;
+    };
+    let area = state
+        .data
+        .abilities
+        .get(&ability)
+        .and_then(|a| a.per_level.first())
+        .map_or(0, |n| n.area);
+    let count = state
+        .units
+        .iter()
+        .filter(|&&o| {
+            let Some(e) = state.unit(Some(o)) else {
+                return false;
+            };
+            if !e.alive || e.hidden || !movement::enemies(state, owner, e.owner) {
+                return false;
+            }
+            let collision = state.data.units.get(&e.type_id).map_or(0, |t| t.collision);
+            let (dx, dy) = (sub(e.x, at[0]), sub(e.y, at[1]));
+            let reach = add(area, collision);
+            f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach))
+        })
+        .count();
+    let threshold = if victim == h && life < 400.0 { 2 } else { 3 };
+    if count >= threshold {
+        super::cast::creep_cast(state, h, ability, 1, attacker);
     }
 }

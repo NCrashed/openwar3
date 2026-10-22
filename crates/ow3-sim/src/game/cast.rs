@@ -43,10 +43,11 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 6] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 7] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
+    ("shockwave", *b"AOsh", 852_125, Aim::Enemy),
     ("holybolt", *b"AHhb", 852_092, Aim::Friend),
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
@@ -461,6 +462,137 @@ pub(super) fn stun(state: &mut State, h: u32, duration: u32, at: u32) {
     state.paths.remove(&h);
 }
 
+/// A shockwave under way (SPEC-0047): from `origin` along `direction`,
+/// started at tick `start`, the units it hit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wave {
+    caster: u32,
+    owner: i32,
+    origin: [u32; 2],
+    direction: [u32; 2],
+    start: u64,
+    /// The radius of its circle, its first distance and its length.
+    area: u32,
+    length: u32,
+    amount: u32,
+    hit: Vec<u32>,
+}
+
+/// The wave moves 105 every 20 ticks (1050 a second) and has a last
+/// update at its end (SPEC-0047).
+const WAVE_EVERY_TICKS: u64 = 20;
+const WAVE_STEP: f32 = 105.0;
+const WAVE_SPEED: f32 = 1050.0;
+
+/// The tick of the last update of `w`, counted from its start: its
+/// length at its speed (800 -> 152).
+fn wave_end(w: &Wave) -> u64 {
+    (f32::from_bits(w.length) / WAVE_SPEED * 200.0) as u64
+}
+
+/// Creep `h` casts its spell `ability` of `level` on `target` without
+/// moving (SPEC-0047): the effect and the end of the order come after its
+/// cast point and backswing.
+pub(super) fn creep_cast(state: &mut State, h: u32, ability: i32, level: i32, target: u32) {
+    let order_id = ABILITY_ORDERS
+        .iter()
+        .find(|(_, b, _, _)| i32::from_be_bytes(*b) == base_code(state, ability))
+        .map_or(0, |o| o.2);
+    movement::stop(state, h);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.casting = Some(Casting {
+            order_id,
+            ability,
+            level,
+            target: Some(target),
+            effect_at: None,
+            end_at: 0,
+            effect_q: 0,
+            point: None,
+        });
+    }
+    let tick = state.ticks;
+    start(state, h, tick);
+}
+
+/// Whether creep spell `ability` of `h` can be cast now (SPEC-0047,
+/// "Ready").
+pub(super) fn creep_ready(state: &State, h: u32, ability: i32, level: i32) -> bool {
+    ready(state, h, ability, level) && state.unit(Some(h)).is_some_and(|u| u.casting.is_none())
+}
+
+/// The shockwave of `h` on `target` starts (SPEC-0047, "The wave").
+fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel) {
+    let (Some(u), Some(t)) = (s.unit(Some(h)), s.unit(Some(target))) else {
+        return;
+    };
+    let (dx, dy) = (sub(t.x, u.x), sub(t.y, u.y));
+    let length = ow3_math::natives::sqrt(add(mul(dx, dx), mul(dy, dy)));
+    if f32::from_bits(length) <= 0.0 {
+        return;
+    }
+    let wave = Wave {
+        caster: h,
+        owner: u.owner,
+        origin: [u.x, u.y],
+        direction: [div(dx, length), div(dy, length)],
+        start: s.ticks,
+        area: n.area,
+        length: n.data[2],
+        amount: n.data[0],
+        hit: Vec::new(),
+    };
+    s.waves.push(wave);
+}
+
+/// The updates of the shockwaves in this tick: each enemy nearer the
+/// centre than the circle's radius plus its own collision, not hit yet,
+/// takes the damage.
+fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
+    let tick = s.ticks;
+    let mut waves = std::mem::take(&mut s.waves);
+    for w in &mut waves {
+        let since = tick - w.start;
+        let last = wave_end(w);
+        let distance = if since == last {
+            add(w.area, w.length)
+        } else if since % WAVE_EVERY_TICKS == 0 && since < last {
+            add(
+                w.area,
+                (WAVE_STEP * (since / WAVE_EVERY_TICKS) as f32).to_bits(),
+            )
+        } else {
+            continue;
+        };
+        let centre = [
+            add(w.origin[0], mul(w.direction[0], distance)),
+            add(w.origin[1], mul(w.direction[1], distance)),
+        ];
+        for &o in &s.units {
+            let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                continue;
+            };
+            if !u.alive || u.hidden || w.hit.contains(&o) || !movement::enemies(s, w.owner, u.owner)
+            {
+                continue;
+            }
+            let collision = s.data.units.get(&u.type_id).map_or(0, |t| t.collision);
+            let (dx, dy) = (sub(u.x, centre[0]), sub(u.y, centre[1]));
+            let reach = add(w.area, collision);
+            if f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach)) {
+                w.hit.push(o);
+                deferred.push(Deferred::Damage {
+                    caster: w.caster,
+                    target: o,
+                    amount: w.amount,
+                });
+            }
+        }
+    }
+    waves.retain(|w| tick - w.start < wave_end(w));
+    s.waves = waves;
+}
+
 /// Whether unit `h` is invulnerable now (SPEC-0045).
 pub(super) fn invulnerable(state: &State, h: u32) -> bool {
     let tick = state.ticks;
@@ -528,6 +660,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .iter()
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
+        shockwaves(s, &mut deferred);
         for (h, c) in casting {
             if c.effect_at == Some(tick) {
                 effect(s, h, &c, &mut deferred);
@@ -612,6 +745,12 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                 u.invulnerable_until = Some(until);
             }
             movement::target_died(s, h);
+        }
+        // The creep Shockwave (SPEC-0047).
+        b"AOsh" => {
+            if let Some(target) = c.target {
+                shockwave(s, h, target, &n);
+            }
         }
         b"AHhb" => {
             if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))

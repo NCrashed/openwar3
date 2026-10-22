@@ -505,6 +505,8 @@ fn strike(
     // backswing (SPEC-0019).
     let mut s = state.borrow_mut();
     // The victim and its friends answer the hit (SPEC-0019).
+    // A creep hit may cast its spell at the attacker (SPEC-0047).
+    super::creeps::consider_spell(&mut s, target, target, h);
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
         super::movement::retaliate(&mut s, target, h, impact);
     }

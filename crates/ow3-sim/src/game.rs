@@ -813,6 +813,8 @@ pub struct State {
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
+    /// The shockwaves under way (SPEC-0047).
+    pub(super) waves: Vec<cast::Wave>,
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
@@ -947,6 +949,7 @@ impl State {
             creep_timers: 0,
             attack_checks: Vec::new(),
             timed_life: Vec::new(),
+            waves: Vec::new(),
             leveled: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),

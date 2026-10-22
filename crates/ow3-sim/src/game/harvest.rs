@@ -1004,6 +1004,27 @@ fn next_tree(state: &mut State, h: u32, old: u32, numbers: Gathering) {
     }
 }
 
+/// The nearest living tree within `Area` of tree `old` (or of worker `h`
+/// when `old` has no position), the first created among equals.
+fn nearest_tree(state: &State, h: u32, old: u32, numbers: Gathering) -> Option<u32> {
+    let from = position(state, old).or_else(|| position(state, h))?;
+    let area = f32::from_bits(numbers.area);
+    let mut best: Option<(u32, f32)> = None;
+    for (&d, o) in &state.objects {
+        let Object::Destructable(t) = o else {
+            continue;
+        };
+        if !t.alive || !state.data.trees.contains(&t.type_id) {
+            continue;
+        }
+        let e = squared(from, [t.x, t.y]);
+        if e <= area * area && best.is_none_or(|(b, f)| e < f || (e == f && d < b)) {
+            best = Some((d, e));
+        }
+    }
+    best.map(|(d, _)| d)
+}
+
 /// Worker `h` reached the building it carries its load to: its player
 /// gets the load and the worker goes back to work.
 fn deliver(state: &mut State, h: u32) {
@@ -1246,25 +1267,4 @@ mod tests {
             assert_eq!(kept(used), 4);
         }
     }
-}
-
-/// The nearest living tree within `Area` of tree `old` (or of worker `h`
-/// when `old` has no position), the first created among equals.
-fn nearest_tree(state: &State, h: u32, old: u32, numbers: Gathering) -> Option<u32> {
-    let from = position(state, old).or_else(|| position(state, h))?;
-    let area = f32::from_bits(numbers.area);
-    let mut best: Option<(u32, f32)> = None;
-    for (&d, o) in &state.objects {
-        let Object::Destructable(t) = o else {
-            continue;
-        };
-        if !t.alive || !state.data.trees.contains(&t.type_id) {
-            continue;
-        }
-        let e = squared(from, [t.x, t.y]);
-        if e <= area * area && best.is_none_or(|(b, f)| e < f || (e == f && d < b)) {
-            best = Some((d, e));
-        }
-    }
-    best.map(|(d, _)| d)
 }

@@ -54,16 +54,9 @@ const IN_MINE: u64 = 200;
 const IN_MINE_TIME: u32 = 0x3F80_0000;
 /// Ticks between two updates of a unit (SPEC-0018).
 const UPDATE: u64 = 6;
-/// Ticks from reaching a tree to the first hit, and from the hit that
-/// fills the load to the walk back (measured in test RUF).
-const FIRST_HIT: u64 = 99;
-const AFTER_LAST_HIT: u64 = 114;
 /// Ticks from a work start out of reach to the check that takes another
 /// tree (0.5 s), and from that check to the first hit on it.
 const SWITCH_CHECK: u64 = 100;
-/// Ticks from the arrival at a tree to the first hit of a worker in the
-/// gathering cycle (0.433 s).
-const SWING_POINT: u64 = 86;
 /// The reach of the harvest of a tree, squared, in cells: (116 / 32 +
 /// 0.5) squared (SPEC-0029, "Arriving at the tree").
 const TREE_REACH_SQUARED: f32 = 17.015625;
@@ -90,10 +83,10 @@ pub struct Harvest {
     target: Option<u32>,
     /// What it carries.
     carry: Option<(Resource, i32)>,
-    /// The tick of its next hit on a tree, and of the walk back with a
-    /// full load.
-    next_hit: Option<u64>,
-    back_at: Option<u64>,
+    /// The queue times of its next hit on a tree and of the walk back
+    /// with a full load (SPEC-0029, "Arriving at the tree").
+    next_hit: Option<u32>,
+    back_at: Option<u32>,
     /// The work started out of reach of its tree: the tick of the check
     /// that takes another tree (SPEC-0029, "Another tree").
     switch_at: Option<u64>,
@@ -101,6 +94,10 @@ pub struct Harvest {
     /// placing of buildings (SPEC-0029, "Workers in the gathering cycle
     /// do not block each other").
     cycling: bool,
+    /// The harvest's ready mark and retry counter of the arrival check at
+    /// a tree (SPEC-0029, "Arriving at the tree").
+    ready: bool,
+    retries: u8,
     /// From its first arrival at its tree to the end of its first work:
     /// trees close their cells for its searches, its own included, and it
     /// still meets other units (SPEC-0029, "Entering the gathering cycle").
@@ -134,6 +131,7 @@ struct Gathering {
     per_hit: i32,
     lumber: i32,
     period: u64,
+    duration: u32,
     reach: u32,
     area: u32,
 }
@@ -155,6 +153,7 @@ fn gathering(state: &State, h: u32) -> Option<Gathering> {
         per_hit: whole(a.data[0]),
         lumber: whole(a.data[1]),
         period: (f64::from(f32::from_bits(a.duration)) * 200.0).round() as u64,
+        duration: a.duration,
         reach: a.range,
         area: a.area,
     })
@@ -355,9 +354,12 @@ pub(super) fn at_work_on_trees(state: &State) -> impl Iterator<Item = u32> + '_ 
 /// Sends worker `h` to its mine or tree, or with a load from elsewhere
 /// first to deliver it.
 fn walk_to_work(state: &mut State, h: u32) -> bool {
-    let Some(g) = get(state, h) else {
+    let Some(mut g) = get(state, h) else {
         return false;
     };
+    // A new walk: the arrival check finds the ready mark clear.
+    g.ready = false;
+    set(state, h, Some(g));
     let Some(target) = g.target else {
         return false;
     };
@@ -544,31 +546,41 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             arrive_at_mine(&mut s, h, target);
         } else if is_tree(&s, target) {
             let tick = s.ticks;
-            let near = within_reach(&s, h, target);
+            // The check of the place: the range test or the touch test
+            // (SPEC-0029, "Arriving at the tree").
+            let passes = within_reach(&s, h, target) || touches_tree(&s, h, target);
             if let Some(mut g) = get(&s, h)
                 && g.next_hit.is_none()
             {
-                // Out of its reach the work starts anyway, and 0.5 s later
-                // another tree is taken (SPEC-0029; c-RYP-1: peasant 4).
-                if near {
-                    // A worker in the gathering cycle arrives by the test of
-                    // its walk and swings at once: the swing point 0.433 s
-                    // later (c-RYP-1: peasant 5, 1351 -> 1437).
-                    let first = if g.cycling || g.at_tree {
-                        SWING_POINT
+                if passes && g.ready {
+                    // The swing starts; the first hit at its swing point
+                    // (c-RYP-1: peasant 0 at 1003 -> 1089, peasant 5 at
+                    // 1351 -> 1437).
+                    let (point, _) = swing(&s, h);
+                    g.next_hit = Some(add(s.update_time, point));
+                    set(&mut s, h, Some(g));
+                } else if passes || g.retries > 0 {
+                    // The walk to the same tree again, with the search set
+                    // of a worker at its tree (c-RYP-1: peasant 0 at 997,
+                    // peasant 5 at 1309).
+                    if passes {
+                        g.retries = 2;
                     } else {
-                        FIRST_HIT
-                    };
-                    g.next_hit = Some(tick + first);
-                    // A first-walk worker arrives at its tree here (the
-                    // retry of its first check, c-RYP-1: peasant 0 at 997).
-                    if !g.cycling {
-                        g.at_tree = true;
+                        g.retries -= 1;
+                    }
+                    g.at_tree = true;
+                    set(&mut s, h, Some(g));
+                    walk_to_work(&mut s, h);
+                    if let Some(mut g) = get(&s, h) {
+                        g.ready = true;
+                        set(&mut s, h, Some(g));
                     }
                 } else {
+                    // The tree is dropped; another one 0.5 s later
+                    // (c-RYP-1: peasant 4 at 1243).
                     g.switch_at = Some(tick + SWITCH_CHECK);
+                    set(&mut s, h, Some(g));
                 }
-                set(&mut s, h, Some(g));
             }
         } else {
             drop(s);
@@ -874,7 +886,7 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let Some(numbers) = numbers else {
             continue;
         };
-        if g.back_at == Some(tick) {
+        if g.back_at.is_some_and(|e| due(&state.borrow(), e)) {
             let mut s = state.borrow_mut();
             let mut g = g;
             g.back_at = None;
@@ -888,12 +900,12 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         }
         if g.switch_at == Some(tick) {
             let mut s = state.borrow_mut();
-            take_another_tree(&mut s, h, tick);
+            take_another_tree(&mut s, h);
             continue;
         }
-        if g.next_hit != Some(tick) {
+        let Some(hit) = g.next_hit.filter(|&e| due(&state.borrow(), e)) else {
             continue;
-        }
+        };
         let Some(tree) = g.target else {
             continue;
         };
@@ -917,10 +929,11 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         g.carry = Some((Resource::Lumber, carried));
         if carried >= numbers.lumber {
             g.next_hit = None;
-            g.back_at = Some(tick + AFTER_LAST_HIT);
+            // At the end of the swing's backswing.
+            g.back_at = Some(add(hit, swing(&s, h).1));
             set(&mut s, h, Some(g));
         } else {
-            g.next_hit = Some(tick + numbers.period);
+            g.next_hit = Some(add(hit, numbers.duration));
             set(&mut s, h, Some(g));
             if !is_tree(&s, tree) {
                 next_tree(&mut s, h, tree, numbers);
@@ -1008,10 +1021,26 @@ fn deliver(state: &mut State, h: u32) {
     }
 }
 
+/// Whether queue time `e` falls in this tick: Q(k) < e <= Q(k + 1).
+fn due(state: &State, e: u32) -> bool {
+    f32::from_bits(e) <= f32::from_bits(add(state.move_clock, crate::timers::TICK))
+}
+
+/// The damage point and the backswing of worker `h`'s weapon, in seconds.
+fn swing(state: &State, h: u32) -> (u32, u32) {
+    state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .and_then(|t| t.weapon.as_ref())
+        .map_or((0, 0), |w| (w.damage_point, w.backswing))
+}
+
 /// Worker `h` hitting a tree: the tick of its next hit, the ticks between
 /// hits and the damage point of its weapon in ticks, for the swing shown.
 pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
-    let next = get(state, h)?.next_hit?;
+    let e = get(state, h)?.next_hit?;
+    let left = f32::from_bits(e) - f32::from_bits(add(state.move_clock, crate::timers::TICK));
+    let next = state.ticks + (left / 0.005).ceil().max(0.0) as u64;
     let period = gathering(state, h)?.period;
     let point = state
         .unit(Some(h))
@@ -1023,21 +1052,18 @@ pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
     Some((next, period, point))
 }
 
-/// Whether worker `h` is in the gathering cycle (it has been in a mine
-/// or at a tree once, SPEC-0029).
-/// (For trees also from its first arrival, see `at_tree`.)
-pub(super) fn cycling(state: &State, h: u32) -> bool {
-    get(state, h).is_some_and(|g| g.cycling || g.at_tree)
-}
-
-/// Worker `h` arrives at its tree touching it, out of reach: the retry of
-/// the harvest's check (SPEC-0029), its first arrival or, in the cycle,
-/// a failed one (c-RYP-1: peasant 5 at 5599, set B in its search of 5605).
-pub(super) fn start_cycling(state: &mut State, h: u32) {
-    if let Some(mut g) = get(state, h) {
-        g.at_tree = true;
-        set(state, h, Some(g));
-    }
+/// Whether worker `h` touches tree `tree`: the ring of cells round its
+/// own meets one of the tree's (SPEC-0025, "Blocked units").
+fn touches_tree(state: &State, h: u32, tree: u32) -> bool {
+    let (Some(u), Some(Object::Destructable(d))) = (state.unit(Some(h)), state.objects.get(&tree))
+    else {
+        return false;
+    };
+    let class =
+        crate::path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let at = super::follow::to_cells(relative([u.x, u.y], min));
+    super::follow::touches(d.footprint.red(), at, class)
 }
 
 /// Whether worker `h` is within the harvest's reach of tree `tree`.
@@ -1056,7 +1082,7 @@ fn within_reach(state: &State, h: u32, tree: u32) -> bool {
 /// free and an iteration limit of 32, then of the best removals plus 16
 /// (SPEC-0029, "Another tree").
 ///
-fn take_another_tree(state: &mut State, h: u32, tick: u64) {
+fn take_another_tree(state: &mut State, h: u32) {
     let Some(g) = get(state, h) else {
         return;
     };
@@ -1129,7 +1155,7 @@ fn take_another_tree(state: &mut State, h: u32, tick: u64) {
     if let Some(mut g) = get(state, h) {
         g.switch_at = None;
         g.target = Some(tree);
-        g.next_hit = Some(tick + SWITCH_CHECK);
+        g.ready = false;
         set(state, h, Some(g));
     }
     if let Some(at) = position(state, tree) {

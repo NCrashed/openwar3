@@ -2113,13 +2113,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         if let Order::Gather { target } | Order::Return { building: target } = m.order
             && !waiting
-            // A worker in the gathering cycle reaches its tree by the arrival
-            // test of its walk (SPEC-0019, SPEC-0029; c-RYP-1: peasant 5
-            // turned at 1339 and 1345 and arrived at 1351); one on its first
-            // walk when within reach (peasant 0 at 991).
-            && if building_target(target)
-                || (is_tree_target(state, target) && super::harvest::cycling(state, h))
-            {
+            // A worker reaches its tree by the arrival test of its walk
+            // (SPEC-0019, SPEC-0029; c-RYP-1: peasant 5 turned at 1339 and
+            // 1345 and arrived at 1351, peasant 0 turned at 991 and
+            // arrived at 997).
+            && if building_target(target) || is_tree_target(state, target) {
                 m.arrived
             } else {
                 super::harvest::reached(state, h, here, target)
@@ -2128,12 +2126,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
-            // It turns to the tree by one step of its turn rate at most
-            // (c-RYP-1: peasant 0 at 991, 0.0627 -> 0.6627).
-            if let Some(Object::Destructable(d)) = state.objects.get(&target) {
-                let at = relative([d.x, d.y], min);
-                motion(&mut m, at, false, speed, limit, turn_rate, window);
-            }
             m.arrived = false;
         }
         if let Order::Work { .. } = m.order {
@@ -2654,16 +2646,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let delivering = matches!(m.order, Order::Return { .. });
             state.harvest_reached.push((h, target, delivering));
             m.order = Order::Work { target };
-            // It turns to a tree by one step of its turn rate at most
-            // (c-RYP-1: peasant 0 at 991, 0.0627 -> 0.6627).
-            // A cycling worker, arrived by the arrival test, is turned to
-            // it already (peasant 0 at 4789).
-            if !super::harvest::cycling(state, h)
-                && let Some(Object::Destructable(d)) = state.objects.get(&target)
-            {
-                let at = relative([d.x, d.y], min);
-                motion(&mut m, at, false, speed, limit, turn_rate, window);
-            }
             m.arrived = false;
         }
         // So too a worker sent back to its building under construction.

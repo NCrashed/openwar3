@@ -96,8 +96,6 @@ pub struct Follow {
     /// within its order's reach at the next arrival test (SPEC-0025,
     /// "Blocked units").
     touching: bool,
-    /// The mark came from giving up at P = 1: arrived, it works there.
-    gave_up: bool,
     /// The cluster's list (the 5000 search, in blocks, from the start) and
     /// the index of its current waypoint W; the unit's own list goes to W
     /// (SPEC-0020, "Two searches"; SPEC-0025).
@@ -154,7 +152,7 @@ impl Budget {
     }
 }
 
-fn to_cells(p: [u32; 2]) -> [u32; 2] {
+pub(super) fn to_cells(p: [u32; 2]) -> [u32; 2] {
     p.map(|c| mul(c, CELL))
 }
 
@@ -583,7 +581,6 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             made: false,
             patience: 0,
             touching: false,
-            gave_up: false,
             order: order_cells,
             cluster: plan.0,
             w: plan.1,
@@ -647,16 +644,6 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
-    // At its first arrival at its tree the worker enters the gathering
-    // cycle (SPEC-0029; c-RYP-1: peasant 5 arrived in 1309, searched as a
-    // cycling worker in 1315).
-    if decided == Steer::Hold
-        && walker.tree.is_some()
-        && follow.final_goal
-        && follow.stop_at.is_none()
-    {
-        super::harvest::start_cycling(state, walker.handle);
-    }
     // An arrived unit searches a new path at its next update.
     if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);
@@ -733,8 +720,10 @@ fn decide(
             if real(off).abs() > 0.2 {
                 return Steer::Stand(place);
             }
-            // At its target: there; else a new search at the next update.
-            if (in_reach || follow.gave_up) && follow.final_goal && follow.stop_at.is_none() {
+            // At its target, or touching its tree: the walk ends there
+            // (SPEC-0029, "Arriving at the tree"); else a new search at the
+            // next update.
+            if follow.final_goal && follow.stop_at.is_none() {
                 return Steer::Arrived;
             }
             if follow.stop_at.is_some() {
@@ -877,7 +866,6 @@ fn decide(
                 // c-RYP-1: peasant 4 at 1231).
                 if follow.patience == 1 && walker.tree.is_some() {
                     follow.touching = true;
-                    follow.gave_up = true;
                     return Steer::Stand(walker.order);
                 }
                 // Set and lowered in the same update (P = 2 -> 1 for a
@@ -938,10 +926,6 @@ fn decide(
                 && touches(&shared.tree, at, class)
             {
                 follow.touching = true;
-                // A path that cannot get it closer: it works there.
-                // PROVISIONAL: the game's local search to a tree ends
-                // only on its occupancy cells (open, asked).
-                follow.gave_up = follow.local.len() <= 1;
                 shared.events.push(PathEvent {
                     tick,
                     kind: PathEventKind::Blocked,
@@ -962,7 +946,6 @@ fn decide(
             {
                 if follow.patience == 1 {
                     follow.touching = true;
-                    follow.gave_up = true;
                 } else {
                     let fresh = follow.patience == 0;
                     count_block(follow, shared, walker, order, at);
@@ -1086,7 +1069,7 @@ fn decide(
 
 /// Whether a unit of `class` at `at` (cells) touches `cells`: one of its
 /// cells on one of them or next to it, also diagonally.
-fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
+pub(super) fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
     path::occupied_cells(at, class).iter().any(|&(x, y)| {
         cells
             .iter()

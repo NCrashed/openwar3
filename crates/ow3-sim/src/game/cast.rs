@@ -244,16 +244,22 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
     if aim != Aim::Point || !ready(state, h, ability, level) {
         return Some(false);
     }
-    // The same spell again while its cast runs to the effect goes on
-    // with that cast (c-RZJ-1: blizzard ordered again at 600, effect at
-    // 649 of the start at 589).
-    // PROVISIONAL: not read in the game beyond that case.
-    if state
+    // The same spell again while its cast runs to the effect is taken and
+    // changes nothing, whatever its point; during the channel it is
+    // refused (SPEC-0043, edge cases; c-RZJ-1: blizzard ordered again at
+    // 600).
+    if let Some(c) = state
         .unit(Some(h))
         .and_then(|u| u.casting)
-        .is_some_and(|c| c.ability == ability && c.effect_at.is_some_and(|e| e > state.ticks))
+        .filter(|c| c.ability == ability)
+        && let Some(e) = c.effect_at
     {
-        return Some(true);
+        if e > state.ticks {
+            return Some(true);
+        }
+        if state.ticks < c.end_at {
+            return Some(false);
+        }
     }
     let casting = Casting {
         order_id,

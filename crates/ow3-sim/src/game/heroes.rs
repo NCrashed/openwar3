@@ -214,10 +214,15 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     if skill_points(state, u) <= 0 || next > data.levels || u.level < needs {
         return;
     }
+    let tick = state.ticks;
+    let brilliance = data.code == i32::from_be_bytes(*b"AHab") && next == 1;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         match u.skills.iter_mut().find(|(a, _)| *a == ability) {
             Some(entry) => entry.1 = next,
             None => u.skills.push((ability, next)),
+        }
+        if brilliance {
+            u.aura_learned = Some(tick);
         }
         u.spent += 1;
     }

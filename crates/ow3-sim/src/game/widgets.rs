@@ -136,6 +136,10 @@ pub(super) fn set_attribute(
         .type_id;
     let data = state.data.units.get(&type_id).cloned().unwrap_or_default();
     let night = state.night;
+    // Brilliance aura adds to the mana regeneration (SPEC-0046).
+    let mana_bonus = state
+        .unit(h)
+        .map_or(0, |u| super::auras::mana_bonus(state, u));
     let u = unit_mut(state, h)?;
     let old = match attribute {
         Attribute::Strength => std::mem::replace(&mut u.strength, value),
@@ -168,7 +172,12 @@ pub(super) fn set_attribute(
             shift(&mut u.life, 25, 1.0, rate);
         }
         Attribute::Intelligence => {
-            shift(&mut u.mana, 15, 0.0, crate::data::attribute_regen(value));
+            shift(
+                &mut u.mana,
+                15,
+                0.0,
+                add(crate::data::attribute_regen(value), mana_bonus),
+            );
         }
         Attribute::Agility => {}
     }
@@ -369,6 +378,7 @@ pub(super) fn create_unit(
         stun_back: None,
         slowed_until: None,
         buffs: Vec::new(),
+        aura_learned: None,
         weapon_ready: 0,
         cooldown_end: 0,
         cooldown_target: 0,

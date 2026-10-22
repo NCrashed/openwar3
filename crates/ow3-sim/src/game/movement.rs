@@ -2212,6 +2212,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // That renewal falls on this update: it comes after the step
             // (SPEC-0019; c-RXD-1: creep 6 at 2395).
             let mut renew_exact = false;
+            // That renewal with the target in range: the update's own step
+            // first, then the swing (c-RXD-1: creep 9 at 6589).
+            let mut exact_swing = None;
             // The goal before a renewal after a swing (SPEC-0019).
             let old_goal = m.target;
             let mut full_reach = reach;
@@ -2233,6 +2236,21 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         }
                         match m.chase {
                             // The new goal after a swing (SPEC-0019).
+                            _ if renew_now
+                                && renew_exact
+                                // (a swing timed by the cooldown goes on by its
+                                // timer: c-RSL-1, the footman at 2251)
+                                && state.unit(Some(h)).is_some_and(|u| u.attack.is_none())
+                                && in_range(
+                                    here,
+                                    relative(at, min),
+                                    add(reach, mul(collision_of(state, target), CELL)),
+                                ) =>
+                            {
+                                m.renew_at = None;
+                                m.renew_stands = false;
+                                exact_swing = Some(at);
+                            }
                             _ if renew_now => {
                                 m.renew_at = None;
                                 after_swing = true;
@@ -2437,7 +2455,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             !timed && (fresh || tick + point >= u.weapon_ready)
                         });
                         let (h, d) = heading_and_turn(&m, goal);
-                        let gate_open = cooled && m.swing_gate.is_none_or(|from| tick >= from);
+                        let gate_open = cooled
+                            && m.swing_gate.is_none_or(|from| tick >= from)
+                            && exact_swing.is_none();
                         if real_of(d).abs() < ATTACK_ANGLE {
                             m.heading = h;
                             m.walking = false;
@@ -2453,6 +2473,25 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             }
                         } else {
                             motion(&mut m, goal, false, speed, limit, turn_rate, window);
+                        }
+                        // After the step, the renewal: turned within 0.2 to the
+                        // target where it is, the swing starts; else it is
+                        // faced there (c-RXD-1: creep 9 at 6589, creep 6 at
+                        // 2107).
+                        if let Some(at) = exact_swing
+                            && begin_attack.is_none()
+                            && m.swing_gate.is_none_or(|from| tick >= from)
+                        {
+                            if real_of(heading_and_turn(&m, relative(at, min)).1).abs()
+                                < ATTACK_ANGLE
+                            {
+                                m.arrived = true;
+                                m.walking = false;
+                                m.velocity = [0, 0];
+                                begin_attack = Some(target);
+                            } else {
+                                m.target = at;
+                            }
                         }
                     } else if state.grid.is_some() {
                         // To the goal point by the paths of SPEC-0020 and

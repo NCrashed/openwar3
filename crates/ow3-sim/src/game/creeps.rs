@@ -444,6 +444,9 @@ pub(super) fn after_stun(state: &mut State, h: u32, now: u32) {
     }
 }
 
+/// How long a creep's spell decision holds the spell, 0.5 s (SPEC-0047).
+const DECISION_HOLD: u32 = 0x3F00_0000;
+
 /// Creep spells (SPEC-0047): at a hit on creep `h` or a call for help
 /// that reaches it, with `victim` the creep hit or calling and `attacker`
 /// the enemy, a creep with Shockwave casts it on the attacker when the
@@ -478,6 +481,14 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
     };
     if !super::cast::creep_ready(state, h, ability, 1) {
         return;
+    }
+    // A decision past readiness puts the spell on a 0.5 s cooldown, cast
+    // or not (SPEC-0047, "The decision"; c-RZJ-1: 6029 decided, 6117
+    // refused).
+    let hold = state.ticks + super::attack::ticks(DECISION_HOLD);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.ready.retain(|&(a, _)| a != ability);
+        u.ready.push((ability, hold));
     }
     let busy = state.units.iter().any(|&o| {
         o != h

@@ -44,6 +44,16 @@ following hold:
 
 1. **Ready.** The cooldown is over and the creep can cast the spell
    now. In particular it has the mana and is not casting already.
+   **Each decision that gets past this test puts the spell on a 0.5 s
+   cooldown**, whether it then casts or not. Every further decision
+   in those 0.5 s fails here at once (so of several calls in one tick
+   only the first is decided). `c-RZJ-1`, read in the game:
+   - 6029: decided, count 1 against threshold 2, no cast;
+   - 6117: 0.0589 s left, fails;
+   - 6226: decided, count 1, no cast;
+   - 6228: 0.49 s left, fails;
+   - 6298: 0.136 s left, fails;
+   - 6371: decided, count 4, cast.
 2. **Enough enemies.** Count the enemy units whose distance from the
    attacker's position is smaller than `150 + collision`, with each
    unit's own collision size; the attacker counts itself.

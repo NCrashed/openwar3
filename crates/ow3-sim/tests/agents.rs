@@ -1,7 +1,8 @@
 //! The path agents of `c-RXI-1` (six peasants harvesting) and `c-RTW-3`
 //! (footmen walking in groups): every position commit read in the game
 //! (`<replay>.agents.tsv`), compared bit for bit with the simulation's.
-//! All of them must match (c-RXI-1, c-RTW-3, c-RYP-1, c-RXD-1). Skipped without the game data.
+//! c-RXI-1, c-RTW-3, c-RYP-1 and c-RXD-1 must match; c-RZH-1 (the hero test) reports
+//! the first commit of each unit that differs. Skipped without the game data.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -232,4 +233,29 @@ fn creep_agents_report() {
     // Every commit of the path agents is the game's, bit for bit.
     let first = report(&game, &ours);
     assert!(first.is_empty(), "first differences: {first:?}");
+}
+
+#[test]
+fn hero_agents_report() {
+    let Some(game) = game_commits("c-RZH-1") else {
+        return;
+    };
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    let kinds = [
+        code(b"Hmkg"),
+        code(b"hfoo"),
+        code(b"nkob"),
+        code(b"nkot"),
+        code(b"ngno"),
+        code(b"nogr"),
+    ];
+    // The hero, the footmen and the creeps by their order of creation.
+    let ours = our_commits("c-RZH-1", 12000, |h, units, _| {
+        units
+            .iter()
+            .filter(|u| kinds.contains(&u.type_id))
+            .position(|u| u.handle == h)
+            .map_or(-1, |i| i as i32)
+    });
+    eprintln!("first differences: {:?}", report(&game, &ours));
 }

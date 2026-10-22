@@ -398,3 +398,16 @@ fn go_home(state: &mut State, h: u32) {
         c.homebound = walks;
     });
 }
+
+/// A creep idle after a stun at queue time `now`: its return timer starts
+/// and its guard checks start again (SPEC-0037; c-RZH-1: creep 8 at
+/// 1946).
+pub(super) fn after_stun(state: &mut State, h: u32, now: u32) {
+    let back = state.combat.guard_return_time;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && u.owner == CREEPS
+    {
+        u.creep.return_time = Some(add(now, back));
+        u.creep.checks_next = Some(add(now, CHECK_PERIOD));
+    }
+}

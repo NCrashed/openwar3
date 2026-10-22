@@ -3307,7 +3307,56 @@ pub(super) fn first_check(state: &State) -> Option<u32> {
         .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)))
 }
 
+/// The ends of stuns in this tick (SPEC-0037, "The order after a stun"):
+/// a unit's own order is given again as new (c-RZH-1: footman 2's
+/// attack-move at 2009); an attack it acquired is not, the unit is idle and
+/// checks 0.01 s later (creep 8 at 1946, taking footman 4 at 1948), a creep
+/// with its return timer and guard checks started.
+fn stun_ends(state: &mut State) {
+    let tick = state.ticks;
+    let ended: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            state
+                .unit(Some(h))
+                .is_some_and(|u| u.alive && u.stunned_until == Some(tick))
+        })
+        .collect();
+    let now = state.move_clock;
+    for h in ended {
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
+        if let Some(a) = u.attack_move {
+            point_order_taken(state, h, "attack", a.point, true);
+            // Its first check 0.01 s after this tick's clock.
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(a) = u.attack_move.as_mut()
+            {
+                a.next_check = add(now, AFTER_DEATH);
+            }
+            continue;
+        }
+        let acquired = u.attack.is_some_and(|a| a.order_id == 0)
+            || u.movement.is_some_and(|m| {
+                matches!(m.order, Order::Attack { .. }) && m.order_id == 0 && m.ordered()
+            });
+        if acquired {
+            halt(state, h);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && u.acquire_phase != super::NO_PHASE
+            {
+                u.next_acquire = add(now, AFTER_DEATH);
+            }
+            super::creeps::after_stun(state, h, now);
+        }
+    }
+}
+
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
+    stun_ends(state);
     let tick = state.ticks;
     let next_clock = add(state.move_clock, crate::timers::TICK);
     let alive: BTreeSet<u32> = state
@@ -3772,8 +3821,12 @@ impl Targets {
         let from = self
             .list
             .partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
-        // (structure, threat, squared distance, y, x, handle).
-        let mut best: Option<(bool, u8, f32, f32, f32, u32)> = None;
+        // In range of the attack before threat (SPEC-0019; c-RZH-1: footman
+        // 2 took creep 7 in range at 2011, not creep 11).
+        let range =
+            data.weapon.as_ref().map_or(0.0, |w| real_of(w.range)) + real_of(data.collision);
+        // (structure, out of range, threat, squared distance, y, x, handle).
+        let mut best: Option<(bool, bool, u8, f32, f32, f32, u32)> = None;
         for &(ox, oy, collision, other_owner, structure, other) in &self.list[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
@@ -3789,13 +3842,24 @@ impl Targets {
             if distance > limit * limit {
                 continue;
             }
-            let key = (structure, threat(state, h, other), distance, oy, ox, other);
-            if best.is_none_or(|b| (key.0, key.1, key.2, key.3, key.4) < (b.0, b.1, b.2, b.3, b.4))
-            {
+            let within = range + real_of(collision);
+            let out = distance > within * within;
+            let key = (
+                structure,
+                out,
+                threat(state, h, other),
+                distance,
+                oy,
+                ox,
+                other,
+            );
+            if best.is_none_or(|b| {
+                (key.0, key.1, key.2, key.3, key.4, key.5) < (b.0, b.1, b.2, b.3, b.4, b.5)
+            }) {
                 best = Some(key);
             }
         }
-        best.map(|b| b.5)
+        best.map(|b| b.6)
     }
 }
 

@@ -968,7 +968,9 @@ pub(super) fn spell_hit(
     let mut s = state.borrow_mut();
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
         let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
-        super::cast::stun(&mut s, target, if hero { stun.1 } else { stun.0 });
+        // The impact comes at the end of the tick: the stun counts from the
+        // next one (c-RZH-1: bolt 943, order back at 1946).
+        super::cast::stun(&mut s, target, 1 + if hero { stun.1 } else { stun.0 });
     }
 }
 

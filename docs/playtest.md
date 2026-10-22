@@ -6,17 +6,24 @@ be read by the analyst) and its state.
 
 ## Icecrown, 2026-10-22
 
-1. Build and training queue. The game limits a queue to 5 units and
-   shows the empty slots of the queue. Ask the analyst for the limit and
-   the empty slots. Open.
+1. Build and training queue. The user remembers a limit of 5. The
+   analyst read 7 in the game (8th to 10th train orders refused; the cost
+   is paid when an order enters the queue). The look of the empty slots
+   is not observed; the interface data has only a queue border texture,
+   and from memory the first item shows big with its progress bar, the
+   next six as small icons, empty slots as the backdrop. Open.
 2. Order confirmations. We draw a blinking circle. The game highlights
    the tree, the mine and attacked targets on their own, in another way.
-   Ask the analyst how each confirmation looks. Open.
+   The interface data has two models: one for an order on a point, one
+   for an order on a unit or other target, and target colors (a green
+   target light, a yellow highlight of the target). Not yet watched in
+   the game. Open.
 3. Power building (several workers building one structure). Not done.
    Open.
 4. Placement of a building. We tint the whole building green or red.
-   Ask the analyst whether the game also shows the cells under the
-   building that forbid building. Open.
+   The game data tints it bluish when it can be paid and reddish when
+   not. Whether the cells that forbid building are shown on their own is
+   not observed. Open.
 5. The resources a unit costs are not shown (tooltip of the train
    button). Open.
 6. Not enough food. The game does not queue a unit then; a unit already
@@ -33,6 +40,11 @@ be read by the analyst) and its state.
    - attack on the ground: the units walk to the point as a group, then
      all bunch round the order point at once. Check against the game;
    - check which mouse button issues the attack click after A.
+   From the analyst's memory (not observed): after A the cursor becomes
+   the targeting cursor, a left click gives the order, a right click
+   cancels, a click on the ground is an attack-move, and at its end the
+   group keeps its formation places round the point (as for a move)
+   instead of closing in.
    Open.
 10. No error feedback (message and sound) when gold, lumber or food is
     missing. Open.

@@ -542,6 +542,8 @@ pub struct Missile {
     spell: Option<(u64, u64)>,
 }
 
+/// 1/32: world units to path cells.
+const CELLS: u32 = 0x3D00_0000;
 /// 0.1 s, the step of a homing missile, in ticks and as a real.
 const HOMING_TICKS: u64 = 20;
 /// The least delay of a timer, 0.0001 s (SPEC-0002).
@@ -913,27 +915,34 @@ pub(super) fn launch_spell(
     stun: (u64, u64),
     speed: u32,
 ) -> Option<Missile> {
+    // It flies straight at the target's position at the launch, from the
+    // caster's position floored to 1/128 cell, at its speed per tick, and
+    // hits in the first tick in which it has flown the distance (SPEC-0037,
+    // "Flight"; c-RZH-1: launch 891, 8.1708 cells, 53 ticks, damage in 943).
     let u = state.unit(Some(h))?;
     let from = [u.x, u.y];
     let to = super::movement::position_of(state, target)?;
-    let flight = distance(from, to);
-    let step = mul(speed, HOMING_STEP);
-    if f32::from_bits(flight) < f32::from_bits(step) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cells = |p: [u32; 2]| super::movement::relative(p, min).map(|c| mul(c, CELLS));
+    let floor128 = |c: u32| (f32::from_bits(mul(c, 0x4300_0000)).floor() / 128.0).to_bits();
+    let (a, b) = (cells(from).map(floor128), cells(to));
+    let (dx, dy) = (sub(b[0], a[0]), sub(b[1], a[1]));
+    let d = ow3_math::natives::sqrt(add(mul(dx, dx), mul(dy, dy)));
+    let per_tick = mul(mul(speed, CELLS), crate::timers::TICK);
+    if f32::from_bits(per_tick) <= 0.0 {
         return None;
     }
-    let k = div(step, flight);
-    let at = [
-        add(from[0], mul(sub(to[0], from[0]), k)),
-        add(from[1], mul(sub(to[1], from[1]), k)),
-    ];
+    let n = (f32::from_bits(div(d, per_tick))).ceil().max(1.0) as u64;
+    // The impact tick's own clock: due at the end of the tick before.
+    let expiry = (0..n).fold(state.move_clock, |c, _| add(c, crate::timers::TICK));
     Some(Missile {
         attacker: h,
         target,
-        at,
+        at: from,
         point: to,
         launched: state.move_clock,
-        expiry: state.move_clock,
-        homing: Some((step, state.ticks + HOMING_TICKS)),
+        expiry,
+        homing: None,
         artillery: false,
         amount,
         attack_type: 0,

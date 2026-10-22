@@ -2369,6 +2369,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             _ if renew_now => {
                                 m.renew_at = None;
                                 after_swing = true;
+                                follow::new_group(state, h);
                                 m.target = at;
                                 // A goal of a timer: the countdown starts at
                                 // the search, the next update, which does not

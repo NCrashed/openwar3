@@ -103,6 +103,9 @@ pub struct Follow {
     w: usize,
     /// W in cells when it is not the order point.
     stop_at: Option<[u32; 2]>,
+    /// Its chase group was made anew (`fn new_group`): while its search is
+    /// held it does not walk the old path.
+    new_group: bool,
     /// The unit arrived at W: at its next update W moves on and it
     /// searches its own list to the new W.
     advance: bool,
@@ -413,6 +416,16 @@ pub struct PathEvent {
     pub at: [u32; 2],
 }
 
+/// Unit `h`'s chase group was made anew (the new goal after a swing,
+/// SPEC-0019): its local path goes with the old group, and while its next
+/// search is held it stands and turns to its goal (c-RXD-1: creep 9 from
+/// 8018 to 8066).
+pub(super) fn new_group(state: &mut State, h: u32) {
+    if let Some(f) = state.paths.get_mut(&h) {
+        f.new_group = true;
+    }
+}
+
 /// A unit at an update, as `steer` needs it.
 pub struct Walker {
     pub handle: u32,
@@ -597,6 +610,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             w: plan.1,
             stop_at: plan.2,
             advance: false,
+            new_group: false,
         };
         follow.take_segment(order_cells);
         follow
@@ -776,7 +790,11 @@ fn decide(
         follow.next = Next::Search;
     }
     let segment_goal = to_world(follow.goal);
-    if follow.next == Next::Search {
+    // While its search is held the unit walks on along its old local path,
+    // if it has one (c-RZJ-1: creep 15, goal renewed at 769, searched at
+    // 787, turning and walking along the path of 727 in between).
+    let held = tick < follow.hold_until && !follow.local.is_empty() && !follow.new_group;
+    if follow.next == Next::Search && !held {
         if tick < follow.hold_until {
             return Steer::Stand(segment_goal);
         }
@@ -785,6 +803,7 @@ fn decide(
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
         }
+        follow.new_group = false;
         let found = match walker.chase {
             // A chase searches to its goal and ends where it touches its
             // target (SPEC-0019).

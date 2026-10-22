@@ -255,7 +255,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     let primary = hero_primary(s, h);
                     // A thunder clap slows the attacks (SPEC-0037).
                     let cooldown = slowed(s, h, hero_cooldown(s, h, weapon.cooldown));
-                    let backswing = slowed(s, h, weapon.backswing);
+                    let backswing = slowed(s, h, hero_cooldown(s, h, weapon.backswing));
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     // A launch draws one more output for the missile
                     // (SPEC-0016).
@@ -518,8 +518,9 @@ fn strike(
     if !standing(&s, target) {
         let tick = s.ticks;
         let backswing = match s.objects.get(&h) {
-            Some(Object::Unit(u)) => weapon_for(&s, u.type_id, Some(target))
-                .map_or(1, |w| ticks(slowed(&s, h, w.backswing))),
+            Some(Object::Unit(u)) => weapon_for(&s, u.type_id, Some(target)).map_or(1, |w| {
+                ticks(slowed(&s, h, hero_cooldown(&s, h, w.backswing)))
+            }),
             _ => 1,
         };
         super::movement::killed(&mut s, h, tick, backswing);
@@ -929,7 +930,8 @@ pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
 
 /// The seconds between the hits of `h` with a weapon of `cooldown`: for a
 /// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034). Its
-/// damage point shrinks the same way.
+/// damage point and its backswing shrink the same way (c-RZJ-1: the Paladin,
+/// AGI 16, backswing 0.567 / 1.32 = 0.4295 s after his kill at 2836).
 fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
     match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
         Some(u) => {

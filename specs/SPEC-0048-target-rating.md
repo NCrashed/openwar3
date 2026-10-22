@@ -38,13 +38,13 @@ gives that order; the "list" column says who uses a part.
 | # | Part | List |
 |---|---|---|
 | 1 | the candidate is not rooted (no `BEer` buff) and not in a second state that was not identified (true for every unit seen) | B |
-| 2 | big creeps: the candidate is a hero within the rater's range + 150; lists D/E: damage multiplier at least 0.7, or the building rule of E | C, D |
+| 2 | big creeps: the candidate is a hero within the rater's weapon range + 150, measured between centres (no collision sizes; `c-RZJ-1` 1307: the Paladin at 262 from the Ogre Lord, range 100, did not get it); lists D/E: damage multiplier at least 0.7, or the building rule of E | C, D |
 | 3 | the candidate belongs to a non-neutral player (player number below 12) | B |
 | 4 | the candidate is not a "special" unit (a state not identified) | D |
 | 5 | the candidate is not attacking an enemy of the rater: it is idle, attacks the rater, or attacks an ally of the rater | A |
 | 6 | as 2 for big creeps (the same rule gives both 2 and 6) | C |
 | 7 | constant, equal for every candidate (three parts) | - |
-| 8 | the candidate can attack (it has an attack that is not disabled) | A |
+| 8 | the candidate has an attack whose own disabled state is not set; a stun does not count (checked: counting stunned candidates as unable broke `c-RXD-1` and `c-RZH-1`) | A |
 | 9 | as 5, but always "no" for creeps of level 6 or below | A |
 | 10 | the candidate attacks an allied building of the rater | D |
 | 11 | the candidate has a unit state not identified (from a game-wide setting) | B |
@@ -52,7 +52,7 @@ gives that order; the "list" column says who uses a part.
 | 13 | damage multiplier at least 1.5, the candidate cannot move | as 12 |
 | 14 | the candidate attacks an allied hero of the rater | B |
 | 15 | the candidate can hit the rater (as 31, copied up) | B |
-| 16 | in range (the range test of SPEC-0019), unless 2 applies | C |
+| 16 | in range (the range test of SPEC-0019); "no" when part 2 applies (part 2 ranks higher anyway) | C |
 | 17 | the candidate has a poison ability without the poison buff | B |
 | 18 | the candidate is not ensnared (no `Bens` buff) | B |
 | 19 | damage multiplier at least 2.0, the candidate can move | as 12 |
@@ -67,14 +67,14 @@ gives that order; the "list" column says who uses a part.
 | 28 | damage multiplier above 0.2 | as 12 |
 | 29 | the candidate's armour type is not "fortified" | A |
 | 30 | the candidate can move; or (for a candidate that cannot move) it is a Serpent Ward | A |
-| 31 | big creeps: the candidate is a hero | C |
+| 31 | big creeps: the candidate is in a state not identified (not simply "is a hero": the Paladin at `c-RZJ-1` 1307 did not have it) | C |
 | 32 | the candidate can hit the rater (one of its weapons can target it) | A |
 | 33 | in range | A |
 | 34 | slower: the candidate can move and its movement speed is below the rater's; a candidate that cannot move (other than a Serpent Ward) also gets this part | B |
 | 35 | current target and in range | A |
 | 36 | the candidate attacks the rater itself | A |
 | 37 | the candidate attacks the rater, or an ally of the rater, or is busy with an ability with no target (a state not identified) | A |
-| 38 | both the rater and the candidate are heroes | A |
+| 38 | both the rater and the candidate are in the state of part 31 | A |
 | 39 | building priorities by unit type (town halls, towers, and others), ten parts | E |
 
 The damage multiplier parts (12, 13, 19, 20, 22, 24, 27, 28) are checked only by big creeps, and only under a condition of the creep player's AI that was false in all games read. Parts 2 (D/E variant), 4, 10 and 39 need a game-wide setting of 2 or more (it was 1), which is raised to 2 for big creeps under that same condition.
@@ -90,6 +90,9 @@ The damage multiplier parts (12, 13, 19, 20, 22, 24, 27, 28) are checked only by
   range and both attack ogre 14. Footman 5 has life 285, which gives
   part 26 "yes", and that ranks above part 35 (footman 2 is the current
   target). Footman 2 had about 334 life.
+- `c-RZJ-1` 1307, the Ogre Lord answering a call: footman 2 (244 away)
+  and its current target the Paladin (262 away), both out of range, got
+  equal keys. The nearer footman won.
 - `c-RXD-1`, `c-RZH-1`: the raters are creeps of level 1 to 3 or player
   units, so parts 16, 21, 25, 26 and 31 (list C) do not occur.
 

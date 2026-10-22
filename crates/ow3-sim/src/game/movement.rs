@@ -3817,7 +3817,7 @@ fn prefers_by(
 
 /// The parts of the rating of SPEC-0048 that our games use, in its
 /// order, as flags that are `true` where the candidate ranks lower.
-type Key = [bool; 19];
+type Key = [bool; 18];
 
 /// The rating of enemy `other` by unit `h` (SPEC-0048) with `current` its
 /// target, and the squared distance between their centres; `threat`
@@ -3827,9 +3827,8 @@ type Key = [bool; 19];
 /// off in all games read and not done; the unidentified states of parts
 /// 1, 4, 11 and 37 are taken as equal; part 9 repeats part 5 or is equal
 /// for all, so it changes no choice and is left out; Serpent Wards and
-/// the poison and ensnare parts are not done. Part 31 (a big creep
-/// prefers a hero) is left out: at 1307 in c-RZJ-1 the Ogre Lord left the
-/// Paladin for a nearer footman, both out of range (asked).
+/// the poison and ensnare parts are not done. Parts 31 and 38 rest on a
+/// state not identified and are left out.
 fn rating(
     state: &State,
     h: u32,
@@ -3886,7 +3885,7 @@ fn rating(
         !can_attack,                                         // 8
         creep && !attacks_allied_hero,                       // 14
         creep && !hits_rater,                                // 15
-        big && !(in_range || near_hero),                     // 16
+        big && !(in_range && !near_hero),                    // 16
         big && life >= 100.0,                                // 21
         big && life >= 200.0,                                // 25
         big && life >= 300.0,                                // 26
@@ -3898,7 +3897,6 @@ fn rating(
         !(current == Some(other) && in_range),               // 35
         rank != 0,                                           // 36
         rank > 1,                                            // 37
-        !(crate::data::is_hero(u.type_id) && hero),          // 38
     ];
     Some((key, distance))
 }

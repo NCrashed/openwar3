@@ -89,8 +89,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RZH-1.w3g",
-        "the hero test (Mountain King, footmen, creeps): its traces are being recorded; \
-         the state changes differ from turn 19 on",
+        "the hero test (Mountain King, footmen, creeps): all path agents and events are \
+         the game's (tests/agents.rs, tests/crowd.rs); the state changes differ from turn \
+         19 on, not looked at yet",
     ),
     (
         "c-RXI-1.w3g",

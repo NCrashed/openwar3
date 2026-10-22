@@ -1111,7 +1111,11 @@ fn decide(
     if touching_target {
         follow.touching = true;
     } else if !examined.is_empty() {
+        let fresh = follow.patience == 0;
         count_block(follow, shared, walker, order, at);
+        if fresh && follow.patience == 2 {
+            follow.patience -= 1;
+        }
     }
     shared.events.push(PathEvent {
         tick,

@@ -405,13 +405,11 @@ fn lumber_walks_report() {
 }
 
 /// `c-RZH-1`: the hero test (a Mountain King and six footmen against a
-/// creep camp).
-///
-/// PROVISIONAL: reports the first difference (the hero stage).
+/// creep camp): the path events match.
 #[test]
 fn hero_walks_report() {
     let Some(first) = report("c-RZH-1", 12000) else {
         return;
     };
-    eprintln!("hero: first difference at tick {first}");
+    assert_eq!(first, u64::MAX, "first difference at tick {first}");
 }

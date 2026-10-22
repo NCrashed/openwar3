@@ -80,7 +80,15 @@ fn play_replay(name: &str, until: u64) -> Option<Ours> {
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.game.state.borrow_mut().path_trace = Some(Vec::new());
     let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
-    let kinds = [code(b"hpea"), code(b"nkob"), code(b"nkot")];
+    let kinds = [
+        code(b"hpea"),
+        code(b"nkob"),
+        code(b"nkot"),
+        code(b"Hmkg"),
+        code(b"hfoo"),
+        code(b"ngno"),
+        code(b"nogr"),
+    ];
     let mut index: BTreeMap<u32, i32> = BTreeMap::new();
     let mut at: BTreeMap<i32, BTreeMap<u64, [f32; 2]>> = BTreeMap::new();
     while playback.game.ticks() < until && playback.step_tick() {
@@ -394,4 +402,16 @@ fn lumber_walks_report() {
         return;
     };
     assert_eq!(first, u64::MAX, "first difference at tick {first}");
+}
+
+/// `c-RZH-1`: the hero test (a Mountain King and six footmen against a
+/// creep camp).
+///
+/// PROVISIONAL: reports the first difference (the hero stage).
+#[test]
+fn hero_walks_report() {
+    let Some(first) = report("c-RZH-1", 12000) else {
+        return;
+    };
+    eprintln!("hero: first difference at tick {first}");
 }

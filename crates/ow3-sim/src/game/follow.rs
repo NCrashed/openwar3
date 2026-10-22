@@ -263,7 +263,9 @@ fn others(state: &State, h: u32) -> Others {
     // the workers waiting at a mine are in the way (c-RXI-1: worker 4's
     // search of 1279 touched two of them).
     if super::harvest::passes_through(state, h) {
-        for o in super::harvest::waiting(state) {
+        // So are the workers working at a tree (c-RYP-1: peasant 2 at its
+        // tree in peasant 5's search of 3537).
+        for o in super::harvest::waiting(state).chain(super::harvest::at_work_on_trees(state)) {
             let Some(u) = state.unit(Some(o)) else {
                 continue;
             };

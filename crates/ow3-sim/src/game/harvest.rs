@@ -344,6 +344,14 @@ pub(super) fn waiting(state: &State) -> impl Iterator<Item = u32> + '_ {
     state.mines.values().flat_map(|m| m.waiting.iter().copied())
 }
 
+/// The workers working at a tree (between their hits).
+pub(super) fn at_work_on_trees(state: &State) -> impl Iterator<Item = u32> + '_ {
+    state.units.iter().copied().filter(move |&h| {
+        get(state, h)
+            .is_some_and(|g| g.next_hit.is_some() && g.target.is_some_and(|t| is_tree(state, t)))
+    })
+}
+
 /// Sends worker `h` to its mine or tree, or with a load from elsewhere
 /// first to deliver it.
 fn walk_to_work(state: &mut State, h: u32) -> bool {

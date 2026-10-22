@@ -222,7 +222,7 @@ fn creep_agents_report() {
     let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
     let kinds = [code(b"hpea"), code(b"nkob"), code(b"nkot")];
     // Peasants and creeps by their order of creation.
-    let ours = our_commits("c-RXD-1", 8762, |h, units, _| {
+    let ours = our_commits("c-RXD-1", 9261, |h, units, _| {
         units
             .iter()
             .filter(|u| kinds.contains(&u.type_id))

@@ -203,6 +203,8 @@ struct Globals {
     fog_color: [f32; 4],
     vision_area: [f32; 4],
     vision_shades: [f32; 4],
+    /// The direction from the scene toward the camera, for billboards.
+    camera_toward: [f32; 4],
 }
 
 /// The light when no day/night model can be read: a white sun from the
@@ -487,7 +489,13 @@ impl ModelView {
 
     /// Shows the model through `view_projection` in the pixels `rect`
     /// (left, top, width, height).
-    fn aim(&mut self, queue: &wgpu::Queue, view_projection: Mat4, rect: [f32; 4]) {
+    fn aim(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_projection: Mat4,
+        toward: [f32; 3],
+        rect: [f32; 4],
+    ) {
         let light = PLAIN_LIGHT;
         let globals = Globals {
             view_projection,
@@ -513,6 +521,7 @@ impl ModelView {
             fog_color: [0.0; 4],
             vision_area: [0.0, 0.0, 1.0, 1.0],
             vision_shades: [0.0; 4],
+            camera_toward: [toward[0], toward[1], toward[2], 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.rect = Some(rect);
@@ -1116,7 +1125,13 @@ impl Renderer {
             camera.far,
             rect[2] / rect[3],
         );
-        self.portrait.aim(queue, view_projection, rect);
+        let toward = {
+            let (p, t) = (camera.position, camera.target);
+            let d = [p[0] - t[0], p[1] - t[1], p[2] - t[2]];
+            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+            [d[0] / n, d[1] / n, d[2] / n]
+        };
+        self.portrait.aim(queue, view_projection, toward, rect);
     }
 
     /// Shows the time of day indicator `model` (SPEC-0028) over the
@@ -1153,7 +1168,9 @@ impl Renderer {
             [0.0, 0.0, -1.0, 0.0],
             [-1.0, -1.0, 1.0, 1.0],
         ];
-        self.time_indicator.aim(queue, view_projection, rect);
+        // Its coordinates are those of the interface, larger z nearer.
+        self.time_indicator
+            .aim(queue, view_projection, [0.0, 0.0, 1.0], rect);
     }
 
     pub fn prepare_overlay(
@@ -1357,6 +1374,12 @@ impl Renderer {
             fog_color: self.fog.1,
             vision_area: self.vision_area,
             vision_shades: [self.vision_masked, 0.0, 0.0, 0.0],
+            camera_toward: {
+                let (eye, at) = (camera.eye(), camera.target);
+                let d = [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]];
+                let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+                [d[0] / n, d[1] / n, d[2] / n, 0.0]
+            },
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

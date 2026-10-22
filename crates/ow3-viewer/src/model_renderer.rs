@@ -30,6 +30,8 @@ struct Globals {
     fog_color: vec4<f32>,
     vision_area: vec4<f32>,
     vision_shades: vec4<f32>,
+    // Toward the camera, for billboards.
+    camera_toward: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var shadow_map: texture_2d<f32>;
@@ -39,6 +41,9 @@ struct Globals {
 @group(1) @binding(1) var skin_sampler: sampler;
 @group(2) @binding(0) var<storage, read> bones: array<mat4x4<f32>>;
 @group(2) @binding(1) var<storage, read> alphas: array<vec4<f32>>;
+// A bone's pivot and billboard mode (0 none, 1 facing the camera, 2
+// turning about z).
+@group(2) @binding(2) var<storage, read> bone_info: array<vec4<f32>>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -84,16 +89,44 @@ fn vs(v: VertexIn) -> VertexOut {
             + bones[v.bone_base + v.bone_ids.z] * v.weights.z
             + bones[v.bone_base + v.bone_ids.w] * v.weights.w;
     }
+    var position = (skinned * vec4<f32>(v.position, 1.0)).xyz;
+    var normal = (skinned * vec4<f32>(v.normal, 0.0)).xyz;
+    // A billboarded bone turns its vertices round its pivot to face the
+    // camera: the node's x toward it, z up.
+    let info = bone_info[v.bone_base + v.bone_ids.x];
+    if total > 0.0 && info.w > 0.5 {
+        let bone = bones[v.bone_base + v.bone_ids.x];
+        let pivot = (bone * vec4<f32>(info.xyz, 1.0)).xyz;
+        let scale = vec3<f32>(length(bone[0].xyz), length(bone[1].xyz), length(bone[2].xyz));
+        let offset = (v.position - info.xyz) * scale;
+        let axes = mat3x3<f32>(
+            normalize(model[0].xyz),
+            normalize(model[1].xyz),
+            normalize(model[2].xyz),
+        );
+        let inverse = transpose(axes);
+        var toward = normalize(inverse * globals.camera_toward.xyz);
+        let model_up = inverse * vec3<f32>(0.0, 0.0, 1.0);
+        var up = model_up;
+        if info.w > 1.5 {
+            toward = normalize(toward - model_up * dot(toward, model_up));
+        } else {
+            up = normalize(model_up - toward * dot(model_up, toward));
+        }
+        let side = cross(up, toward);
+        position = pivot + toward * offset.x + side * offset.y + up * offset.z;
+        normal = toward;
+    }
     var out: VertexOut;
-    out.clip = globals.view_projection * model * skinned * vec4<f32>(v.position, 1.0);
-    out.normal = (model * skinned * vec4<f32>(v.normal, 0.0)).xyz;
+    out.clip = globals.view_projection * model * vec4<f32>(position, 1.0);
+    out.normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.uv = v.uv;
     // The colour of the geoset animation and the alpha of the slot.
     let slot = alphas[v.alpha + v.alpha_shift];
     out.alpha = slot.w;
     out.tint = v.tint * slot.rgb;
     out.terrain_light = v.terrain_light;
-    out.world = (model * skinned * vec4<f32>(v.position, 1.0)).xy;
+    out.world = (model * vec4<f32>(position, 1.0)).xy;
     out.depth = out.clip.w;
     return out;
 }
@@ -196,6 +229,8 @@ pub struct ModelRenderer {
     animation: Animation,
     bones: wgpu::Buffer,
     alphas: wgpu::Buffer,
+    /// The pivot and billboard mode of each bone (`Animation::bone_info`).
+    bone_info: wgpu::Buffer,
     animation_bind_group: wgpu::BindGroup,
     animation_layout: wgpu::BindGroupLayout,
     texture_layout: wgpu::BindGroupLayout,
@@ -212,6 +247,7 @@ pub struct ModelRenderer {
     /// The matrices of units in a pose of their own (dying, swinging),
     /// after those of the variants.
     unit_bones: Vec<crate::camera::Mat4>,
+    unit_bone_info: Vec<[f32; 4]>,
     /// The colours and alphas of effects played once and of units with
     /// their own, after the shared ones.
     unit_alphas: Vec<[f32; 4]>,
@@ -337,7 +373,7 @@ impl ModelRenderer {
         };
         let animation_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("animation"),
-            entries: &[storage(0), storage(1)],
+            entries: &[storage(0), storage(1), storage(2)],
         });
         let bones = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bones"),
@@ -348,6 +384,12 @@ impl ModelRenderer {
         let alphas = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("alphas"),
             size: u64::from(animation.alpha_count()) * 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bone_info = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bone info"),
+            size: u64::from(animation.bone_count()) * 16,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -362,6 +404,10 @@ impl ModelRenderer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: alphas.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bone_info.as_entire_binding(),
                 },
             ],
         });
@@ -481,6 +527,7 @@ impl ModelRenderer {
             parts: Vec::new(),
             animation: animation.clone(),
             bones,
+            bone_info,
             alphas,
             animation_bind_group,
             animation_layout,
@@ -491,6 +538,7 @@ impl ModelRenderer {
             statics: Vec::new(),
             hidden: std::collections::BTreeSet::new(),
             unit_bones: Vec::new(),
+            unit_bone_info: Vec::new(),
             unit_alphas: Vec::new(),
             bone_capacity: animation.bone_count(),
             alpha_capacity: animation.alpha_count(),
@@ -626,6 +674,7 @@ impl ModelRenderer {
         // Dying and swinging units get their own matrices after those of
         // the variants.
         self.unit_bones.clear();
+        self.unit_bone_info.clear();
         self.unit_alphas.clear();
         let first_alpha = self.animation.alpha_count();
         let first = self.animation.bone_count();
@@ -643,6 +692,8 @@ impl ModelRenderer {
                 Some(matrices) => {
                     let base = first + self.unit_bones.len() as u32;
                     self.unit_bones.extend(matrices);
+                    self.unit_bone_info
+                        .extend(self.animation.palette_info(model));
                     base
                 }
                 None => self.animation.variant_base(model, unit.handle),
@@ -696,6 +747,8 @@ impl ModelRenderer {
             self.alpha_capacity = self.alpha_capacity.max(alpha_count * 2);
             self.bones = storage_buffer(device, "bones", u64::from(self.bone_capacity) * 64);
             self.alphas = storage_buffer(device, "alphas", u64::from(self.alpha_capacity) * 16);
+            self.bone_info =
+                storage_buffer(device, "bone info", u64::from(self.bone_capacity) * 16);
             self.animation_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("animation"),
                 layout: &self.animation_layout,
@@ -708,11 +761,18 @@ impl ModelRenderer {
                         binding: 1,
                         resource: self.alphas.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.bone_info.as_entire_binding(),
+                    },
                 ],
             });
         }
         queue.write_buffer(&self.bones, 0, bytemuck::cast_slice(&bones));
         queue.write_buffer(&self.alphas, 0, bytemuck::cast_slice(&alphas));
+        let mut info = self.animation.bone_info();
+        info.extend_from_slice(&self.unit_bone_info);
+        queue.write_buffer(&self.bone_info, 0, bytemuck::cast_slice(&info));
     }
 
     /// Draws the models into a pass whose group 0 holds the globals.

@@ -536,6 +536,51 @@ impl Animation {
         self.alphas.len() as u32 + 1
     }
 
+    /// The billboard data of every bone, in the order of [`Self::bones`]:
+    /// the node's pivot and its mode (0 none, 1 facing the camera, 2
+    /// turning about z only).
+    pub fn bone_info(&self) -> Vec<[f32; 4]> {
+        let mut out = Vec::with_capacity(self.bone_count() as usize);
+        out.push([0.0; 4]);
+        for index in 0..self.models.len() {
+            let info = self.palette_info(index);
+            for _ in 0..VARIANTS {
+                out.extend_from_slice(&info);
+            }
+        }
+        out
+    }
+
+    /// The billboard data of model `index`'s palette (`bone_info`).
+    pub fn palette_info(&self, index: usize) -> Vec<[f32; 4]> {
+        let animated = &self.models[index];
+        let model = &animated.model;
+        animated
+            .palette
+            .iter()
+            .map(|&id| {
+                let flags = model
+                    .bones
+                    .iter()
+                    .map(|b| &b.node)
+                    .chain(&model.helpers)
+                    .find(|n| n.object_id == id)
+                    .map_or(0, |n| n.flags);
+                // Billboarded 0x8, locked about x, y or z 0x10, 0x20, 0x40.
+                // PROVISIONAL: the locks about x and y face the camera fully.
+                let mode = if flags & 0x40 != 0 {
+                    2.0
+                } else if flags & 0x38 != 0 {
+                    1.0
+                } else {
+                    0.0
+                };
+                let p = model.pivots.get(id as usize).copied().unwrap_or([0.0; 3]);
+                [p[0], p[1], p[2], mode]
+            })
+            .collect()
+    }
+
     /// Every bone matrix `elapsed` milliseconds in.
     pub fn bones(&self, elapsed: i32) -> Vec<Mat4> {
         let mut out = Vec::with_capacity(self.bone_count() as usize);

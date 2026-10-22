@@ -383,6 +383,8 @@ fn go_home(state: &mut State, h: u32) {
     {
         u.next_acquire = add(t, movement::AFTER_DEATH);
     }
+    // The give-up stops it with a commit first.
+    movement::stop_commit(state, h);
     let walks = movement::move_home(state, h, home);
     set(state, h, |c| {
         c.return_time = None;

@@ -1731,6 +1731,23 @@ fn freeze(state: &mut State, h: u32) {
     }
 }
 
+/// Unit `h` stops where it is with a commit, walking or not (a creep
+/// giving up its chase, SPEC-0030; c-RXD-1: creeps 6 and 7 at 7788).
+pub(super) fn stop_commit(state: &mut State, h: u32) {
+    let clock = state.move_clock;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.commit(clock);
+        m.velocity = [0, 0];
+        m.walking = false;
+        let record = (state.ticks, h, m.origin, m.velocity, m.heading, [0, 0]);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push(record);
+        }
+    }
+}
+
 /// Unit `h` stands where it is now, keeping its order (a stun,
 /// SPEC-0037).
 pub(super) fn stand_still(state: &mut State, h: u32) {

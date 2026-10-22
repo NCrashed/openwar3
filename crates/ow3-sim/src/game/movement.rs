@@ -3824,6 +3824,11 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
     let Some(o) = state.unit(Some(other)) else {
         return 2;
     };
+    // A stunned unit's attack is disabled: no threat (c-RZH-1: creep 8,
+    // stunned by the Storm Bolt, at the hero's check of 1003).
+    if o.stunned_until.is_some_and(|t| state.ticks < t) {
+        return 2;
+    }
     let target = o
         .attack
         .map(|a| a.target)

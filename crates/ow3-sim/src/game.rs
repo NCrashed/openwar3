@@ -804,6 +804,9 @@ pub struct State {
     /// The backswing-end checks of attackers that switched targets in
     /// their backswing: (tick, attacker, new target).
     pub(super) attack_checks: Vec<(u64, u32, u32)>,
+    /// Summoned units and the tick in which their time runs out
+    /// (SPEC-0044).
+    pub(super) timed_life: Vec<(u64, u32)>,
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
@@ -937,6 +940,7 @@ impl State {
             member_now: BTreeMap::new(),
             creep_timers: 0,
             attack_checks: Vec::new(),
+            timed_life: Vec::new(),
             leveled: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),

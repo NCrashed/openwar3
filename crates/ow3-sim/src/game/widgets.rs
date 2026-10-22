@@ -224,7 +224,12 @@ pub(super) fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
 ///
 /// PROVISIONAL: unpassable terrain and buildings are not tested; they do
 /// not move the unit here.
-fn create_unit_by_script(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Option<u32> {
+pub(super) fn create_unit_by_script(
+    state: &mut State,
+    owner: i32,
+    type_id: i32,
+    at: [u32; 3],
+) -> Option<u32> {
     let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
     let (x, y) = off_other_units(state, type_id, [snap(at[0]), snap(at[1])]);
     create_unit(state, owner, type_id, [x, y, at[2]])

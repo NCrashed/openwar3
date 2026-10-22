@@ -24,6 +24,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ow3_jass::vm::Vm;
+use ow3_math::natives::{cos, sin};
 use ow3_math::{add, div, mul, sub};
 
 use super::movement::{self, CELL};
@@ -42,8 +43,9 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 4] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 5] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
+    ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("holybolt", *b"AHhb", 852_092, Aim::Friend),
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
@@ -51,6 +53,9 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 4] = [
 
 /// The time from the end of a stun to its order coming back (0.01 s).
 const STUN_BACK: u32 = 0x3C23_D70A;
+
+/// Ticks a summon lives over its duration (SPEC-0044).
+const SUMMON_OVER: u64 = 6;
 
 /// The order id a stunned unit reads (SPEC-0037).
 pub const ORDER_STUNNED: i32 = 851_973;
@@ -232,12 +237,23 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
 /// turned within 0.2 to the point the cast starts at once; else the unit
 /// walks into range and turns to it (SPEC-0043, as SPEC-0035 for a unit).
 ///
-/// PROVISIONAL: the reach of a point spell is taken as its range plus
-/// the caster's collision.
+/// PROVISIONAL: the reach of a point spell is taken as its range (c-RZJ-1:
+/// the Archmage 826 from the point walked on at 517).
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -> Option<bool> {
     let (ability, level, order_id, aim) = ability_for(state, h, name)?;
     if aim != Aim::Point || !ready(state, h, ability, level) {
         return Some(false);
+    }
+    // The same spell again while its cast runs to the effect goes on
+    // with that cast (c-RZJ-1: blizzard ordered again at 600, effect at
+    // 649 of the start at 589).
+    // PROVISIONAL: not read in the game beyond that case.
+    if state
+        .unit(Some(h))
+        .and_then(|u| u.casting)
+        .is_some_and(|c| c.ability == ability && c.effect_at.is_some_and(|e| e > state.ticks))
+    {
+        return Some(true);
     }
     let casting = Casting {
         order_id,
@@ -286,8 +302,7 @@ pub(super) fn point_reach(state: &State, h: u32) -> u32 {
     let range = u
         .casting
         .map_or(0, |c| numbers(state, c.ability, c.level).range);
-    let collision = state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
-    mul(add(range, collision), CELL)
+    mul(range, CELL)
 }
 
 /// Blizzard (SPEC-0043): wave `k` of `DataA` falls `180 + 200 * (k - 1)`
@@ -482,6 +497,17 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
     }
+    // Summons whose time ran out die (SPEC-0044).
+    let expired: Vec<u32> = {
+        let mut s = state.borrow_mut();
+        let tick = s.ticks;
+        let (now, later): (Vec<_>, Vec<_>) = s.timed_life.iter().partition(|(t, _)| *t <= tick);
+        s.timed_life = later;
+        now.into_iter().map(|(_, h)| h).collect()
+    };
+    for h in expired {
+        super::widgets::kill_unit(vm, state, Some(h), None);
+    }
     for d in deferred {
         match d {
             Deferred::SpellHit {
@@ -514,6 +540,24 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
     let seconds = |hero: bool| if hero { n.hero_duration } else { n.duration };
     let duration = |hero: bool| super::attack::ticks(seconds(hero));
     match &base.to_be_bytes() {
+        // The summon stands Area in front of the caster, placed as by
+        // `CreateUnit`, and dies 12006 ticks after the effect
+        // (SPEC-0044).
+        // PROVISIONAL: the 6 ticks over the duration are read with a script
+        // timer (SPEC-0044, open question 4).
+        b"AHwe" => {
+            if let Some(u) = s.unit(Some(h)) {
+                let (x, y, f, owner) = (u.x, u.y, u.facing, u.owner);
+                let at = [
+                    add(x, mul(n.area, cos(f))),
+                    add(y, mul(n.area, sin(f))),
+                    super::facing::to_degrees(f),
+                ];
+                if let Some(e) = super::widgets::create_unit_by_script(s, owner, n.unit_id, at) {
+                    s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
+                }
+            }
+        }
         b"AHhb" => {
             if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))
                 && t.alive

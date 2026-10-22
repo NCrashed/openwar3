@@ -915,15 +915,44 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let Some(tree) = g.target else {
             continue;
         };
-        let life = match state.borrow().objects.get(&tree) {
+        let life_of = |tree: u32| match state.borrow().objects.get(&tree) {
             Some(Object::Destructable(d)) if d.alive => d.life,
             _ => 0,
         };
+        let mut tree = tree;
+        let mut life = life_of(tree);
         if f32::from_bits(life) <= 0.0 {
+            // Its tree fell by another worker's hit: the swing lands on the
+            // nearest other tree when the worker reaches it from where it
+            // stands, else it walks there (c-RYP-1: peasant 0 at 10216).
             let mut s = state.borrow_mut();
-            next_tree(&mut s, h, tree, numbers);
-            continue;
+            match nearest_tree(&s, h, tree, numbers) {
+                Some(next) if within_reach(&s, h, next) || touches_tree(&s, h, next) => {
+                    let mut g = get(&s, h).unwrap_or(g);
+                    g.target = Some(next);
+                    set(&mut s, h, Some(g));
+                    // It faces the new tree at once (its stored heading).
+                    let min = [s.world_bounds[0], s.world_bounds[1]];
+                    if let (Some(u), Some(at)) = (s.unit(Some(h)), position(&s, next)) {
+                        let (a, b) = (relative([u.x, u.y], min), relative(at, min));
+                        let heading = movement::angle(sub(b[0], a[0]), sub(b[1], a[1]));
+                        if let Some(Object::Unit(u)) = s.objects.get_mut(&h)
+                            && let Some(m) = u.movement.as_mut()
+                        {
+                            m.heading = heading;
+                        }
+                    }
+                    drop(s);
+                    tree = next;
+                    life = life_of(tree);
+                }
+                _ => {
+                    next_tree(&mut s, h, tree, numbers);
+                    continue;
+                }
+            }
         }
+        let g = get(&state.borrow(), h).unwrap_or(g);
         let one = (numbers.per_hit as f32).to_bits();
         super::widgets::set_destructable_life(vm, state, Some(tree), sub(life, one));
         let mut s = state.borrow_mut();
@@ -953,25 +982,8 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
 /// Worker `h`'s tree `old` is gone: it goes on at the nearest living tree
 /// within `Area` of it, or takes back what it carries.
 fn next_tree(state: &mut State, h: u32, old: u32, numbers: Gathering) {
-    let from = position(state, old).or_else(|| position(state, h));
-    let mut best: Option<(u32, f32)> = None;
-    if let Some(from) = from {
-        let area = f32::from_bits(numbers.area);
-        for (&d, o) in &state.objects {
-            let Object::Destructable(t) = o else {
-                continue;
-            };
-            if !t.alive || !state.data.trees.contains(&t.type_id) {
-                continue;
-            }
-            let e = squared(from, [t.x, t.y]);
-            if e <= area * area && best.is_none_or(|(b, f)| e < f || (e == f && d < b)) {
-                best = Some((d, e));
-            }
-        }
-    }
-    match best {
-        Some((tree, _)) => {
+    match nearest_tree(state, h, old, numbers) {
+        Some(tree) => {
             if let Some(mut g) = get(state, h) {
                 g.target = Some(tree);
                 g.next_hit = None;
@@ -1234,4 +1246,25 @@ mod tests {
             assert_eq!(kept(used), 4);
         }
     }
+}
+
+/// The nearest living tree within `Area` of tree `old` (or of worker `h`
+/// when `old` has no position), the first created among equals.
+fn nearest_tree(state: &State, h: u32, old: u32, numbers: Gathering) -> Option<u32> {
+    let from = position(state, old).or_else(|| position(state, h))?;
+    let area = f32::from_bits(numbers.area);
+    let mut best: Option<(u32, f32)> = None;
+    for (&d, o) in &state.objects {
+        let Object::Destructable(t) = o else {
+            continue;
+        };
+        if !t.alive || !state.data.trees.contains(&t.type_id) {
+            continue;
+        }
+        let e = squared(from, [t.x, t.y]);
+        if e <= area * area && best.is_none_or(|(b, f)| e < f || (e == f && d < b)) {
+            best = Some((d, e));
+        }
+    }
+    best.map(|(d, _)| d)
 }

@@ -181,26 +181,35 @@ block of the goal point. If both are the same node, the list is just
 pathing map: their cells carry no static closing bits. Each tree is
 held as three occupant entries (layers) over its 4 x 4 cells (the
 occupied cells of SPEC-0021), in this order in each cell's list: one
-that never closes a cell for a ground unit; one of the kind that closes
-cells only for the searches of workers in the gathering cycle (the kind
-of the marks of workers waiting at a mine, SPEC-0029); and its
-footprint layer, which closes cells for ground units and is the layer a
-search to that tree takes as its target (the target tree's own
-footprint layer does not close). A cell test walks the cell's list from
-the front and stops at the first closing entry, so the target is
-touched (which ends a search to a target, as for chases and buildings)
-only if its entry comes before any closing entry of that cell. So a
-worker on its first walk touches its tree in the tree's own cells,
-while a worker in the gathering cycle stops at the tree's second layer
-and does not touch it by the search. Read in the game: `c-RYP-1`
-peasant 0's search of 313 (first walk, to tree 2's point (354, 382))
-touched in cell (352, 380), the lower left cell of the tree; peasant
-5's search of 1315 (gathering cycle, tree 27 at x 358..361, y
-388..391) was refused at every step towards row 392 (each step's
-footprint reached row 391), ran to its limit and ended at its closest
-cell (360, 393). Such a worker reaches its tree through the arrival
-test with the order's reach (SPEC-0019) and the touch or patience
-cases of SPEC-0025.
+that never closes a cell for a ground unit; one of the gathering kind
+(the kind of the marks of workers waiting at a mine, SPEC-0029); and
+its footprint layer, of the ordinary ground-unit kind. A search closes
+cells only for the kinds of its unit's set (below), and its target is
+the target tree's layer of that set's kind; the target layer itself
+does not close. A cell test walks the cell's list from the front and
+stops at the first closing entry, so the target is touched (which ends
+a search to a target, as for chases and buildings) only if its entry
+comes before any closing entry of that cell. A worker's set:
+
+- first walk to its tree: the ground kind only: target = footprint
+  layer, the gathering layer does not close: touch in the tree's cells
+  (`c-RYP-1` peasant 0's search of 313: touched in cell (352, 380), the
+  tree's lower left cell);
+- from the harvest's retry at the tree until the end of its first work
+  (SPEC-0029): ground and gathering kinds: target = footprint layer,
+  the tree's own gathering layer closes first: no touch (peasant 5 at
+  1315, tree 27 at x 358..361, y 388..391: every step towards row 392
+  refused, the search ran to its limit and ended at its closest cell
+  (360, 393));
+- from the end of its first work on (walks to the hall and back): the
+  gathering kind only: target = the gathering layer, which comes right
+  after the never-closing layer: touch (peasant 0's search of 3993 to
+  tree 2: touched in cell (352, 380) from cell (351, 379), path end
+  (351.5, 379.5)).
+
+Read in the game. A worker that does not touch reaches its tree through
+the arrival test with the order's reach (SPEC-0019) and the touch or
+patience cases of SPEC-0025.
 
 **Two searches, and a target's footprint.** A path to a target runs
 the high-level search twice in a row: first the cluster's search with

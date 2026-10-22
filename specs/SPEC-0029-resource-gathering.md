@@ -242,16 +242,18 @@ to 32, the first with cost 4 was the tree at (358, 378); it turned to
 it at 1351 and started chopping it at 1357.
 
 **Entering the gathering cycle.** A gold worker enters the cycle at
-its first exit from a mine (below). A lumber worker enters it when it
-first arrives at its tree and starts work there (the arrival test of
-SPEC-0019 passing at its tree): from that tick on its searches treat
-the second layer of every tree as closed (SPEC-0020, "Trees in the
-local search"). Read in the game, `c-RYP-1` peasant 5: its searches up
-to tick 1081 used the first-walk set of closing kinds; it arrived at
-tree 27 in tick 1309 (after the touch of 1297 and its turn), and in
-that tick the harvest code switched its set to the gathering-cycle
-one, which its search of 1315 used. Peasant 4 at 1231 (blocked, not
-yet arrived) still searched with the first-walk set.
+its first exit from a mine (below). A lumber worker changes its set of
+closing kinds for searches (SPEC-0020, "Trees in the local search") in
+two steps: at the harvest's first retry at its tree (the arrival
+check failing, "Arriving at the tree") it adds the gathering kind to
+the ground kind; at the end of its first work at a tree (the walk back
+with its load) it changes to the gathering kind only, and it is set to
+that again after each delivery. Read in the game, `c-RYP-1`: peasant 5
+searched with the first-walk set up to 1081 and with both kinds from
+its retry at 1309 (its search of 1315); peasant 0: ground kind until
+997, both from its retry at 997, the gathering kind only from 3183
+(end of its first work) and again from 3985 (after its delivery);
+peasant 4 at 1231 (not arrived) still had the first-walk set.
 
 **Workers in the gathering cycle do not block each other.** A
 worker's cells (SPEC-0021, "Occupied cells") block other ground units

@@ -189,7 +189,14 @@ the target tree's layer of that set's kind; the target layer itself
 does not close. A cell test walks the cell's list from the front and
 stops at the first closing entry, so the target is touched (which ends
 a search to a target, as for chases and buildings) only if its entry
-comes before any closing entry of that cell. A worker's set:
+comes before any closing entry of that cell. Where the cells of two
+trees overlap, the later created tree's entries come first in the
+list (entries are added at the front), so its closing layer can hide
+the target there: `c-RYP-1` peasant 3's search of 4929 (set C) to the
+tree at (354, 382): cells (352, 382) and (352, 383), shared with the
+tree above it, stopped at that tree's gathering layer; the touch came
+in (352, 381), at the expansion of (351, 383), path end (351.5, 383.5).
+A worker's set:
 
 - first walk to its tree: the ground kind only: target = footprint
   layer, the gathering layer does not close: touch in the tree's cells

@@ -1057,7 +1057,20 @@ fn decide(
     // SPEC-0020 (c-PF1), which match without it. What a unit does at a
     // block with a counter of 1 is not known (SPEC-0025, open question 5);
     // here the same, with the counter staying 1.
-    if !examined.is_empty() {
+    // An attacker blocked where it touches its target gets the mark of
+    // reach, without the patience counter (SPEC-0025, "Blocked units";
+    // c-RZH-1: creep 9 at 907 next to the standing footman 5, swinging at
+    // 913).
+    let touching_target = walker.chase.is_some_and(|chase| {
+        touches(
+            &path::occupied_cells(to_cells(chase.target), chase.target_class),
+            at,
+            class,
+        )
+    });
+    if touching_target {
+        follow.touching = true;
+    } else if !examined.is_empty() {
         count_block(follow, shared, walker, order, at);
     }
     shared.events.push(PathEvent {
@@ -1079,6 +1092,12 @@ fn decide(
 /// at 4603 and 4609); the code path behind it was not read.
 fn member_place(follow: &Follow, otherwise: [u32; 2]) -> [u32; 2] {
     follow.stop_at.map_or(otherwise, to_world)
+}
+
+/// Whether unit `h`'s walk has the mark of reach from touching its target
+/// (SPEC-0025, "Blocked units").
+pub(super) fn touching(state: &State, h: u32) -> bool {
+    state.paths.get(&h).is_some_and(|f| f.touching)
 }
 
 /// The movement type of unit `h` as a small key: units of different types

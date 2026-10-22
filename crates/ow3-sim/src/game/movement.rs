@@ -2329,6 +2329,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // range (SPEC-0019).
                         full_reach = add(reach, mul(other, CELL));
                         in_reach = in_range(here, relative(m.target, min), full_reach);
+                        // Or by the mark of touching its target at a block.
+                        in_reach = in_reach || follow::touching(state, h);
                     }
                     _ => {
                         m.arrived = true;

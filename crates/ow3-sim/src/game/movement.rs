@@ -3829,11 +3829,51 @@ fn prefers_by(
     )
 }
 
+/// Whether unit `h` rates targets with the creeps' extra parts: a unit of
+/// the neutral hostile player (SPEC-0019, "Target rating").
+fn rates_as_creep(state: &State, h: u32) -> bool {
+    state
+        .unit(Some(h))
+        .is_some_and(|u| u.owner == super::creeps::CREEPS)
+}
+
+/// The life band of `other` for rater `h`: for a creep of level 7 or more,
+/// below 100, 200 or 300 life ranks above more life, over every other part
+/// of the rating; for other raters all are equal (SPEC-0019, "Target
+/// rating"; c-RZJ-1: the Ogre Lord, level 7, left footman 2, about 334
+/// life, for footman 5, about 285, at 2352).
+fn life_band(state: &State, h: u32, other: u32) -> u8 {
+    let strong = rates_as_creep(state, h)
+        && state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .is_some_and(|t| t.level >= 7);
+    if !strong {
+        return 3;
+    }
+    let life = state
+        .unit(Some(other))
+        .map_or(f32::INFINITY, |u| real_of(u.life.value()));
+    if life < 100.0 {
+        0
+    } else if life < 200.0 {
+        1
+    } else if life < 300.0 {
+        2
+    } else {
+        3
+    }
+}
+
 /// Whether enemy `other` moves at least as fast as unit `h`: a slower one
 /// ranks higher, after threat and before distance (SPEC-0019, "Target
 /// rating"; c-RZJ-1: the creeps took the Water Elemental, speed 220, over
 /// the Paladin, 270, at 1019).
 fn not_slower(state: &State, h: u32, other: u32) -> bool {
+    // Only creeps rate by speed (SPEC-0019, "Target rating").
+    if !rates_as_creep(state, h) {
+        return false;
+    }
     let speed = |x: u32| {
         state
             .unit(Some(x))
@@ -3850,9 +3890,9 @@ struct Targets {
     widest: f32,
 }
 
-/// The rating of a candidate target, best first: (structure, out of range,
-/// threat, not slower, squared distance, y, x, handle).
-type Rating = (bool, bool, u8, bool, f32, f32, f32, u32);
+/// The rating of a candidate target, best first: (structure, life band, out
+/// of range, threat, not slower, squared distance, y, x, handle).
+type Rating = (bool, u8, bool, u8, bool, f32, f32, f32, u32);
 
 impl Targets {
     fn new(state: &State) -> Targets {
@@ -3920,7 +3960,7 @@ impl Targets {
             current,
             mine,
             threat(state, h, current),
-            !mine.0 && not_slower(state, h, current),
+            not_slower(state, h, current),
         );
         let structure = |x: u32| {
             state
@@ -3941,9 +3981,13 @@ impl Targets {
             }
             let (in_range, distance) = rate(other, ox, oy, collision);
             let rank = threat(state, h, other);
-            let slow = !in_range && not_slower(state, h, other);
+            let slow = not_slower(state, h, other);
             let (best_in, best_distance) = best.1;
-            let better = if in_range != best_in {
+            // The life band before all (SPEC-0019, "Target rating").
+            let (band, best_band) = (life_band(state, h, other), life_band(state, h, best.0));
+            let better = if band != best_band {
+                band < best_band
+            } else if in_range != best_in {
                 in_range
             } else if in_range && best.0 == current {
                 false
@@ -4002,23 +4046,23 @@ impl Targets {
             let out = distance > within * within;
             let key = (
                 structure,
+                life_band(state, h, other),
                 out,
                 threat(state, h, other),
-                // Speed counts only out of range.
-                out && not_slower(state, h, other),
+                not_slower(state, h, other),
                 distance,
                 oy,
                 ox,
                 other,
             );
             if best.is_none_or(|b| {
-                (key.0, key.1, key.2, key.3, key.4, key.5, key.6)
-                    < (b.0, b.1, b.2, b.3, b.4, b.5, b.6)
+                (key.0, key.1, key.2, key.3, key.4, key.5, key.6, key.7)
+                    < (b.0, b.1, b.2, b.3, b.4, b.5, b.6, b.7)
             }) {
                 best = Some(key);
             }
         }
-        best.map(|b| b.7)
+        best.map(|b| b.8)
     }
 }
 

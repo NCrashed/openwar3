@@ -294,9 +294,17 @@ fn set(state: &mut State, h: u32, change: impl FnOnce(&mut Creep)) {
 
 /// Creep `h` gives up its chase and walks home with a `move` order.
 fn go_home(state: &mut State, h: u32) {
-    let Some(home) = state.unit(Some(h)).map(|u| u.home) else {
+    let Some((home, at)) = state.unit(Some(h)).map(|u| (u.home, u.creep.return_time)) else {
         return;
     };
+    // The walk home restarts its acquisition check 0.01 s after the
+    // return timer (c-RXD-1: creep 6, return at 4557, check at 4559, then
+    // every 0.5 s).
+    if let Some(t) = at
+        && let Some(super::Object::Unit(u)) = state.objects.get_mut(&h)
+    {
+        u.next_acquire = add(t, movement::AFTER_DEATH);
+    }
     let walks = movement::move_home(state, h, home);
     set(state, h, |c| {
         c.return_time = None;

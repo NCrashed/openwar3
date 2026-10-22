@@ -3368,6 +3368,9 @@ fn attack_checks(state: &mut State) {
         {
             m.target = at;
             m.faced = true;
+            // A face movement is no chase: no renewal before the one after
+            // the swing (c-RXD-1: creep 8 kept its place from 2083 to 2155).
+            m.chase = Some(u32::MAX);
         }
     }
 }

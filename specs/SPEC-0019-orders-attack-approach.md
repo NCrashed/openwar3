@@ -445,11 +445,12 @@ time to time:
   own update of that tick if it has one) is compared with the goal by
   2 x 2 squares: `floor(x) >> 1` and `floor(y) >> 1` in path cells. If
   both are equal, the goal stays. If either differs, the goal becomes
-  the target's current position, provided the path code's pass counter
-  has advanced by more than 9 since each of two stamps of the cluster
-  (how often that counter steps and when the stamps are set is not
-  read; a new order's cluster passed two ticks after the order, creep 6
-  below). Otherwise it stays for now (open question). The member's place follows the new goal at once (it is the
+  the target's current position, provided the count of update cycles
+  (one per 0.03 s pass of the path code) is more than 9 past each of
+  two stamps of the chase's target tracking. Both stamps were 0 in all
+  18 trackings read in `c-RXD-1` at 6295..6307, so the condition held
+  there; what sets them is not read (open question). Otherwise the
+  goal stays for now. The member's place follows the new goal at once (it is the
   place of that update's member step). Read in the game, `c-RXD-1`:
   creep 6's backswing-end check at 6293 took unit 2 at (386.0105,
   387.49948) (`43c10158`, `43c1bfef`); at the cluster's first update at

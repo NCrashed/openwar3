@@ -264,6 +264,37 @@ tree 22 in 1243 out of reach, at 1343 about 30 candidates with costs 4
 to 32, the first with cost 4 was the tree at (358, 378); it turned to
 it at 1351 and started chopping it at 1357.
 
+**When the tree is gone.** A tree felled while a worker works at it
+(by that worker's hit or another's) ends the work of every worker at
+it at the end of that worker's own backswing (the hit's backswing,
+0.567 s after its hit; the hit itself lands on the tree as usual). At
+that moment the worker takes another tree by the rule above, the
+search starting from the worker, and gets a harvest order on it: a
+walk, ended by the arrival test, then the arrival check with its ready
+step as always ("Arriving at the tree"). The swing cycle's 0.1 s pause
+started at that backswing end goes on: a worker that has started the
+work on the new tree by then (both checks passed at its next updates,
+the worker not having to move) swings at the end of the pause as in the
+cycle; one that has to walk starts its swing when its work starts (the
+swing point 0.433 s later). The load carried so far stays. The tree the
+worker returns to after a delivery is not changed by this switch: it is
+still the felled one, so after the delivery the worker takes another
+tree by the rule above with the search starting from the felled tree's
+point (the worker is at the hall), and walks there.
+Read in the game, `c-RYP-1` (trees numbered in creation order, from 0):
+peasants 0 and 3 worked at tree 2; peasant 3's hit at 10010 felled it.
+Peasant 0 (hit at 9996, backswing end 10109): another tree at 10109,
+tree 1 (the first of cost 4, from the worker), arrival checks at 10119
+(ready step) and 10125 (start), swing at 10129 (the end of the 0.1 s
+pause), hit at 10216 on tree 1. Peasant 3 (backswing end 10123): tree
+1 too, walked, arrival checks at 10167 and 10197, swing at once at
+10197, hit at 10284. Peasant 0 after its delivery at 11578: candidates
+costed from tree 2's point (cost 2 for the trees in the next
+high-level nodes); the first of cost 2 in the visiting order was tree
+9, so it walked to tree 9 (not to tree 1, which it had chopped since
+10216). There its arrival check failed (both tests) at 12580, and 0.5 s
+later (12680) it took tree 1 again, starting at 12700.
+
 **Entering the gathering cycle.** A gold worker enters the cycle at
 its first exit from a mine (below). A lumber worker changes its set of
 closing kinds for searches (SPEC-0020, "Trees in the local search") in

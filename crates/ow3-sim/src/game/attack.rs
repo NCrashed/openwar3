@@ -514,6 +514,8 @@ fn strike(
             h,
             impact.map(|p| (p, super::movement::IMPACT_REACH)),
         );
+    } else {
+        super::movement::relay_death(&mut s, target, h);
     }
     if !standing(&s, target) {
         let tick = s.ticks;

@@ -4237,8 +4237,7 @@ pub(super) fn retaliate(
     // then each unit that answers calls in turn, in the order of the grid
     // (SPEC-0019, "Order of the responders").
     // A call starts a 3.0 s timer of the victim; while it runs, damage to
-    // it makes no call (c-RXR-1: grunt 13 in 4823). PROVISIONAL: the
-    // chain's callers are not held by their own timers.
+    // it makes no call (c-RXR-1: grunt 13 in 4823); a creep's runs 0.5 s.
     // A missile's impact calls instead, round the impact point, with
     // CallForHelp + 150 and no timer (SPEC-0019; test RZG). A unit is
     // reached when its centre is within the radius plus its collision
@@ -4323,57 +4322,10 @@ pub(super) fn retaliate(
         };
         v.call_until = (now + cooldown).to_bits();
     }
-    // A creep the call reaches calls in turn, busy or not, once its own
-    // 0.5 s have run, and so on along the chain (SPEC-0030; c-RZJ-1: all
-    // eight creeps called at each of creep 9's calls).
-    if calls {
-        let creep_reach = real_of(state.combat.creep_call_for_help);
-        let is_creep = |state: &State, h: u32| {
-            state
-                .unit(Some(h))
-                .is_some_and(|u| u.owner == super::creeps::CREEPS)
-        };
-        let mut queue: std::collections::VecDeque<u32> = reached
-            .iter()
-            .copied()
-            .filter(|&h| h != victim && is_creep(state, h))
-            .collect();
-        while let Some(c) = queue.pop_front() {
-            let Some(cu) = state.unit(Some(c)).filter(|u| u.alive) else {
-                continue;
-            };
-            if now < real_of(cu.call_until) {
-                continue;
-            }
-            let (cx, cy, c_owner) = (real_of(cu.x), real_of(cu.y), cu.owner);
-            if let Some(Object::Unit(cu)) = state.objects.get_mut(&c) {
-                cu.call_until = (now + CREEP_CALL_COOLDOWN).to_bits();
-            }
-            for h in state.units.clone() {
-                let Some(Object::Unit(u)) = state.objects.get(&h) else {
-                    continue;
-                };
-                let collision = state
-                    .data
-                    .units
-                    .get(&u.type_id)
-                    .map_or(0.0, |t| real_of(t.collision));
-                let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
-                let r = creep_reach + collision;
-                if u.alive
-                    && h != attacker
-                    && !reached.contains(&h)
-                    && dx * dx + dy * dy <= r * r
-                    && state.setup.helps(u.owner, c_owner)
-                {
-                    reached.push(h);
-                    if is_creep(state, h) {
-                        queue.push_back(h);
-                    }
-                }
-            }
-        }
-    }
+    // The other members of the victim's group try their own calls, whether
+    // the victim's call was made or not (SPEC-0030, "Groups").
+    let relayed = relay(state, victim, attacker, now, &mut reached);
+    let calls = calls || relayed;
     if calls {
         for &h in &reached {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -4427,6 +4379,82 @@ pub(super) fn retaliate(
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h, state.move_clock);
         }
+    }
+}
+
+/// The relay of a hit on creep `victim` by `attacker` at queue time `now`
+/// (SPEC-0030, "Groups"): every other living member of its group, in the
+/// order of the group's places, makes its own call once its 0.5 s timer
+/// has run, round itself with CreepCallForHelp; such a call starts no
+/// further relay. The units the calls reach are added to `reached`;
+/// whether any member called (c-RZJ-1: ogre 15 called at 3722, at the
+/// fatal hit on ogre 14, and so could call again at 3827).
+fn relay(state: &mut State, victim: u32, attacker: u32, now: f32, reached: &mut Vec<u32>) -> bool {
+    let creep_reach = real_of(state.combat.creep_call_for_help);
+    let mut any = false;
+    for c in super::creeps::group_of(state, victim) {
+        if c == victim {
+            continue;
+        }
+        let Some(cu) = state.unit(Some(c)).filter(|u| u.alive) else {
+            continue;
+        };
+        if now < real_of(cu.call_until) {
+            continue;
+        }
+        let (cx, cy, c_owner) = (real_of(cu.x), real_of(cu.y), cu.owner);
+        if let Some(Object::Unit(cu)) = state.objects.get_mut(&c) {
+            cu.call_until = (now + CREEP_CALL_COOLDOWN).to_bits();
+        }
+        any = true;
+        for h in state.units.clone() {
+            let Some(Object::Unit(u)) = state.objects.get(&h) else {
+                continue;
+            };
+            let collision = state
+                .data
+                .units
+                .get(&u.type_id)
+                .map_or(0.0, |t| real_of(t.collision));
+            let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
+            let r = creep_reach + collision;
+            if u.alive
+                && h != attacker
+                && !reached.contains(&h)
+                && dx * dx + dy * dy <= r * r
+                && state.setup.helps(u.owner, c_owner)
+            {
+                reached.push(h);
+            }
+        }
+    }
+    any
+}
+
+/// A hit killed creep `victim`: its group still relays the hit (SPEC-0030,
+/// "Groups"; c-RZJ-1: ogre 14 killed by the elemental at 3722). The units
+/// the calls reach remember `attacker`, restart their returns and may cast
+/// their spells, as at a call.
+pub(super) fn relay_death(state: &mut State, victim: u32, attacker: u32) {
+    let (Some(v), Some(a)) = (state.unit(Some(victim)), state.unit(Some(attacker))) else {
+        return;
+    };
+    if !enemies(state, v.owner, a.owner) {
+        return;
+    }
+    let when = state.event_time.unwrap_or_else(|| state.timers.time());
+    let mut reached = Vec::new();
+    if !relay(state, victim, attacker, real_of(when), &mut reached) {
+        return;
+    }
+    for &h in &reached {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.remembered = Some(attacker);
+        }
+        super::creeps::restart_return(state, h, when);
+    }
+    for &h in &reached {
+        super::creeps::consider_spell(state, h, victim, attacker);
     }
 }
 

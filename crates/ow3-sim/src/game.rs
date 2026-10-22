@@ -731,6 +731,9 @@ pub struct State {
     conditions: HashMap<usize, u32>,
     /// Units in the order they were created.
     units: Vec<u32>,
+    /// The groups of the neutral hostile creeps, each its members in the
+    /// order they joined (SPEC-0030, "Groups").
+    creep_groups: Vec<Vec<u32>>,
     /// Destructables in the order they were placed or created.
     destructables: Vec<u32>,
     /// Items on the ground in the order they were created.
@@ -918,6 +921,7 @@ impl State {
             random: Random::game_start().0,
             game_random: Random::game_start().1,
             units: Vec::new(),
+            creep_groups: Vec::new(),
             destructables: Vec::new(),
             items: Vec::new(),
             events: Vec::new(),

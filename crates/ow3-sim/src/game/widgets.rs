@@ -411,6 +411,7 @@ pub(super) fn create_unit(
     };
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
+    super::creeps::join_group(state, h);
     // A unit uses its food, a building gives its food (SPEC-0027).
     //
     // PROVISIONAL: measured only with trained units and finished

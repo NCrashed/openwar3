@@ -518,3 +518,50 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
         super::cast::creep_cast(state, h, ability, 1, attacker);
     }
 }
+
+/// The most creeps that join one group (SPEC-0030, "Groups").
+const GROUP_SIZE: usize = 12;
+/// How near the first living member of a group a creep must be to join it.
+const GROUP_REACH: f32 = 676.0;
+
+/// New unit `h` joins a group if it is a creep (SPEC-0030, "Groups"): the
+/// nearest group that has had fewer than 12 joiners and whose first living
+/// member is within 676 of it, else a new group of its own.
+pub(super) fn join_group(state: &mut State, h: u32) {
+    let Some(u) = state.unit(Some(h)).filter(|u| u.owner == CREEPS) else {
+        return;
+    };
+    let (x, y) = (f32::from_bits(u.x), f32::from_bits(u.y));
+    let mut best: Option<(f32, usize)> = None;
+    for (i, group) in state.creep_groups.iter().enumerate() {
+        if group.len() >= GROUP_SIZE {
+            continue;
+        }
+        let Some(first) = group
+            .iter()
+            .find_map(|&m| state.unit(Some(m)).filter(|m| m.alive))
+        else {
+            continue;
+        };
+        let (dx, dy) = (f32::from_bits(first.x) - x, f32::from_bits(first.y) - y);
+        let distance = dx * dx + dy * dy;
+        if distance <= GROUP_REACH * GROUP_REACH && best.is_none_or(|(d, _)| distance < d) {
+            best = Some((distance, i));
+        }
+    }
+    match best {
+        Some((_, i)) => state.creep_groups[i].push(h),
+        None => state.creep_groups.push(vec![h]),
+    }
+}
+
+/// The members of creep `h`'s group, in the order they joined, the dead
+/// included.
+pub(super) fn group_of(state: &State, h: u32) -> Vec<u32> {
+    state
+        .creep_groups
+        .iter()
+        .find(|g| g.contains(&h))
+        .cloned()
+        .unwrap_or_default()
+}

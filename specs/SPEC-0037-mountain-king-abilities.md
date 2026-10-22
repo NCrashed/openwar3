@@ -29,11 +29,26 @@ the damage event (`GetEventDamage`).
   (3 s): its current order reads 851973 while stunned and it does not
   move or attack. The order went back to 0 in the tick 1003 ticks
   (footman) and 603 ticks (paladin) after the damage tick.
-- Flight: a homing missile (SPEC-0016, "Missiles": steps of 0.1 s,
-  a hit when the target is closer than 100). Launched in tick `e`, the
-  damage came in `e + 41` (footman 302 away at the launch, walking
-  towards the caster at 270: two steps) and `e + 20` (paladin 186 away,
-  walking towards it: one step).
+- Flight: the missile is a path agent of its own (commits only at the
+  launch and at the impact) and flies a fixed straight line.
+  - Launch in the effect tick `e`, from the caster's position floored to
+    1/128 cell, towards the target's per-tick position (SPEC-0018) in
+    that tick.
+  - It moves at the missile speed (1000 = 0.15625 cells per tick) along
+    that direction and does not follow the target afterwards.
+  - Impact (damage and stun) in tick `e + n`, with `n = ceil(d /
+    0.15625)` and `d` the launch distance in cells. The impact position
+    is the launch point plus `n` steps, so it slightly overshoots.
+  Read in the game, `c-RZH-1`, both bolts on creep 8, ticks by the
+  movement clock:
+  - bolt 1: the target was walking, `d` = 8.1708, `n` = 53, launch 891,
+    impact 944 (the map's log labels the damage 943); creep 8 had
+    stopped elsewhere by then;
+  - bolt 2: standing target, `d` = 4.9974, `n` = 32, launch 2781,
+    impact 2813, 0.0016 cells past the target's centre.
+  The two earlier tests (damage in `e + 41` and `e + 20`, targets
+  walking towards the caster) also fit this rule, checked by the
+  implementer.
 - The order stays `thunderbolt` (852095) until `e + 100` (`castbsw`).
 
 ### Thunder clap (`AHtc`, order `thunderclap`, no target)

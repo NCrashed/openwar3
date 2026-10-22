@@ -690,7 +690,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .collect();
         for (h, c) in casting {
             if c.effect_at == Some(tick) {
-                effect(s, h, &c, &mut deferred);
+                // A spell on a target that died ends the cast at once
+                // (SPEC-0035, edge cases; c-RZJ-1: the Paladin's order
+                // ended at the effect time 3227 and he acquired at 3229).
+                if !effect(s, h, &c, &mut deferred) {
+                    movement::end_cast(s, h);
+                    continue;
+                }
             }
             if let Some(e) = c.effect_at
                 && tick > e
@@ -748,8 +754,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
 }
 
 /// The effect of cast `c` of `h`; the mana is paid and the cooldown starts
-/// now.
-fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
+/// now. `false` when the spell fizzles on a dead target.
+fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> bool {
     // A spell on a unit that died before the effect does nothing and costs
     // nothing: no mana, no cooldown (c-RZJ-1: the Paladin's Holy Light on
     // footman 5, dead at 3142, effect time 3227; his next cast at 3301).
@@ -757,7 +763,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
     if let Some(t) = c.target
         && !s.unit(Some(t)).is_some_and(|u| u.alive)
     {
-        return;
+        return false;
     }
     let tick = s.ticks;
     let n = numbers(s, c.ability, c.level);
@@ -844,7 +850,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
         }
         b"AHtc" => {
             let Some(u) = s.unit(Some(h)) else {
-                return;
+                return true;
             };
             let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
             let (u_x, u_y) = (u.x, u.y);
@@ -900,4 +906,5 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
         u.ready
             .push((c.ability, tick + super::attack::ticks(n.cooldown)));
     }
+    true
 }

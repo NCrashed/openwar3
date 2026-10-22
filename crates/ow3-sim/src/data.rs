@@ -182,6 +182,9 @@ pub struct AbilityLevel {
     pub hero_duration: u32,
     pub area: u32,
     pub data_d: u32,
+    /// `DataEN` and `DataFN` (SPEC-0043).
+    pub data_e: u32,
+    pub data_f: u32,
 }
 
 /// The pathing of a destructable type (`DestructableData.slk`,
@@ -810,7 +813,8 @@ impl ObjectData {
         .to_vec();
         for level in 1..=4 {
             for field in [
-                "Cool", "Cost", "Rng", "DataA", "DataB", "DataC", "Dur", "HeroDur", "Area", "DataD",
+                "Cool", "Cost", "Rng", "DataA", "DataB", "DataC", "Dur", "HeroDur", "Area",
+                "DataD", "DataE", "DataF",
             ] {
                 ability_columns.push(format!("{field}{level}"));
             }
@@ -837,7 +841,7 @@ impl ObjectData {
                     buff: code(values[10].as_ref()),
                     per_level: (0..4)
                         .map(|l| {
-                            let at = 11 + 10 * l;
+                            let at = 11 + 12 * l;
                             AbilityLevel {
                                 cooldown: real(values[at].as_ref()),
                                 cost: cost(values[at + 1].as_ref()),
@@ -847,6 +851,8 @@ impl ObjectData {
                                 hero_duration: real(values[at + 7].as_ref()),
                                 area: real(values[at + 8].as_ref()),
                                 data_d: real(values[at + 9].as_ref()),
+                                data_e: real(values[at + 10].as_ref()),
+                                data_f: real(values[at + 11].as_ref()),
                             }
                         })
                         .collect(),

@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ow3_jass::vm::Vm;
-use ow3_math::{add, mul};
+use ow3_math::{add, div, mul, sub};
 
 use super::movement::{self, CELL};
 use super::{Object, State};
@@ -36,11 +36,14 @@ enum Aim {
     Friend,
     Enemy,
     Nothing,
+    /// A point on the ground (SPEC-0043).
+    Point,
 }
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 3] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 4] = [
+    ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("holybolt", *b"AHhb", 852_092, Aim::Friend),
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
@@ -65,6 +68,8 @@ pub struct Casting {
     end_at: u64,
     /// The queue time of the effect: the start's time plus the cast point.
     effect_q: u32,
+    /// The point of a point spell.
+    point: Option<[u32; 2]>,
 }
 
 /// The ability of unit `h` that order `name` casts: the ability, its
@@ -138,7 +143,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
             && match aim {
                 Aim::Friend => !movement::enemies(state, owner, t.owner),
                 Aim::Enemy => movement::enemies(state, owner, t.owner),
-                Aim::Nothing => false,
+                Aim::Nothing | Aim::Point => false,
             }
     });
     if !fits || !ready(state, h, ability, level) {
@@ -152,6 +157,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         effect_at: None,
         end_at: 0,
         effect_q: 0,
+        point: None,
     };
     let set = |state: &mut State| {
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -213,11 +219,144 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
             effect_at: None,
             end_at: 0,
             effect_q: 0,
+            point: None,
         });
     }
     let tick = state.ticks;
     start(state, h, tick);
     Some(true)
+}
+
+/// Order `name` of unit `h` on the point `at`: `None` when it is not the
+/// order of a point spell, else whether the unit took it. In range and
+/// turned within 0.2 to the point the cast starts at once; else the unit
+/// walks into range and turns to it (SPEC-0043, as SPEC-0035 for a unit).
+///
+/// PROVISIONAL: the reach of a point spell is taken as its range plus
+/// the caster's collision.
+pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -> Option<bool> {
+    let (ability, level, order_id, aim) = ability_for(state, h, name)?;
+    if aim != Aim::Point || !ready(state, h, ability, level) {
+        return Some(false);
+    }
+    let casting = Casting {
+        order_id,
+        ability,
+        level,
+        target: None,
+        effect_at: None,
+        end_at: 0,
+        effect_q: 0,
+        point: Some(at),
+    };
+    let set = |state: &mut State| {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.casting = Some(casting);
+        }
+    };
+    let here = movement::position_of(state, h)?;
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let in_range = movement::in_range(
+        movement::relative(here, min),
+        movement::relative(at, min),
+        point_reach(state, h),
+    );
+    let tick = state.ticks;
+    if in_range && movement::turned_to(state, h, at) {
+        movement::stop(state, h);
+        set(state);
+        start(state, h, tick);
+    } else {
+        if in_range {
+            movement::stop(state, h);
+        }
+        if !movement::cast_point_order(state, h, order_id, at) {
+            return Some(false);
+        }
+        set(state);
+    }
+    Some(true)
+}
+
+/// The reach in cells of `h`'s cast on a point (`point_order`).
+pub(super) fn point_reach(state: &State, h: u32) -> u32 {
+    let Some(u) = state.unit(Some(h)) else {
+        return 0;
+    };
+    let range = u
+        .casting
+        .map_or(0, |c| numbers(state, c.ability, c.level).range);
+    let collision = state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
+    mul(add(range, collision), CELL)
+}
+
+/// Blizzard (SPEC-0043): wave `k` of `DataA` falls `180 + 200 * (k - 1)`
+/// ticks after the effect; the channel ends 21 ticks after the last one.
+const FIRST_WAVE: u64 = 180;
+const WAVE_EVERY: u64 = 200;
+const CHANNEL_AFTER: u64 = 21;
+
+/// The waves of a channeled point spell of `h`, `since` ticks after its
+/// effect: every unit nearer the point than `Area` plus its collision
+/// takes `min(DataB, DataF / n)` of the `n` units hit, a building
+/// `DataD` of it (SPEC-0043).
+///
+/// PROVISIONAL: paused units take every wave; whether buildings count in
+/// `n` and whether the caster is hit are open.
+fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred>) {
+    let base = s
+        .data
+        .abilities
+        .get(&c.ability)
+        .map_or(c.ability, |a| a.code);
+    if &base.to_be_bytes() != b"AHbz" {
+        return;
+    }
+    let n = numbers(s, c.ability, c.level);
+    let count = f32::from_bits(n.data[0]) as u64;
+    if since < FIRST_WAVE || (since - FIRST_WAVE) % WAVE_EVERY != 0 {
+        return;
+    }
+    if (since - FIRST_WAVE) / WAVE_EVERY >= count {
+        return;
+    }
+    let Some(point) = c.point else {
+        return;
+    };
+    let hit: Vec<(u32, bool)> = s
+        .units
+        .iter()
+        .filter_map(|&o| {
+            let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                return None;
+            };
+            let t = s.data.units.get(&u.type_id)?;
+            if !u.alive || u.hidden {
+                return None;
+            }
+            let (dx, dy) = (sub(u.x, point[0]), sub(u.y, point[1]));
+            let reach = add(n.area, t.collision);
+            let near =
+                f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach));
+            near.then_some((o, t.building))
+        })
+        .collect();
+    if hit.is_empty() {
+        return;
+    }
+    let share = div(n.data_f, ow3_math::i2r(hit.len() as i32));
+    let each = if f32::from_bits(share) < f32::from_bits(n.data[1]) {
+        share
+    } else {
+        n.data[1]
+    };
+    for (target, building) in hit {
+        deferred.push(Deferred::Damage {
+            caster: h,
+            target,
+            amount: if building { mul(each, n.data_d) } else { each },
+        });
+    }
 }
 
 /// The cast of `h` starts in tick `tick`: the effect `castpt` later.
@@ -231,11 +370,23 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
         .get(&u.type_id)
         .map_or((0, 0), |t| (t.cast_point, t.cast_backswing));
     let effect = tick + super::attack::ticks(point);
+    // A channel ends after its last wave (SPEC-0043).
+    let channel = u.casting.and_then(|c| {
+        let base = state
+            .data
+            .abilities
+            .get(&c.ability)
+            .map_or(c.ability, |a| a.code);
+        (&base.to_be_bytes() == b"AHbz").then(|| {
+            let waves = f32::from_bits(numbers(state, c.ability, c.level).data[0]) as u64;
+            FIRST_WAVE + WAVE_EVERY * waves.saturating_sub(1) + CHANNEL_AFTER
+        })
+    });
     let effect_q = add(
         state.event_time.unwrap_or_else(|| state.timers.time()),
         point,
     );
-    let end = effect + super::attack::ticks(backswing);
+    let end = effect + channel.unwrap_or_else(|| super::attack::ticks(backswing));
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(c) = u.casting.as_mut()
     {
@@ -320,6 +471,11 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         for (h, c) in casting {
             if c.effect_at == Some(tick) {
                 effect(s, h, &c, &mut deferred);
+            }
+            if let Some(e) = c.effect_at
+                && tick > e
+            {
+                waves(s, h, &c, tick - e, &mut deferred);
             }
             if c.effect_at.is_some() && tick >= c.end_at {
                 movement::end_cast(s, h);

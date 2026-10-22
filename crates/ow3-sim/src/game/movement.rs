@@ -179,6 +179,9 @@ pub enum Order {
     /// Walk into the range of an ability on `target` to cast it
     /// (SPEC-0035).
     Cast { target: u32 },
+    /// Walk into the range of an ability on the order point to cast it
+    /// (SPEC-0043).
+    CastAt,
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -1486,6 +1489,11 @@ pub(super) fn cast_order(state: &mut State, h: u32, target: u32, order_id: i32) 
     }
 }
 
+/// Unit `h` walks into range of its cast on point `at` (SPEC-0043).
+pub(super) fn cast_point_order(state: &mut State, h: u32, order_id: i32, at: [u32; 2]) -> bool {
+    order(state, h, Order::CastAt, order_id, at)
+}
+
 /// A unit just trained walks to the rally point of its building, by the
 /// rules of `move` with the order id 851970 (SPEC-0027).
 pub(super) fn rally_order(state: &mut State, h: u32, target: [u32; 2]) -> bool {
@@ -1522,6 +1530,14 @@ fn point_order_taken(
             u.rally = Some(target);
         }
         return (true, true);
+    }
+    // A point spell (SPEC-0043).
+    if let Some(taken) = super::cast::point_order(state, h, name, target) {
+        // A new order ends an attack-move.
+        if taken {
+            set_attack_move(state, h, None);
+        }
+        return (taken, taken);
     }
     let here = state.unit(Some(h)).map(|u| [u.x, u.y]);
     if stop && matches!(name, "move" | "attack" | "patrol" | "smart") {
@@ -2263,6 +2279,24 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                 }
                 None => m.arrived = true,
+            }
+        }
+        // The same for a cast on a point: its place is the order point.
+        if m.order == Order::CastAt && !waiting && !m.arrived {
+            let place = relative(m.target, min);
+            let reach = super::cast::point_reach(state, h);
+            if in_range(here, place, reach) {
+                let walked = m.walking;
+                if real_of(heading_and_turn(&m, place).1).abs() < ATTACK_ANGLE {
+                    m.arrived = true;
+                    m.walking = false;
+                    m.velocity = [0, 0];
+                    let from = if walked { tick.saturating_sub(1) } else { tick };
+                    super::cast::start(state, h, from);
+                } else {
+                    motion(&mut m, place, false, speed, limit, turn_rate, window);
+                    cast_turn = true;
+                }
             }
         }
         // A worker building stays until the building is finished.

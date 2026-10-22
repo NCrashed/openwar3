@@ -772,6 +772,9 @@ pub struct State {
     /// The velocities of the moving units at the start of the updates of
     /// this tick: who counts as moving for a look-ahead check (SPEC-0021).
     start_velocities: std::collections::BTreeMap<u32, [u32; 2]>,
+    /// The units that took a new goal standing at their own update in
+    /// this tick (SPEC-0019, "After the swing").
+    renewed_now: std::collections::BTreeSet<u32>,
     /// The positions of the moving units at their last updates before the
     /// updates of this tick, and the units updated so far in this tick:
     /// a member of a group keeps its cells until its whole cluster is
@@ -922,6 +925,7 @@ impl State {
             update_cycle: 0,
             player_orders: false,
             start_velocities: std::collections::BTreeMap::new(),
+            renewed_now: std::collections::BTreeSet::new(),
             start_origins: std::collections::BTreeMap::new(),
             updated: std::collections::BTreeSet::new(),
             budget: follow::Budget::default(),

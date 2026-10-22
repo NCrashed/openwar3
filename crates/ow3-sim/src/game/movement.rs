@@ -2031,6 +2031,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     // Units updating in the same tick go by their orders, the newest first,
     // and the members of a group in the order of its cluster (SPEC-0021,
     // "Searches of many units in the same tick"; SPEC-0025).
+    state.renewed_now.clear();
     state.start_velocities = state
         .moving
         .iter()
@@ -2611,6 +2612,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // check of the old path says (SPEC-0019).
                         let cooldown = after_swing && std::mem::take(&mut m.renew_cooldown);
                         let renewing = after_swing && std::mem::take(&mut m.renew_stands);
+                        if renewing {
+                            state.renewed_now.insert(h);
+                        }
                         let hold = renewing && m.velocity == [0, 0];
                         let mut walked = None;
                         let steer = if renewing {

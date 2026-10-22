@@ -304,10 +304,18 @@ fn others(state: &State, h: u32) -> Others {
             continue;
         }
         let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
-        // Moving also when it stopped at its own update earlier in this
-        // tick, with the velocity it had then.
+        // The look-ahead reads the velocity the other unit has at the
+        // check. A unit alone that stopped at its update earlier in this
+        // tick stands (c-RZH-1: footman 4 blocked by footman 6, blocked at
+        // 5983 and at its target at 6049), but the stand of a new goal
+        // after a swing comes after the updates (c-RXD-1: creep 7 waits
+        // for creep 8 at 2803), and so do the stops of the members of a
+        // group cluster, after their cluster's update (c-RTW-3: 954 waits
+        // for 936 at 4855).
+        let grouped =
+            state.renewed_now.contains(&o) || super::movement::group_of(state, o).is_some();
         let velocity = |m: &super::movement::Moving| match state.start_velocities.get(&o) {
-            Some(&start) if m.velocity == [0, 0] => start,
+            Some(&start) if m.velocity == [0, 0] && grouped => start,
             _ => m.velocity,
         };
         // A unit stopped this tick stands for the searches (`stands`).

@@ -2730,6 +2730,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // The walk back to the town hall, reach 6.0 (c-RXD-1,
                         // SPEC-0019).
                         Order::Return { .. } => Some((HALL_REACH, m.heading, false)),
+                        // A walk to a point that gave up with the mark of reach
+                        // arrives once turned to the point (SPEC-0025).
+                        Order::Point if follow::touching(state, h) => {
+                            Some((ARRIVAL, m.heading, true))
+                        }
                         _ => None,
                     };
                     let place = (cluster > 1)

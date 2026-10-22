@@ -848,6 +848,38 @@ fn decide(
             // stood on stopped and its order ended two updates later.
             // A worker walking to a building keeps searching: it goes in
             // or delivers only touching it (SPEC-0029).
+            // A path of only its own position is a block of the order's
+            // walk, with the patience counter; at P = 1 the unit gives up
+            // with the mark of reach and arrives once turned to the point
+            // (SPEC-0025, "Blocked units"; c-RZH-1: footman 4 and the hero
+            // at 7028, their orders ending at 7034 and 7040).
+            if last == 0
+                && follow.final_goal
+                && walker.building.is_none()
+                && walker.tree.is_none()
+                && walker.chase.is_none()
+                && follow.stop_at.is_none()
+            {
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                if follow.patience == 1 {
+                    follow.touching = true;
+                    return Steer::Stand(walker.order);
+                }
+                let fresh = follow.patience == 0;
+                count_block(follow, shared, walker, order, at);
+                if fresh && follow.patience > 1 {
+                    follow.patience -= 1;
+                }
+                follow.local.clear();
+                follow.next = Next::Search;
+                return Steer::Stand(segment_goal);
+            }
             if last == 0 && follow.final_goal && walker.building.is_none() && walker.tree.is_none()
             {
                 if follow.stuck {

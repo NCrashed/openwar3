@@ -68,7 +68,16 @@ still walking home, answered the call in that same tick (in the order
 8, 6, 7, 9) and attacked worker 2. When the move order home ends,
 the creep's acquisition check starts again 0.01 s later and its guard
 check timer restarts (2.0 s); creep 8: home at queue time 29.5793381
-(tick 5917), check at 29.5893364 (tick 5919). The creeps that answer
+(tick 5917), check at 29.5893364 (tick 5919). While the move order home lasts,
+the creep's own acquisition check looks for no target at all: it only
+restarts itself, after 0.5 s without a target and 1.0 s with one. An
+attack taken up by answering a call does not end that state. It ends
+only when the move order home ends. Creep 6 of `c-RXD-1` (read in the
+game): the return timer gave the move order home at 4557, and its check
+restarted with 0.01 s there (4559). Its checks at 4559 .. 5859 (every
+0.5 s) and, after it answered the call at 5954, at 5959, 6159, 6359
+(every 1.0 s) searched nothing. So it kept unit 2 although unit 3 was
+nearer, until the move order ended at 8492. The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

@@ -3335,13 +3335,20 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         if let Some(a) = u.attack_move.as_mut() {
             if real_of(a.next_check) <= real_of(next_clock) {
                 let expiry = a.next_check;
-                a.next_check = add(a.next_check, HALF);
+                // The period follows the state at the expiry: 0.5 s without
+                // a target, 1.0 s with one (c-RZH-1: footman 4, 803 then 903
+                // then 1.0 s).
+                a.next_check = add(a.next_check, if target.is_some() { ONE } else { HALF });
                 let walking = u.attack.is_none()
                     && a.resume_at.is_none()
                     && u.movement
                         .is_some_and(|m| m.ordered() && m.order == Order::Point);
                 if walking {
                     due.push((expiry, 0, h, Check::AttackMove { expiry }));
+                } else if let Some((current, _)) = target {
+                    // With a target the same check looks for a better one
+                    // (c-RZH-1: footman 4 switched to creep 8 at 903).
+                    due.push((expiry, 0, h, Check::Attacking { current }));
                 }
             }
             continue;

@@ -3914,7 +3914,7 @@ impl Targets {
             current,
             mine,
             threat(state, h, current),
-            not_slower(state, h, current),
+            !mine.0 && not_slower(state, h, current),
         );
         let structure = |x: u32| {
             state
@@ -3935,7 +3935,7 @@ impl Targets {
             }
             let (in_range, distance) = rate(other, ox, oy, collision);
             let rank = threat(state, h, other);
-            let slow = not_slower(state, h, other);
+            let slow = !in_range && not_slower(state, h, other);
             let (best_in, best_distance) = best.1;
             let better = if in_range != best_in {
                 in_range
@@ -3998,7 +3998,8 @@ impl Targets {
                 structure,
                 out,
                 threat(state, h, other),
-                not_slower(state, h, other),
+                // Speed counts only out of range.
+                out && not_slower(state, h, other),
                 distance,
                 oy,
                 ox,
@@ -4070,6 +4071,8 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
 pub(super) const IMPACT_REACH: f32 = 150.0;
 /// Seconds after a call for help in which the caller makes no other.
 const CALL_COOLDOWN: f32 = 3.0;
+/// A creep calls at most once in 0.5 s (SPEC-0030; c-RZJ-1: creep 9).
+const CREEP_CALL_COOLDOWN: f32 = 0.5;
 /// How far a remembered attacker of a call for help is taken.
 const REMEMBERED_REACH: f32 = 2000.0;
 
@@ -4250,7 +4253,63 @@ pub(super) fn retaliate(
         && impact.is_none()
         && let Some(Object::Unit(v)) = state.objects.get_mut(&victim)
     {
-        v.call_until = (now + CALL_COOLDOWN).to_bits();
+        let cooldown = if v.owner == super::creeps::CREEPS {
+            CREEP_CALL_COOLDOWN
+        } else {
+            CALL_COOLDOWN
+        };
+        v.call_until = (now + cooldown).to_bits();
+    }
+    // A creep the call reaches calls in turn, busy or not, once its own
+    // 0.5 s have run, and so on along the chain (SPEC-0030; c-RZJ-1: all
+    // eight creeps called at each of creep 9's calls).
+    if calls {
+        let creep_reach = real_of(state.combat.creep_call_for_help);
+        let is_creep = |state: &State, h: u32| {
+            state
+                .unit(Some(h))
+                .is_some_and(|u| u.owner == super::creeps::CREEPS)
+        };
+        let mut queue: std::collections::VecDeque<u32> = reached
+            .iter()
+            .copied()
+            .filter(|&h| h != victim && is_creep(state, h))
+            .collect();
+        while let Some(c) = queue.pop_front() {
+            let Some(cu) = state.unit(Some(c)).filter(|u| u.alive) else {
+                continue;
+            };
+            if now < real_of(cu.call_until) {
+                continue;
+            }
+            let (cx, cy, c_owner) = (real_of(cu.x), real_of(cu.y), cu.owner);
+            if let Some(Object::Unit(cu)) = state.objects.get_mut(&c) {
+                cu.call_until = (now + CREEP_CALL_COOLDOWN).to_bits();
+            }
+            for h in state.units.clone() {
+                let Some(Object::Unit(u)) = state.objects.get(&h) else {
+                    continue;
+                };
+                let collision = state
+                    .data
+                    .units
+                    .get(&u.type_id)
+                    .map_or(0.0, |t| real_of(t.collision));
+                let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
+                let r = creep_reach + collision;
+                if u.alive
+                    && h != attacker
+                    && !reached.contains(&h)
+                    && dx * dx + dy * dy <= r * r
+                    && state.setup.helps(u.owner, c_owner)
+                {
+                    reached.push(h);
+                    if is_creep(state, h) {
+                        queue.push_back(h);
+                    }
+                }
+            }
+        }
     }
     if calls {
         for &h in &reached {

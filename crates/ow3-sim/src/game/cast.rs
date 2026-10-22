@@ -303,7 +303,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
     let in_range = movement::in_range(
         movement::relative(here, min),
         movement::relative(at, min),
-        point_reach(state, h),
+        mul(numbers(state, ability, level).range, CELL),
     );
     let tick = state.ticks;
     if in_range && movement::turned_to(state, h, at) {

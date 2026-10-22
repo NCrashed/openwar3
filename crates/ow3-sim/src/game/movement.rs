@@ -1512,11 +1512,40 @@ fn is_building(state: &State, h: u32) -> bool {
         .is_some_and(|t| t.building)
 }
 
+/// Takes unit `h` out of the stop of its target checks for an order
+/// (SPEC-0045): whether they were stopped.
+fn take_checks_off(state: &mut State, h: u32) -> bool {
+    match state.objects.get_mut(&h) {
+        Some(Object::Unit(u)) => std::mem::take(&mut u.checks_off),
+        _ => false,
+    }
+}
+
+/// After an order of unit `h` whose target checks were stopped (`off`):
+/// a taken order restarts them with 0.01 s, unless it stopped them again;
+/// one not taken leaves them stopped (SPEC-0045; c-RZJ-1: the Paladin's
+/// attack-move at 4901).
+fn resume_checks(state: &mut State, h: u32, off: bool, taken: bool) {
+    let now = state.move_clock;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && off
+    {
+        if !taken {
+            u.checks_off = true;
+        } else if !u.checks_off && u.acquire_phase != super::NO_PHASE {
+            u.next_acquire = add(now, AFTER_DEATH);
+        }
+    }
+}
+
 /// `IssuePointOrder(h, name, target)`: what the native returns.
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     // An order without Shift empties the queue (SPEC-0031).
     super::queue::clear(state, h);
-    point_order_taken(state, h, name, target, true).1
+    let off = take_checks_off(state, h);
+    let (taken, done) = point_order_taken(state, h, name, target, true);
+    resume_checks(state, h, off, taken);
+    done
 }
 
 /// A point order: whether the unit took it, and what the native returns.
@@ -1588,7 +1617,9 @@ fn point_order_taken(
 /// ends an attack-move.
 pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
     super::queue::clear(state, h);
+    let off = take_checks_off(state, h);
     let done = target_order_taken(state, h, name, target);
+    resume_checks(state, h, off, done);
     if done {
         set_attack_move(state, h, None);
     }
@@ -1599,7 +1630,9 @@ pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -
 /// new order ends an attack-move.
 pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
     super::queue::clear(state, h);
+    let off = take_checks_off(state, h);
     let done = immediate_order_taken(state, h, name);
+    resume_checks(state, h, off, done);
     if done {
         set_attack_move(state, h, None);
     }
@@ -3482,6 +3515,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             continue;
         };
         if !u.alive {
+            continue;
+        }
+        // No check and no timer until its next order (SPEC-0045).
+        if u.checks_off {
             continue;
         }
         // The unit's own timer runs whatever it does: the check runs in the

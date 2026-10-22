@@ -357,6 +357,7 @@ pub(super) fn create_unit(
         next_acquire: add(state.timers.time(), mul(acquire_phase, HALF_SECOND)),
         acquire_seq: 0,
         after_death: false,
+        checks_off: false,
         guard_return: None,
         target_taken: None,
         call_cells: Vec::new(),

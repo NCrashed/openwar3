@@ -244,12 +244,11 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
         };
         let mut deferred = Vec::new();
         effect(state, h, &c, &mut deferred);
-        // No acquisition check follows (c-RZJ-1: the Paladin stood with no
-        // order from 4802 and acquired nothing before his next order).
-        // PROVISIONAL: his periodic check also found nothing by 4901,
-        // which ours does at 4861 (asked).
+        // No target check of his runs until his next order (SPEC-0045, "The
+        // Paladin's own target checks"; c-RZJ-1: none from 4802 to 4901).
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.attack_move = None;
+            u.checks_off = true;
         }
         return Some(true);
     }

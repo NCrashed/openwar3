@@ -195,6 +195,9 @@ pub struct Unit {
     acquire_seq: u64,
     /// Its check was restarted by the death of its target.
     after_death: bool,
+    /// It has no target check until its next order (SPEC-0045: after
+    /// Divine Shield).
+    checks_off: bool,
     /// The tick at which it walks back to its guard point, the place it
     /// was created at, after an attack it took on its own ended.
     guard_return: Option<u64>,

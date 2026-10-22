@@ -51,6 +51,18 @@ the effect was at tick 399 and the buff was gone at tick 3400
   next tick and was idle again 166 ticks later (it walked off). Further
   hits repeated this.
 
+### The Paladin's own target checks
+
+The cast ends the Paladin's attack and leaves him with no order. No
+target check of his runs after it until he gets a new order. Read in
+the game, `c-RZJ-1`: no check and no check timer of his between 4780
+and 4899, although kobold 8, which he had attacked just before the
+shield, stood close. The script's attack-move at 4901 set his check
+to 0.01 s, the check of 4902 took a target, and his reaction delay
+(0.0557 s) followed. A cast with a backswing behaves differently: the
+Archmage's Water Elemental order ended at 5042, and his check of 5043,
+0.01 s later, took the Ogre Lord (SPEC-0035, item 6).
+
 ### When the shield ends
 
 In the tick the buff is removed (3400 in the test), every idle enemy

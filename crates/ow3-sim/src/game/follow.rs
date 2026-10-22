@@ -579,10 +579,33 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         follow
     });
     let at_tree = super::harvest::at_tree(state, walker.handle);
+    // The tree's cells that can be touched: not those also covered by a
+    // tree created later, whose entries come first there and close the
+    // cell (c-RYP-1: peasant 3's search of 4929).
     let tree_cells = walker
         .tree
         .and_then(|t| match state.objects.get(&t) {
-            Some(super::Object::Destructable(d)) => Some(d.footprint.red().to_vec()),
+            Some(super::Object::Destructable(d)) => {
+                let later: HashSet<(i32, i32)> = state
+                    .objects
+                    .iter()
+                    .filter(|&(&o, _)| o > t)
+                    .filter_map(|(_, o)| match o {
+                        super::Object::Destructable(e) if e.alive => Some(e.footprint.red()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .copied()
+                    .collect();
+                Some(
+                    d.footprint
+                        .red()
+                        .iter()
+                        .copied()
+                        .filter(|c| !later.contains(c))
+                        .collect::<Vec<_>>(),
+                )
+            }
             _ => None,
         })
         .unwrap_or_default();

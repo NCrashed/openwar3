@@ -230,6 +230,9 @@ pub struct Moving {
     /// The goal was taken at the end of the reaction delay: the first
     /// update keeps it and starts the countdown of its renewal from there.
     goal_taken: bool,
+    /// The goal is the place a backswing-end check faced the target at:
+    /// the first update keeps it (SPEC-0019).
+    faced: bool,
     /// The new goal after a swing comes at the first update from this tick
     /// on (SPEC-0019).
     renew_at: Option<u64>,
@@ -500,6 +503,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
+            faced: false,
             renew_at: None,
             renew_cooldown: false,
             chase: None,
@@ -529,6 +533,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction: None,
             reaction_end: None,
             goal_taken: false,
+            faced: false,
             renew_at: None,
             renew_cooldown: false,
             chase: None,
@@ -1977,6 +1982,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 .map(|m| (h, m.origin))
         })
         .collect();
+    attack_checks(state);
     state.updated.clear();
     let mut moving = std::mem::take(&mut state.moving);
     let key = |h: &u32| {
@@ -2230,8 +2236,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             _ if std::mem::take(&mut m.goal_taken) => {
                                 // At the first update, a renewal: the 64 grid rule
                                 // (c-RXR-1: grunt 11 renewed at 595, grunt 15 kept
-                                // its goal at 625).
-                                if grid64(relative(at, min)) != grid64(relative(m.target, min)) {
+                                // its goal at 625); a goal faced by the attack's
+                                // check stays.
+                                let faced = std::mem::take(&mut m.faced);
+                                if !faced
+                                    && grid64(relative(at, min)) != grid64(relative(m.target, min))
+                                {
                                     m.target = at;
                                 }
                                 m.chase = Some(countdown(here, relative(m.target, min)));
@@ -3315,11 +3325,64 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     acquired
 }
 
+/// The checks at the end of a backswing of the attackers that switched
+/// targets in it: a new target within range is faced where it was at the
+/// start of this tick, as after the swing (`chase`), the place of the
+/// attacker's next update (SPEC-0019, "Which direction it turns to";
+/// c-RXD-1: creep 6 switched at 2031, backswing end 2033, turned at 2035;
+/// creep 8 switched at 2007, backswing end 2081, turned at 2083).
+fn attack_checks(state: &mut State) {
+    let tick = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.attack_checks)
+        .into_iter()
+        .partition(|&(t, _, _)| t <= tick);
+    state.attack_checks = later;
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    for (_, h, target) in due {
+        let at = match state.objects.get(&target) {
+            Some(Object::Unit(u)) => u
+                .movement
+                .map(|m| absolute(m.position(sub(state.move_clock, crate::timers::TICK)), min)),
+            _ => None,
+        };
+        let Some(at) = at.or_else(|| position_of(state, target)) else {
+            continue;
+        };
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
+        let range =
+            super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
+        let own = state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
+        let reach = add(
+            mul(add(range, own), CELL),
+            mul(collision_of(state, target), CELL),
+        );
+        let here = relative([u.x, u.y], min);
+        if !in_range(here, relative(at, min), reach) {
+            continue;
+        }
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+            && m.order == (Order::Attack { target })
+        {
+            m.target = at;
+            m.faced = true;
+        }
+    }
+}
+
 /// Unit `h` attacks `better` instead of its target at once: no reaction
 /// delay and no call for help; a walking attacker stops at once, and a
 /// new goal after a swing still waits for the cooldown (SPEC-0019).
 /// Whether it took the order.
 fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
+    let tick = state.ticks;
+    let resume = state
+        .unit(Some(h))
+        .and_then(|u| u.attack)
+        .and_then(|a| a.resume)
+        .filter(|&r| r > tick);
     let renew = state.unit(Some(h)).and_then(|u| {
         u.attack
             .and_then(|a| a.renew_at)
@@ -3340,6 +3403,10 @@ fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
         .unwrap_or(0);
     if !order(state, h, Order::Attack { target: better }, order_id, at) {
         return false;
+    }
+    // A switch in a backswing: the check at its end is on the new target.
+    if let Some(r) = resume {
+        state.attack_checks.push((r, h, better));
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(m) = u.movement.as_mut()

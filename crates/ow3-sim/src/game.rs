@@ -790,6 +790,9 @@ pub struct State {
     member_now: BTreeMap<u32, [u32; 2]>,
     /// Creep timers started so far (SPEC-0030).
     pub(super) creep_timers: u64,
+    /// The backswing-end checks of attackers that switched targets in
+    /// their backswing: (tick, attacker, new target).
+    pub(super) attack_checks: Vec<(u64, u32, u32)>,
     /// Entries into cells of the grid of calls for help so far.
     pub(super) call_entries: u64,
     /// Groups ordered together whose formation is laid out at their first
@@ -917,6 +920,7 @@ impl State {
             member_places: BTreeMap::new(),
             member_now: BTreeMap::new(),
             creep_timers: 0,
+            attack_checks: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),
             orders_given: 0,

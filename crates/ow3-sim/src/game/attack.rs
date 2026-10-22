@@ -36,7 +36,7 @@ pub struct Attacking {
     pub(super) order_id: i32,
     /// The tick after the end of the last swing, when a target out of
     /// reach is chased again (SPEC-0019).
-    resume: Option<u64>,
+    pub(super) resume: Option<u64>,
     /// The attacker swings again, or takes a new goal and stands, at its
     /// first update from this tick on: the cooldown less the damage point
     /// after the last hit (SPEC-0019, "After the swing").

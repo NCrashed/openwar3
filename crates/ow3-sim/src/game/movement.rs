@@ -3790,9 +3790,8 @@ pub(super) fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
 }
 
 /// Whether unit `h`, attacking `current` on its own, takes `other` that
-/// calls for help instead, by the rating of its checks: in range before
-/// out of range, the target in range kept, else by what the enemy does and
-/// then the nearer (SPEC-0019, "Checks while attacking").
+/// calls for help instead, by the rating of [`rating`] and then the
+/// strictly nearer (SPEC-0048; SPEC-0019, "Checks while attacking").
 fn prefers(state: &State, h: u32, current: u32, other: u32) -> bool {
     prefers_by(state, h, current, other, threat)
 }
@@ -3805,48 +3804,107 @@ fn prefers_by(
     other: u32,
     threat: fn(&State, u32, u32) -> u8,
 ) -> bool {
-    let Some(u) = state.unit(Some(h)) else {
+    let (Some(mine), Some(theirs)) = (
+        rating(state, h, current, Some(current), threat),
+        rating(state, h, other, Some(current), threat),
+    ) else {
         return false;
     };
-    let own = state
-        .data
-        .units
-        .get(&u.type_id)
-        .map_or(0.0, |d| real_of(d.collision));
-    let (x, y) = (real_of(u.x), real_of(u.y));
-    let rate = |t: u32| {
-        let o = state.unit(Some(t))?;
-        let collision = state
-            .data
-            .units
-            .get(&o.type_id)
-            .map_or(0.0, |d| real_of(d.collision));
-        let range =
-            super::attack::weapon_for(state, u.type_id, Some(t)).map_or(0.0, |w| real_of(w.range));
-        let (dx, dy) = (real_of(o.x) - x, real_of(o.y) - y);
-        let distance = dx * dx + dy * dy;
-        let reach = range + own + collision;
-        Some((distance <= reach * reach, distance))
-    };
-    let (Some(mine), Some(theirs)) = (rate(current), rate(other)) else {
-        return false;
-    };
-    if mine.0 != theirs.0 {
-        return theirs.0;
-    }
-    if mine.0 {
-        return false;
-    }
-    (
-        threat(state, h, other),
-        not_slower(state, h, other),
-        theirs.1,
-    ) < (
-        threat(state, h, current),
-        not_slower(state, h, current),
-        mine.1,
-    )
+    // The strictly better key, else the strictly nearer; a tie keeps the
+    // current target.
+    theirs.0 < mine.0 || (theirs.0 == mine.0 && theirs.1 < mine.1)
 }
+
+/// The parts of the rating of SPEC-0048 that our games use, in its
+/// order, as flags that are `true` where the candidate ranks lower.
+type Key = [bool; 19];
+
+/// The rating of enemy `other` by unit `h` (SPEC-0048) with `current` its
+/// target, and the squared distance between their centres; `threat`
+/// tells whom `other` attacks (0 `h`, 1 an ally of `h`, 2 else).
+///
+/// PROVISIONAL: lists D and E and the parts of the damage multiplier are
+/// off in all games read and not done; the unidentified states of parts
+/// 1, 4, 11 and 37 are taken as equal; part 9 repeats part 5 or is equal
+/// for all, so it changes no choice and is left out; Serpent Wards and
+/// the poison and ensnare parts are not done. Part 31 (a big creep
+/// prefers a hero) is left out: at 1307 in c-RZJ-1 the Ogre Lord left the
+/// Paladin for a nearer footman, both out of range (asked).
+fn rating(
+    state: &State,
+    h: u32,
+    other: u32,
+    current: Option<u32>,
+    threat: fn(&State, u32, u32) -> u8,
+) -> Option<(Key, f32)> {
+    let u = state.unit(Some(h))?;
+    let o = state.unit(Some(other))?;
+    let ud = state.data.units.get(&u.type_id);
+    let od = state.data.units.get(&o.type_id);
+    let collision = |d: Option<&crate::data::UnitType>| d.map_or(0.0, |d| real_of(d.collision));
+    let (dx, dy) = (real_of(o.x) - real_of(u.x), real_of(o.y) - real_of(u.y));
+    let distance = dx * dx + dy * dy;
+    let range =
+        super::attack::weapon_for(state, u.type_id, Some(other)).map_or(0.0, |w| real_of(w.range));
+    let reach = range + collision(ud) + collision(od);
+    let in_range = distance <= reach * reach;
+    let creep = rates_as_creep(state, h);
+    let big = creep && ud.is_some_and(|d| d.level >= 7);
+    let hero = crate::data::is_hero(o.type_id);
+    // A big creep and a hero within its range + 150 between centres (part
+    // 2; c-RZJ-1: the Ogre Lord, range 100, kept no hero at 262 from the
+    // Paladin at 1307).
+    let near_hero = big && hero && {
+        let r = range + 150.0;
+        distance <= r * r
+    };
+    // Whom `other` attacks: its attack, else the target of its attack
+    // order, while that target lives.
+    let target = o
+        .attack
+        .map(|a| a.target)
+        .or(match o.movement.map(|m| m.order) {
+            Some(Order::Attack { target }) => Some(target),
+            _ => None,
+        })
+        .and_then(|t| state.unit(Some(t)).filter(|t| t.alive));
+    let attacks_enemy = target.is_some_and(|t| enemies(state, u.owner, t.owner));
+    let attacks_allied_hero = target.is_some_and(|t| {
+        crate::data::is_hero(t.type_id)
+            && (t.owner == u.owner || state.setup.is_ally(u.owner, t.owner))
+    });
+    let hits_rater = super::attack::weapon_for(state, o.type_id, Some(h)).is_some();
+    // A stunned unit still counts as one that can attack (c-RXD-1,
+    // c-RZH-1).
+    let can_attack = od.is_some_and(|d| d.weapon.is_some());
+    let life = real_of(o.life.value());
+    let rank = threat(state, h, other);
+    let key = [
+        !near_hero,                                          // 2
+        creep && o.owner >= 12,                              // 3
+        attacks_enemy,                                       // 5
+        !can_attack,                                         // 8
+        creep && !attacks_allied_hero,                       // 14
+        creep && !hits_rater,                                // 15
+        big && !(in_range || near_hero),                     // 16
+        big && life >= 100.0,                                // 21
+        big && life >= 200.0,                                // 25
+        big && life >= 300.0,                                // 26
+        od.is_some_and(|d| d.armor_type == Some(FORTIFIED)), // 29
+        od.is_none_or(|d| real_of(d.speed) <= 0.0),          // 30
+        !hits_rater,                                         // 32
+        !in_range,                                           // 33
+        not_slower(state, h, other),                         // 34
+        !(current == Some(other) && in_range),               // 35
+        rank != 0,                                           // 36
+        rank > 1,                                            // 37
+        !(crate::data::is_hero(u.type_id) && hero),          // 38
+    ];
+    Some((key, distance))
+}
+
+/// The index of the armor type `fort` (`combat`).
+const FORTIFIED: usize = 3;
 
 /// Whether unit `h` rates targets with the creeps' extra parts: a unit of
 /// the neutral hostile player (SPEC-0019, "Target rating").
@@ -3856,38 +3914,9 @@ fn rates_as_creep(state: &State, h: u32) -> bool {
         .is_some_and(|u| u.owner == super::creeps::CREEPS)
 }
 
-/// The life band of `other` for rater `h`: for a creep of level 7 or more,
-/// below 100, 200 or 300 life ranks above more life, over every other part
-/// of the rating; for other raters all are equal (SPEC-0019, "Target
-/// rating"; c-RZJ-1: the Ogre Lord, level 7, left footman 2, about 334
-/// life, for footman 5, about 285, at 2352).
-fn life_band(state: &State, h: u32, other: u32) -> u8 {
-    let strong = rates_as_creep(state, h)
-        && state
-            .unit(Some(h))
-            .and_then(|u| state.data.units.get(&u.type_id))
-            .is_some_and(|t| t.level >= 7);
-    if !strong {
-        return 3;
-    }
-    let life = state
-        .unit(Some(other))
-        .map_or(f32::INFINITY, |u| real_of(u.life.value()));
-    if life < 100.0 {
-        0
-    } else if life < 200.0 {
-        1
-    } else if life < 300.0 {
-        2
-    } else {
-        3
-    }
-}
-
 /// Whether enemy `other` moves at least as fast as unit `h`: a slower one
-/// ranks higher, after threat and before distance (SPEC-0019, "Target
-/// rating"; c-RZJ-1: the creeps took the Water Elemental, speed 220, over
-/// the Paladin, 270, at 1019).
+/// ranks higher for a creep (SPEC-0048, part 34; c-RZJ-1: the creeps
+/// took the Water Elemental, speed 220, over the Paladin, 270, at 1019).
 fn not_slower(state: &State, h: u32, other: u32) -> bool {
     // Only creeps rate by speed (SPEC-0019, "Target rating").
     if !rates_as_creep(state, h) {
@@ -3908,10 +3937,6 @@ struct Targets {
     list: Vec<(f32, f32, u32, i32, bool, u32)>,
     widest: f32,
 }
-
-/// The rating of a candidate target, best first: (structure, life band, out
-/// of range, threat, not slower, squared distance, y, x, handle).
-type Rating = (bool, u8, bool, u8, bool, f32, f32, f32, u32);
 
 impl Targets {
     fn new(state: &State) -> Targets {
@@ -3936,17 +3961,11 @@ impl Targets {
         Targets { list, widest }
     }
 
-    /// The enemy unit `h` takes within its acquisition range, by the rule
-    /// above.
     /// At a check while unit `h` attacks `current` (SPEC-0019, "Checks
     /// while attacking"): the enemy it should attack instead, if any. The
     /// enemies within half its `acquire` and both collision sizes are
-    /// rated with its target: one in range of the attack before one out of
-    /// it, the target in range before any other in range, and else the
-    /// strictly nearer; a tie keeps the target.
-    ///
-    /// PROVISIONAL: only those parts of the rating were measured (with
-    /// peasants as targets; open question 10 of SPEC-0019).
+    /// rated with its target by [`rating`], then the strictly nearer; a
+    /// tie keeps the target (SPEC-0048).
     fn better_than(&self, state: &State, h: u32, current: u32) -> Option<u32> {
         let u = state.unit(Some(h))?;
         let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
@@ -3959,74 +3978,30 @@ impl Targets {
         let half = (real_of(data.acquire) / 2.0)
             .max(range(&data.weapon))
             .max(range(&data.weapon2));
-        // (in range, squared distance) of a candidate.
-        let rate = |t: u32, ox: f32, oy: f32, collision: f32| {
-            let range = super::attack::weapon_for(state, u.type_id, Some(t))
-                .map_or(0.0, |w| real_of(w.range));
-            let (dx, dy) = (ox - x, oy - y);
-            let distance = dx * dx + dy * dy;
-            let reach = range + own + collision;
-            (distance <= reach * reach, distance)
-        };
-        let t = state.unit(Some(current))?;
-        let collision = state
-            .data
-            .units
-            .get(&t.type_id)
-            .map_or(0.0, |d| real_of(d.collision));
-        let mine = rate(current, real_of(t.x), real_of(t.y), collision);
-        let mut best = (
-            current,
-            mine,
-            threat(state, h, current),
-            not_slower(state, h, current),
-        );
-        let structure = |x: u32| {
-            state
-                .unit(Some(x))
-                .and_then(|o| state.data.units.get(&o.type_id))
-                .is_some_and(|d| d.building)
-        };
-        let current_structure = structure(current);
-        for &(ox, oy, collision, other_owner, other_structure, other) in &self.list {
+        let mut best = (current, rating(state, h, current, Some(current), threat)?);
+        for &(ox, oy, collision, other_owner, _, other) in &self.list {
             if other == current || !enemies(state, owner, other_owner) {
                 continue;
             }
-            let collision = real_of(collision);
-            let limit = half + own + collision;
+            let limit = half + own + real_of(collision);
             let (dx, dy) = (ox - x, oy - y);
             if dx.abs() > limit || dy.abs() > limit || dx * dx + dy * dy > limit * limit {
                 continue;
             }
-            let (in_range, distance) = rate(other, ox, oy, collision);
-            let rank = threat(state, h, other);
-            let slow = not_slower(state, h, other);
-            let (best_in, best_distance) = best.1;
-            // The life band before all (SPEC-0019, "Target rating").
-            let (band, best_band) = (life_band(state, h, other), life_band(state, h, best.0));
-            let better = if band != best_band {
-                band < best_band
-            } else if in_range != best_in {
-                in_range
-            } else if in_range && best.0 == current {
-                false
-            } else {
-                // A structure only after the units (SPEC-0019).
-                let best_structure = if best.0 == current {
-                    current_structure
-                } else {
-                    structure(best.0)
-                };
-                (other_structure, rank, slow, distance)
-                    < (best_structure, best.2, best.3, best_distance)
+            let Some(rated) = rating(state, h, other, Some(current), threat) else {
+                continue;
             };
-            if better {
-                best = (other, (in_range, distance), rank, slow);
+            // The strictly better key, else the strictly nearer; a tie
+            // keeps the one found first.
+            if rated.0 < best.1.0 || (rated.0 == best.1.0 && rated.1 < best.1.1) {
+                best = (other, rated);
             }
         }
         (best.0 != current).then_some(best.0)
     }
 
+    /// The enemy unit `h` takes within its acquisition range: the best
+    /// [`rating`], then the nearer, then by y, x and handle (SPEC-0048).
     fn nearest_enemy(&self, state: &State, h: u32) -> Option<u32> {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             return None;
@@ -4041,12 +4016,8 @@ impl Targets {
         let from = self
             .list
             .partition_point(|t| t.0 < x - real_of(reach) - widest - 1.0);
-        // In range of the attack before threat (SPEC-0019; c-RZH-1: footman
-        // 2 took creep 7 in range at 2011, not creep 11).
-        let range =
-            data.weapon.as_ref().map_or(0.0, |w| real_of(w.range)) + real_of(data.collision);
-        let mut best: Option<Rating> = None;
-        for &(ox, oy, collision, other_owner, structure, other) in &self.list[from..] {
+        let mut best: Option<(Key, f32, f32, f32, u32)> = None;
+        for &(ox, oy, collision, other_owner, _, other) in &self.list[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
             // every pair in the engine arithmetic is slow.
@@ -4057,31 +4028,19 @@ impl Targets {
             if dx.abs() > limit || dy.abs() > limit || !enemies(state, owner, other_owner) {
                 continue;
             }
-            let distance = dx * dx + dy * dy;
-            if distance > limit * limit {
+            if dx * dx + dy * dy > limit * limit {
                 continue;
             }
-            let within = range + real_of(collision);
-            let out = distance > within * within;
-            let key = (
-                structure,
-                life_band(state, h, other),
-                out,
-                threat(state, h, other),
-                not_slower(state, h, other),
-                distance,
-                oy,
-                ox,
-                other,
-            );
-            if best.is_none_or(|b| {
-                (key.0, key.1, key.2, key.3, key.4, key.5, key.6, key.7)
-                    < (b.0, b.1, b.2, b.3, b.4, b.5, b.6, b.7)
-            }) {
-                best = Some(key);
+            let Some((key, distance)) = rating(state, h, other, None, threat) else {
+                continue;
+            };
+            // The better key, then the nearer, then by y, x and handle.
+            let rated = (key, distance, oy, ox, other);
+            if best.is_none_or(|b| (rated.0, rated.1, rated.2, rated.3) < (b.0, b.1, b.2, b.3)) {
+                best = Some(rated);
             }
         }
-        best.map(|b| b.8)
+        best.map(|b| b.4)
     }
 }
 

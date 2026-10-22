@@ -74,6 +74,13 @@ With the order given in tick `o` (script order, SPEC-0019):
 
 ## Edge cases
 
+- **The target dies before the effect.** The cast ends without an
+  effect at the moment the effect was due. No mana is spent and the
+  cooldown does not start, so a new cast can follow at once. `c-RZJ-1`:
+  Holy Light ordered on footman 5 at 3101 (order from 3102). The footman
+  dies at 3142, and the order ends at 3228 with the mana unchanged
+  (245.45 at 3227, regeneration only). A new Holy Light, ordered at
+  3301, has its effect at 3425, and the 65 mana are spent there.
 - An order given exactly when the cooldown should have run out (1000
   ticks after the effect, in a script timer of that tick) also did
   nothing; whether the cooldown ends a tick later or the order is

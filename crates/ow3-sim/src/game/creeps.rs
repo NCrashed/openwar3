@@ -105,11 +105,10 @@ pub(super) fn night_changed(state: &mut State) {
     }
 }
 
-/// Creep `h` enters a fight at queue time `at`: its guard checks start,
-/// the first at `at`, unless they go on already or it is on its way home.
-// Also when its checks already run: they restart from this fight
-// (c-RXD-1: creep 8, its checks from its acquisition of 6667, its return
-// timer from 7869, giving up at 8869).
+/// Creep `h` enters a fight at queue time `at`: its guard checks start
+/// again, the first at `at`, also when they already run (c-RXD-1: creep 8,
+/// its checks from its acquisition of 6667, its return timer from 7869,
+/// giving up at 8869), unless it is on its way home.
 pub(super) fn enter_fight(state: &mut State, h: u32, at: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.owner == CREEPS

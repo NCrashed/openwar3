@@ -939,19 +939,26 @@ An idle unit with a weapon attacks an enemy unit on its own:
   - the comparison when it answers a call for help (the caller's
     attacker against its current target; "Retaliation and call for
     help").
-  From the most to the least important part:
+  The full rating, with all its parts in order and who uses them, is
+  SPEC-0048, read from the game; where this summary and SPEC-0048
+  differ, SPEC-0048 holds. Every unit uses a common set of parts; creeps
+  (units of the neutral hostile player) add more, and creeps of level 7
+  or more add more still, such as life bands (100 / 200 / 300) that rank
+  above "in range" of this summary. Summary of the common parts, from
+  the most to the least important (SPEC-0048 orders the threat parts
+  below in range, slower and current target):
   1. **In range**: the enemy is within the range test of the attack;
      the current target in range ranks higher still.
   2. **Threat**: the enemy is attacking the unit itself (higher) or one
      of its allies (lower). It counts only while that enemy's attack is
      in progress (attacking or moving to attack) and not disabled: a
      stunned enemy carries no threat.
-  3. **Slower**: among enemies out of range, one whose movement speed
-     is below the unit's own ranks higher than one that is not (equal
-     speed counts as not slower). Enemies in range are not compared by
-     speed: in `c-RZJ-1` at 1851 the Archmage (320) took the Ogre Lord
-     (320, 454 away) over ogre 14 (270, 530 away), both in range, and the
-     speed comparison was not made for any of its candidates. Read in the game, `c-RZJ-1` tick 1019: the creeps (speed
+  3. **Slower** (creep raters only): an enemy whose movement speed is
+     below the creep's own ranks higher than one that is not (equal
+     speed counts as not slower), in and out of range (`c-RZJ-1` 1019).
+     Player units do not use it: the Archmage at 1851 took the Ogre
+     Lord (320, 454 away) over ogre 14 (270, 530 away), both in range.
+     Read in the game, `c-RZJ-1` tick 1019: the creeps (speed
      270) rated the Water Elemental (220) above the Paladin (270), both
      out of range and both attacking a creep. So gnoll 13 left the
      Paladin, 167 away, for the elemental, 443 away.

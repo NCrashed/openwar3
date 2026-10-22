@@ -504,27 +504,39 @@ fn wave_end(w: &Wave) -> u64 {
 
 /// Creep `h` casts its spell `ability` of `level` on `target` without
 /// moving (SPEC-0047): the effect and the end of the order come after its
-/// cast point and backswing.
+/// cast point and backswing. Not turned within 0.2 to the target, it first
+/// turns and starts at the update at which it is (SPEC-0035; c-RZJ-1: the
+/// Ogre Lord ordered at 2423, turned at 2425, started at 2431).
 pub(super) fn creep_cast(state: &mut State, h: u32, ability: i32, level: i32, target: u32) {
     let order_id = ABILITY_ORDERS
         .iter()
         .find(|(_, b, _, _)| i32::from_be_bytes(*b) == base_code(state, ability))
         .map_or(0, |o| o.2);
+    let casting = Casting {
+        order_id,
+        ability,
+        level,
+        target: Some(target),
+        effect_at: None,
+        end_at: 0,
+        effect_q: 0,
+        point: None,
+    };
+    let set = |state: &mut State| {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.casting = Some(casting);
+        }
+    };
+    let turned =
+        movement::position_of(state, target).is_some_and(|at| movement::turned_to(state, h, at));
     movement::stop(state, h);
-    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-        u.casting = Some(Casting {
-            order_id,
-            ability,
-            level,
-            target: Some(target),
-            effect_at: None,
-            end_at: 0,
-            effect_q: 0,
-            point: None,
-        });
+    set(state);
+    if turned {
+        let tick = state.ticks;
+        start(state, h, tick);
+    } else if movement::cast_order(state, h, target, order_id) {
+        set(state);
     }
-    let tick = state.ticks;
-    start(state, h, tick);
 }
 
 /// Whether creep spell `ability` of `h` can be cast now (SPEC-0047,
@@ -676,7 +688,6 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .iter()
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
-        shockwaves(s, &mut deferred);
         for (h, c) in casting {
             if c.effect_at == Some(tick) {
                 effect(s, h, &c, &mut deferred);
@@ -690,6 +701,10 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 movement::end_cast(s, h);
             }
         }
+        // A wave made at an effect has its first update in that tick
+        // (SPEC-0047; c-RZJ-1: the second Shockwave, effect and first hits
+        // at 2543).
+        shockwaves(s, &mut deferred);
     }
     // Summons whose time ran out die (SPEC-0044).
     let expired: Vec<u32> = {

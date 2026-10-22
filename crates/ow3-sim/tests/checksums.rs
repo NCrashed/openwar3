@@ -78,13 +78,19 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RYP-1.w3g",
-        "lumber harvesting (trees, the harvest swing of weapon 2) is not simulated yet",
+        "all path agents and events are the game's (tests/agents.rs, tests/crowd.rs); the \
+         objects of the lumber harvest (orders, paths, timers) are not compared yet",
     ),
     (
         "c-RXD-1.w3g",
-        "harvesting changes the game's state at turns where the simulation has nothing (the \
-         objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks), and the path \
-         events differ from tick 6361 on (tests/crowd.rs)",
+        "all path agents and events are the game's (tests/agents.rs, tests/crowd.rs); \
+         harvesting changes the game's state at turns where the simulation has nothing (the \
+         objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks)",
+    ),
+    (
+        "c-RZH-1.w3g",
+        "the hero test (Mountain King, footmen, creeps): its traces are being recorded; \
+         the state changes differ from turn 19 on",
     ),
     (
         "c-RXI-1.w3g",

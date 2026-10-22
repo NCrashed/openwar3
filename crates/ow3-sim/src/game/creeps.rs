@@ -239,13 +239,18 @@ pub(super) fn call_for_help(
             if movement::attack_target(state, h) == Some(target) {
                 continue;
             }
-            let joined = if movement::attacking(state, h) {
+            let switching = movement::attacking(state, h);
+            let joined = if switching {
                 movement::switch_target(state, h, target)
             } else {
                 movement::join_fight(state, h, target, from)
             };
             if joined {
-                enter_fight(state, h, at);
+                // A switch while attacking keeps the guard checks running
+                // (SPEC-0030, "What restarts the guard checks").
+                if !switching {
+                    enter_fight(state, h, at);
+                }
                 came.push(h);
                 callers.push_back(h);
             }

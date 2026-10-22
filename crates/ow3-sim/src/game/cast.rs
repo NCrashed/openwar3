@@ -748,6 +748,13 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                     super::facing::to_degrees(f),
                 ];
                 if let Some(e) = super::widgets::create_unit_by_script(s, owner, n.unit_id, at) {
+                    // Its first acquisition check counts from the effect's queue
+                    // time (SPEC-0019; c-RZJ-1: elemental 16, effect at 2.3).
+                    if let Some(Object::Unit(w)) = s.objects.get_mut(&e)
+                        && w.acquire_phase != super::NO_PHASE
+                    {
+                        w.next_acquire = add(c.effect_q, mul(w.acquire_phase, 0x3F00_0000));
+                    }
                     s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
                 }
             }

@@ -1472,6 +1472,15 @@ impl<'a> Game<'a> {
             // What happens at the updates sees the queue time `U`.
             self.state.borrow_mut().timers.move_to(at);
         }
+        // The hits whose timers expire before `U` come before the updates
+        // (SPEC-0018; c-RZJ-1: the Paladin's hit at 31.4073 killed kobold 8
+        // before the update at 31.4103 in tick 6283, where footman 4 went
+        // on with its attack-move).
+        // PROVISIONAL: after the script timers before `U`, not interleaved
+        // with them by expiry.
+        if let Some(at) = at {
+            attack::hits_before(&mut self.vm, &self.state, Some(at));
+        }
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());

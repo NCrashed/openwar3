@@ -144,6 +144,17 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
     let Some((ability, level, order_id, aim)) = ability_for(state, h, name) else {
         return known.then_some(false);
     };
+    // The same spell again before the effect of its cast is taken and
+    // changes nothing (as for a point spell, SPEC-0043; c-RZJ-1: the
+    // Paladin's Holy Light ordered again at 2001, effect at 2033).
+    // PROVISIONAL: measured for Blizzard; whatever the new target.
+    if state
+        .unit(Some(h))
+        .and_then(|u| u.casting)
+        .is_some_and(|c| c.ability == ability && c.effect_at.is_none_or(|e| e > state.ticks))
+    {
+        return Some(true);
+    }
     let owner = state.unit(Some(h))?.owner;
     let fits = state.unit(Some(target)).is_some_and(|t| {
         t.alive

@@ -100,9 +100,18 @@ consecutive blocks decides when the unit reacts differently; it draws
 the script generator (SPEC-0025, "Blocked units: the patience
 counter").
 
-During every waiting update the heading still turns as in SPEC-0018:
-towards the current target at the first update of a 5-update wait,
-towards the segment goal on the later waiting updates.
+During every waiting update the heading still turns as in SPEC-0018
+(at most `turnRate`, the angle function of SPEC-0018 from the committed
+position): at the update that starts the wait towards the local path
+point it was about to step to, on the later waiting updates towards the
+member's place (the cluster's waypoint plus the member's offset,
+SPEC-0025). Read in the game: `c-RXR-1` unit 8 at 307 (wait start) turned
+from 0 to 0.6, a full step towards its path point (366.5, 386.5)
+(direction 0.6435; its place (386.5, 386.5) lies at 0.0443), and at 313
+to 0.044278, the place's direction; `c-RXD-1` creep 7 at 4603 (wait
+start) a full 0.5 step to 2.753035, at 4609 to the direction of its
+place (399.5, 401.5), 2.7184253, not to that of its path point (415.5,
+401.5), 2.4266458.
 
 Speeds that are equal by `spd` differ slightly through the movement
 arithmetic of SPEC-0018. In a head-on meeting of two footmen on an

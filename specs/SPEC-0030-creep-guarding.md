@@ -77,7 +77,23 @@ game): the return timer gave the move order home at 4557, and its check
 restarted with 0.01 s there (4559). Its checks at 4559 .. 5859 (every
 0.5 s) and, after it answered the call at 5954, at 5959, 6159, 6359
 (every 1.0 s) searched nothing. So it kept unit 2 although unit 3 was
-nearer, until the move order ended at 8492. The creeps that answer
+nearer, until the move order ended at 8492.
+
+**Losing the target.** When the target of a creep that fights from its
+guard state dies, the creep gets a movement back to its guard point at
+once, in that tick. The guard point is the creep's position where its
+last walk home ended. Its acquisition check restarts 0.01 s later.
+Read in the game, `c-RXD-1`:
+- 5917: creep 8's walk home ends at (392.3828, 400.0463) (its committed
+  position then, `43c43100`, `43c805ed`).
+- 6665: its target, unit 3, dies (creep 9's hit). The same tick already
+  had creep 8's backswing-end check, earlier in the queue, which gave
+  it a face movement towards unit 3. With the death, creep 8 gets the
+  movement back to that point instead.
+- 6667: it turns one step towards the point (5.476150 -> 5.976150) in
+  its member step. After the batch, its restarted check takes unit 1.
+The case of a creep that never walked home (whether the point is then
+its start position) was not read. The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

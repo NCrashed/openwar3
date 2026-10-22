@@ -568,6 +568,24 @@ time to time:
   (123.412, 44.088), 48.6 apart but in the same cell: no new goal. Otherwise the chase path is searched again; if its current
   waypoint is the same point as the attacker's current waypoint, the
   attacker keeps its own path, else it gets a new one at once.
+- **A held search.** The new path needs a search of the attacker's own
+  path, and that search may be held by the search throttle (SPEC-0021,
+  60 ticks after the path's last search). What the attacker does until
+  the held search runs depends on how the goal changed:
+  - At a renewal of the same group (the countdown below ran out), the
+    attacker keeps walking its old local path, with its usual turns and
+    waypoint advances. `c-RZJ-1` creep 15: renewal at 769, last search
+    727. It reaches a waypoint at 763, turns in place at 763 and 769, and
+    walks from 775. The held search runs at 787 and its path replaces
+    the old one.
+  - When the group is replaced by a new one (a new chase, or the forced
+    new group after a swing), the old local path is dropped with the old
+    group. The attacker stands with no path and no look-ahead, and only
+    turns toward the new goal. `c-RXD-1` creep 9: last search 8006, new
+    group at 8018 (its old group's countdown still at 5), the new group's
+    first update at 8030. It stands and turns until the held search at
+    8066; its heading ends at 3.2749, the direction to the new goal
+    (360.218, 387.5).
 - **Start in a block that is not free.** When the attacker stands next
   to a wall so that its level-0 block is not free, the high-level search
   started from the free neighbouring block nearest to the attacker (one

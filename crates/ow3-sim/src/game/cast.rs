@@ -161,14 +161,25 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
     );
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let tick = state.ticks;
-    if movement::in_range(
+    let in_range = movement::in_range(
         movement::relative(here, min),
         movement::relative(there, min),
         reach,
-    ) {
+    );
+    // In range and turned within 0.2 to the target, the cast starts at once
+    // (SPEC-0035, verification 2); else the unit first stops and turns to
+    // it, and the cast starts when turned (c-RZH-1: the Storm Bolt).
+    if in_range && movement::turned_to(state, h, there) {
         movement::stop(state, h);
         set(state);
         start(state, h, tick);
+    } else if in_range {
+        movement::stop(state, h);
+        set(state);
+        if !movement::cast_order(state, h, target, order_id) {
+            return Some(false);
+        }
+        set(state);
     } else if movement::cast_order(state, h, target, order_id) {
         set(state);
     } else {
@@ -291,11 +302,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if c.effect_at == Some(tick) {
                 effect(s, h, &c, &mut deferred);
             }
-            if c.effect_at.is_some()
-                && tick >= c.end_at
-                && let Some(Object::Unit(u)) = s.objects.get_mut(&h)
-            {
-                u.casting = None;
+            if c.effect_at.is_some() && tick >= c.end_at {
+                movement::end_cast(s, h);
             }
         }
     }

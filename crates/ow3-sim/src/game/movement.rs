@@ -1432,9 +1432,37 @@ pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
     done
 }
 
+/// Unit `h`'s cast ends (SPEC-0035): it is left with no order (an
+/// attack-move before it is not taken up again), and its acquisition check
+/// comes 0.01 s later (c-RZH-1: the Mountain King's Storm Bolt ending at
+/// 991, its check taking creep 7 at 993).
+pub(super) fn end_cast(state: &mut State, h: u32) {
+    let now = state.move_clock;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.attack_move = None;
+        if u.acquire_phase != super::NO_PHASE {
+            u.next_acquire = add(now, AFTER_DEATH);
+        }
+    }
+    halt(state, h);
+}
+
 /// Unit `h` stops where it is, its order over.
 pub(super) fn stop(state: &mut State, h: u32) {
     halt(state, h);
+}
+
+/// Whether unit `h`'s stored heading (its facing without a movement) is
+/// within 0.2 of the direction to point `at` (SPEC-0035).
+pub(super) fn turned_to(state: &State, h: u32, at: [u32; 2]) -> bool {
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let (here, there) = (relative([u.x, u.y], min), relative(at, min));
+    let a = angle(sub(there[0], here[0]), sub(there[1], here[1]));
+    let heading = u.movement.map_or(u.facing, |m| m.heading);
+    real_of(super::facing::angle_difference(a, heading)).abs() < ATTACK_ANGLE
 }
 
 /// Unit `h` walks into the range of its cast on `target` (SPEC-0035).
@@ -2189,19 +2217,34 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // which it is in range (SPEC-0035).
         // PROVISIONAL: the effect came 99 ticks after the last position
         // change, taken as a start one tick before this update.
+        let mut cast_turn = false;
         if let Order::Cast { target } = m.order
             && !waiting
             && !m.arrived
         {
             match position_of(state, target).filter(|_| super::attack::standing(state, target)) {
                 Some(at) => {
-                    m.target = at;
                     let reach = super::cast::reach(state, h, target).unwrap_or(0);
                     if in_range(here, relative(at, min), reach) {
-                        m.arrived = true;
-                        m.walking = false;
-                        m.velocity = [0, 0];
-                        super::cast::start(state, h, tick.saturating_sub(1));
+                        // In range it turns to its place, the target where
+                        // it was at the order, and the cast starts when it
+                        // is turned within 0.2 (SPEC-0035; c-RZH-1: the
+                        // Storm Bolt ordered at 801, turned at 805, started
+                        // at 811).
+                        let place = relative(m.target, min);
+                        let walked = m.walking;
+                        if real_of(heading_and_turn(&m, place).1).abs() < ATTACK_ANGLE {
+                            m.arrived = true;
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                            let from = if walked { tick.saturating_sub(1) } else { tick };
+                            super::cast::start(state, h, from);
+                        } else {
+                            motion(&mut m, place, false, speed, limit, turn_rate, window);
+                            cast_turn = true;
+                        }
+                    } else {
+                        m.target = at;
                     }
                 }
                 None => m.arrived = true,
@@ -2220,7 +2263,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             }
         }
         let repairing = matches!(m.order, Order::Repair { .. } | Order::Work { .. });
-        if !m.arrived && !waiting && !repairing && !turning_to_site {
+        if !m.arrived && !waiting && !repairing && !turning_to_site && !cast_turn {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
                 m.velocity = [0, 0];

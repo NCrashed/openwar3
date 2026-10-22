@@ -81,6 +81,13 @@ target's armour (footman, knight, farm as above).
   only. Later waves skip them. Unpaused units next to them take all
   waves.
 - A unit exactly at distance `Area + collision` was not tested.
+- **Ordered again while casting.** A second `blizzard` order given
+  between the first order and the effect is accepted
+  (`IssuePointOrder` returns true) but changes nothing. The cast is
+  not restarted, the effect comes at the same tick, and the waves fall
+  on the first point even when the second order names another point
+  (300 away). A `blizzard` order given during the channel, after the
+  effect, is refused, and the channel goes on.
 
 ## Open questions
 

@@ -204,6 +204,12 @@ as their base:
   150 is inferred from these values. Several missile and spell impact
   routines make this call.
 
+A walking unit that answers an impact call moves on through the tick
+of the impact and stands from the next tick. `c-RZJ-1` tick 1019: the
+elemental's missile hits creep 10 first in that tick, and gnoll 13's
+commit after it still has its walking velocity. Its commit in 1020 is
+at the same position with velocity 0.
+
 Instant and melee hits make only the damaged unit's call.
 
 **Spell damage.** Damage of an area spell makes a call around the

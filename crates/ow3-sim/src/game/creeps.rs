@@ -175,8 +175,12 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
                     && u.owner == CREEPS
                     && !u.creep.sleeping
                     && u.attack.is_none()
-                    // Creeps on their way home come too (c-RXD-1).
-                    && (u.creep.returning || u.movement.is_none_or(|m| !m.ordered()))
+                    // Creeps on their way home come too, also while their
+                    // move order home lasts in a chase (c-RXD-1: creeps 6
+                    // and 7 answered creep 8 at 6667).
+                    && (u.creep.returning
+                        || u.creep.homebound
+                        || u.movement.is_none_or(|m| !m.ordered()))
                     && dx * dx + dy * dy <= reach * reach
             }
             _ => false,
@@ -214,7 +218,14 @@ pub(super) fn call_for_help(
             // A creep on its way home comes too (SPEC-0030; c-RXD-1: 6, 7
             // and 9 at 5919).
             set(state, h, |c| c.returning = false);
-            if movement::join_fight(state, h, target, from) {
+            // One already chasing takes the new target at once, as a
+            // switch (c-RXD-1: creeps 6 and 7 at 6667, turning at 6673).
+            let joined = if movement::attacking(state, h) {
+                movement::switch_target(state, h, target)
+            } else {
+                movement::join_fight(state, h, target, from)
+            };
+            if joined {
                 enter_fight(state, h, at);
                 came.push(h);
                 callers.push_back(h);

@@ -3412,11 +3412,19 @@ fn attack_checks(state: &mut State) {
     }
 }
 
+/// Whether unit `h` has an attack order.
+pub(super) fn attacking(state: &State, h: u32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+}
+
 /// Unit `h` attacks `better` instead of its target at once: no reaction
 /// delay and no call for help; a walking attacker stops at once, and a
 /// new goal after a swing still waits for the cooldown (SPEC-0019).
 /// Whether it took the order.
-fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
+pub(super) fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
     let tick = state.ticks;
     let resume = state
         .unit(Some(h))

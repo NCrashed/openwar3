@@ -63,17 +63,22 @@ fn our_commits(
     let units = playback.game.units();
     let cells = |v: u32| (f32::from_bits(v) / 32.0).to_bits();
     let state = playback.game.state.borrow();
+    // The last commit of a tick: the game's file gives the velocity and
+    // heading at the end of the tick (an order commit after the update).
     let mut ours = Commits::new();
     for &(t, h, p, v, heading, aim) in state.agent_trace.as_deref().unwrap_or(&[]) {
-        ours.entry((t, label(h, &units, &ids))).or_insert([
-            cells(p[0]),
-            cells(p[1]),
-            cells(v[0]),
-            cells(v[1]),
-            heading,
-            cells(aim[0]),
-            cells(aim[1]),
-        ]);
+        ours.insert(
+            (t, label(h, &units, &ids)),
+            [
+                cells(p[0]),
+                cells(p[1]),
+                cells(v[0]),
+                cells(v[1]),
+                heading,
+                cells(aim[0]),
+                cells(aim[1]),
+            ],
+        );
     }
     ours
 }

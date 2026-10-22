@@ -297,6 +297,23 @@ Footman (`turnRate` 0.6, 34.38 degrees per update) with `a` = 34.38 +
 `d`: `d` from 9 to 11 gave 112 ticks (attack at update 2), `d` 11.5 to 16
 gave 118 (update 3).
 
+**Which direction it turns to.** A unit standing in range turns to a
+place given by its attack's own check: when that check finds the target
+within range, it gives the unit a new "face the target" movement (a new
+cluster) whose place is the target's position at that moment, the
+per-tick position of SPEC-0018 (between the target's updates). The
+following updates turn the unit towards that stored place; the target
+is not read again in those updates. Read in the game, `c-RXD-1`: creep 6
+acquired unit 3 at 2031; its attack check at 2033 (0.01 s later) found
+unit 3 in range and took its position of that tick, (379.1333,
+389.6884) in cells, 4/6 of the way from unit 3's position after its
+update of 2029 to that after 2035; at 2035 the creep turned from
+4.385801 to the direction of that place, 4.103981 (not 4.124695, the
+direction to unit 3 after its own update of 2035). Creep 8 at 2083
+turned one full step of 0.5 towards its target, unit 2 (4.363140 ->
+4.863140, the place at about 4.88), and then stayed: 0.02 rad off is
+within 0.2.
+
 ### Reaction delay
 
 When a unit takes an attack order it first waits a random **reaction

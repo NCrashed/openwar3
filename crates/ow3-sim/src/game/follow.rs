@@ -272,9 +272,24 @@ fn others(state: &State, h: u32) -> Others {
             let class =
                 path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
             let at = super::movement::relative([u.x, u.y], min);
-            others
-                .standing
-                .extend(path::occupied_cells(to_cells(at), class));
+            let cells = path::occupied_cells(to_cells(at), class);
+            // A worker at work on a tree also stops its look-ahead
+            // (c-RYP-1: peasant 4 at 5449, blocked by peasant 1).
+            if super::harvest::at_work_on_trees(state).any(|w| w == o) {
+                for &cell in &cells {
+                    others.by_cell.entry(cell).or_default().push(o);
+                }
+                others.units.insert(
+                    o,
+                    Other {
+                        moving: false,
+                        squared_speed: 0,
+                        class,
+                        group: None,
+                    },
+                );
+            }
+            others.standing.extend(cells);
         }
         return others;
     }

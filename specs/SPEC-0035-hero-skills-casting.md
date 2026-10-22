@@ -53,6 +53,24 @@ With the order given in tick `o` (script order, SPEC-0019):
 4. The cooldown (`Cool1`, 5 s) starts at the effect; an order given
    while it runs does nothing (no effect, no mana; the order given 400
    ticks after the effect).
+5. **In range but not facing:** the order gives a movement towards the
+   target as for an attack (SPEC-0019): a stop commit at the order and a
+   cluster whose place is the target's per-tick position then. At its
+   member steps the hero stands and turns (at most `turnRate` per update)
+   until it is within 0.2 rad of the place's direction. At that update
+   the movement ends and the cast starts; the effect follows `castpt`
+   later. Read in the game, `c-RZH-1`, Mountain King's Storm Bolt on
+   creep 8:
+   - order in tick 801 (queue time 4.0), place (388.4560, 384.3517) in
+     cells;
+   - 805: one turn from 6.168117 to 0.090873, the place's direction;
+   - 811: within 0.2, so the cast starts (`castpt` 0.4 s);
+   - 891: the effect; the cooldown (9 s) starts.
+6. **After the backswing** the order ends (order 0), and an order the
+   hero had before the cast (an attack-move) is not resumed. Its
+   acquisition check runs 0.01 s later, as for an idle unit (SPEC-0019).
+   Read in `c-RZH-1`: Storm Bolt's backswing (0.5 s) ended at 991;
+   check at 993 took creep 7.
 
 ## Edge cases
 

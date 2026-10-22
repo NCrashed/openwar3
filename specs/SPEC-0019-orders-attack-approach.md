@@ -173,8 +173,21 @@ expired in the same moment as the second hit, before it); its seven
 hits in between made no call, among them rifleman 8's at 24.1098976
 (tick 4823), which fell into the cooldown of an earlier call. Over all
 43 attempts between 23.0 and 27.46 s, the 26 that followed a call of
-the same unit in that window matched this rule. A second value of the
-timer, 0.5 s, exists for a unit state that was not identified.
+the same unit in that window matched this rule.
+
+**Creeps: 0.5 s, and every call counts.** For the creeps of a camp the
+timer is 0.5 s. Which unit property selects 0.5 s instead of 3.0 s is not
+identified; all eight creeps of `c-RZJ-1` have it, the player units of
+the tests above do not. The timer belongs to the calling unit and is
+started by every call it makes: for a hit on itself, for an acquisition
+(SPEC-0030), and when another creep's call reaches it. A creep reached
+by a call calls in turn (the chain under "Order of the responders"),
+also while it is fighting and keeps its target. Read in the game,
+`c-RZJ-1` 6.9 .. 12.2 s: all eight creeps called in the same ticks 1415,
+1549, 1685, 1829, 1955, 2117, 2220, 2321 and 2423, and every other attempt
+fell inside 0.5 s after one of these. Creep 9's own hits at 1613, 1882,
+1883 and 2153 made no call; its hit at 2423 came 102 ticks after the
+call of 2321 and called.
 
 **Reach.** There are two kinds of call, with `CallForHelp` of
 `Units\MiscGame.txt` (600 in 1.27b; the map's copy is used, SPEC-0015)

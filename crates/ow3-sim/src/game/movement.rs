@@ -233,6 +233,9 @@ pub struct Moving {
     /// The goal is the place a backswing-end check faced the target at:
     /// the first update keeps it (SPEC-0019).
     faced: bool,
+    /// A chase goal taken at a backswing end: the cluster's first update
+    /// compares it with the target by 2 x 2 squares (SPEC-0019).
+    follow_check: bool,
     /// The new goal after a swing comes at the first update from this tick
     /// on (SPEC-0019).
     renew_at: Option<u64>,
@@ -504,6 +507,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction_end: None,
             goal_taken: false,
             faced: false,
+            follow_check: false,
             renew_at: None,
             renew_cooldown: false,
             chase: None,
@@ -534,6 +538,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             reaction_end: None,
             goal_taken: false,
             faced: false,
+            follow_check: false,
             renew_at: None,
             renew_cooldown: false,
             chase: None,
@@ -2216,6 +2221,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     Some(at) if super::attack::standing(state, target) => {
                         let renew_now = m.renew_at.is_some_and(|r| tick >= r);
                         renew_exact = m.renew_at == Some(tick);
+                        // The goal follows the target into another 2 x 2 square
+                        // at the cluster's first update (SPEC-0019, "The goal
+                        // follows the target at cluster updates"; c-RXD-1:
+                        // creep 6 at 6295).
+                        if std::mem::take(&mut m.follow_check)
+                            && let Some(now) = position_of(state, target)
+                            && grid64(relative(now, min)) != grid64(relative(m.target, min))
+                        {
+                            m.target = now;
+                        }
                         match m.chase {
                             // The new goal after a swing (SPEC-0019).
                             _ if renew_now => {
@@ -2966,6 +2981,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
                 m.chase = Some(u32::MAX);
                 m.renew_at = Some(r);
                 m.renew_stands = true;
+                m.follow_check = true;
             }
             // At the new goal itself: this goal, searched at the next
             // update.

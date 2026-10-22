@@ -42,6 +42,41 @@ had creeps 128 and 400 apart).
 While a creep chases by acquisition its current order is 0
 (`GetUnitCurrentOrder`).
 
+### Creep groups
+
+The creeps of the neutral hostile player are kept in groups, which
+spread a fight through a camp.
+
+- **Joining.** A creep joins a group when it is created. It joins the
+  nearest group that has had fewer than 12 joiners and whose first
+  living member is within 676 of it (distance between centres; it was
+  not settled whether this is 676 in world units or a squared distance
+  of 26 cells). If there is no such group, it starts a new one. A creep
+  is in one group only and stays in it: walking away from its camp
+  does not change its group. A dead member drops out; its place can be
+  taken by a later joiner. In `c-RZJ-1` all eight creeps of the camp
+  are in one group (the only group of the game).
+- **Relay.** On every hit on a member, a fatal one included, every
+  other living member of its group tries its own call for help, in the
+  order of the group's places (the order of joining), each with its own
+  0.5 s call timer (SPEC-0019, "Creeps: 0.5 s"). The relay does not
+  depend on the victim's own call: when the victim's timer blocks its
+  call, the relay still runs. A relay also runs when a creep acquires a
+  target at its own acquisition check.
+- **No further chain.** A call made in a relay is an ordinary call
+  around the member that makes it (`CallForHelp`); it does not start
+  another relay.
+
+Read in the game, `c-RZJ-1`:
+- 3722: ogre 14 dies of the Water Elemental's hit. Kobold 8, the Ogre
+  Lord, gnolls 12 and 13 and ogre 15 try in that order, and ogre 15
+  calls.
+- 3731: the Archmage's missile hits the Ogre Lord, whose own call is
+  blocked. Kobold 8, gnolls 12 and 13 and ogre 15 try, all blocked by
+  their timers.
+- Ogre 15's calls between 3700 and 4054: 3722 (relay), 3827, 3941 and
+  4049 (its own hits). Its other tries fell within 0.5 s of a call.
+
 ### Going back home
 
 A creep's home is the point where it was created; a `move` order from

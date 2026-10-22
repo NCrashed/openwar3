@@ -4242,7 +4242,13 @@ pub(super) fn retaliate(
     // CallForHelp + 150 and no timer (SPEC-0019; test RZG). A unit is
     // reached when its centre is within the radius plus its collision
     // size (c-RXR-1, 6479: trolls at 611.1 in, 635.2 out).
-    let calls = impact.is_some()
+    // A creep's call at an impact is held by its timer and starts it as
+    // any other (SPEC-0030; c-RZJ-1: the Ogre Lord at the Archmage's
+    // missile in 5917, no call of his at 5975).
+    let creep_victim = state
+        .unit(Some(victim))
+        .is_some_and(|v| v.owner == super::creeps::CREEPS);
+    let calls = (impact.is_some() && !creep_victim)
         || state
             .unit(Some(victim))
             .is_some_and(|v| now >= real_of(v.call_until));
@@ -4312,7 +4318,7 @@ pub(super) fn retaliate(
         .filter(|&h| switches(h))
         .collect();
     if calls
-        && impact.is_none()
+        && (impact.is_none() || creep_victim)
         && let Some(Object::Unit(v)) = state.objects.get_mut(&victim)
     {
         let cooldown = if v.owner == super::creeps::CREEPS {

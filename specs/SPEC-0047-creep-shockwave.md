@@ -69,7 +69,12 @@ Lord cast; with 182, 186 and 190 it did not (count 1). The bound is
 ### The cast
 
 The order is a unit target order on the attacker. The creep does not
-move for it in the cases seen. The spell effect comes 111 ticks after
+move for it in the cases seen. If it does not face the attacker within 0.2 rad, it
+first turns in place as a hero does (SPEC-0035, "In range but not
+facing"), and the cast starts at the update at which it is within 0.2
+rad. `c-RZJ-1`, second cast: order at 2423 on footman 4, 0.227 rad off.
+The turn shows at 2425, the cast starts at the update of 2431, and the
+effect comes at 2431 + 112 = 2543. The spell effect comes 111 ticks after
 the order, and the order ends 214 ticks after it (the creep then has no
 order). After the cast the cooldown of 8 s runs from the effect.
 Repeated casts with three knights came 1800 ticks apart: the cooldown

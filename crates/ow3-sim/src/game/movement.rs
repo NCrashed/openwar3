@@ -3152,9 +3152,6 @@ pub(super) fn enemies(state: &State, a: i32, b: i32) -> bool {
     a != b && a != NEUTRAL_PASSIVE && b != NEUTRAL_PASSIVE && !state.setup.is_ally(a, b)
 }
 
-/// The first check of an attack-move after its order, or after a kill:
-/// 0.51 s on the timer queue.
-const ATTACK_MOVE_FIRST_TIME: u32 = 0x3F02_8F5C;
 const HALF: u32 = 0x3F00_0000;
 
 /// An `attack` order to a point (SPEC-0019, "Attack-move with enemies"):
@@ -3178,12 +3175,14 @@ fn set_attack_move(state: &mut State, h: u32, attack_move: Option<AttackMove>) {
 /// it walks on after its backswing, and checks again 102 ticks after the
 /// kill (SPEC-0019).
 pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
-    let time = state.timers.time();
-    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-        && let Some(a) = u.attack_move.as_mut()
-    {
-        a.resume_at = Some(tick + backswing);
-        a.next_check = add(time, ATTACK_MOVE_FIRST_TIME);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        // The check 0.01 s after the end of its backswing (c-RZH-1, the
+        // hero's kill of 2224: restart 2330, check 2332).
+        let end = u.backswing_end;
+        if let Some(a) = u.attack_move.as_mut() {
+            a.resume_at = Some(tick + backswing);
+            a.next_check = add(end, AFTER_DEATH);
+        }
     }
 }
 
@@ -3367,15 +3366,14 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             && std::mem::take(&mut u.after_death)
             && target.is_none()
         {
+            // It is the attack-move's own timer: the next check 0.5 s on, as
+            // without a target (c-RXR-1: rifleman 8, 2703 then 2803).
+            if let Some(a) = u.attack_move.as_mut()
+                && real_of(a.next_check) <= real_of(next_clock)
+            {
+                a.next_check = add(a.next_check, HALF);
+            }
             due.push((expiry, seq, h, Check::AttackMove { expiry }));
-            continue;
-        }
-        // A unit on attack-move that attacks a target checks for a better
-        // one as any attacker (c-RXR-1: rifleman 8 took grunt 15 in 5603).
-        if u.attack_move.is_some()
-            && let (Some(expiry), Some((current, _))) = (expired, target)
-        {
-            due.push((expiry, seq, h, Check::Attacking { current }));
             continue;
         }
         if let Some(a) = u.attack_move.as_mut() {
@@ -4170,6 +4168,11 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 now
             };
             u.next_acquire = add(from, AFTER_DEATH);
+            // The attack-move's check is that timer (c-RXR-1: rifleman 8,
+            // grunt 12 dead at 2579, restart at its backswing end 2701).
+            if let Some(a) = u.attack_move.as_mut() {
+                a.next_check = add(from, AFTER_DEATH);
+            }
             // An attack-move goes on at once, or at the end of the
             // backswing (c-RXR-1: footman 2 searched towards its point at
             // its update of 2581).

@@ -638,7 +638,19 @@ impl ObjectData {
                 let int = |v: &Option<String>| v.as_deref().and_then(|t| t.trim().parse().ok());
                 let float = |v: &Option<String>| f32::from_bits(real(v.as_ref()));
                 let attack_type = v[6].as_deref().and_then(attack_type)?;
-                let area = (float(&v[11]) > 0.0).then(|| Area {
+                // Area fields count only for the weapon types that splash: a
+                // plain `missile` or `normal` weapon hits its target alone
+                // (c-RZJ-1: the Water Elemental, `missile` with areas 25,
+                // 50, 75, hit creep 10 and not creep 9 next to it).
+                // PROVISIONAL: `mbounce` takes no area here.
+                let splashes = matches!(
+                    v[15]
+                        .as_deref()
+                        .map(|t| t.trim().to_ascii_lowercase())
+                        .as_deref(),
+                    Some("msplash" | "artillery" | "aline" | "mline")
+                );
+                let area = (splashes && float(&v[11]) > 0.0).then(|| Area {
                     full: float(&v[9]),
                     half: float(&v[10]),
                     quarter: float(&v[11]),

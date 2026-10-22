@@ -386,10 +386,12 @@ fn group_walks_report() {
 }
 
 /// `c-RYP-1`: peasants harvesting lumber in a block of trees.
+///
+/// All the events of the log are the game's.
 #[test]
 fn lumber_walks_report() {
     let Some(first) = report("c-RYP-1", 12205) else {
         return;
     };
-    eprintln!("lumber: first difference at tick {first}");
+    assert_eq!(first, u64::MAX, "first difference at tick {first}");
 }

@@ -87,6 +87,13 @@ pub struct Harvest {
     /// with a full load (SPEC-0029, "Arriving at the tree").
     next_hit: Option<u32>,
     back_at: Option<u32>,
+    /// The end of the backswing of its last hit, and of the pause after
+    /// it (SPEC-0029, "When the tree is gone").
+    swing_end: Option<u32>,
+    pause_end: Option<u32>,
+    /// The felled tree it returns to after its delivery, when it took
+    /// another one at the end of its backswing.
+    home: Option<u32>,
     /// The work started out of reach of its tree: the tick of the check
     /// that takes another tree (SPEC-0029, "Another tree").
     switch_at: Option<u64>,
@@ -133,7 +140,6 @@ struct Gathering {
     period: u64,
     duration: u32,
     reach: u32,
-    area: u32,
 }
 
 fn ability_of(state: &State, type_id: i32, base: i32) -> Option<&crate::data::Ability> {
@@ -155,7 +161,6 @@ fn gathering(state: &State, h: u32) -> Option<Gathering> {
         period: (f64::from(f32::from_bits(a.duration)) * 200.0).round() as u64,
         duration: a.duration,
         reach: a.range,
-        area: a.area,
     })
 }
 
@@ -556,8 +561,14 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     // The swing starts; the first hit at its swing point
                     // (c-RYP-1: peasant 0 at 1003 -> 1089, peasant 5 at
                     // 1351 -> 1437).
+                    // After a tree that was gone, not before the end of the
+                    // pause (c-RYP-1: peasant 0, start 10125, swing 10129).
                     let (point, _) = swing(&s, h);
-                    g.next_hit = Some(add(s.update_time, point));
+                    let start = match g.pause_end.take() {
+                        Some(p) if f32::from_bits(p) > f32::from_bits(s.update_time) => p,
+                        _ => s.update_time,
+                    };
+                    g.next_hit = Some(add(start, point));
                     set(&mut s, h, Some(g));
                 } else if passes || g.retries > 0 {
                     // The walk to the same tree again, with the search set
@@ -895,18 +906,32 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             g.at_tree = false;
             g.cycling = true;
             set(&mut s, h, Some(g));
-            // Its tree fell at its last hit: on to the next one at the end
-            // of the backswing (c-RYP-1: peasant 3 at 10010 -> 10123).
-            if let Some(tree) = g.target.filter(|&t| !is_tree(&s, t)) {
-                next_tree(&mut s, h, tree, numbers);
-                continue;
-            }
             walk_back(&mut s, h);
             continue;
         }
+        // At the end of its backswing a worker whose tree is gone takes
+        // another tree, the search from the worker; the pause after the
+        // backswing runs on (SPEC-0029, "When the tree is gone"; c-RYP-1:
+        // peasant 0 at 10109, peasant 3 at 10123).
+        if let Some(e) = g.swing_end.filter(|&e| due(&state.borrow(), e)) {
+            let mut s = state.borrow_mut();
+            let mut g = g;
+            g.swing_end = None;
+            if let Some(tree) = g.target.filter(|&t| !is_tree(&s, t)) {
+                g.next_hit = None;
+                g.pause_end = Some(add(e, PAUSE));
+                g.home = g.home.or(Some(tree));
+                g.at_tree = false;
+                g.cycling = true;
+                set(&mut s, h, Some(g));
+                take_another_tree(&mut s, h, false);
+                continue;
+            }
+            set(&mut s, h, Some(g));
+        }
         if g.switch_at == Some(tick) {
             let mut s = state.borrow_mut();
-            take_another_tree(&mut s, h);
+            take_another_tree(&mut s, h, false);
             continue;
         }
         let Some(hit) = g.next_hit.filter(|&e| due(&state.borrow(), e)) else {
@@ -915,44 +940,19 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let Some(tree) = g.target else {
             continue;
         };
-        let life_of = |tree: u32| match state.borrow().objects.get(&tree) {
+        let life = match state.borrow().objects.get(&tree) {
             Some(Object::Destructable(d)) if d.alive => d.life,
             _ => 0,
         };
-        let mut tree = tree;
-        let mut life = life_of(tree);
         if f32::from_bits(life) <= 0.0 {
-            // Its tree fell by another worker's hit: the swing lands on the
-            // nearest other tree when the worker reaches it from where it
-            // stands, else it walks there (c-RYP-1: peasant 0 at 10216).
+            // Felled during the swing: no hit; on at the backswing end.
             let mut s = state.borrow_mut();
-            match nearest_tree(&s, h, tree, numbers) {
-                Some(next) if within_reach(&s, h, next) || touches_tree(&s, h, next) => {
-                    let mut g = get(&s, h).unwrap_or(g);
-                    g.target = Some(next);
-                    set(&mut s, h, Some(g));
-                    // It faces the new tree at once (its stored heading).
-                    let min = [s.world_bounds[0], s.world_bounds[1]];
-                    if let (Some(u), Some(at)) = (s.unit(Some(h)), position(&s, next)) {
-                        let (a, b) = (relative([u.x, u.y], min), relative(at, min));
-                        let heading = movement::angle(sub(b[0], a[0]), sub(b[1], a[1]));
-                        if let Some(Object::Unit(u)) = s.objects.get_mut(&h)
-                            && let Some(m) = u.movement.as_mut()
-                        {
-                            m.heading = heading;
-                        }
-                    }
-                    drop(s);
-                    tree = next;
-                    life = life_of(tree);
-                }
-                _ => {
-                    next_tree(&mut s, h, tree, numbers);
-                    continue;
-                }
-            }
+            let mut g = g;
+            g.next_hit = None;
+            g.swing_end = Some(add(hit, swing(&s, h).1));
+            set(&mut s, h, Some(g));
+            continue;
         }
-        let g = get(&state.borrow(), h).unwrap_or(g);
         let one = (numbers.per_hit as f32).to_bits();
         super::widgets::set_destructable_life(vm, state, Some(tree), sub(life, one));
         let mut s = state.borrow_mut();
@@ -968,61 +968,11 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             g.back_at = Some(add(hit, swing(&s, h).1));
             set(&mut s, h, Some(g));
         } else {
-            if is_tree(&s, tree) {
-                g.next_hit = Some(add(hit, numbers.duration));
-            } else {
-                g.next_hit = None;
-                g.back_at = Some(add(hit, swing(&s, h).1));
-            }
+            g.next_hit = is_tree(&s, tree).then(|| add(hit, numbers.duration));
+            g.swing_end = Some(add(hit, swing(&s, h).1));
             set(&mut s, h, Some(g));
         }
     }
-}
-
-/// Worker `h`'s tree `old` is gone: it goes on at the nearest living tree
-/// within `Area` of it, or takes back what it carries.
-fn next_tree(state: &mut State, h: u32, old: u32, numbers: Gathering) {
-    match nearest_tree(state, h, old, numbers) {
-        Some(tree) => {
-            if let Some(mut g) = get(state, h) {
-                g.target = Some(tree);
-                g.next_hit = None;
-                set(state, h, Some(g));
-            }
-            walk_to_work(state, h);
-        }
-        None => {
-            if let Some(mut g) = get(state, h) {
-                g.target = None;
-                g.next_hit = None;
-                set(state, h, Some(g));
-            }
-            if !walk_back(state, h) {
-                movement::stop(state, h);
-            }
-        }
-    }
-}
-
-/// The nearest living tree within `Area` of tree `old` (or of worker `h`
-/// when `old` has no position), the first created among equals.
-fn nearest_tree(state: &State, h: u32, old: u32, numbers: Gathering) -> Option<u32> {
-    let from = position(state, old).or_else(|| position(state, h))?;
-    let area = f32::from_bits(numbers.area);
-    let mut best: Option<(u32, f32)> = None;
-    for (&d, o) in &state.objects {
-        let Object::Destructable(t) = o else {
-            continue;
-        };
-        if !t.alive || !state.data.trees.contains(&t.type_id) {
-            continue;
-        }
-        let e = squared(from, [t.x, t.y]);
-        if e <= area * area && best.is_none_or(|(b, f)| e < f || (e == f && d < b)) {
-            best = Some((d, e));
-        }
-    }
-    best.map(|(d, _)| d)
 }
 
 /// Worker `h` reached the building it carries its load to: its player
@@ -1054,13 +1004,29 @@ fn deliver(state: &mut State, h: u32) {
         };
         *state.setup.player_states.entry((owner, which)).or_default() += amount;
     }
-    let target = g.target.filter(|&t| is_mine(state, t) || is_tree(state, t));
+    // Back to its tree, the felled one it left included: then another
+    // tree, costed from that tree's point (SPEC-0029, "When the tree is
+    // gone"; c-RYP-1: peasant 0 at 11578).
+    let back = g.home.take().or(g.target);
+    if let Some(t) = back
+        && matches!(state.objects.get(&t), Some(Object::Destructable(_)))
+        && !is_tree(state, t)
+    {
+        g.target = Some(t);
+        set(state, h, Some(g));
+        take_another_tree(state, h, true);
+        return;
+    }
+    let target = back.filter(|&t| is_mine(state, t) || is_tree(state, t));
     g.target = target;
     set(state, h, Some(g));
     if target.is_none() || !walk_to_work(state, h) {
         movement::stop(state, h);
     }
 }
+
+/// The pause after a backswing before the next swing, in seconds (0.1).
+const PAUSE: u32 = 0x3DCC_CCCD;
 
 /// Whether queue time `e` falls in this tick: Q(k) < e <= Q(k + 1).
 fn due(state: &State, e: u32) -> bool {
@@ -1123,7 +1089,7 @@ fn within_reach(state: &State, h: u32, tree: u32) -> bool {
 /// free and an iteration limit of 32, then of the best removals plus 16
 /// (SPEC-0029, "Another tree").
 ///
-fn take_another_tree(state: &mut State, h: u32) {
+fn take_another_tree(state: &mut State, h: u32, from_tree: bool) {
     let Some(g) = get(state, h) else {
         return;
     };
@@ -1138,7 +1104,12 @@ fn take_another_tree(state: &mut State, h: u32) {
         let r = relative(p, min);
         [mul(r[0], CELL), mul(r[1], CELL)]
     };
-    let at = cells([u.x, u.y]);
+    // From the worker, or from the old tree's point after a delivery.
+    let at = if from_tree {
+        cells([cx, cy])
+    } else {
+        cells([u.x, u.y])
+    };
     let class = state
         .data
         .units

@@ -115,7 +115,13 @@ the attack order follows after the reaction delay. Read in the game,
   a 9 1 at 6787), reaction delay 0.1623 s.
 - 6820: the attack order on unit 1. Goal: unit 1's position, (389.7260,
   385.4998).
-- 6823: it walks; first path point (389.5, 390.5). The creeps that answer
+- 6823: it walks; first path point (389.5, 390.5).
+
+A creep that already attacks the target named by a call does not take
+it again: its order and path stay, with no extra commit. Read in the
+game, `c-RXD-1`: creep 7, chasing unit 1, at 6787 (creep 9's check
+took unit 1 then). Creep 7 has only its ordinary walking commit there,
+no acquisition row, and its path point (387.5, 388.5) is kept. The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

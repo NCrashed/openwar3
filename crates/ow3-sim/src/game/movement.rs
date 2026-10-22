@@ -1315,9 +1315,20 @@ pub(super) fn join_fight(state: &mut State, h: u32, target: u32, from: Option<u3
             state.game_random[REACTION].fraction(),
             state.combat.reaction_delay,
         );
+        // Not before the end of its backswing (c-RXD-1: creep 9 answered at
+        // 6667 in the backswing of its kill of 6665, walking from 6787).
+        let backswing = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
         match from {
             // From the expiry of the caller's check (SPEC-0019).
-            Some(time) => react_until(state, h, add(time, delay)),
+            Some(time) => {
+                let end = add(time, delay);
+                let end = if real_of(backswing) > real_of(end) {
+                    backswing
+                } else {
+                    end
+                };
+                react_until(state, h, end)
+            }
             None => react(state, h, tick, delay, tick),
         }
     }
@@ -3113,7 +3124,13 @@ pub(super) fn attack_moves(state: &mut State) {
         .iter()
         .filter_map(|&h| {
             let u = state.unit(Some(h)).filter(|u| u.alive)?;
-            (u.guard_return == Some(tick)).then_some((h, u.home))
+            // A creep's guard point is where its last walk home ended.
+            let home = if u.owner == super::creeps::CREEPS {
+                u.creep.guard.unwrap_or(u.home)
+            } else {
+                u.home
+            };
+            (u.guard_return == Some(tick)).then_some((h, home))
         })
         .collect();
     for (h, home) in back {
@@ -4000,6 +4017,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         })
         .collect();
     attackers.sort_unstable();
+    let mut to_guard = Vec::new();
     for (_, h, own) in attackers {
         state.acquire_starts += 1;
         let seq = state.acquire_starts;
@@ -4023,8 +4041,16 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // Below an attack it took on its own lies the walk back to its
             // guard point (c-RXR-1: grunt 14 at 4813). PROVISIONAL: the
             // 50 it accepts; creeps go home by SPEC-0030.
-            if own && u.owner != super::creeps::CREEPS {
+            // A creep's walk to its guard point waits for the end of its
+            // backswing (c-RXD-1: creep 9, whose hit killed unit 3 at 6665,
+            // stood in its backswing).
+            let creep = u.owner == super::creeps::CREEPS;
+            let swinging = f32::from_bits(u.backswing_end) > f32::from_bits(now);
+            if own && (!creep || swinging) {
                 u.guard_return = Some(at);
+            }
+            if own && creep && !swinging {
+                to_guard.push(h);
             }
             u.acquire_seq = seq;
             u.after_death = true;
@@ -4037,8 +4063,8 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // A creep walks back to its guard point at once, where its
             // last walk home ended (c-RXD-1: creep 8 at 6665, turning to it
             // at 6667).
-            if let Some(u) = state.unit(Some(h))
-                && u.owner == super::creeps::CREEPS
+            if to_guard.contains(&h)
+                && let Some(u) = state.unit(Some(h))
             {
                 let guard = u.creep.guard.unwrap_or(u.home);
                 order(state, h, Order::Point, 0, guard);

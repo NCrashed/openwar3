@@ -684,9 +684,7 @@ fn search(
                 // A chase touching its target ends here (SPEC-0019); the
                 // other neighbours of the cell are still tested, but none
                 // is added.
-                // The start cell is not tested: a worker standing where it
-                // touched its tree searches on (c-RYP-1: peasant 5 at 5605).
-                if c != start && touches(c, n) {
+                if touches(c, n) {
                     end_near = Some(c);
                     continue;
                 }

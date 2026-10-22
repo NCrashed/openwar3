@@ -1030,12 +1030,11 @@ pub(super) fn cycling(state: &State, h: u32) -> bool {
     get(state, h).is_some_and(|g| g.cycling || g.at_tree)
 }
 
-/// Worker `h` arrives at its tree the first time (the retry of the
-/// harvest's first check, SPEC-0029).
+/// Worker `h` arrives at its tree touching it, out of reach: the retry of
+/// the harvest's check (SPEC-0029), its first arrival or, in the cycle,
+/// a failed one (c-RYP-1: peasant 5 at 5599, set B in its search of 5605).
 pub(super) fn start_cycling(state: &mut State, h: u32) {
-    if let Some(mut g) = get(state, h)
-        && !g.cycling
-    {
+    if let Some(mut g) = get(state, h) {
         g.at_tree = true;
         set(state, h, Some(g));
     }

@@ -676,7 +676,7 @@ fn decide(
     }
     if follow.wait > 0 {
         follow.wait -= 1;
-        return Steer::Stand(to_world(follow.goal));
+        return Steer::Stand(member_place(follow, to_world(follow.goal)));
     }
     let order = to_cells(walker.order);
     // A chase with a new goal: a new chase path; the attacker's own path
@@ -1065,6 +1065,16 @@ fn decide(
     follow.next = Next::Search;
     follow.local.clear();
     Steer::Stand(segment_goal)
+}
+
+/// The place a member turns to while it waits: its cluster's waypoint W,
+/// if it has one (SPEC-0025; c-RXD-1: creep 7 at 4609).
+///
+/// PROVISIONAL: used for the updates of a wait after its first; at the
+/// update that starts the wait the unit turns to its path point as before
+/// (c-RXR-1: unit 8 at 307 needs that), which is not explained yet.
+fn member_place(follow: &Follow, otherwise: [u32; 2]) -> [u32; 2] {
+    follow.stop_at.map_or(otherwise, to_world)
 }
 
 /// Whether a unit of `class` at `at` (cells) touches `cells`: one of its

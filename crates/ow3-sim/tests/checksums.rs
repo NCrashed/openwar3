@@ -94,6 +94,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          19 on, not looked at yet",
     ),
     (
+        "c-RZJ-1.w3g",
+        "the second hero test (Archmage, Paladin, water elementals): its abilities are not \
+         specified yet",
+    ),
+    (
         "c-RXI-1.w3g",
         "the walks are the game's to the end of the log (tests/crowd.rs); the turns that \
          change objects differ from turn 126 on (134 in the game, 126 here), and \

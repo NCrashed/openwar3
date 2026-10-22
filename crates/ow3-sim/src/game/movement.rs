@@ -1539,10 +1539,11 @@ fn point_order_taken(
     };
     if taken {
         // An attack to a point checks for enemies on the way, the first
-        // time 102 ticks later (SPEC-0019, "Attack-move with enemies").
+        // time 0.01 s later, then every 0.5 s (SPEC-0019, "Attack-move
+        // with enemies"; c-RZH-1: the checks of 303 and of 1003).
         let attack_move = (name == "attack").then(|| AttackMove {
             point: target,
-            next_check: add(state.timers.time(), ATTACK_MOVE_FIRST_TIME),
+            next_check: add(state.timers.time(), AFTER_DEATH),
             resume_at: None,
         });
         set_attack_move(state, h, attack_move);

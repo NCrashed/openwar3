@@ -1,8 +1,9 @@
 //! The path agents of `c-RXI-1` (six peasants harvesting) and `c-RTW-3`
 //! (footmen walking in groups): every position commit read in the game
 //! (`<replay>.agents.tsv`), compared bit for bit with the simulation's.
-//! c-RXI-1, c-RTW-3, c-RYP-1 and c-RXD-1 must match; c-RZH-1 (the hero test) reports
-//! the first commit of each unit that differs. Skipped without the game data.
+//! c-RXI-1, c-RTW-3, c-RYP-1, c-RXD-1 and c-RZH-1 (the hero test, the
+//! hero, the footmen and the creeps) must match. Skipped without the game
+//! data.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -257,5 +258,7 @@ fn hero_agents_report() {
             .position(|u| u.handle == h)
             .map_or(-1, |i| i as i32)
     });
-    eprintln!("first differences: {:?}", report(&game, &ours));
+    let first = report(&game, &ours);
+    eprintln!("first differences: {first:?}");
+    assert!(first.is_empty(), "first differences: {first:?}");
 }

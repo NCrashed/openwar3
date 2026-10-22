@@ -4265,6 +4265,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
     attackers.sort_unstable();
     let mut to_guard = Vec::new();
     for (_, h, own) in attackers {
+        let mut walk_on = None;
         state.acquire_starts += 1;
         let seq = state.acquire_starts;
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -4282,12 +4283,19 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // An attack-move goes on at once, or at the end of the
             // backswing (c-RXR-1: footman 2 searched towards its point at
             // its update of 2581).
+            // Not in a backswing it walks on in the handling of the death,
+            // in the order of the attackers (c-RZH-1: footmen 1, 4 and the
+            // hero at 6966, their new clusters in that order).
             let left = real_of(from) - real_of(now);
             let at = state.ticks + 1 + (left / real_of(crate::timers::TICK)).ceil() as u64;
             if let Some(a) = u.attack_move.as_mut()
                 && a.resume_at.is_none()
             {
-                a.resume_at = Some(at);
+                if left > 0.0 {
+                    a.resume_at = Some(at);
+                } else {
+                    walk_on = Some(a.point);
+                }
             }
             // Below an attack it took on its own lies the walk back to its
             // guard point (c-RXR-1: grunt 14 at 4813). PROVISIONAL: the
@@ -4308,6 +4316,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             if own {
                 u.attack = None;
             }
+        }
+        if let Some(point) = walk_on {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.attack = None;
+            }
+            order(state, h, Order::Point, ORDER_ATTACK, point);
         }
         if own {
             halt(state, h);

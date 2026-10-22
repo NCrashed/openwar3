@@ -43,6 +43,9 @@ pub struct Creep {
     started: u64,
     /// It walks home and does not fight.
     pub(super) returning: bool,
+    /// Its move order home has not ended (it may be answering a call):
+    /// its acquisition check looks for no target (SPEC-0030).
+    pub(super) homebound: bool,
     /// It sleeps.
     pub(super) sleeping: bool,
 }
@@ -235,6 +238,7 @@ pub(super) fn tick(state: &mut State) {
             (next.unwrap_or(u32::MAX), u.creep.started)
         })
     });
+    let mut ended = Vec::new();
     for h in units {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
@@ -244,6 +248,11 @@ pub(super) fn tick(state: &mut State) {
         }
         let creep = u.creep;
         let ordered = u.movement.is_some_and(|m| m.ordered());
+        // The move order home ends when the creep stands idle again.
+        let idle = !ordered && u.attack.is_none();
+        if creep.homebound && idle {
+            ended.push(h);
+        }
         if creep.returning {
             if !ordered {
                 set(state, h, |c| c.returning = false);
@@ -284,6 +293,9 @@ pub(super) fn tick(state: &mut State) {
             });
         }
     }
+    for h in ended {
+        set(state, h, |c| c.homebound = false);
+    }
 }
 
 fn set(state: &mut State, h: u32, change: impl FnOnce(&mut Creep)) {
@@ -309,5 +321,6 @@ fn go_home(state: &mut State, h: u32) {
     set(state, h, |c| {
         c.return_time = None;
         c.returning = walks;
+        c.homebound = walks;
     });
 }

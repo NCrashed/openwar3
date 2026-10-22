@@ -3262,6 +3262,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
         // An attack the unit took on its own (order id 0) checks for a
         // better target (SPEC-0019, "Checks while attacking").
+        // Nor a creep whose move order home has not ended (SPEC-0030;
+        // c-RXD-1: creep 6 kept unit 2 at 6359).
+        if u.creep.homebound {
+            continue;
+        }
         if let (Some(expiry), Some((current, 0))) = (expired, target) {
             due.push((expiry, seq, h, Check::Attacking { current }));
             continue;

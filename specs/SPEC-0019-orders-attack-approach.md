@@ -863,6 +863,32 @@ An idle unit with a weapon attacks an enemy unit on its own:
   -376.586, -387.984, -351.890 and -391.784, read in the game.
 - **Then** it walks to the target and attacks it by the approach rule
   above. `GetUnitCurrentOrder` stays 0 during such an attack.
+- **Target rating.** One rating orders the candidates everywhere a unit
+  chooses an enemy:
+  - its acquisition checks when idle or on an attack-move;
+  - its checks while attacking (below);
+  - the comparison when it answers a call for help (the caller's
+    attacker against its current target; "Retaliation and call for
+    help").
+  From the most to the least important part:
+  1. **In range**: the enemy is within the range test of the attack;
+     the current target in range ranks higher still.
+  2. **Threat**: the enemy is attacking the unit itself (higher) or one
+     of its allies (lower). It counts only while that enemy's attack is
+     in progress (attacking or moving to attack) and not disabled: a
+     stunned enemy carries no threat.
+  3. **Distance**: between equal ratings the strictly nearer one wins.
+     A tie keeps the current target, or the one found first.
+  Read in the game, `c-RZH-1`:
+  - footmen 1 and 3 at 1103: creeps 11, 7, 10, 13 and 9, each attacking
+    an ally, rate equal; creep 8, stunned by the Storm Bolt, rates
+    lower; both take creep 7, the nearest of the best;
+  - at 989 a call made footmen 1 and 3 switch from creep 8 (out of
+    range, no threat) to creep 9 (attacking footman 5). Footmen 2 and 4,
+    whose targets were in range, kept them;
+  - creep 13 at 1192 took the nearest of three equal footmen;
+  - `c-RXR-1` 779..787: every responder with its current target in
+    range kept it.
 - **Checks while attacking.** The checks go on while the unit attacks
   a target it acquired (or was called to), but less often: at each
   check the next one is set 1.0 s after this one's expiry if the unit

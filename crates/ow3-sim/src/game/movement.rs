@@ -107,6 +107,9 @@ pub(super) const CELL: u32 = 0x3D00_0000;
 const ARRIVAL: u32 = 0x3EFA_E148;
 /// A unit attacks once its heading is this close to its target (radians).
 const ATTACK_ANGLE: f32 = 0.2;
+/// AttackHalfAngle: a target further off the facing than this is faced
+/// before the swing (SPEC-0019).
+const ATTACK_HALF_ANGLE: f32 = 0.5;
 const PI: u32 = 0x4049_0FDB;
 const TWO_PI: u32 = 0x40C9_0FDB;
 const ONE: u32 = 0x3F80_0000;
@@ -2466,7 +2469,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // waits for the update after the one at which
                             // the unit acted (SPEC-0019, "When it
                             // starts").
-                            if gate_open {
+                            // Its movement ended, the attack tests the angle to
+                            // the target where it is now against AttackHalfAngle
+                            // (0.5): further off, it is faced again there (c-RXD-1:
+                            // creep 8 at 7046); else the swing starts.
+                            let now = position_of(state, target).map(|p| relative(p, min));
+                            let off = now.is_some_and(|p| {
+                                real_of(heading_and_turn(&m, p).1).abs() > ATTACK_HALF_ANGLE
+                            });
+                            if gate_open && off {
+                                m.target = now.map_or(m.target, |p| absolute(p, min));
+                            } else if gate_open {
                                 m.arrived = true;
                                 m.swing_gate = None;
                                 begin_attack = Some(target);

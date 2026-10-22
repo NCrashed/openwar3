@@ -4000,7 +4000,7 @@ fn threat(state: &State, h: u32, other: u32) -> u8 {
 }
 
 /// What a missile's impact adds to CallForHelp for its call (SPEC-0019).
-const IMPACT_REACH: f32 = 150.0;
+pub(super) const IMPACT_REACH: f32 = 150.0;
 /// Seconds after a call for help in which the caller makes no other.
 const CALL_COOLDOWN: f32 = 3.0;
 /// How far a remembered attacker of a call for help is taken.
@@ -4017,7 +4017,12 @@ const REMEMBERED_REACH: f32 = 2000.0;
 /// PROVISIONAL: only units with a weapon answer, workers (`peon`) never;
 /// the area is a circle round the victim's centre (its exact shape is
 /// open); only hits of weapons call for help, not scripted damage.
-pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: Option<[u32; 2]>) {
+pub(super) fn retaliate(
+    state: &mut State,
+    victim: u32,
+    attacker: u32,
+    impact: Option<([u32; 2], f32)>,
+) {
     let tick = state.ticks;
     let (Some(v), Some(a)) = (state.unit(Some(victim)), state.unit(Some(attacker))) else {
         return;
@@ -4042,8 +4047,11 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
                 && !u.creep.sleeping
                 && !u.creep.returning
                 && u.attack.is_none()
-                && u.attack_move.is_none()
-                && u.movement.is_none_or(|m| !m.ordered() || m.going_back())
+                // Idle, or walking an attack-move with no target (SPEC-0019,
+                // "Spell damage"; c-RZJ-1: footmen 2, 5, 6 and 7 at 788).
+                && (walking_attack_move(u)
+                    || (u.attack_move.is_none()
+                        && u.movement.is_none_or(|m| !m.ordered() || m.going_back())))
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state
@@ -4106,9 +4114,8 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
         || state
             .unit(Some(victim))
             .is_some_and(|v| now >= real_of(v.call_until));
-    let (x, y) = impact.map_or((x, y), |p| (real_of(p[0]), real_of(p[1])));
-    let radius =
-        real_of(state.combat.call_for_help) + if impact.is_some() { IMPACT_REACH } else { 0.0 };
+    let (x, y) = impact.map_or((x, y), |(p, _)| (real_of(p[0]), real_of(p[1])));
+    let radius = real_of(state.combat.call_for_help) + impact.map_or(0.0, |(_, area)| area);
     let call_radius = real_of(state.combat.call_for_help);
     let reach_of = |u: &super::Unit, first: bool| {
         (if first { radius } else { call_radius })
@@ -4190,16 +4197,35 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
             switch_target(state, h, attacker);
             continue;
         }
-        if order(state, h, Order::Attack { target: attacker }, 0, at) {
+        // A unit walking an attack-move stops and takes the attacker as at
+        // an acquisition.
+        let walker = state.unit(Some(h)).is_some_and(walking_attack_move);
+        if walker {
+            freeze(state, h);
+        }
+        let id = if walker { ORDER_ATTACK } else { 0 };
+        if order(state, h, Order::Attack { target: attacker }, id, at) {
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            react(state, h, tick, delay, tick);
+            // A walker stands from the next tick, and its delay counts from
+            // there (c-RZJ-1: footman 6, delay 0.0226 at 788, walked at
+            // 799).
+            let from = if walker { tick + 1 } else { tick };
+            react(state, h, from, delay, from);
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h, state.move_clock);
         }
     }
+}
+
+/// Whether `u` walks an attack-move with no target.
+fn walking_attack_move(u: &super::Unit) -> bool {
+    u.attack.is_none()
+        && u.attack_move.is_some()
+        && u.movement
+            .is_some_and(|m| m.order == Order::Point && m.ordered())
 }
 
 /// The cooldowns that expire in this tick for units attacking another

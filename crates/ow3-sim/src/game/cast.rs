@@ -398,6 +398,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             caster: h,
             target,
             amount: if building { mul(each, n.data_d) } else { each },
+            call: Some((point, n.area)),
         });
     }
 }
@@ -585,6 +586,7 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                     caster: w.caster,
                     target: o,
                     amount: w.amount,
+                    call: Some((centre, w.area)),
                 });
             }
         }
@@ -645,6 +647,9 @@ enum Deferred {
         caster: u32,
         target: u32,
         amount: u32,
+        /// The centre and area of the spell, for its call for help
+        /// (SPEC-0019, "Spell damage").
+        call: Option<([u32; 2], u32)>,
     },
 }
 
@@ -698,8 +703,19 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 caster,
                 target,
                 amount,
+                call,
             } => {
                 super::widgets::damage_widget(vm, state, Some(caster), Some(target), amount, 0, 0);
+                // The victim and its friends answer the hit (SPEC-0019).
+                let mut s = state.borrow_mut();
+                if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                    movement::retaliate(
+                        &mut s,
+                        target,
+                        caster,
+                        call.map(|(p, a)| (p, f32::from_bits(a))),
+                    );
+                }
             }
         }
     }
@@ -789,6 +805,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                 return;
             };
             let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+            let (u_x, u_y) = (u.x, u.y);
             let area = f32::from_bits(n.area);
             // 1 - DataD: the attack-speed factor of the slowed units.
             let speed = ow3_math::sub(1.0f32.to_bits(), n.data_d);
@@ -813,6 +830,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                     })
                 })
                 .collect();
+            let centre = [u_x, u_y];
             for o in hit {
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
                 let until = tick + duration(hero);
@@ -827,6 +845,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                     caster: h,
                     target: o,
                     amount: n.data[0],
+                    call: Some((centre, n.area)),
                 });
             }
         }

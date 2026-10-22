@@ -508,7 +508,12 @@ fn strike(
     // A creep hit may cast its spell at the attacker (SPEC-0047).
     super::creeps::consider_spell(&mut s, target, target, h);
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-        super::movement::retaliate(&mut s, target, h, impact);
+        super::movement::retaliate(
+            &mut s,
+            target,
+            h,
+            impact.map(|p| (p, super::movement::IMPACT_REACH)),
+        );
     }
     if !standing(&s, target) {
         let tick = s.ticks;

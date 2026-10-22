@@ -145,12 +145,19 @@ When an enemy damages a unit that has no order (idle):
   alliances allow it (player 2 passive toward player 0 with help
   request and help response set in both directions; with help response
   alone they did not). Walking units (with a `move` order) and peasants
-  did not respond; units that already had a target in range did not
+  did not respond (units walking an attack-move without a target do
+  respond, see below); units that already had a target in range did not
   respond either, but one whose target was out of its range did and
   switched at once to the attacker (no reaction delay; replay
   `c-RXR-1` tick 827: troll 16, chasing rifleman 7 far away, answered
   grunt 14's call against footman 4 and swung at its next update),
   presumably by the rating of "Checks while attacking";
+- units walking an attack-move that have no target respond like idle
+  units, with the same reach: footmen walking past a footman hit by
+  an enemy footman answered at 538 and 626 and not at 672 and 750 (test
+  SAH), and in `c-RZJ-1` at tick 788 footmen 2, 5, 6 and 7 (246 to 519
+  from the Paladin, hit by a Shockwave) acquired the Ogre Lord. They
+  stand from the next tick, as if they had stopped;
 - all of them then wait their reaction delay (generator 9, counted from
   the tick of the damage; the damaged unit draws first) and attack the
   attacker by the approach rule.
@@ -196,6 +203,25 @@ as their base:
   routines make this call.
 
 Instant and melee hits make only the damaged unit's call.
+
+**Spell damage.** Damage of an area spell makes a call around the
+spell's own centre, with the units of all players handed to the same
+response, like the impact call above. Its radius is `CallForHelp`
+plus the spell's area, and a unit counts when its centre is within
+that radius plus its collision size (footmen, collision 31, tests SAH
+to SAJ):
+
+| Spell | Centre | Radius + 31 | Answered / not |
+|---|---|---|---|
+| Blizzard (area 200) | the target point | 831 | 825 / 835 |
+| Thunder Clap (area 250) | the caster | 881 | 878 / 885 |
+| Shockwave (`AOsh`, area 125) | the wave's centre at the update that hit | 756 | 748 / 757.9 |
+
+The creep Shockwave (`ACsh`, area 150, SPEC-0047) gives 781. A Thunder
+Clap 146 ticks after the victim's own call (melee hit, its 3.0 s timer
+running) still made this call, so the call does not depend on the
+victim's timer. Whether spell damage also makes the damaged unit's own
+call and starts its timer was not separated (open question).
 
 **Order of the responders.** A call for help (a damaged unit, or an
 idle creep that acquires a target, SPEC-0030) visits the units around
@@ -1060,6 +1086,9 @@ An idle unit with a weapon attacks an enemy unit on its own:
 10. The other parts of the rating of targets at a check while attacking
    (heroes, structures, units that attack the unit or its allies, the
    life of the candidates) and their order.
+11. Whether spell damage also makes the damaged unit's own call and
+   starts its 3.0 s timer ("Spell damage").
+
 ## Sources
 
 - Test maps RZC, RZD, RZE, RZF and RZG on 1.27b under Wine,

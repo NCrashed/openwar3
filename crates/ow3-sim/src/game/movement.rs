@@ -4267,6 +4267,16 @@ pub(super) fn retaliate(
             super::creeps::restart_return(state, h, when);
         }
     }
+    // The creeps a call reaches may cast their spells at the attacker
+    // (SPEC-0047; c-RZJ-1: the Ogre Lord at 2424, creep 9 hit by footman
+    // 4).
+    if calls {
+        for &h in &reached {
+            if h != victim {
+                super::creeps::consider_spell(state, h, victim, attacker);
+            }
+        }
+    }
     if impact.is_none() {
         super::creeps::restart_return(state, victim, when);
     }

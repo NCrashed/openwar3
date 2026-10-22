@@ -4259,6 +4259,17 @@ pub(super) fn retaliate(
             }
         }
     }
+    // The creeps a call reaches, and the creep hit, restart a return in
+    // progress (SPEC-0030).
+    let when = state.event_time.unwrap_or_else(|| state.timers.time());
+    if calls {
+        for &h in &reached {
+            super::creeps::restart_return(state, h, when);
+        }
+    }
+    if impact.is_none() {
+        super::creeps::restart_return(state, victim, when);
+    }
     for h in responders {
         if switching.contains(&h) {
             switch_target(state, h, attacker);

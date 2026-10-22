@@ -271,6 +271,28 @@ pub(super) fn call_for_help(
 /// its return timer restarted (SPEC-0030, "Calls restart the return
 /// timer"; c-RXD-1: creeps 6 and 7 at 6667, 6763 and 6787, giving up at
 /// 7788).
+/// A call or a hit reached creep `h` at queue time `at`: a return in
+/// progress restarts, within `MaxGuardDistance` of its home (SPEC-0030;
+/// c-RZJ-1: ogre 14, restarted by the hits on it, the calls of creeps 9
+/// and 10 when hit, and the area calls of Blizzard and of missiles).
+pub(super) fn restart_return(state: &mut State, h: u32, at: u32) {
+    let far = f32::from_bits(state.combat.max_guard_distance);
+    let back = state.combat.guard_return_time;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        let (hx, hy) = (
+            f32::from_bits(u.x) - f32::from_bits(u.home[0]),
+            f32::from_bits(u.y) - f32::from_bits(u.home[1]),
+        );
+        if u.alive
+            && u.owner == CREEPS
+            && (u.creep.homebound || u.creep.return_time.is_some())
+            && hx * hx + hy * hy <= far * far
+        {
+            u.creep.return_time = Some(add(at, back));
+        }
+    }
+}
+
 fn restart_returns(state: &mut State, caller: u32, at: u32) {
     let Some(c) = state.unit(Some(caller)) else {
         return;

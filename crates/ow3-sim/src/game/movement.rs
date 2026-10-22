@@ -4034,6 +4034,15 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         }
         if own {
             halt(state, h);
+            // A creep walks back to its guard point at once, where its
+            // last walk home ended (c-RXD-1: creep 8 at 6665, turning to it
+            // at 6667).
+            if let Some(u) = state.unit(Some(h))
+                && u.owner == super::creeps::CREEPS
+            {
+                let guard = u.creep.guard.unwrap_or(u.home);
+                order(state, h, Order::Point, 0, guard);
+            }
         }
     }
 }

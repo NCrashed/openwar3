@@ -46,6 +46,9 @@ pub struct Creep {
     /// Its move order home has not ended (it may be answering a call):
     /// its acquisition check looks for no target (SPEC-0030).
     pub(super) homebound: bool,
+    /// Where its last walk home ended: it walks back there when it loses
+    /// its target.
+    pub(super) guard: Option<[u32; 2]>,
     /// It sleeps.
     pub(super) sleeping: bool,
 }
@@ -266,7 +269,11 @@ pub(super) fn tick(state: &mut State) {
         }
         if creep.returning {
             if !ordered {
-                set(state, h, |c| c.returning = false);
+                let here = [u.x, u.y];
+                set(state, h, |c| {
+                    c.returning = false;
+                    c.guard = Some(here);
+                });
                 // Home again: its acquisition check restarts 0.01 s later
                 // (c-RXD-1: creep 8 home in 5917, check in 5919).
                 // From the update cycle of its arrival.

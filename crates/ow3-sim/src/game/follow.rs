@@ -576,7 +576,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         follow.take_segment(order_cells);
         follow
     });
-    let cycling = super::harvest::cycling(state, walker.handle);
+    let at_tree = super::harvest::at_tree(state, walker.handle);
     let tree_cells = walker
         .tree
         .and_then(|t| match state.objects.get(&t) {
@@ -591,11 +591,12 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         random: &mut state.random,
         events: Vec::new(),
         search_only,
-        // A worker on its first walk ends its local search touching its
-        // tree; one in the gathering cycle does not (SPEC-0020, "Trees in
-        // the local search"; c-RYP-1: peasant 0 at 313, peasant 5 at 1315).
+        // A worker ends its local search touching its tree, except between
+        // its first arrival there and the end of its first work (SPEC-0020,
+        // "Trees in the local search"; c-RYP-1: peasant 0 at 313 and 3993,
+        // peasant 5 at 1315).
         building: footprint.map(|f| f.0).unwrap_or_else(|| {
-            if cycling {
+            if at_tree {
                 Vec::new()
             } else {
                 tree_cells.clone()

@@ -101,6 +101,10 @@ pub struct Harvest {
     /// placing of buildings (SPEC-0029, "Workers in the gathering cycle
     /// do not block each other").
     cycling: bool,
+    /// From its first arrival at its tree to the end of its first work:
+    /// trees close their cells for its searches, its own included, and it
+    /// still meets other units (SPEC-0029, "Entering the gathering cycle").
+    at_tree: bool,
     /// The pace of the gold cycle (SPEC-0029): the expiry of its 10 s
     /// timer, its speed bonus, and the last trip with the bonus during it.
     pace_timer: u32,
@@ -542,8 +546,17 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     // A worker in the gathering cycle arrives by the test of
                     // its walk and swings at once: the swing point 0.433 s
                     // later (c-RYP-1: peasant 5, 1351 -> 1437).
-                    let first = if g.cycling { SWING_POINT } else { FIRST_HIT };
+                    let first = if g.cycling || g.at_tree {
+                        SWING_POINT
+                    } else {
+                        FIRST_HIT
+                    };
                     g.next_hit = Some(tick + first);
+                    // A first-walk worker arrives at its tree here (the
+                    // retry of its first check, c-RYP-1: peasant 0 at 997).
+                    if !g.cycling {
+                        g.at_tree = true;
+                    }
                 } else {
                     g.switch_at = Some(tick + SWITCH_CHECK);
                 }
@@ -580,6 +593,7 @@ fn forget_others(state: &mut State) {
         // PROVISIONAL: what ends the gathering cycle was not tested
         // (SPEC-0029); here any other order does.
         g.cycling = false;
+        g.at_tree = false;
         set(state, h, Some(g));
         for mine in state.mines.values_mut() {
             mine.waiting.retain(|&w| w != h);
@@ -856,6 +870,10 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let mut s = state.borrow_mut();
             let mut g = g;
             g.back_at = None;
+            // Its first work ends: from now on it is in the gathering
+            // cycle (SPEC-0029; c-RYP-1: peasant 0 at 3183).
+            g.at_tree = false;
+            g.cycling = true;
             set(&mut s, h, Some(g));
             walk_back(&mut s, h);
             continue;
@@ -999,14 +1017,18 @@ pub(super) fn chopping(state: &State, h: u32) -> Option<(u64, u64, u64)> {
 
 /// Whether worker `h` is in the gathering cycle (it has been in a mine
 /// or at a tree once, SPEC-0029).
+/// (For trees also from its first arrival, see `at_tree`.)
 pub(super) fn cycling(state: &State, h: u32) -> bool {
-    get(state, h).is_some_and(|g| g.cycling)
+    get(state, h).is_some_and(|g| g.cycling || g.at_tree)
 }
 
-/// Worker `h` enters the gathering cycle.
+/// Worker `h` arrives at its tree the first time (the retry of the
+/// harvest's first check, SPEC-0029).
 pub(super) fn start_cycling(state: &mut State, h: u32) {
-    if let Some(mut g) = get(state, h) {
-        g.cycling = true;
+    if let Some(mut g) = get(state, h)
+        && !g.cycling
+    {
+        g.at_tree = true;
         set(state, h, Some(g));
     }
 }
@@ -1106,6 +1128,12 @@ fn take_another_tree(state: &mut State, h: u32, tick: u64) {
     if let Some(at) = position(state, tree) {
         movement::harvest_order(state, h, Order::Gather { target: tree }, ORDER_HARVEST, at);
     }
+}
+
+/// Whether worker `h` is between its first arrival at its tree and the end
+/// of its first work: its local search does not end touching its tree.
+pub(super) fn at_tree(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.at_tree)
 }
 
 /// What worker `h` carries, for the interface.

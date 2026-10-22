@@ -157,7 +157,9 @@ When an enemy damages a unit that has no order (idle):
   an enemy footman answered at 538 and 626 and not at 672 and 750 (test
   SAH), and in `c-RZJ-1` at tick 788 footmen 2, 5, 6 and 7 (246 to 519
   from the Paladin, hit by a Shockwave) acquired the Ogre Lord. They
-  stand from the next tick, as if they had stopped;
+  stand from the next tick, as if they had stopped, and their reaction
+  delay counts from that next tick (footman 6 drew 0.0226 at 788 and
+  walked at 799, footman 2 drew 0.0115 and searched at 793);
 - all of them then wait their reaction delay (generator 9, counted from
   the tick of the damage; the damaged unit draws first) and attack the
   attacker by the approach rule.
@@ -921,7 +923,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
      of its allies (lower). It counts only while that enemy's attack is
      in progress (attacking or moving to attack) and not disabled: a
      stunned enemy carries no threat.
-  3. **Distance**: between equal ratings the strictly nearer one wins.
+  3. **Slower**: an enemy whose movement speed is below the unit's own
+     ranks higher than one that is not (equal speed counts as not
+     slower). Read in the game, `c-RZJ-1` tick 1019: the creeps (speed
+     270) rated the Water Elemental (220) above the Paladin (270), both
+     out of range and both attacking a creep. So gnoll 13 left the
+     Paladin, 167 away, for the elemental, 443 away.
+  4. **Distance**: between equal ratings the strictly nearer one wins.
      A tie keeps the current target, or the one found first.
   Read in the game, `c-RZH-1`:
   - footmen 1 and 3 at 1103: creeps 11, 7, 10, 13 and 9, each attacking

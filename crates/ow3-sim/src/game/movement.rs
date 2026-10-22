@@ -3792,7 +3792,29 @@ fn prefers_by(
     if mine.0 {
         return false;
     }
-    (threat(state, h, other), theirs.1) < (threat(state, h, current), mine.1)
+    (
+        threat(state, h, other),
+        not_slower(state, h, other),
+        theirs.1,
+    ) < (
+        threat(state, h, current),
+        not_slower(state, h, current),
+        mine.1,
+    )
+}
+
+/// Whether enemy `other` moves at least as fast as unit `h`: a slower one
+/// ranks higher, after threat and before distance (SPEC-0019, "Target
+/// rating"; c-RZJ-1: the creeps took the Water Elemental, speed 220, over
+/// the Paladin, 270, at 1019).
+fn not_slower(state: &State, h: u32, other: u32) -> bool {
+    let speed = |x: u32| {
+        state
+            .unit(Some(x))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .map_or(0.0, |t| real_of(t.speed))
+    };
+    speed(other) >= speed(h)
 }
 
 /// The units that can be targets, by x: (x, y, collision, owner,
@@ -3801,6 +3823,10 @@ struct Targets {
     list: Vec<(f32, f32, u32, i32, bool, u32)>,
     widest: f32,
 }
+
+/// The rating of a candidate target, best first: (structure, out of range,
+/// threat, not slower, squared distance, y, x, handle).
+type Rating = (bool, bool, u8, bool, f32, f32, f32, u32);
 
 impl Targets {
     fn new(state: &State) -> Targets {
@@ -3910,8 +3936,7 @@ impl Targets {
         // 2 took creep 7 in range at 2011, not creep 11).
         let range =
             data.weapon.as_ref().map_or(0.0, |w| real_of(w.range)) + real_of(data.collision);
-        // (structure, out of range, threat, squared distance, y, x, handle).
-        let mut best: Option<(bool, bool, u8, f32, f32, f32, u32)> = None;
+        let mut best: Option<Rating> = None;
         for &(ox, oy, collision, other_owner, structure, other) in &self.list[from..] {
             let limit = real_of(add(reach, collision));
             // Plain reals here: the comparison is the same, and scanning
@@ -3933,18 +3958,20 @@ impl Targets {
                 structure,
                 out,
                 threat(state, h, other),
+                not_slower(state, h, other),
                 distance,
                 oy,
                 ox,
                 other,
             );
             if best.is_none_or(|b| {
-                (key.0, key.1, key.2, key.3, key.4, key.5) < (b.0, b.1, b.2, b.3, b.4, b.5)
+                (key.0, key.1, key.2, key.3, key.4, key.5, key.6)
+                    < (b.0, b.1, b.2, b.3, b.4, b.5, b.6)
             }) {
                 best = Some(key);
             }
         }
-        best.map(|b| b.6)
+        best.map(|b| b.7)
     }
 }
 

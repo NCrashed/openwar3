@@ -556,6 +556,14 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         },
     };
     state.orders_given = given;
+    // The order that took this target, kept through re-orders on it
+    // (c-RZH-1: footmen 1 and 3 took creep 7 at 1103, 1 first).
+    if let Order::Attack { target: t } = order
+        && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && u.target_taken.is_none_or(|(old, _)| old != t)
+    {
+        u.target_taken = Some((t, given));
+    }
     // A new order takes the unit out of its group.
     for cluster in &mut state.clusters {
         cluster.keep(|m| m != h);
@@ -4217,7 +4225,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 _ => return None,
             };
             (target == dead && u.acquire_phase != super::NO_PHASE)
-                .then(|| (u.movement.map_or(0, |m| m.given), h, order_id == 0))
+                .then(|| (u.target_taken.map_or(0, |t| t.1), h, order_id == 0))
         })
         .collect();
     attackers.sort_unstable();

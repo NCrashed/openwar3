@@ -278,6 +278,7 @@ pub(super) fn create_unit(
         acquire_seq: 0,
         after_death: false,
         guard_return: None,
+        target_taken: None,
         call_cells: Vec::new(),
         call_until: 0,
         remembered: None,

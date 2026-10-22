@@ -198,6 +198,10 @@ pub struct Unit {
     /// The tick at which it walks back to its guard point, the place it
     /// was created at, after an attack it took on its own ended.
     guard_return: Option<u64>,
+    /// The target of its attack and the number of the order that took it,
+    /// kept while the attack goes on (SPEC-0019: attackers of a dead unit
+    /// are handled in the order they took it).
+    target_taken: Option<(u32, u64)>,
     /// The cells of 256 its box covers in the grid of calls for help, with
     /// the order in which it entered each (SPEC-0019).
     call_cells: Vec<((i64, i64), u64)>,

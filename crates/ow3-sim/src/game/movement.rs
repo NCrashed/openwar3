@@ -225,6 +225,9 @@ pub struct Moving {
     /// A point order of a player stopped it: it stops after the motion
     /// of the next tick (SPEC-0019).
     stop_after_step: bool,
+    /// The call of a missile's impact stopped it: it stands from the next
+    /// tick, where it is then (SPEC-0019; c-RZJ-1: gnoll 13 at 1019).
+    halt_next: bool,
     /// The tick the reaction delay counts from, the delay in seconds and
     /// the earliest tick of the update that may act: the unit acts on the
     /// order from its first update after both.
@@ -543,6 +546,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             restart: false,
             skip: false,
             stop_after_step: false,
+            halt_next: false,
             reaction: None,
             reaction_end: None,
             goal_taken: false,
@@ -1773,6 +1777,12 @@ fn freeze(state: &mut State, h: u32) {
         && let Some(m) = u.movement.as_mut()
         && m.walking
     {
+        // The call of an impact, which comes at the end of the tick: the
+        // unit moves this tick and stands from the next.
+        if state.impact_now {
+            m.halt_next = true;
+            return;
+        }
         // A player's order, given between two ticks, comes after the
         // motion of the next one.
         if later {
@@ -2034,6 +2044,16 @@ pub(super) fn step(state: &mut State) {
             m.walking = false;
             // It starts as from standing.
             m.restart = false;
+        }
+        if std::mem::take(&mut m.halt_next) {
+            m.commit(clock);
+            m.velocity = [0, 0];
+            m.walking = false;
+            m.restart = false;
+            let record = (state.ticks, *h, m.origin, m.velocity, m.heading, [0, 0]);
+            if let Some(trace) = state.agent_trace.as_mut() {
+                trace.push(record);
+            }
         }
     }
 }

@@ -693,6 +693,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         s.event_time = Some(next_clock);
         arrived
     };
+    state.borrow_mut().impact_now = true;
     for m in arrived {
         if let Some(stun) = m.spell {
             spell_hit(vm, state, m.attacker, m.target, m.amount, stun);
@@ -732,6 +733,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
     }
+    state.borrow_mut().impact_now = false;
     state.borrow_mut().event_time = None;
 }
 

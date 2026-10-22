@@ -815,6 +815,8 @@ pub struct State {
     pub(super) timed_life: Vec<(u64, u32)>,
     /// The shockwaves under way (SPEC-0047).
     pub(super) waves: Vec<cast::Wave>,
+    /// The calls of missile impacts are being handled (SPEC-0019).
+    pub(super) impact_now: bool,
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
@@ -950,6 +952,7 @@ impl State {
             attack_checks: Vec::new(),
             timed_life: Vec::new(),
             waves: Vec::new(),
+            impact_now: false,
             leveled: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),

@@ -895,6 +895,12 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             g.at_tree = false;
             g.cycling = true;
             set(&mut s, h, Some(g));
+            // Its tree fell at its last hit: on to the next one at the end
+            // of the backswing (c-RYP-1: peasant 3 at 10010 -> 10123).
+            if let Some(tree) = g.target.filter(|&t| !is_tree(&s, t)) {
+                next_tree(&mut s, h, tree, numbers);
+                continue;
+            }
             walk_back(&mut s, h);
             continue;
         }
@@ -933,11 +939,13 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             g.back_at = Some(add(hit, swing(&s, h).1));
             set(&mut s, h, Some(g));
         } else {
-            g.next_hit = Some(add(hit, numbers.duration));
-            set(&mut s, h, Some(g));
-            if !is_tree(&s, tree) {
-                next_tree(&mut s, h, tree, numbers);
+            if is_tree(&s, tree) {
+                g.next_hit = Some(add(hit, numbers.duration));
+            } else {
+                g.next_hit = None;
+                g.back_at = Some(add(hit, swing(&s, h).1));
             }
+            set(&mut s, h, Some(g));
         }
     }
 }

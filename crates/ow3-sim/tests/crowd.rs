@@ -230,13 +230,13 @@ fn report(name: &str, until: u64) -> Option<u64> {
 
 /// `c-RXD-1`: the creeps' chase follows the game.
 ///
-/// PROVISIONAL: the events are the game's up to tick 6667 (looked at next).
+/// PROVISIONAL: the events are the game's up to tick 7790 (looked at next).
 #[test]
 fn crowd_chase_report() {
     let Some(first) = report("c-RXD-1", 9300) else {
         return;
     };
-    assert!(first >= 6667, "first difference at tick {first}");
+    assert!(first >= 7790, "first difference at tick {first}");
 }
 
 /// `c-RXI-1`: the workers' walks between the mine and the town hall.

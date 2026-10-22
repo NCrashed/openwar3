@@ -66,6 +66,12 @@ death knight (23 + 2.7, 12 + 1.5, 17 + 1.8) at levels 1 to 10 set with
   242/243 (AGI 23) and 201/202 (AGI 38); archmage 2.13 s -> 318 (AGI 17)
   and 280/281 (AGI 26); death knight 2.33 s -> 375/376 (AGI 12) and
   310/311 (AGI 25).
+- The backswing shrinks the same way, `backSw1 / (1 + 0.02 x AGI)`.
+  Read in the game, `c-RZJ-1`: the Paladin (level 3, AGI 13 + 2 x 1.5 =
+  16, `backSw1` 0.567) killed creep 9 with the hit of tick 2836. His
+  backswing ended 86 ticks later (0.567 / 1.32 = 0.4295 s): at 2922 his
+  acquisition check was set to 0.01 s, as after any backswing
+  (SPEC-0019), and it ran at 2924.
 - The damage point shrinks the same way, `dmgpt1 / (1 + 0.02 x AGI)`:
   blademaster (0.33 s, AGI 23) 45 ticks from the start of the swing to
   the damage, mountain king (0.35 s, AGI 11) 57 (tests RYB, RYC, every
@@ -83,7 +89,7 @@ death knight (23 + 2.7, 12 + 1.5, 17 + 1.8) at levels 1 to 10 set with
    `IntRegenBonus`) and its timing.
 2. Attribute bonuses from items and abilities (green numbers), and
    whether they count for armor, attack speed and damage as above.
-3. Whether the backswing of a hero's attack also shrinks with agility.
+3. (Resolved: the backswing shrinks with agility like the cooldown.)
 4. Skill points and learning abilities, the ability level rule
    (`HeroAbilityLevelSkip`), and the abilities themselves.
 

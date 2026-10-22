@@ -131,6 +131,20 @@ within `MaxGuardDistance` (1000, read in the game) of its home point
 start of its return timer until its walk home ends. This also holds
 when the creep keeps its order because it already attacks the
 caller's target. The creep's zone (`GuardDistance`) plays no part.
+The same restart comes from every event that reaches the creep this
+way, not only from a creep that acquires a target:
+- the call of a camp creep that is hit while it is busy fighting
+  (SPEC-0019: a damaged unit calls whether idle or busy, at most once
+  in 3 s);
+- the area call of a spell and the impact call of a missile
+  (SPEC-0019, "Reach", "Spell damage");
+- a hit on the creep itself.
+`c-RZJ-1` ogre 14 (read in the game): its return timer started at 1436
+and was restarted at 1511, 1549, 1577, 1629, 1685, 1781, 1829, 1847, 1955,
+2051, 2117, 2141, 2220, 2321, 2341, 2387 and 2423. The causes were hits
+on itself, calls of creeps 9 and 10 hit by footmen and the Paladin,
+Blizzard waves and an elemental's missile. So it fought footman 2 on
+and did not walk home.
 When the timer expires, the creep gives up: a stop commit, then the
 walk home. Read in the game, `c-RXD-1` (homes in world units: creep 6
 (100, 450), 7 (-60, 520), 8 (260, 520), 9 (100, 600)):

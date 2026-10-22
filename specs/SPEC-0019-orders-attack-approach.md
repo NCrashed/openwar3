@@ -819,6 +819,10 @@ An idle unit with a weapon attacks an enemy unit on its own:
   delay. Its first check is `100 * x` ticks (`0.5 * x` seconds) after
   its creation, and then every 100 ticks (0.5 s). Units without a weapon
   (a farm) draw nothing. The draws are made in the order of creation.
+  A summoned unit does the same when it is created at the spell effect
+  (`c-RZJ-1`, Water Elemental 16: tick 460, queue time 2.299999952,
+  delay 0.119724 s, checks at 2.4197235 + 0.5 k; the one at 4.4197235
+  ran in tick 884).
   The checks are timers of the game's timer queue (SPEC-0018, "Order
   within an update tick"; SPEC-0002). The first expires at the queue's
   time at the creation plus `0.5 * x` s, each next one 0.5 s later, and

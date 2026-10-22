@@ -344,6 +344,12 @@ impl Hud {
         let section = code(s.type_id);
         let building = s.stats.is_some_and(|t| t.building);
         let mut out = Vec::new();
+        // While an order waits for its target the card shows only cancel
+        // (playtest item 9, observed in the game).
+        if self.pending.is_some() {
+            out.extend(self.command_button("CmdCancel", Command::Back));
+            return out;
+        }
         match self.card {
             Card::Build => {
                 for b in self.units.list(&section, "Builds") {

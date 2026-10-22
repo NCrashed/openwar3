@@ -52,9 +52,12 @@ be read by the analyst) and its state.
    attack-move on empty ground the units stop in their formation places
    round the point (a diamond of four footmen about 70 apart), so our
    bunching on the point is wrong.
-   The bunching is fixed: an attack-move ends where its walk arrives, at
-   the member's place in the formation. The button animation, the
-   cursor and the left/right clicks are still open.
+   Done: an attack-move ends where its walk arrives, at the member's
+   place in the formation; while an order waits for its target the card
+   shows only cancel and the cursor is a crosshair (the system one for
+   now, not the game's cyan art); a left click gives the order, a right
+   click or cancel drops it; the current order's button has the green
+   frame.
 10. No error feedback (message and sound) when gold, lumber or food is
     missing. Open.
 11. Footmen trained on the map hit the bear creeps once and then freeze.

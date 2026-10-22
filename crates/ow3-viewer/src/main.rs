@@ -586,6 +586,10 @@ impl App {
         let Some(sim) = &mut self.sim else {
             return;
         };
+        // Cancel drops an order waiting for its target.
+        if button.command == ow3_viewer::hud::Command::Back && sim.hud.pending.take().is_some() {
+            return;
+        }
         if active.is_empty() {
             return;
         }
@@ -862,6 +866,17 @@ impl App {
     /// Moves the camera and the simulation on and draws the next frame.
     fn frame(&mut self) {
         self.sync_selection();
+        // A crosshair while an order waits for its target (playtest item 9:
+        // the game shows a targeting cursor).
+        // PROVISIONAL: the system crosshair stands for the game's cursor art.
+        let targeting = self.sim.as_ref().is_some_and(|s| s.hud.pending.is_some());
+        if let Some(gpu) = &self.gpu {
+            gpu.window.set_cursor(if targeting {
+                winit::window::CursorIcon::Crosshair
+            } else {
+                winit::window::CursorIcon::Default
+            });
+        }
         // The ground under the mouse, outside the console.
         let ground = self
             .ui_point()

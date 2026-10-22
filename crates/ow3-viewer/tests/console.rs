@@ -781,3 +781,22 @@ fn a_creep_shows_its_level() {
     let peasant = first(&sim, b"hpea");
     assert_eq!(sim.selected(peasant).unwrap().level, None);
 }
+
+/// While an order waits for its target the card shows only cancel, at the
+/// bottom right (playtest item 9, observed in the game).
+#[test]
+fn a_waiting_order_shows_only_cancel() {
+    let Some(mut sim) = start() else {
+        return;
+    };
+    sim.advance(100_000);
+    let peasant = first(&sim, b"hpea");
+    let s = sim.selected(peasant).unwrap();
+    sim.hud.pending = Some(Command::Attack);
+    let buttons = sim.hud.buttons(Some(&s));
+    assert_eq!(buttons.len(), 1);
+    assert_eq!(buttons[0].command, Command::Back);
+    assert_eq!(buttons[0].place, (3, 2));
+    sim.hud.pending = None;
+    assert!(sim.hud.buttons(Some(&s)).len() > 1);
+}

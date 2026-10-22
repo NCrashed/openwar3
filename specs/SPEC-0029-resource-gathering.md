@@ -273,7 +273,13 @@ worker meets them as unpassable (`c-RXI-1` tick 1279: worker 4,
 walking back to the hall, searched along the row past two waiting
 peasants; the search touched their cells (350, 383) and (350, 384), so
 it took the second-last point of its path first, SPEC-0020 step 2,
-instead of walking straight to the end); a worker on its first walk to the mine,
+instead of walking straight to the end). A lumber worker WORKING at
+its tree marks its cells in the same way (the same kind of entry as a
+waiting worker at a mine): `c-RYP-1` tick 3537, peasant 2, working at
+its tree since 1585, held cells x 350..351, y 387..388 with such an
+entry, and peasant 5's search (gathering kind only, SPEC-0020) found
+them closed and did not step onto (350, 389) next to them (read in
+the game). A worker on its first walk to the mine,
 or one waiting there for the first time, still blocks like any unit
 (and sees others). Whether a gathering worker sees units other than
 workers (creeps, soldiers) was not tested. A worker inside the mine keeps its cells where it

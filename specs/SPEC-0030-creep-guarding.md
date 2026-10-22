@@ -95,17 +95,27 @@ Read in the game, `c-RXD-1`:
 The case of a creep that never walked home (whether the point is then
 its start position) was not read.
 
-**Orders taken in a backswing.** A creep that gets a new movement while
-its backswing runs does not move before the backswing ends. This holds
-for the walk back to its guard point after a kill and for answering a
-call for help. It stands until the backswing's end (`D` + the backswing
-time on the queue), and the new movement's member steps start at its
-next update. Read in the game, `c-RXD-1` creep 9:
+**Losing the target in a backswing.** A creep whose target dies by its
+own hit stands until its backswing ends (`D` + the backswing time on
+the queue). A call for help answered during the backswing does not
+survive it. At the backswing's end the attack's check finds no target,
+so the creep gets the walk back to its guard point, with its
+acquisition check restarted 0.01 s later. If that check finds a target,
+the attack order follows after the reaction delay. Read in the game,
+`c-RXD-1` creep 9:
 - 6665: its hit kills unit 3 (backswing 0.6 s).
-- 6667: it answers creep 8's call (log: a 9 1).
+- 6667: it answers creep 8's call (log: a 9 1); this leaves no trace in
+  its movement.
 - 6665 .. 6785: no commit; it stands at (388.1508, 391.1045).
-- 6785: the backswing ends (commit).
-- 6787: first member step, turning one step (5.480618 -> 5.980618). The creeps that answer
+- 6785: backswing end. No target, so it gets the walk to its guard point
+  (387.4614, 402.6797) = (`43c1bb10`, `43c95700`), its position where
+  its walk home ended at 5761.
+- 6787: first member step, one turn step towards that point (5.480618
+  -> 5.980618). After the batch, its restarted check takes unit 1 (log:
+  a 9 1 at 6787), reaction delay 0.1623 s.
+- 6820: the attack order on unit 1. Goal: unit 1's position, (389.7260,
+  385.4998).
+- 6823: it walks; first path point (389.5, 390.5). The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

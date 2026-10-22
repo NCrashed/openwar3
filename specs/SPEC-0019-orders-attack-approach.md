@@ -946,9 +946,12 @@ An idle unit with a weapon attacks an enemy unit on its own:
      of its allies (lower). It counts only while that enemy's attack is
      in progress (attacking or moving to attack) and not disabled: a
      stunned enemy carries no threat.
-  3. **Slower**: an enemy whose movement speed is below the unit's own
-     ranks higher than one that is not (equal speed counts as not
-     slower). Read in the game, `c-RZJ-1` tick 1019: the creeps (speed
+  3. **Slower**: among enemies out of range, one whose movement speed
+     is below the unit's own ranks higher than one that is not (equal
+     speed counts as not slower). Enemies in range are not compared by
+     speed: in `c-RZJ-1` at 1851 the Archmage (320) took the Ogre Lord
+     (320, 454 away) over ogre 14 (270, 530 away), both in range, and the
+     speed comparison was not made for any of its candidates. Read in the game, `c-RZJ-1` tick 1019: the creeps (speed
      270) rated the Water Elemental (220) above the Paladin (270), both
      out of range and both attacking a creep. So gnoll 13 left the
      Paladin, 167 away, for the elemental, 443 away.

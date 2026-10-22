@@ -41,6 +41,8 @@ native ConvertUnitState takes integer i returns unitstate
 native SetUnitState takes unit whichUnit, unitstate whichUnitState, real newVal returns nothing
 native SetHeroStr takes unit whichHero, integer newStr, boolean permanent returns nothing
 native SetUnitFacing takes unit whichUnit, real facingAngle returns nothing
+native SetUnitX takes unit whichUnit, real newX returns nothing
+native SetUnitY takes unit whichUnit, real newY returns nothing
 native DisplayTextToPlayer takes player toPlayer, real x, real y, string message returns nothing
 native I2S takes integer i returns string
 native R2S takes real r returns string
@@ -245,6 +247,8 @@ fn mortar_shells_fly() {
 }
 
 /// The turning table of SPEC-0019: a knight next to a target at `a`
+/// (the target is set next to the knight after its creation, which would
+/// move it off the knight's footprint, SPEC-0013)
 /// degrees from its heading, first damage in ticks after the order given
 /// in an update tick. The knight turns at the first update at or after
 /// order + 0.31, but not before order + 2, and swings one update later
@@ -267,7 +271,7 @@ fn knight_turns_before_it_strikes() {
     ] {
         let (s, c) = a.to_radians().sin_cos();
         let units = format!(
-            "set a = CreateUnit(Player(0), 'hkni', 0, 0, 0)\n    set t = CreateUnit(Player(15), 'hpea', {:.4}, {:.4}, 0)",
+            "set a = CreateUnit(Player(0), 'hkni', 0, 0, 0)\n    set t = CreateUnit(Player(15), 'hpea', 1000, 1000, 0)\n    call SetUnitX(t, {:.4})\n    call SetUnitY(t, {:.4})",
             100.0 * c,
             100.0 * s
         );

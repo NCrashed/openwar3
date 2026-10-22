@@ -217,6 +217,70 @@ pub(super) fn life_rate(data: &UnitType, hero_part: u32, night: bool) -> u32 {
     }
 }
 
+/// `CreateUnit` and its kin: a unit that is not a building and whose
+/// footprint at the snapped point overlaps another unit's is moved to the
+/// centre of the first cell of a ring search round its own cell where it
+/// overlaps none (SPEC-0013, "Occupied ground").
+///
+/// PROVISIONAL: unpassable terrain and buildings are not tested; they do
+/// not move the unit here.
+fn create_unit_by_script(state: &mut State, owner: i32, type_id: i32, at: [u32; 3]) -> Option<u32> {
+    let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
+    let (x, y) = off_other_units(state, type_id, [snap(at[0]), snap(at[1])]);
+    create_unit(state, owner, type_id, [x, y, at[2]])
+}
+
+/// Where a new unit of `type_id` at the snapped point `at` stands
+/// (`create_unit_by_script`).
+fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32, u32) {
+    use crate::path::{occupied_cells, size_class};
+    let Some(t) = state.data.units.get(&type_id).filter(|t| !t.building) else {
+        return (at[0], at[1]);
+    };
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let cells = |p: [u32; 2]| super::follow::to_cells(super::movement::relative(p, min));
+    let mut taken = std::collections::BTreeSet::new();
+    for &o in &state.units {
+        let Some(Object::Unit(u)) = state.objects.get(&o) else {
+            continue;
+        };
+        let Some(d) = state.data.units.get(&u.type_id) else {
+            continue;
+        };
+        if u.alive && !u.hidden && !d.building {
+            taken.extend(occupied_cells(cells([u.x, u.y]), size_class(d.collision)));
+        }
+    }
+    let class = size_class(t.collision);
+    let free = |c: [u32; 2]| occupied_cells(c, class).iter().all(|k| !taken.contains(k));
+    let here = cells(at);
+    if free(here) {
+        return (at[0], at[1]);
+    }
+    let (cx, cy) = (
+        f32::from_bits(floor(here[0])) as i32,
+        f32::from_bits(floor(here[1])) as i32,
+    );
+    // The centre of cell `c` on one axis, in cells and in world units.
+    let centre = |c: i32| add(ow3_math::i2r(c), 0.5f32.to_bits());
+    for n in 1..=64 {
+        let (l, r, b, t) = (cx - n, cx + n, cy - n, cy + n);
+        let ring = ((l + 1)..=r)
+            .map(|i| (i, b))
+            .chain(((b + 1)..=t).map(|j| (r, j)))
+            .chain((l..r).rev().map(|i| (i, t)))
+            .chain((b..t).rev().map(|j| (l, j)));
+        for (i, j) in ring {
+            let c = [centre(i), centre(j)];
+            if free(c) {
+                let world = |v: u32, m: u32| add(mul(v, 0x4200_0000), m);
+                return (world(c[0], min[0]), world(c[1], min[1]));
+            }
+        }
+    }
+    (at[0], at[1])
+}
+
 /// Creates a unit of `type_id` for `owner`, or `None` for a type the game
 /// data does not know.
 pub(super) fn create_unit(
@@ -887,7 +951,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Handle(None)));
             };
             let at = [real(&args[2]), real(&args[3]), real(&args[4])];
-            let h = create_unit(&mut state, owner, integer(&args[1]), at);
+            let h = create_unit_by_script(&mut state, owner, integer(&args[1]), at);
             Ok(Some(Value::Handle(h)))
         }
     );
@@ -903,7 +967,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Handle(None)));
             };
             let at = [real(&args[2]), real(&args[3]), real(&args[4])];
-            Ok(Some(Value::Handle(create_unit(
+            Ok(Some(Value::Handle(create_unit_by_script(
                 &mut state, owner, type_id, at,
             ))))
         }
@@ -1259,7 +1323,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let (Some(owner), Some((x, y))) = (owner, at) else {
                 return Ok(Some(Value::Handle(None)));
             };
-            let h = create_unit(&mut state, owner, integer(&args[1]), [x, y, real(&args[3])]);
+            let h =
+                create_unit_by_script(&mut state, owner, integer(&args[1]), [x, y, real(&args[3])]);
             Ok(Some(Value::Handle(h)))
         }
     );

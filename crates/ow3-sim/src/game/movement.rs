@@ -527,7 +527,10 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             // The stored heading of a unit whose facing still turns to it
             // (c-RXR-1: troll 16 kept 2.535097 through its attacks).
             heading: u.movement.map_or(u.facing, |m| m.heading),
-            next_update: next_update_after(tick),
+            // At the next update batch: the batches drift against a fixed
+            // phase (c-RXD-1: creep 7, an order at 7081, its first update
+            // at 7082).
+            next_update: tick + 1,
             walking: false,
             origin: relative([u.x, u.y], min),
             velocity: [0, 0],

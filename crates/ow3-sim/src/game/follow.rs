@@ -584,6 +584,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     }
     let others = others(state, walker.handle);
     let grid = state.grid.as_ref().unwrap();
+    let held = state.path_holds.remove(&walker.handle);
     let mut follow = state.paths.remove(&walker.handle).unwrap_or_else(|| {
         let (waypoints, reached) = high.flatten().map_or_else(
             || (Vec::new(), false),
@@ -600,7 +601,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             stuck: false,
             target: 0,
             next: Next::Search,
-            hold_until: 0,
+            hold_until: held.unwrap_or(0),
             wait: 0,
             made: false,
             patience: 0,
@@ -610,7 +611,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             w: plan.1,
             stop_at: plan.2,
             advance: false,
-            new_group: false,
+            new_group: held.is_some(),
         };
         follow.take_segment(order_cells);
         follow
@@ -1255,4 +1256,18 @@ fn farthest_seen(
         best = i;
     }
     best
+}
+
+/// Unit `h` starts a chase as a new group (SPEC-0019, "A held search"):
+/// its path goes, and a search of its old path that is still held stays
+/// held for the new one, the unit standing and turning to its goal until
+/// then (c-RZJ-1: the Paladin at his cooldown end 7218, last search 7190,
+/// searched at 7250).
+pub(super) fn regroup(state: &mut State, h: u32) {
+    let tick = state.ticks;
+    if let Some(f) = state.paths.remove(&h)
+        && f.hold_until > tick
+    {
+        state.path_holds.insert(h, f.hold_until);
+    }
 }

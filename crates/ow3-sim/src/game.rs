@@ -796,6 +796,9 @@ pub struct State {
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
+    /// The held searches of units whose path went with a new group: the
+    /// tick their next search may run (SPEC-0019, "A held search").
+    path_holds: std::collections::BTreeMap<u32, u64>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
     /// The hits of weapons without a missile, when a test asks for them:
@@ -950,6 +953,7 @@ impl State {
             updated: std::collections::BTreeSet::new(),
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
+            path_holds: std::collections::BTreeMap::new(),
             path_trace: None,
             hit_trace: None,
             agent_trace: None,

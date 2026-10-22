@@ -4532,7 +4532,7 @@ fn cooldown_expiries(state: &mut State) {
             super::attack::begin(state, h, target, tick, order_id);
         } else {
             let goal = tick_start_position(state, target);
-            state.paths.remove(&h);
+            follow::regroup(state, h);
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                 && let Some(m) = u.movement.as_mut()
             {

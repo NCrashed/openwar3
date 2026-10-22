@@ -61,4 +61,5 @@ be read by the analyst) and its state.
 12. Following 11: the creep leader and the tracker round the fountain of
     life do not react to trained footmen at all. Open.
 13. The human shop renders its spinning runes wrong: they should be
-    billboards facing the camera. Open.
+    billboards facing the camera. Done: billboarded nodes now face the
+    camera (checked on the wisps of the fountain of health).

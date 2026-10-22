@@ -750,6 +750,15 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
 /// The effect of cast `c` of `h`; the mana is paid and the cooldown starts
 /// now.
 fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
+    // A spell on a unit that died before the effect does nothing and costs
+    // nothing: no mana, no cooldown (c-RZJ-1: the Paladin's Holy Light on
+    // footman 5, dead at 3142, effect time 3227; his next cast at 3301).
+    // PROVISIONAL: measured for Holy Light only.
+    if let Some(t) = c.target
+        && !s.unit(Some(t)).is_some_and(|u| u.alive)
+    {
+        return;
+    }
     let tick = s.ticks;
     let n = numbers(s, c.ability, c.level);
     let base = s

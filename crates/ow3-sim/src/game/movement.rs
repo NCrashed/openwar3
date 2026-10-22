@@ -3733,14 +3733,30 @@ pub(super) fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
         .and_then(|u| u.attack)
         .and_then(|a| a.resume)
         .filter(|&r| r > tick);
-    let renew = state.unit(Some(h)).and_then(|u| {
-        u.attack
-            .and_then(|a| a.renew_at)
-            .or(u.movement.and_then(|m| m.renew_at))
-    });
+    // Only a renewal still to come (a switch in the backswing); one that
+    // passed is stale (c-RZJ-1: the Ogre Lord, standing, switched at 2352
+    // and turned at once).
+    let renew = state
+        .unit(Some(h))
+        .and_then(|u| {
+            u.attack
+                .and_then(|a| a.renew_at)
+                .or(u.movement.and_then(|m| m.renew_at))
+        })
+        .filter(|&r| r > tick);
     let Some(at) = position_of(state, better) else {
         return false;
     };
+    // A unit standing when it switches starts a new movement, as at a new
+    // order: a stop commit now, its first update at the next update batch
+    // (SPEC-0018; c-RZJ-1: the Ogre Lord switched at 2352, turned at
+    // 2353).
+    let standing = state
+        .unit(Some(h))
+        .is_some_and(|u| u.movement.is_none_or(|m| !m.walking));
+    if standing {
+        stop_commit(state, h);
+    }
     freeze(state, h);
     // An attack-move keeps its order id.
     let order_id = state
@@ -3762,6 +3778,9 @@ pub(super) fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
         && let Some(m) = u.movement.as_mut()
     {
         m.goal_taken = true;
+        if standing {
+            m.next_update = state.ticks + 1;
+        }
         if let Some(r) = renew {
             m.renew_at = Some(r);
             m.renew_stands = true;

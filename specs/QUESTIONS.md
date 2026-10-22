@@ -283,8 +283,10 @@ where the spec is silent:
   its heading (not measured).
 - **A thread resumed after `TriggerSleepAction`** (SPEC-0013 open question
   2) sees regeneration like any other thread.
-- **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` places the
-  unit at the snapped point whatever is there. `SetUnitY` below
+- **Blocked ground** (SPEC-0013 open question 3): `CreateUnit` moves a unit
+  off other units' footprints by the ring search of SPEC-0013
+  ("Occupied ground"); on unpassable terrain and next to buildings it
+  places the unit at the snapped point whatever is there. `SetUnitY` below
   `minY - 32` and `CreateUnit` far outside the world, which hang the
   game, are accepted.
 - **A destructable placed with 0 percent life** is alive and enumerated

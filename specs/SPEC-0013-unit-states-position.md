@@ -204,6 +204,31 @@ brake from about 11.5 degrees (0.2 radians) before the end, last values
 
 - `CreateUnit` places the unit at `floor(4x) / 4`, `floor(4y) / 4` on open
   ground (-1000.3 -> -1000.5, 100.37 -> 100.25, -2999.9 -> -3000).
+- **Occupied ground.** The new unit is compared with the units that
+  already stand (also paused ones). Each unit covers the footprint of
+  its size class (SPEC-0020, "Size classes and footprints") around its
+  path cell `(floor(x / 32), floor(y / 32))` in path cells. If the
+  footprint of the new unit at the snapped point overlaps no other
+  unit's footprint, the unit stays at the snapped point. Otherwise it is
+  moved to the first free cell of a search in rings around its own cell
+  `(cx, cy)`:
+  1. Ring `n` (`n = 1, 2, ...`) is the border of the square
+     `L = cx - n`, `R = cx + n`, `B = cy - n`, `T = cy + n`.
+  2. Its cells are tried in the order bottom `(L + 1, B)` .. `(R, B)`,
+     right `(R, B + 1)` .. `(R, T)`, top `(R - 1, T)` .. `(L, T)`,
+     left `(L, T - 1)` .. `(L, B)`. This is the order of SPEC-0027
+     ("Where the new unit appears") with the bottom side first.
+  3. A cell is free when the new unit's footprint at that cell overlaps
+     no other unit's footprint. The unit is placed at the centre of the
+     first free cell, `((c + 0.5) * 32)` in each axis, in world units
+     relative to the path grid.
+  The facing has no effect on the search.
+  Example (c-RZJ-1): an Ogre Lord (class 3) stands at (450, 0), path cell
+  (14, 0), footprint x 12..15, y -2..1. `CreateUnit` of an ogre (class 3)
+  at (550, 120), cell (17, 3), footprint x 15..18, y 1..4, overlaps it.
+  Ring 1: (17, 2) and its predecessor (16, 2) overlap. (18, 2) is free,
+  so the ogre stands at (592, 80). An ogre at (550, -120), cell (17, -4),
+  footprint y -6..-3, does not overlap and stays there.
 - `SetUnitX`, `SetUnitY` and `SetUnitPosition` store coordinates relative
   to the world's lower left corner (`GetWorldBounds`, SPEC-0008) in the
   engine arithmetic: `x' = sub(add(x, -minX), -minX)` with truncation, so
@@ -228,7 +253,9 @@ brake from about 11.5 degrees (0.2 radians) before the end, last values
 2. A thread resumed after `TriggerSleepAction` that sets life and starts
    a 0.005 s periodic timer reads no regeneration at the first expiry
    (all unit types), unlike a thread run from a timer trigger.
-3. Placement of new units on blocked ground.
+3. (Resolved for other units: see "Position", occupied ground.) Placement
+   on unpassable terrain and near buildings was not tested; it is
+   expected to use the same free-cell test with the pathing map.
 4. How jumps of the hour with a suspended clock decide between night
    and day (above), and the regeneration types `day` and `blight`.
 5. What `permanent` of `SetHeroStr` and its kind changes.
@@ -256,4 +283,17 @@ brake from about 11.5 degrees (0.2 radians) before the end, last values
    350 of 350; 650 / 0 -> 100 of 100; 650 / -5 and 100 / -5 -> dies;
    10 / 21 -> 1 of 625; 0.5 / 22 -> unchanged; 650 / 23 -> 675 of 675;
    325 / 30 -> 525 of 850.
-
+6. **Occupied ground.** A paused blocker at a cell-aligned point (and
+   at offsets (16, 16) and (8, 24) inside the same cell), then units
+   created at offsets in steps of 4 along x and y, each removed after
+   its position is read. Pairs: ogre/ogre, footman/footman, ogre and
+   footman both ways, peasant/peasant, knight/knight, nwlg (collision
+   47), noga (collision 64), and mixed pairs with footman
+   and peasant. The moved range is the footprint overlap of the
+   classes, the same for all offsets of the blocker inside its cell
+   (ogre/ogre: new unit cells -3 .. 3 from the blocker's; knight
+   blocker and footman: -1 .. 2). Landings: footman next to footman at
+   cells (-1, 0) -> (-48, 48), (0, 0) -> (-16, -48), (1, 0) -> (80, -16),
+   (0, -1) -> (16, -48), (0, 1) -> (48, 80) for a blocker at (0, 0); the
+   same for facings 0, 90, 180 and 270. c-RZJ-1: the ogre at (550, 120)
+   stands at (592, 80).

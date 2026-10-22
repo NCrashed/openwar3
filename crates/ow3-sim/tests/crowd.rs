@@ -183,6 +183,25 @@ fn report(name: &str, until: u64) -> Option<u64> {
         .filter(|e| e.0 <= UNTIL && kinds.contains(&e.1.as_str()))
         .collect();
     game_events.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
+    // OW3_UNIT="unit from to" lists both sides' events of one unit.
+    if let Ok(v) = std::env::var("OW3_UNIT") {
+        let w: Vec<i64> = v
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if let [u, from, to] = w[..] {
+            let of = |list: &[Logged], side: &str| {
+                for e in list
+                    .iter()
+                    .filter(|e| e.2 == u as i32 && (from as u64..=to as u64).contains(&e.0))
+                {
+                    eprintln!("{side} {e:?}");
+                }
+            };
+            of(&game_events, "game");
+            of(&ours_events, "ours");
+        }
+    }
     let same = |a: &Logged, b: &Logged| {
         a.0 == b.0
             && a.1 == b.1

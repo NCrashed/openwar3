@@ -198,7 +198,7 @@ fn lumber_agents_report() {
     };
     let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
     // Peasants by their order among the units.
-    let ours = our_commits("c-RYP-1", 6000, |h, units, _| {
+    let ours = our_commits("c-RYP-1", 12205, |h, units, _| {
         units
             .iter()
             .filter(|u| u.type_id == code(b"hpea"))

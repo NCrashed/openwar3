@@ -3576,6 +3576,17 @@ pub(super) fn switch_target(state: &mut State, h: u32, better: u32) -> bool {
 /// out of range, the target in range kept, else by what the enemy does and
 /// then the nearer (SPEC-0019, "Checks while attacking").
 fn prefers(state: &State, h: u32, current: u32, other: u32) -> bool {
+    prefers_by(state, h, current, other, threat)
+}
+
+/// [`prefers`] with the threat rating `threat`.
+fn prefers_by(
+    state: &State,
+    h: u32,
+    current: u32,
+    other: u32,
+    threat: fn(&State, u32, u32) -> u8,
+) -> bool {
     let Some(u) = state.unit(Some(h)) else {
         return false;
     };
@@ -3750,6 +3761,21 @@ impl Targets {
 /// target"): 0 when it attacks `h`, 1 when it attacks another unit of
 /// `h`'s player or an ally, 2 when it attacks nobody (an attack-move
 /// without a target counts as nobody).
+/// [`threat`] counting only an attack under way (a swing), not an order,
+/// and not that of a stunned unit (c-RZH-1: creep 8, stunned by the Storm
+/// Bolt of 943, no threat at 989).
+fn swing_threat(state: &State, h: u32, other: u32) -> u8 {
+    let tick = state.ticks;
+    if state
+        .unit(Some(other))
+        .is_some_and(|o| o.attack.is_some() && o.stunned_until.is_none_or(|t| tick >= t))
+    {
+        threat(state, h, other)
+    } else {
+        2
+    }
+}
+
 fn threat(state: &State, h: u32, other: u32) -> u8 {
     let Some(o) = state.unit(Some(other)) else {
         return 2;
@@ -3840,7 +3866,9 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
         let u = state.unit(Some(h))?;
         let target = match (u.attack, u.movement) {
             (Some(a), _) if a.order_id == 0 => a.target,
-            (None, Some(m)) if m.order_id == 0 => match m.order {
+            // Also one chasing on an attack-move (c-RZH-1: footmen 1 and 3
+            // took creep 9 at footman 5's call in 989).
+            (None, Some(m)) if m.order_id == 0 || u.attack_move.is_some() => match m.order {
                 Order::Attack { target } => target,
                 _ => return None,
             },
@@ -3850,13 +3878,23 @@ pub(super) fn retaliate(state: &mut State, victim: u32, attacker: u32, impact: O
             && !swinging_back(u)
             && !u.paused
             && !u.creep.returning
-            && u.attack_move.is_none()
             && u.casting.is_none()
             && u.stunned_until.is_none_or(|t| state.ticks >= t)
             && target != attacker)
             .then_some(target)
     };
-    let switches = |h: u32| current(h).is_some_and(|c| prefers(state, h, c, attacker));
+    // An attack-move's target counts as a threat only while its attack is
+    // under way (c-RZH-1: creep 8, chasing a footman, rated below creep 9,
+    // which hit footman 5).
+    let switches = |h: u32| {
+        current(h).is_some_and(|c| {
+            if state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some()) {
+                prefers_by(state, h, c, attacker, swing_threat)
+            } else {
+                prefers(state, h, c, attacker)
+            }
+        })
+    };
     // The victim calls whatever it is doing (in `c-RXR-1` the troll
     // headhunters answered grunt 12, which was attacking, in tick 688),
     // then each unit that answers calls in turn, in the order of the grid

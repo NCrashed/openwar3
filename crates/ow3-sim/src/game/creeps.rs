@@ -223,6 +223,20 @@ pub(super) fn call_for_help(
             set(state, h, |c| c.returning = false);
             // One already chasing takes the new target at once, as a
             // switch (c-RXD-1: creeps 6 and 7 at 6667, turning at 6673).
+            // One standing in the backswing of the kill of its target takes
+            // nothing from the call (SPEC-0030, "Losing the target in a
+            // backswing"; c-RXD-1: creep 9 at 6667).
+            let now = state.move_clock;
+            if state.unit(Some(h)).is_some_and(|u| {
+                f32::from_bits(u.backswing_end) > f32::from_bits(now) && u.guard_return.is_some()
+            }) {
+                continue;
+            }
+            // One already attacking that target goes on as it is (c-RXD-1:
+            // creep 7 at 6787, on unit 1 since 6667).
+            if movement::attack_target(state, h) == Some(target) {
+                continue;
+            }
             let joined = if movement::attacking(state, h) {
                 movement::switch_target(state, h, target)
             } else {

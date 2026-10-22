@@ -1315,20 +1315,9 @@ pub(super) fn join_fight(state: &mut State, h: u32, target: u32, from: Option<u3
             state.game_random[REACTION].fraction(),
             state.combat.reaction_delay,
         );
-        // Not before the end of its backswing (c-RXD-1: creep 9 answered at
-        // 6667 in the backswing of its kill of 6665, walking from 6787).
-        let backswing = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
         match from {
             // From the expiry of the caller's check (SPEC-0019).
-            Some(time) => {
-                let end = add(time, delay);
-                let end = if real_of(backswing) > real_of(end) {
-                    backswing
-                } else {
-                    end
-                };
-                react_until(state, h, end)
-            }
+            Some(time) => react_until(state, h, add(time, delay)),
             None => react(state, h, tick, delay, tick),
         }
     }
@@ -3465,6 +3454,14 @@ fn attack_checks(state: &mut State) {
             // the swing (c-RXD-1: creep 8 kept its place from 2083 to 2155).
             m.chase = Some(u32::MAX);
         }
+    }
+}
+
+/// The target of unit `h`'s attack order, if it has one.
+pub(super) fn attack_target(state: &State, h: u32) -> Option<u32> {
+    match state.unit(Some(h))?.movement?.order {
+        Order::Attack { target } => Some(target),
+        _ => None,
     }
 }
 

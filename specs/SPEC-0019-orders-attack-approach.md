@@ -297,22 +297,41 @@ Footman (`turnRate` 0.6, 34.38 degrees per update) with `a` = 34.38 +
 `d`: `d` from 9 to 11 gave 112 ticks (attack at update 2), `d` 11.5 to 16
 gave 118 (update 3).
 
-**Which direction it turns to.** A unit standing in range turns to a
-place given by its attack's own check: when that check finds the target
-within range, it gives the unit a new "face the target" movement (a new
-cluster) whose place is the target's position at that moment, the
-per-tick position of SPEC-0018 (between the target's updates). The
-following updates turn the unit towards that stored place; the target
-is not read again in those updates. Read in the game, `c-RXD-1`: creep 6
-acquired unit 3 at 2031; its attack check at 2033 (0.01 s later) found
-unit 3 in range and took its position of that tick, (379.1333,
-389.6884) in cells, 4/6 of the way from unit 3's position after its
-update of 2029 to that after 2035; at 2035 the creep turned from
-4.385801 to the direction of that place, 4.103981 (not 4.124695, the
-direction to unit 3 after its own update of 2035). Creep 8 at 2083
-turned one full step of 0.5 towards its target, unit 2 (4.363140 ->
-4.863140, the place at about 4.88), and then stayed: 0.02 rad off is
-within 0.2.
+**Which direction it turns to.** A unit standing in range turns to the
+place of its current movement order, which is fixed when the order is
+given; the target is not read again at the turning updates. Each update
+turns it by at most `turnRate` towards that place (the angle stepped from
+the current heading), until it is within 0.2 rad. Two things give a
+standing attacker such a place:
+- a new target (acquisition or a switch to a better target, also during
+  a backswing): the place is the target's position at that moment,
+  the per-tick position of SPEC-0018 (between the target's updates);
+- the end of the backswing (`D` + the backswing time on the queue, `D`
+  the damage; kobolds: 0.6 s = 120 ticks): the attack checks the range
+  to its target (the range test above). In range, it gives the unit a
+  new "face the target" movement whose place is the target's per-tick
+  position at that moment; out of range, it takes up the chase ("After
+  the swing" below). This is the only such check in a swing cycle; there
+  is none right after a new target.
+Read in the game, `c-RXD-1` (damage ticks 1913, 1955, 1961, 1967 for
+creeps 6, 7, 8, 9):
+- creep 7: new target at 1857, place (375.2547, 391.2776) in cells;
+  turns 4.860676 -> 4.360676 -> 3.860676 -> 3.377398 at 1861, 1867,
+  1873 (the last one the direction to the place), swing at 1879; damage
+  1955, backswing end 2075: in range, new place (380.3779, 389.6185),
+  turns 3.377398 -> 3.877398 -> 4.377398 -> 4.877398 at 2077, 2083,
+  2089;
+- creep 6: damage 1913, a switch to unit 3 at 2031 (place of 2031),
+  backswing end 2033: in range, new place (379.1333, 389.6884), unit 3's
+  per-tick position of 2033 (4/6 of the way between its updates of 2029
+  and 2035); turns 4.385801 -> 4.103981 at 2035 (less than one step, so
+  straight to that place's direction);
+- creep 8: a switch to unit 2 at 2007 (its place within 0.2 rad: no
+  turn); damage 1961, backswing end 2081: place (383.3033, 387.5001),
+  unit 2's position at 2081; turns one full step 4.363140 -> 4.863140 at
+  2083, then within 0.2 rad (about 0.02 off): no further turn;
+- creep 9: damage 1967, backswing end 2087: out of range, the chase
+  goes on (walking from 2089).
 
 ### Reaction delay
 

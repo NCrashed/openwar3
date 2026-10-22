@@ -243,6 +243,9 @@ pub struct Unit {
     /// The tick in which it learned Brilliance Aura, the origin of the
     /// aura's pulses (SPEC-0046).
     aura_learned: Option<u64>,
+    /// Invulnerable (Divine Shield) up to this tick, exclusive
+    /// (SPEC-0045).
+    invulnerable_until: Option<u64>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// When the cooldown of its last swing expires, on the queue: a new

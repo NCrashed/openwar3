@@ -72,7 +72,8 @@ pub(super) fn ticks(seconds: u32) -> u64 {
 /// Whether `target` can still be hit.
 pub(super) fn standing(state: &State, target: u32) -> bool {
     match state.objects.get(&target) {
-        Some(Object::Unit(u)) => u.alive,
+        // An invulnerable unit cannot be hit (SPEC-0045).
+        Some(Object::Unit(u)) => u.alive && !super::cast::invulnerable(state, target),
         Some(Object::Destructable(d)) => d.alive,
         Some(Object::Item(i)) => f32::from_bits(i.life) > 0.0,
         _ => false,

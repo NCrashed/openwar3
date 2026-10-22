@@ -43,9 +43,10 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 5] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 6] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
+    ("divineshield", *b"AHds", 852_090, Aim::Nothing),
     ("holybolt", *b"AHhb", 852_092, Aim::Friend),
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
@@ -213,6 +214,26 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     let (ability, level, order_id, aim) = ability_for(state, h, name)?;
     if aim != Aim::Nothing || !ready(state, h, ability, level) {
         return Some(false);
+    }
+    // Divine Shield takes effect in the tick of the order, with no cast
+    // time, and the caster is left with no order (SPEC-0045; c-RZJ-1:
+    // the Paladin at 4801).
+    if base_code(state, ability) == i32::from_be_bytes(*b"AHds") {
+        movement::stop(state, h);
+        let c = Casting {
+            order_id,
+            ability,
+            level,
+            target: None,
+            effect_at: None,
+            end_at: 0,
+            effect_q: 0,
+            point: None,
+        };
+        let mut deferred = Vec::new();
+        effect(state, h, &c, &mut deferred);
+        movement::end_cast(state, h);
+        return Some(true);
     }
     movement::stop(state, h);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -440,6 +461,24 @@ pub(super) fn stun(state: &mut State, h: u32, duration: u32, at: u32) {
     state.paths.remove(&h);
 }
 
+/// Whether unit `h` is invulnerable now (SPEC-0045).
+pub(super) fn invulnerable(state: &State, h: u32) -> bool {
+    let tick = state.ticks;
+    state
+        .unit(Some(h))
+        .and_then(|u| u.invulnerable_until)
+        .is_some_and(|t| tick < t)
+}
+
+/// The base code of `ability`.
+fn base_code(state: &State, ability: i32) -> i32 {
+    state
+        .data
+        .abilities
+        .get(&ability)
+        .map_or(ability, |a| a.code)
+}
+
 /// Whether unit `h` is stunned now.
 pub(super) fn stunned(state: &State, h: u32) -> bool {
     let tick = state.ticks;
@@ -563,6 +602,16 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
                     s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
                 }
             }
+        }
+        // Invulnerable from the next tick for its duration (SPEC-0045); the
+        // units attacking it drop it.
+        b"AHds" => {
+            let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
+            let until = tick + 1 + duration(hero);
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                u.invulnerable_until = Some(until);
+            }
+            movement::target_died(s, h);
         }
         b"AHhb" => {
             if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))

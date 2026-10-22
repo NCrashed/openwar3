@@ -3807,7 +3807,10 @@ impl Targets {
             .units
             .iter()
             .filter_map(|&h| match state.objects.get(&h) {
-                Some(Object::Unit(o)) if o.alive && !o.hidden => {
+                // An invulnerable unit is no target (SPEC-0045).
+                Some(Object::Unit(o))
+                    if o.alive && !o.hidden && !super::cast::invulnerable(state, h) =>
+                {
                     let data = state.data.units.get(&o.type_id);
                     let collision = data.map_or(0, |d| d.collision);
                     let structure = data.is_some_and(|d| d.building);

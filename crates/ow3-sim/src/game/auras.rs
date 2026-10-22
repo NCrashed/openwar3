@@ -1,4 +1,5 @@
-//! Hero auras (SPEC-0038): devotion, endurance and unholy aura.
+//! Auras (SPEC-0038, SPEC-0046): devotion, endurance and unholy aura of
+//! heroes and of units that have them, and brilliance aura.
 //!
 //! At checks every 0.5 s each hero with an aura gives its buff to the
 //! friendly ground units within `Area` of it, itself included. Buffs are
@@ -44,15 +45,30 @@ fn base_of(data: &crate::data::ObjectData, ability: i32) -> i32 {
 
 /// The aura of hero `h` with its level, if it learned one.
 fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
-    let u = state
-        .unit(Some(h))
-        .filter(|u| u.alive && is_hero(u.type_id))?;
-    u.skills.iter().copied().find(|&(a, level)| {
-        level > 0
-            && AURAS
-                .iter()
-                .any(|c| i32::from_be_bytes(*c) == base(state, a))
-    })
+    let u = state.unit(Some(h)).filter(|u| u.alive)?;
+    let is_aura = |a: i32| {
+        AURAS
+            .iter()
+            .any(|c| i32::from_be_bytes(*c) == base(state, a))
+    };
+    if is_hero(u.type_id) {
+        return u
+            .skills
+            .iter()
+            .copied()
+            .find(|&(a, level)| level > 0 && is_aura(a));
+    }
+    // A unit with an aura of its type, at level 1 (c-RZJ-1: the Ogre
+    // Lord's ACav, a devotion aura).
+    state
+        .data
+        .units
+        .get(&u.type_id)?
+        .abilities
+        .iter()
+        .copied()
+        .find(|&a| is_aura(a))
+        .map(|a| (a, 1))
 }
 
 /// The checks of this tick.

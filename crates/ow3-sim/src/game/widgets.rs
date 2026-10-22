@@ -379,6 +379,7 @@ pub(super) fn create_unit(
         slowed_until: None,
         buffs: Vec::new(),
         aura_learned: None,
+        invulnerable_until: None,
         weapon_ready: 0,
         cooldown_end: 0,
         cooldown_target: 0,
@@ -837,7 +838,7 @@ fn damage_unit(
         let (Some(_), Some(unit)) = (state.unit(source), state.unit(target)) else {
             return false;
         };
-        if !unit.alive {
+        if !unit.alive || target.is_some_and(|t| super::cast::invulnerable(&state, t)) {
             return false;
         }
         let data = state

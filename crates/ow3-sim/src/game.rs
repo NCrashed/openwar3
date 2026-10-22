@@ -754,6 +754,8 @@ pub struct State {
     move_clock: u32,
     /// The time of the update cycle at its last update tick (SPEC-0018).
     pub(super) update_time: u32,
+    /// The movement clock of the tick before (SPEC-0018).
+    pub(super) last_move_clock: u32,
     /// This tick is an update tick (SPEC-0018).
     update_now: bool,
     /// The number of the last update cycle, 1 for the first (SPEC-0018).
@@ -906,6 +908,7 @@ impl State {
             grid: None,
             move_clock: 0,
             update_time: 0,
+            last_move_clock: 0,
             update_now: false,
             update_cycle: 0,
             player_orders: false,

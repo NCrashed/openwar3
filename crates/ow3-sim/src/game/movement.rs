@@ -1922,6 +1922,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
 pub(super) fn step(state: &mut State) {
     // In tick k the clock is the sum of k - 1 ticks (SPEC-0018).
     if state.ticks > 1 {
+        state.last_move_clock = state.move_clock;
         state.move_clock = add(state.move_clock, crate::timers::TICK);
     }
     let (min, clock) = (
@@ -2938,7 +2939,7 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
     let at = match (renew_at, state.objects.get(&target)) {
         (Some(_), Some(Object::Unit(u))) => u.movement.map(|m| {
             let min = [state.world_bounds[0], state.world_bounds[1]];
-            absolute(m.position(sub(state.move_clock, crate::timers::TICK)), min)
+            absolute(m.position(state.last_move_clock), min)
         }),
         _ => None,
     };
@@ -3357,7 +3358,7 @@ fn attack_checks(state: &mut State) {
         let at = match state.objects.get(&target) {
             Some(Object::Unit(u)) => u
                 .movement
-                .map(|m| absolute(m.position(sub(state.move_clock, crate::timers::TICK)), min)),
+                .map(|m| absolute(m.position(state.last_move_clock), min)),
             _ => None,
         };
         let Some(at) = at.or_else(|| position_of(state, target)) else {

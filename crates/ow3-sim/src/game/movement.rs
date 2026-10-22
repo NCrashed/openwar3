@@ -2203,6 +2203,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             let mut in_reach = false;
             // The goal of R after a swing (SPEC-0019).
             let mut after_swing = false;
+            // That renewal falls on this update: it comes after the step
+            // (SPEC-0019; c-RXD-1: creep 6 at 2395).
+            let mut renew_exact = false;
             // The goal before a renewal after a swing (SPEC-0019).
             let old_goal = m.target;
             let mut full_reach = reach;
@@ -2211,6 +2214,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 match tick_start_position(state, target) {
                     Some(at) if super::attack::standing(state, target) => {
                         let renew_now = m.renew_at.is_some_and(|r| tick >= r);
+                        renew_exact = m.renew_at == Some(tick);
                         match m.chase {
                             // The new goal after a swing (SPEC-0019).
                             _ if renew_now => {
@@ -2461,6 +2465,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         let cooldown = after_swing && std::mem::take(&mut m.renew_cooldown);
                         let renewing = after_swing && std::mem::take(&mut m.renew_stands);
                         let hold = renewing && m.velocity == [0, 0];
+                        let mut walked = None;
                         let steer = if renewing {
                             let mut stand = goal;
                             if !hold {
@@ -2469,6 +2474,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     ..walker
                                 };
                                 match follow::steer(state, &old, tick) {
+                                    // A walking step of its own update, then
+                                    // the renewal's stop: the heading of the
+                                    // step stays.
+                                    follow::Steer::Walk(to) if renew_exact => walked = Some(to),
                                     follow::Steer::Walk(to) | follow::Steer::Stand(to) => {
                                         stand = to
                                     }
@@ -2502,6 +2511,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 motion(&mut m, to, true, speed, limit, turn_rate, window);
                             }
                             follow::Steer::Stand(_) if hold => {
+                                m.velocity = [0, 0];
+                                m.walking = false;
+                            }
+                            follow::Steer::Stand(_) if walked.is_some() => {
+                                let to = walked.unwrap_or(goal);
+                                motion(&mut m, to, true, speed, limit, turn_rate, window);
                                 m.velocity = [0, 0];
                                 m.walking = false;
                             }

@@ -194,31 +194,54 @@ test RUJ: three trips), the mine's gold is 0 as the peasant leaves it
 and the mine is gone; the peasant delivers its 10 gold and then stands
 with order 0.
 
-**Arriving at the tree.** When a lumber worker arrives at its place
-(the arrival test of SPEC-0019), the end of its walk is reported in
-one of two ways, depending on how it got there:
-- if its "within reach" mark came from the give-up case of the
-  patience counter (SPEC-0025, case 2), the walk ends as "target
-  reached": the harvest order completes and the work starts at once
-  (the first hit 0.5 s later), with no range test;
-- otherwise (an ordinary arrival, or the mark from touching the tree)
-  the walk ends as "stopped", and the harvest makes its own range
-  test: the distance from the worker to the tree's point against
-  `Rng1` of `Ahar` / 32 plus the worker's collision in cells (116 / 32
-  + 0.5 = 4.125 cells; the tree's size does not count). If it passes,
-  the work starts; if it fails and the worker is not yet in the
-  gathering cycle, a retry counter is set to 3, the worker enters the
-  cycle (below) and walks to the tree again (a new search at its next
-  update). A failure of a worker already in the cycle goes another
-  way (not read); each retry lowers the counter.
-Read in the game, `c-RYP-1`: peasant 4 arrived at tree 22 in tick 1243
-by the give-up mark, 4.4871 cells from the tree's point: work at once;
-peasant 5 arrived at tree 27 in tick 1309 by the touch mark, 4.4925
-cells (squared 20.18 > 17.02): test failed, searched again in 1315.
+**Arriving at the tree.** Each time a lumber worker's walk to its tree
+ends (the arrival test of SPEC-0019, by reach, by touching the tree or
+by the give-up mark of SPEC-0025), the harvest checks the place. The
+check passes when either of two tests passes:
+- the range test: the distance from the worker to the tree's point
+  against `Rng1` of `Ahar` / 32 plus the worker's collision in cells
+  (116 / 32 + 0.5 = 4.125 cells; the tree's size does not count);
+- the touch test of the path code (SPEC-0025, "Blocked units"): the
+  ring of cells around the worker's cell meets a cell of the tree.
+The harvest also keeps a "ready" mark, which is clear at every arrival
+at a tree (it was clear at each one read: first walks, walks to
+another tree, walks back from a delivery). Then:
+- passes, mark clear: the retry counter is set to 3, the worker gets
+  the walk to the same tree again (this is where its search set changes,
+  "Entering the gathering cycle"), the mark is set at once and the
+  counter drops to 2. A worker already at its place arrives again at
+  its next update (6 ticks later), the check passes again and the work
+  starts. So a worker that arrives within range starts the work one
+  update after its arrival, never in the arrival update;
+- passes, mark set: the work starts. The swing starts at the queue time
+  of that update; the first hit (swing point) is 0.433 s later, the
+  backswing ends 0.567 s after the hit, the next swing starts 0.1 s
+  later, i.e. one hit every 1.1 s (220 ticks) on queue times;
+- fails, counter 0: the worker drops the tree, and 0.5 s later it takes
+  another tree ("Another tree" below);
+- fails, counter above 0 (not seen in the replays read): the walk to
+  the tree is given again and the counter drops by one.
+Read in the game, `c-RYP-1` (ticks of queue times, Q(k) < e <= Q(k + 1)):
+- peasant 0, first walk: arrives at 997 (range passes), walks again,
+  check at 1003 (q 5.0099878) passes, the swing starts; hits at q
+  5.4429874 = tick 1089, then 1309, 1529, ..., 3069 (ten hits, every
+  220 ticks); the tenth hit's backswing ends at q 15.9099751 = tick
+  3183, where the walk back is ordered. Second load: arrives at 4789,
+  starts at 4795 (q 23.9695663), hits from 4882, walk back at 6976;
+- peasant 5: arrives at tree 27 at 1309 by touch, 4.4925 cells from
+  the tree's point (range fails, touch passes): walks again (a new
+  search at 1315), arrives within range at 1351 and starts there (its
+  mark was set at 1309);
+- peasant 4: arrives at tree 22 at 1243 by the give-up mark, 4.4871
+  cells from the point, both tests fail: drops the tree; 0.5 s later
+  it takes tree 14, arrives at 1351 (range passes), starts at 1357;
+- peasant 1 as peasant 0: arrives at 1231, starts at 1237;
+- peasants 2 and 3 as peasant 4: both tests fail at 1471 and 1807,
+  another tree 0.5 s later, arrivals there at 1579 and 1915, starts at
+  1585 and 1921.
 
-**Another tree.** When the work was started at a tree out of the
-harvest's reach (the give-up case above), the harvest checks again
-0.5 s later and takes another tree: among the trees within `Area1` of
+**Another tree.** When the arrival check fails with the retry
+counter at 0 (above), the harvest takes another tree 0.5 s later: among the trees within `Area1` of
 `Ahar` (900) of the current tree's point, the current one excluded and
 only harvestable ones, the one with the smallest high-level path cost
 from the worker. The cost of a candidate is a high-level search
@@ -244,8 +267,8 @@ it at 1351 and started chopping it at 1357.
 **Entering the gathering cycle.** A gold worker enters the cycle at
 its first exit from a mine (below). A lumber worker changes its set of
 closing kinds for searches (SPEC-0020, "Trees in the local search") in
-two steps: at the harvest's first retry at its tree (the arrival
-check failing, "Arriving at the tree") it adds the gathering kind to
+two steps: at the first walk again to its tree (the arrival check
+passing with the ready mark clear, "Arriving at the tree") it adds the gathering kind to
 the ground kind; at the end of its first work at a tree (the walk back
 with its load) it changes to the gathering kind only, and it is set to
 that again after each delivery. Read in the game, `c-RYP-1`: peasant 5

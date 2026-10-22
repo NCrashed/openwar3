@@ -202,8 +202,9 @@ A worker's set:
   layer, the gathering layer does not close: touch in the tree's cells
   (`c-RYP-1` peasant 0's search of 313: touched in cell (352, 380), the
   tree's lower left cell);
-- from the harvest's retry at the tree until the end of its first work
-  (SPEC-0029): ground and gathering kinds: target = footprint layer,
+- from the harvest's first walk again to the tree (the arrival check
+  passing with its ready mark clear, SPEC-0029 "Arriving at the tree")
+  until the end of its first work: ground and gathering kinds: target = footprint layer,
   the tree's own gathering layer closes first: no touch (peasant 5 at
   1315, tree 27 at x 358..361, y 388..391: every step towards row 392
   refused, the search ran to its limit and ended at its closest cell

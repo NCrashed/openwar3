@@ -3910,8 +3910,20 @@ impl Targets {
             .get(&t.type_id)
             .map_or(0.0, |d| real_of(d.collision));
         let mine = rate(current, real_of(t.x), real_of(t.y), collision);
-        let mut best = (current, mine, threat(state, h, current));
-        for &(ox, oy, collision, other_owner, _, other) in &self.list {
+        let mut best = (
+            current,
+            mine,
+            threat(state, h, current),
+            not_slower(state, h, current),
+        );
+        let structure = |x: u32| {
+            state
+                .unit(Some(x))
+                .and_then(|o| state.data.units.get(&o.type_id))
+                .is_some_and(|d| d.building)
+        };
+        let current_structure = structure(current);
+        for &(ox, oy, collision, other_owner, other_structure, other) in &self.list {
             if other == current || !enemies(state, owner, other_owner) {
                 continue;
             }
@@ -3923,16 +3935,24 @@ impl Targets {
             }
             let (in_range, distance) = rate(other, ox, oy, collision);
             let rank = threat(state, h, other);
+            let slow = not_slower(state, h, other);
             let (best_in, best_distance) = best.1;
             let better = if in_range != best_in {
                 in_range
             } else if in_range && best.0 == current {
                 false
             } else {
-                (rank, distance) < (best.2, best_distance)
+                // A structure only after the units (SPEC-0019).
+                let best_structure = if best.0 == current {
+                    current_structure
+                } else {
+                    structure(best.0)
+                };
+                (other_structure, rank, slow, distance)
+                    < (best_structure, best.2, best.3, best_distance)
             };
             if better {
-                best = (other, (in_range, distance), rank);
+                best = (other, (in_range, distance), rank, slow);
             }
         }
         (best.0 != current).then_some(best.0)

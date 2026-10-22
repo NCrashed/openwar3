@@ -63,6 +63,8 @@ pub struct Casting {
     /// the caster walks into range.
     effect_at: Option<u64>,
     end_at: u64,
+    /// The queue time of the effect: the start's time plus the cast point.
+    effect_q: u32,
 }
 
 /// The ability of unit `h` that order `name` casts: the ability, its
@@ -149,6 +151,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         target: Some(target),
         effect_at: None,
         end_at: 0,
+        effect_q: 0,
     };
     let set = |state: &mut State| {
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -209,6 +212,7 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
             target: None,
             effect_at: None,
             end_at: 0,
+            effect_q: 0,
         });
     }
     let tick = state.ticks;
@@ -227,11 +231,16 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
         .get(&u.type_id)
         .map_or((0, 0), |t| (t.cast_point, t.cast_backswing));
     let effect = tick + super::attack::ticks(point);
+    let effect_q = add(
+        state.event_time.unwrap_or_else(|| state.timers.time()),
+        point,
+    );
     let end = effect + super::attack::ticks(backswing);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(c) = u.casting.as_mut()
     {
         c.effect_at = Some(effect);
+        c.effect_q = effect_q;
         c.end_at = end;
     }
 }
@@ -268,8 +277,8 @@ pub(super) fn stunned(state: &State, h: u32) -> bool {
         .is_some_and(|t| tick < t)
 }
 
-/// The factor by which `h`'s time between hits grows now: `1 / (1 - DataD)`
-/// of a thunder clap that slows it, if one does.
+/// The attack-speed factor of `h` now: `1 - DataD` of a thunder clap that
+/// slows it, if one does.
 pub(super) fn attack_slow(state: &State, h: u32) -> Option<u32> {
     let tick = state.ticks;
     state
@@ -387,8 +396,9 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
             };
             let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
             let area = f32::from_bits(n.area);
-            // 1 / (1 - DataD): the factor of the time between hits.
-            let factor = ow3_math::div(1.0f32.to_bits(), ow3_math::sub(1.0f32.to_bits(), n.data_d));
+            // 1 - DataD: the attack-speed factor of the slowed units.
+            let speed = ow3_math::sub(1.0f32.to_bits(), n.data_d);
+            let now = c.effect_q;
             let hit: Vec<u32> = s
                 .units
                 .iter()
@@ -412,8 +422,12 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) {
             for o in hit {
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
                 let until = tick + duration(hero);
+                let fresh = attack_slow(s, o).is_none();
                 if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
-                    t.slowed_until = Some((until, factor));
+                    t.slowed_until = Some((until, speed));
+                    if fresh {
+                        super::attack::slow_cooldown(t, now, speed);
+                    }
                 }
                 deferred.push(Deferred::Damage {
                     caster: h,

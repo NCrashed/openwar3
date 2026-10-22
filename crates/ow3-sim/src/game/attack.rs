@@ -83,8 +83,9 @@ pub(super) fn standing(state: &State, target: u32) -> bool {
 /// weapon's damage point later (SPEC-0019).
 pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id: i32) {
     let point = match state.objects.get(&h) {
-        Some(Object::Unit(u)) => weapon_for(state, u.type_id, Some(target))
-            .map_or(0, |w| hero_cooldown(state, h, w.damage_point)),
+        Some(Object::Unit(u)) => weapon_for(state, u.type_id, Some(target)).map_or(0, |w| {
+            slowed(state, h, hero_cooldown(state, h, w.damage_point))
+        }),
         _ => return,
     };
     let damage_point = ticks(point);
@@ -191,8 +192,9 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
             let next_swing = match s.objects.get(&h) {
                 Some(Object::Unit(u)) if u.alive => {
                     u.attack.filter(|a| a.resume.is_some()).map(|a| {
-                        let point = weapon_for(s, u.type_id, Some(a.target))
-                            .map_or(1, |w| ticks(hero_cooldown(s, h, w.damage_point)));
+                        let point = weapon_for(s, u.type_id, Some(a.target)).map_or(1, |w| {
+                            ticks(slowed(s, h, hero_cooldown(s, h, w.damage_point)))
+                        });
                         (a, a.next.saturating_sub(point))
                     })
                 }
@@ -228,7 +230,9 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 let point = s
                     .unit(Some(h))
                     .and_then(|u| weapon_for(s, u.type_id, Some(a.target)))
-                    .map_or(1, |w| ticks(hero_cooldown(s, h, w.damage_point)));
+                    .map_or(1, |w| {
+                        ticks(slowed(s, h, hero_cooldown(s, h, w.damage_point)))
+                    });
                 a.next.saturating_sub(point) == tick
             });
             if starts {
@@ -248,10 +252,9 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 Some(a) if due(s, &a) && standing(s, a.target) => {
                     let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
                     let primary = hero_primary(s, h);
-                    let cooldown = hero_cooldown(s, h, weapon.cooldown);
                     // A thunder clap slows the attacks (SPEC-0037).
-                    let cooldown =
-                        super::cast::attack_slow(s, h).map_or(cooldown, |f| mul(cooldown, f));
+                    let cooldown = slowed(s, h, hero_cooldown(s, h, weapon.cooldown));
+                    let backswing = slowed(s, h, weapon.backswing);
                     let amount = hit_amount(&weapon, primary, &mut s.game_random[ATTACK_DICE]);
                     // A launch draws one more output for the missile
                     // (SPEC-0016).
@@ -259,10 +262,10 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                         s.game_random[ATTACK_DICE].fraction();
                     }
                     let (amount, bash) = proc_effect(s, h, amount);
-                    let point = hero_cooldown(s, h, weapon.damage_point);
+                    let point = slowed(s, h, hero_cooldown(s, h, weapon.damage_point));
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         let next = a.next + ticks(cooldown);
-                        let end = tick + ticks(weapon.backswing);
+                        let end = tick + ticks(backswing);
                         let resume = Some(end + 1);
                         // The next swing, and with it the new goal of a
                         // chase, at the first update from `D + cool -
@@ -273,7 +276,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                         let swing_q = add(a.swing_q, cooldown);
                         u.cooldown_end = swing_q;
                         u.cooldown_target = a.target;
-                        u.backswing_end = add(a.hit_at.unwrap_or(0), weapon.backswing);
+                        u.backswing_end = add(a.hit_at.unwrap_or(0), backswing);
                         u.attack = Some(Attacking {
                             next,
                             resume,
@@ -507,9 +510,8 @@ fn strike(
     if !standing(&s, target) {
         let tick = s.ticks;
         let backswing = match s.objects.get(&h) {
-            Some(Object::Unit(u)) => {
-                weapon_for(&s, u.type_id, Some(target)).map_or(1, |w| ticks(w.backswing))
-            }
+            Some(Object::Unit(u)) => weapon_for(&s, u.type_id, Some(target))
+                .map_or(1, |w| ticks(slowed(&s, h, w.backswing))),
             _ => 1,
         };
         super::movement::killed(&mut s, h, tick, backswing);
@@ -882,6 +884,37 @@ fn hero_primary(state: &State, h: u32) -> u32 {
         _ => 0,
     };
     mul(ow3_math::i2r(points), state.combat.heroes.str_attack)
+}
+
+/// The time `seconds` of a damage point, backswing or cooldown of `h`'s
+/// swing divided by its attack-speed factor while a thunder clap slows it
+/// (SPEC-0037).
+fn slowed(state: &State, h: u32, seconds: u32) -> u32 {
+    super::cast::attack_slow(state, h).map_or(seconds, |speed| div(seconds, speed))
+}
+
+/// A slow of attack-speed factor `speed` starting at the queue time `now`:
+/// the time left of the running cooldown of `u` is divided by it, and a
+/// swing waiting for that cooldown starts at the new end with its damage
+/// point divided too (SPEC-0037; c-RZH-1, creep 10 at 5281).
+///
+/// PROVISIONAL: the end of a slow is not measured; the times stay.
+pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
+    let old = u.cooldown_end;
+    if f32::from_bits(old) <= f32::from_bits(now) {
+        return;
+    }
+    let end = add(now, div(sub(old, now), speed));
+    let later = ticks(sub(end, old));
+    u.cooldown_end = end;
+    u.weapon_ready += later;
+    if let Some(a) = u.attack.as_mut().filter(|a| a.swing_q == old) {
+        let point = a.hit_at.map_or(0, |h| sub(h, old));
+        let slowed = div(point, speed);
+        a.swing_q = end;
+        a.hit_at = Some(add(end, slowed));
+        a.next += later + ticks(sub(slowed, point));
+    }
 }
 
 /// The seconds between the hits of `h` with a weapon of `cooldown`: for a

@@ -557,12 +557,17 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     };
     state.orders_given = given;
     // The order that took this target, kept through re-orders on it
-    // (c-RZH-1: footmen 1 and 3 took creep 7 at 1103, 1 first).
-    if let Order::Attack { target: t } = order
-        && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-        && u.target_taken.is_none_or(|(old, _)| old != t)
-    {
-        u.target_taken = Some((t, given));
+    // (c-RZH-1: footmen 1 and 3 took creep 7 at 1103, 1 first) and lost
+    // with another order (the hero took creep 10 again at 5383).
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        match order {
+            Order::Attack { target: t } => {
+                if u.target_taken.is_none_or(|(old, _)| old != t) {
+                    u.target_taken = Some((t, given));
+                }
+            }
+            _ => u.target_taken = None,
+        }
     }
     // A new order takes the unit out of its group.
     for cluster in &mut state.clusters {

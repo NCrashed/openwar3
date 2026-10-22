@@ -234,7 +234,8 @@ impl Follow {
 struct Other {
     moving: bool,
     squared_speed: u32,
-    class: u8,
+    /// Its movement type, a key of `move_kind`.
+    kind: u8,
     /// Its group cluster, if it has one.
     group: Option<usize>,
 }
@@ -282,7 +283,7 @@ fn others(state: &State, h: u32) -> Others {
                     Other {
                         moving: false,
                         squared_speed: 0,
-                        class,
+                        kind: move_kind(state, o),
                         group: None,
                     },
                 );
@@ -350,7 +351,7 @@ fn others(state: &State, h: u32) -> Others {
             Other {
                 moving,
                 squared_speed: squared_speed(velocity),
-                class,
+                kind: move_kind(state, o),
                 group: super::movement::group_of(state, o),
             },
         );
@@ -369,6 +370,8 @@ struct Shared<'a> {
     search_only: bool,
     /// The group cluster of the unit deciding, if it has one.
     group: Option<usize>,
+    /// The movement type of the unit deciding (`move_kind`).
+    kind: u8,
     /// The red cells of the building walked to, if any.
     building: Vec<(i32, i32)>,
     /// The cells of the tree walked to, for the touch test at the end of
@@ -622,6 +625,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         })
         .unwrap_or_default();
     let group = super::movement::group_of(state, walker.handle);
+    let kind = move_kind(state, walker.handle);
     let mut shared = Shared {
         budget: &mut state.budget,
         paths: &mut state.paths,
@@ -641,6 +645,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
         }),
         tree: tree_cells,
         group,
+        kind,
     };
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
@@ -1024,7 +1029,7 @@ fn decide(
                 at: walker.here,
             };
             match shared.paths.get_mut(&b) {
-                Some(path) if !same_group && !faster && other.class == class => {
+                Some(path) if !same_group && !faster && other.kind == shared.kind => {
                     path.wait = MADE_TO_WAIT;
                     path.made = true;
                     shared
@@ -1074,6 +1079,25 @@ fn decide(
 /// at 4603 and 4609); the code path behind it was not read.
 fn member_place(follow: &Follow, otherwise: [u32; 2]) -> [u32; 2] {
     follow.stop_at.map_or(otherwise, to_world)
+}
+
+/// The movement type of unit `h` as a small key: units of different types
+/// are never made to wait for each other (SPEC-0021, "Blocked by a unit";
+/// the size class plays no part there, c-RZH-1 at 343).
+fn move_kind(state: &State, h: u32) -> u8 {
+    let kind = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or("", |t| t.move_type.as_str());
+    match kind {
+        "foot" => 0,
+        "horse" => 1,
+        "fly" => 2,
+        "hover" => 3,
+        "float" => 4,
+        "amph" => 5,
+        _ => 6,
+    }
 }
 
 /// Whether a unit of `class` at `at` (cells) touches `cells`: one of its

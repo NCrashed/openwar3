@@ -132,6 +132,9 @@ pub struct UnitType {
     /// The unit flies (`movetp` of `UnitData.slk` is `fly`; `umvt` of a
     /// map) and so reveals its whole circle (SPEC-0032).
     pub flying: bool,
+    /// Its movement type (`movetp`, `umvt`: foot, horse, fly, ...), which
+    /// decides who waits for whom (SPEC-0021, "Blocked by a unit").
+    pub move_type: String,
     /// Its level (`level` of `UnitBalance.slk`, `ulev` of a map), which
     /// sums to a creep camp's strength on the minimap (SPEC-0028).
     pub level: i32,
@@ -570,6 +573,10 @@ impl ObjectData {
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
                 unit.flying = values[8].as_deref().is_some_and(|v| v.trim() == "fly");
+                unit.move_type = values[8]
+                    .as_deref()
+                    .map(|v| v.trim().trim_matches('"').to_ascii_lowercase())
+                    .unwrap_or_default();
                 unit.race = values[9]
                     .as_deref()
                     .map(|r| r.trim().trim_matches('"').to_ascii_lowercase())
@@ -931,6 +938,7 @@ impl ObjectData {
             }
             if let Some(kind) = def.text(b"umvt") {
                 unit.flying = kind.trim() == "fly";
+                unit.move_type = kind.trim().to_ascii_lowercase();
             }
             unit.acquire = def.number(b"uacq").unwrap_or(unit.acquire);
             if let Some(name) = def.text(b"upat") {

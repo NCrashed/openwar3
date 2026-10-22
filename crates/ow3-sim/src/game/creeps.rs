@@ -290,7 +290,10 @@ fn restart_returns(state: &mut State, caller: u32, at: u32) {
         );
         if u.alive
             && u.owner == CREEPS
-            && u.creep.homebound
+            // The return is in progress from the start of its timer until
+            // the walk home ends (SPEC-0030; c-RZJ-1: ogre 14, timer from
+            // 1436, restarted by the calls after).
+            && (u.creep.homebound || u.creep.return_time.is_some())
             && dx * dx + dy * dy <= reach * reach
             && hx * hx + hy * hy <= far * far
         {

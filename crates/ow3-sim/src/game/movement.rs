@@ -2988,12 +2988,20 @@ pub(super) fn chasing(state: &State, h: u32, target: u32) -> bool {
 /// at once, the unit moves from its next update on, and at its 12th
 /// update it takes a new goal with an update standing.
 pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew_at: Option<u64>) {
-    // After the swing: where the target was at the start of the tick of
-    // the backswing end (c-RXR-1: rifleman 9, 5053).
+    // After the swing: where the target is by its position formula with
+    // the movement clock of the tick that holds the backswing end
+    // (c-RXR-1: rifleman 9, 5053; c-RXD-1: creep 6 at 6978, its backswing
+    // end in this tick).
+    let end = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
+    let clock = if real_of(end) > real_of(state.move_clock) {
+        state.move_clock
+    } else {
+        state.last_move_clock
+    };
     let at = match (renew_at, state.objects.get(&target)) {
         (Some(_), Some(Object::Unit(u))) => u.movement.map(|m| {
             let min = [state.world_bounds[0], state.world_bounds[1]];
-            absolute(m.position(state.last_move_clock), min)
+            absolute(m.position(clock), min)
         }),
         _ => None,
     };

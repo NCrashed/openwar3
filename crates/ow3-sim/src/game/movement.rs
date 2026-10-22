@@ -2656,7 +2656,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.order = Order::Work { target };
             // It turns to a tree by one step of its turn rate at most
             // (c-RYP-1: peasant 0 at 991, 0.0627 -> 0.6627).
-            if let Some(Object::Destructable(d)) = state.objects.get(&target) {
+            // A cycling worker, arrived by the arrival test, is turned to
+            // it already (peasant 0 at 4789).
+            if !super::harvest::cycling(state, h)
+                && let Some(Object::Destructable(d)) = state.objects.get(&target)
+            {
                 let at = relative([d.x, d.y], min);
                 motion(&mut m, at, false, speed, limit, turn_rate, window);
             }

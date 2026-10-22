@@ -249,6 +249,12 @@ fn hero_agents_report() {
         code(b"nkot"),
         code(b"ngno"),
         code(b"nogr"),
+        code(b"Hamg"),
+        code(b"Hpal"),
+        code(b"nogl"),
+        code(b"hwat"),
+        code(b"hwt2"),
+        code(b"hwt3"),
     ];
     // The hero, the footmen and the creeps by their order of creation.
     let ours = our_commits("c-RZH-1", 12000, |h, units, _| {
@@ -261,4 +267,37 @@ fn hero_agents_report() {
     let first = report(&game, &ours);
     eprintln!("first differences: {first:?}");
     assert!(first.is_empty(), "first differences: {first:?}");
+}
+
+/// `c-RZJ-1`: the second hero test (an Archmage, a Paladin, footmen, the
+/// water elementals and a creep camp).
+///
+/// PROVISIONAL: reports the first differences (the abilities of the
+/// test are not specified yet).
+#[test]
+fn heroes_two_agents_report() {
+    let Some(game) = game_commits("c-RZJ-1") else {
+        return;
+    };
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    let kinds = [
+        code(b"Hamg"),
+        code(b"Hpal"),
+        code(b"hfoo"),
+        code(b"nkob"),
+        code(b"nogl"),
+        code(b"ngno"),
+        code(b"nogr"),
+        code(b"hwat"),
+        code(b"hwt2"),
+        code(b"hwt3"),
+    ];
+    let ours = our_commits("c-RZJ-1", 17000, |h, units, _| {
+        units
+            .iter()
+            .filter(|u| kinds.contains(&u.type_id))
+            .position(|u| u.handle == h)
+            .map_or(-1, |i| i as i32)
+    });
+    eprintln!("first differences: {:?}", report(&game, &ours));
 }

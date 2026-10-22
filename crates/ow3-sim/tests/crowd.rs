@@ -88,6 +88,12 @@ fn play_replay(name: &str, until: u64) -> Option<Ours> {
         code(b"hfoo"),
         code(b"ngno"),
         code(b"nogr"),
+        code(b"Hamg"),
+        code(b"Hpal"),
+        code(b"nogl"),
+        code(b"hwat"),
+        code(b"hwt2"),
+        code(b"hwt3"),
     ];
     let mut index: BTreeMap<u32, i32> = BTreeMap::new();
     let mut at: BTreeMap<i32, BTreeMap<u64, [f32; 2]>> = BTreeMap::new();
@@ -412,4 +418,15 @@ fn hero_walks_report() {
         return;
     };
     assert_eq!(first, u64::MAX, "first difference at tick {first}");
+}
+
+/// `c-RZJ-1`: the second hero test.
+///
+/// PROVISIONAL: reports the first difference.
+#[test]
+fn heroes_two_walks_report() {
+    let Some(first) = report("c-RZJ-1", 17000) else {
+        return;
+    };
+    eprintln!("heroes two: first difference at tick {first}");
 }

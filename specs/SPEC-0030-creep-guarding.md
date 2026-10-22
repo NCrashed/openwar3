@@ -93,7 +93,19 @@ Read in the game, `c-RXD-1`:
 - 6667: it turns one step towards the point (5.476150 -> 5.976150) in
   its member step. After the batch, its restarted check takes unit 1.
 The case of a creep that never walked home (whether the point is then
-its start position) was not read. The creeps that answer
+its start position) was not read.
+
+**Orders taken in a backswing.** A creep that gets a new movement while
+its backswing runs does not move before the backswing ends. This holds
+for the walk back to its guard point after a kill and for answering a
+call for help. It stands until the backswing's end (`D` + the backswing
+time on the queue), and the new movement's member steps start at its
+next update. Read in the game, `c-RXD-1` creep 9:
+- 6665: its hit kills unit 3 (backswing 0.6 s).
+- 6667: it answers creep 8's call (log: a 9 1).
+- 6665 .. 6785: no commit; it stands at (388.1508, 391.1045).
+- 6785: the backswing ends (commit).
+- 6787: first member step, turning one step (5.480618 -> 5.980618). The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

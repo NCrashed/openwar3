@@ -1067,12 +1067,11 @@ fn decide(
     Steer::Stand(segment_goal)
 }
 
-/// The place a member turns to while it waits: its cluster's waypoint W,
-/// if it has one (SPEC-0025; c-RXD-1: creep 7 at 4609).
-///
-/// PROVISIONAL: used for the updates of a wait after its first; at the
-/// update that starts the wait the unit turns to its path point as before
-/// (c-RXR-1: unit 8 at 307 needs that), which is not explained yet.
+/// The place a member turns to while it goes on waiting: its cluster's
+/// waypoint W, if it has one; at the update that starts the wait it turns
+/// to its local path point instead, as it was about to step there. Read in
+/// the game in two cases (c-RXR-1: unit 8 at 307 and 313; c-RXD-1: creep 7
+/// at 4603 and 4609); the code path behind it was not read.
 fn member_place(follow: &Follow, otherwise: [u32; 2]) -> [u32; 2] {
     follow.stop_at.map_or(otherwise, to_world)
 }

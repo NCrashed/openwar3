@@ -121,7 +121,21 @@ A creep that already attacks the target named by a call does not take
 it again: its order and path stay, with no extra commit. Read in the
 game, `c-RXD-1`: creep 7, chasing unit 1, at 6787 (creep 9's check
 took unit 1 then). Creep 7 has only its ordinary walking commit there,
-no acquisition row, and its path point (387.5, 388.5) is kept. The creeps that answer
+no acquisition row, and its path point (387.5, 388.5) is kept.
+
+**Calls restart the return timer.** A call for help in the camp
+restarts the return timer (`GuardReturnTime`, 5 s) of the camp's
+creeps that are in the fight outside their zones. This holds also for
+a creep that keeps its order because it already attacks the caller's
+target. When the timer expires, the creep gives up: a stop commit, then
+the walk home. Read in the game, `c-RXD-1`, creeps 6 and 7 (chasing
+unit 1 westwards):
+- their return timers were restarted at 6667 (creep 8's call), 6763 and
+  6787 (creep 9's checks taking unit 1);
+- the last one expired at queue time 38.9292 (6787 + 1000 ticks), tick
+  7788;
+- both got a stop commit at 7788 and turned back east from 7790.
+Their guard checks (every 2 s) do not stop or restart this timer. The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once
 (creeps 6 and 7). Measured, by the distance from home logged every 4 ticks

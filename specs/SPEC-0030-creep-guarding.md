@@ -123,18 +123,25 @@ game, `c-RXD-1`: creep 7, chasing unit 1, at 6787 (creep 9's check
 took unit 1 then). Creep 7 has only its ordinary walking commit there,
 no acquisition row, and its path point (387.5, 388.5) is kept.
 
-**Calls restart the return timer.** A call for help in the camp
-restarts the return timer (`GuardReturnTime`, 5 s) of the camp's
-creeps that are in the fight outside their zones. This holds also for
-a creep that keeps its order because it already attacks the caller's
-target. When the timer expires, the creep gives up: a stop commit, then
-the walk home. Read in the game, `c-RXD-1`, creeps 6 and 7 (chasing
-unit 1 westwards):
-- their return timers were restarted at 6667 (creep 8's call), 6763 and
-  6787 (creep 9's checks taking unit 1);
-- the last one expired at queue time 38.9292 (6787 + 1000 ticks), tick
-  7788;
-- both got a stop commit at 7788 and turned back east from 7790.
+**Calls restart the return timer.** A call for help reaches every
+creep of the camp. A receiving creep whose return is still in progress
+gets its return timer (`GuardReturnTime`, 5 s) restarted, if it stands
+within `MaxGuardDistance` (1000, read in the game) of its home point
+(its start position in the camp). The return is in progress from the
+start of its return timer until its walk home ends. This also holds
+when the creep keeps its order because it already attacks the
+caller's target. The creep's zone (`GuardDistance`) plays no part.
+When the timer expires, the creep gives up: a stop commit, then the
+walk home. Read in the game, `c-RXD-1` (homes in world units: creep 6
+(100, 450), 7 (-60, 520), 8 (260, 520), 9 (100, 600)):
+- creeps 6 and 7 have their return in progress from 4557 on (their
+  walk home never ended before 8492); creeps 8 and 9 had ended theirs
+  (5917, 5761);
+- calls at 5919, 6667, 6763 and 6787 reached all four creeps, and each
+  restarted the timers of creeps 6 and 7 only, both within 1000 of
+  home;
+- the last restart (6787, q 33.9292488) expired at tick 7788;
+- creeps 6 and 7 got stop commits at 7788 and walked home from 7790.
 Their guard checks (every 2 s) do not stop or restart this timer. The creeps that answer
 draw their reaction delays like any (order 8, 6, 7, 9 here), and one
 that enters the fight outside its zone starts its return timer at once

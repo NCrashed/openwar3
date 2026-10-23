@@ -4542,6 +4542,13 @@ fn cooldown_expiries(state: &mut State) {
                     m.target = goal;
                 }
                 m.follow_check = !in_reach;
+                // A chase out of range is a new group, the newest (SPEC-0021;
+                // c-RZJ-1: footman 7's of 7232 before the Paladin's of 7218
+                // at 7250).
+                if !in_reach {
+                    state.orders_given += 1;
+                    m.given = state.orders_given;
+                }
             }
         }
     }

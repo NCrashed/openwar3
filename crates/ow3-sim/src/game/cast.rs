@@ -913,12 +913,14 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // units attacking it drop it.
         // Invisible and faster for its duration (SPEC-0040, Wind Walk;
         // c-SAK-1: the Blademaster at 400, 20 s at level 1, speed 300 to
-        // about 329.2).
+        // 330). It ends after the script timers of its last tick, whose
+        // periodic timers were started earlier (SPEC-0002; c-SAK-1: the
+        // order of 4401 refused, at the end's queue time 22.0).
         // PROVISIONAL: the bonus damage and the end at an attack or cast
         // are not done (no hit of his in c-SAK-1).
         b"AOwk" => {
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
-            let until = tick + duration(hero);
+            let until = tick + 1 + duration(hero);
             if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.wind_walk = Some(WindWalk {
                     fade: tick + super::attack::ticks(n.data[0]),

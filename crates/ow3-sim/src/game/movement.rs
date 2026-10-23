@@ -2830,6 +2830,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             let reach = mul(add(add(FOLLOW_RANGE, own), other), CELL);
                             Some(chase_of(state, leader, reach))
                         }
+                        // A walk to cast at a unit ends touching it as a chase
+                        // does (c-SAK-1: the Mountain King's Storm Bolt from 505).
+                        Order::Cast { target } => super::cast::reach(state, h, target)
+                            .map(|reach| chase_of(state, target, reach)),
                         _ => None,
                     };
                     // The reach of a gather order on a tree and the direction of the

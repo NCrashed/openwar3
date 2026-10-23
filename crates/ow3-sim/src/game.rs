@@ -803,6 +803,9 @@ pub struct State {
     /// the target in reach: no search and no look-ahead until their next
     /// group (SPEC-0021).
     quiet_paths: std::collections::BTreeSet<u32>,
+    /// The queue time up to which this tick's cooldown expiries are
+    /// handled.
+    cooldowns_done: Option<u32>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
     /// The hits of weapons without a missile, when a test asks for them:
@@ -959,6 +962,7 @@ impl State {
             paths: std::collections::BTreeMap::new(),
             path_holds: std::collections::BTreeMap::new(),
             quiet_paths: std::collections::BTreeSet::new(),
+            cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
             agent_trace: None,

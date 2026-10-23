@@ -3136,7 +3136,13 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
         })
         .collect();
     ending.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    for (_, _, h) in ending {
+    for (at, _, h) in ending {
+        // After the updates, the cooldowns that expire before this end come
+        // first (c-RZJ-1: footman 7's at 36.149391 before footman 4's
+        // reaction end at 36.152317 in 7232).
+        if until.is_none() && !first && at.is_finite() {
+            cooldown_expiries(state, Some(at.to_bits()));
+        }
         let given = state.orders_given + 1;
         state.orders_given = given;
         let (timed, target) = match state.objects.get_mut(&h) {
@@ -3346,7 +3352,7 @@ const GUARD_ACCEPT: f32 = 50.0;
 /// walking back to their guard points.
 pub(super) fn attack_moves(state: &mut State) {
     let tick = state.ticks;
-    cooldown_expiries(state);
+    cooldown_expiries(state, None);
     let back: Vec<(u32, [u32; 2])> = state
         .units
         .iter()
@@ -4493,11 +4499,18 @@ fn walking_attack_move(u: &super::Unit) -> bool {
 /// stops and searches at its next update (SPEC-0019; c-RXR-1: footman 2
 /// in 2629, footman 1 in 2689, grunt 10 in 4927; c-RXD-1: creep 8 at
 /// 10.7699).
-fn cooldown_expiries(state: &mut State) {
-    let (start, end) = (
-        real_of(state.move_clock),
-        real_of(add(state.move_clock, crate::timers::TICK)),
-    );
+/// With `until`, only those expiring up to it, the rest left for later
+/// in the tick.
+fn cooldown_expiries(state: &mut State, until: Option<u32>) {
+    let done = state.cooldowns_done.unwrap_or(state.move_clock);
+    if let Some(u) = until
+        && real_of(u) <= real_of(done)
+    {
+        return;
+    }
+    state.cooldowns_done = until;
+    let start = real_of(done);
+    let end = until.map_or(real_of(add(state.move_clock, crate::timers::TICK)), real_of);
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let due: Vec<(u32, u32, i32)> = state
         .units

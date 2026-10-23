@@ -66,6 +66,11 @@ fn remainders_of_the_reference_replay() {
 /// yet, with the reason.
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
+        "c-SAK-1.w3g",
+        "the third hero test (Mountain King, Blademaster with mirror images and wind walk): \
+         not looked at yet",
+    ),
+    (
         "c-RTW-3.w3g",
         "all path events of the log are the game's (tests/crowd.rs, to tick 5600); the \
          script generator sums differ from turn 268 on and turn 278 changes state here only: \

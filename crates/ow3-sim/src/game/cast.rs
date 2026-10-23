@@ -168,6 +168,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
     if !fits || !ready(state, h, ability, level) {
         return Some(false);
     }
+    end_wind_walk(state, h, ability);
     let casting = Casting {
         order_id,
         ability,
@@ -237,6 +238,7 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     if aim != Aim::Nothing || !ready(state, h, ability, level) {
         return Some(false);
     }
+    end_wind_walk(state, h, ability);
     // Divine Shield takes effect in the tick of the order, with no cast
     // time, and the caster is left with no order (SPEC-0045; c-RZJ-1:
     // the Paladin at 4801).
@@ -266,7 +268,11 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     // the Blademaster's attack-move ended at 400).
     // PROVISIONAL: refused while it lasts (c-SAK-1: the script's orders
     // between 400 and 4400 were not accepted, the next at 4501 was).
-    if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") && wind_walking(state, h) {
+    let lasts = state
+        .unit(Some(h))
+        .and_then(|u| u.wind_walk)
+        .is_some_and(|w| w.on(state.ticks));
+    if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") && lasts {
         return Some(false);
     }
     if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") {
@@ -318,6 +324,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
     if aim != Aim::Point || !ready(state, h, ability, level) {
         return Some(false);
     }
+    end_wind_walk(state, h, ability);
     // The same spell again while its cast runs to the effect is taken and
     // changes nothing, whatever its point; during the channel it is
     // refused (SPEC-0043, edge cases; c-RZJ-1: blizzard ordered again at
@@ -660,20 +667,54 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
 }
 
 /// Whether unit `h` is invulnerable now (SPEC-0045).
+/// A Wind Walk (SPEC-0040): the tick its fade ends and the unit is
+/// invisible, the tick it ends, and its speed bonus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindWalk {
+    fade: u64,
+    until: u64,
+    bonus: u32,
+}
+
+impl WindWalk {
+    /// Whether it lasts at `tick`.
+    pub(super) fn on(&self, tick: u64) -> bool {
+        tick < self.until
+    }
+
+    /// Whether the unit is invisible at `tick`.
+    pub(super) fn invisible(&self, tick: u64) -> bool {
+        self.fade <= tick && tick < self.until
+    }
+}
+
 /// Whether unit `h` walks invisible (SPEC-0040, Wind Walk).
 pub(super) fn wind_walking(state: &State, h: u32) -> bool {
     let tick = state.ticks;
     state
         .unit(Some(h))
         .and_then(|u| u.wind_walk)
-        .is_some_and(|(t, _)| tick < t)
+        .is_some_and(|w| w.invisible(tick))
 }
 
-/// The speed factor of unit `h`'s Wind Walk, if it walks invisible.
+/// The speed factor of unit `h`'s Wind Walk, while it lasts.
 pub(super) fn wind_walk_speed(state: &State, h: u32) -> Option<u32> {
     let tick = state.ticks;
-    let (until, bonus) = state.unit(Some(h))?.wind_walk?;
-    (tick < until).then(|| add(0x3F80_0000, bonus))
+    let w = state.unit(Some(h))?.wind_walk?;
+    w.on(tick).then(|| add(0x3F80_0000, w.bonus))
+}
+
+/// Unit `h` orders another spell: its Wind Walk ends (c-SAK-1: the
+/// Blademaster's at his Mirror Image order of 7102).
+fn end_wind_walk(state: &mut State, h: u32, ability: i32) {
+    let tick = state.ticks;
+    if base_code(state, ability) != i32::from_be_bytes(*b"AOwk")
+        && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(w) = u.wind_walk.as_mut()
+        && w.on(tick)
+    {
+        w.until = tick;
+    }
 }
 
 pub(super) fn invulnerable(state: &State, h: u32) -> bool {
@@ -740,6 +781,16 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let mut s = state.borrow_mut();
         let s = &mut *s;
         let tick = s.ticks;
+        // At the end of a Wind Walk's fade the unit's target checks stop
+        // until its next order (SPEC-0040; c-SAK-1: the Blademaster's check
+        // due at 3.01 did not run).
+        for &h in &s.units {
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&h)
+                && u.wind_walk.is_some_and(|w| w.fade == tick)
+            {
+                u.checks_off = true;
+            }
+        }
         let casting: Vec<(u32, Casting)> = s
             .units
             .iter()
@@ -869,7 +920,11 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
             let until = tick + duration(hero);
             if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-                u.wind_walk = Some((until, n.data[1]));
+                u.wind_walk = Some(WindWalk {
+                    fade: tick + super::attack::ticks(n.data[0]),
+                    until,
+                    bonus: n.data[1],
+                });
             }
             movement::target_died(s, h);
         }

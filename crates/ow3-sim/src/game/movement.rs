@@ -3599,7 +3599,7 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
         // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster
         // took no target in his first Wind Walk, 400 to 4400).
-        if u.wind_walk.is_some_and(|(t, _)| tick < t) {
+        if u.wind_walk.is_some_and(|w| w.invisible(tick)) {
             continue;
         }
         if u.paused {
@@ -4249,7 +4249,7 @@ pub(super) fn retaliate(
             u.alive
                 // Not one walking invisible (SPEC-0040; c-SAK-1: the
                 // Blademaster hit nothing).
-                && u.wind_walk.is_none_or(|(t, _)| tick >= t)
+                && u.wind_walk.is_none_or(|w| !w.invisible(tick))
                 && !swinging_back(u)
                 && !u.paused
                 && !u.creep.sleeping
@@ -4290,7 +4290,7 @@ pub(super) fn retaliate(
             && !swinging_back(u)
             && !u.paused
             && !u.creep.returning
-            && u.wind_walk.is_none_or(|(t, _)| tick >= t)
+            && u.wind_walk.is_none_or(|w| !w.invisible(tick))
             && u.casting.is_none()
             && u.stunned_until.is_none_or(|t| state.ticks >= t)
             && target != attacker)

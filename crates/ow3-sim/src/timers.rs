@@ -133,6 +133,16 @@ impl<T> TimerQueue<T> {
         id
     }
 
+    /// Starts a timer as [`start`](Self::start) does, under the start
+    /// number `id` of an earlier start: a periodic timer started again keeps
+    /// the number of its first start (SPEC-0002, "Order").
+    pub fn start_as(&mut self, timeout: u32, payload: T, id: TimerId) -> TimerId {
+        let expiry = add(self.time, clamp_timeout(timeout));
+        self.pending.insert((expiry, id.0), payload);
+        self.expiries.insert(id, expiry);
+        id
+    }
+
     /// Removes a pending timer and returns its payload.
     pub fn cancel(&mut self, id: TimerId) -> Option<T> {
         let expiry = self.expiries.remove(&id)?;
@@ -294,6 +304,27 @@ mod tests {
         for ((_, got), measured) in log.iter().zip([1.0001, 1.499, 1.5, 1.5, 1.5, 1.501]) {
             assert_measured(*got, measured);
         }
+    }
+
+    /// A periodic timer started again keeps the number of its first start:
+    /// with the same expiry it fires before a timer started after that
+    /// first start (c-SAK-1: the script's 0.5 s timer before Wind Walk's
+    /// buff timer at 22.0).
+    #[test]
+    fn a_periodic_restart_keeps_its_first_start() {
+        let mut queue = TimerQueue::new();
+        let periodic = queue.start(bits(0.5), "periodic");
+        queue.start(bits(1.0), "one-shot");
+        let mut log = Vec::new();
+        while log.len() < 3 {
+            queue.tick(|q, fired| {
+                log.push(fired.payload);
+                if fired.payload == "periodic" {
+                    q.start_as(bits(0.5), "periodic", periodic);
+                }
+            });
+        }
+        assert_eq!(log, ["periodic", "periodic", "one-shot"]);
     }
 
     /// Test T1c of SPEC-0002: a periodic 0.0001 s timer fires several times

@@ -646,6 +646,9 @@ pub struct Timer {
     /// Set by the first start; a timer never started reads 0 throughout.
     started: bool,
     periodic: bool,
+    /// The start number of its first start, kept by a periodic timer's
+    /// restarts (SPEC-0002).
+    first: Option<crate::timers::TimerId>,
     callback: Option<usize>,
     /// Remaining time of a paused timer.
     paused: Option<u32>,
@@ -1117,6 +1120,17 @@ impl State {
     /// Starts a run of `length` seconds. A run of 120 s or more is queued
     /// as parts (SPEC-0002).
     fn start_timer(&mut self, handle: u32, length: u32) {
+        self.start_timer_as(handle, length, None);
+    }
+
+    /// [`start_timer`](Self::start_timer), a periodic restart under the
+    /// start number `first` of the timer's first start.
+    fn start_timer_as(
+        &mut self,
+        handle: u32,
+        length: u32,
+        first_start: Option<crate::timers::TimerId>,
+    ) {
         let length = raise_timeout(length);
         let (n, rest) = split_timeout(length);
         let (first, parts_left, last_part) = if n == 0 {
@@ -1124,8 +1138,12 @@ impl State {
         } else {
             (LONG_PART, n - 1, Some(rest))
         };
-        let id = self.timers.start(first, handle);
+        let id = match first_start {
+            Some(n) => self.timers.start_as(first, handle, n),
+            None => self.timers.start(first, handle),
+        };
         if let Some(timer) = self.timer(Some(handle)) {
+            timer.first = Some(first_start.unwrap_or(id));
             timer.queued = Some(id);
             timer.paused = None;
             timer.started = true;
@@ -1609,12 +1627,14 @@ impl<'a> Game<'a> {
         // destroyed or paused it (SPEC-0002). The queue time is still that
         // expiry.
         let mut state = self.state.borrow_mut();
+        // It keeps the start number of its first start (SPEC-0002; c-SAK-1:
+        // the script's 0.5 s timer before Wind Walk's at 22.0).
         let restart = state
             .timer(Some(handle))
             .filter(|t| t.periodic && t.queued.is_none() && t.paused.is_none())
-            .map(|t| t.timeout);
-        if let Some(period) = restart {
-            state.start_timer(handle, period);
+            .map(|t| (t.timeout, t.first));
+        if let Some((period, first)) = restart {
+            state.start_timer_as(handle, period, first);
         }
     }
 

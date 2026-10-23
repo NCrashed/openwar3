@@ -67,7 +67,11 @@ All arithmetic on timer times below is the engine arithmetic of SPEC-0004
   Tested: 299, 299.999, 300, 301, 310 and 450 s all fire at the requested
   second.
 - **Order.** Pending timers are ordered by expiry `e`; equal expiries are
-  ordered by the start counter, so the earlier start fires first.
+  ordered by the start counter, so the earlier start fires first. A
+  periodic timer's re-arm takes no new number: it keeps the number of
+  its first start. `c-SAK-1`: the script's 0.5 s timer (first started
+  at 1.5 s) and a 20 s buff timer started at 2.0 s both expired at
+  22.0; the script's timer fired first.
 - **Tick.** At each simulation tick the queue computes
   `q1 = add(q, 0x3BA3D70A)` (the tick length). Then, while the earliest
   pending timer has `e <= q1`: that timer is removed, `q` is set to its `e`,

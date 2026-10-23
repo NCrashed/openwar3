@@ -829,6 +829,13 @@ An idle unit with a weapon attacks an enemy unit on its own:
   `acquire + c_a + c_t` away (`acquire` from `Units\UnitWeapons.slk`,
   collisions as above): a footman (`acquire` 500, collision 31) took an
   enemy footman copy (collision 31, `Player(1)`) at 562 and not at 563.
+  Creeps use the same range (probe `c-SAN`: kobolds of `Player(12)`
+  took footmen on hold position up to 561 away, not at 565). The
+  distance is taken to the target's path position as of its last
+  update (its last commit, SPEC-0018), not to the position a script
+  reads every tick: in `c-SAK-1` kobold 10's check in tick 678 (queue
+  time 3.386470) found nothing, since footman 7's commit of tick 673 was
+  563.86 away; its next commit (tick 679, 555.86) came after the check.
   `Player(15)` (neutral passive) is not an enemy of `Player(0)`
   (`IsUnitEnemy` false).
 - **Checks.** Each unit with a weapon checks for targets on its own

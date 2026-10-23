@@ -538,8 +538,12 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
 
 /// The most creeps that join one group (SPEC-0030, "Groups").
 const GROUP_SIZE: usize = 12;
-/// How near the first living member of a group a creep must be to join it.
-const GROUP_REACH: f32 = 676.0;
+/// How near the first living member of a group a creep must be to join it:
+/// 26 path cells, the 676 of SPEC-0030 being its square (c-SAK-1: the
+/// second camp, 800 from the first, joined the first camp's group).
+///
+/// PROVISIONAL: inferred from the relay of 706 reaching both camps.
+const GROUP_REACH: f32 = 26.0 * 32.0;
 
 /// New unit `h` joins a group if it is a creep (SPEC-0030, "Groups"): the
 /// nearest group that has had fewer than 12 joiners and whose first living

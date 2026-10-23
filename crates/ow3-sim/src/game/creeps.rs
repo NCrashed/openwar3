@@ -159,8 +159,8 @@ pub(super) fn wake_on_hit(state: &mut State, victim: u32, attacker: u32) {
     }
 }
 
-/// The idle creeps within `CreepCallForHelp` of creep `caller`, in the
-/// order of their creation.
+/// The idle creeps within `CreepCallForHelp` and their collision size of
+/// creep `caller`, the caller among them, in the order of their creation.
 fn camp(state: &State, caller: u32) -> Vec<u32> {
     let Some(c) = state.unit(Some(caller)) else {
         return Vec::new();
@@ -171,7 +171,6 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
         .units
         .iter()
         .copied()
-        .filter(|&h| h != caller)
         .filter(|&h| match state.objects.get(&h) {
             Some(Object::Unit(u)) => {
                 let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
@@ -185,18 +184,31 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
                     && (u.creep.returning
                         || u.creep.homebound
                         || u.movement.is_none_or(|m| !m.ordered()))
-                    && dx * dx + dy * dy <= reach * reach
+                    // Within the call's radius plus its own collision size
+                    // (c-SAK-1: ogre 13's call took kobolds 14 and 15,
+                    // 618.5 away).
+                    && {
+                        let r = reach
+                            + state
+                                .data
+                                .units
+                                .get(&u.type_id)
+                                .map_or(0.0, |t| f32::from_bits(t.collision));
+                        dx * dx + dy * dy <= r * r
+                    }
             }
             _ => false,
         })
         .collect()
 }
 
-/// Creep `caller` acquired `target`: it enters the fight, and the idle
-/// creeps of its camp come too, in the same tick, in the order of the
-/// grid of SPEC-0019 ("Order of the responders"); each that comes calls
-/// in turn, so a chain reaches creeps beyond the caller, after all of the
-/// caller's. Their reaction delays count from `from` on the timer queue
+/// Creep `caller` acquired `target`: it enters the fight, and the other
+/// living members of its group, in their order of joining, each make a
+/// call of their own unless their 0.5 s call timer runs; the idle creeps
+/// a call reaches, the member among them, take the target in the order
+/// of the grid of SPEC-0019 ("Order of the responders"). Those that come
+/// make no call of their own (SPEC-0030, "Creep groups"; c-SAK-1: kobold
+/// 8 at 706, both camps in the game's order). Their reaction delays count from `from` on the timer queue
 /// (the expiry of the caller's check), or from this tick. Gives the creeps
 /// that came, in that order.
 pub(super) fn call_for_help(
@@ -213,9 +225,22 @@ pub(super) fn call_for_help(
     restart_returns(state, caller, at);
     enter_fight(state, caller, at);
     let mut came = Vec::new();
-    let mut callers = std::collections::VecDeque::from([caller]);
+    let callers: Vec<u32> = group_of(state, caller)
+        .into_iter()
+        .filter(|&m| m != caller)
+        .collect();
     let mut reached = Vec::new();
-    while let Some(c) = callers.pop_front() {
+    let now_q = f32::from_bits(state.event_time.unwrap_or(at));
+    for c in callers {
+        let Some(cu) = state.unit(Some(c)).filter(|u| u.alive) else {
+            continue;
+        };
+        if now_q < f32::from_bits(cu.call_until) {
+            continue;
+        }
+        if let Some(Object::Unit(cu)) = state.objects.get_mut(&c) {
+            cu.call_until = (now_q + movement::CREEP_CALL_COOLDOWN).to_bits();
+        }
         let near: Vec<u32> = camp(state, c)
             .into_iter()
             .filter(|h| *h != caller && !came.contains(h))
@@ -254,7 +279,6 @@ pub(super) fn call_for_help(
                     enter_fight(state, h, at);
                 }
                 came.push(h);
-                callers.push_back(h);
             }
         }
     }

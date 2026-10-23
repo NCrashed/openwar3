@@ -4226,7 +4226,7 @@ pub(super) const IMPACT_REACH: f32 = 150.0;
 /// Seconds after a call for help in which the caller makes no other.
 const CALL_COOLDOWN: f32 = 3.0;
 /// A creep calls at most once in 0.5 s (SPEC-0030; c-RZJ-1: creep 9).
-const CREEP_CALL_COOLDOWN: f32 = 0.5;
+pub(super) const CREEP_CALL_COOLDOWN: f32 = 0.5;
 /// How far a remembered attacker of a call for help is taken.
 const REMEMBERED_REACH: f32 = 2000.0;
 

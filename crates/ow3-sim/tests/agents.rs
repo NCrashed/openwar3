@@ -299,3 +299,31 @@ fn heroes_two_agents_report() {
     let first = report(&game, &ours);
     assert!(first.is_empty(), "first differences: {first:?}");
 }
+
+/// `c-SAK-1`: the third hero test (a Mountain King, a Blademaster with
+/// Wind Walk and mirror images, footmen and two creep camps).
+///
+/// PROVISIONAL: reports the first differences (Mirror Image is not done).
+#[test]
+fn heroes_three_agents_report() {
+    let Some(game) = game_commits("c-SAK-1") else {
+        return;
+    };
+    let code = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    let kinds = [
+        code(b"Hmkg"),
+        code(b"Obla"),
+        code(b"hfoo"),
+        code(b"nkob"),
+        code(b"ngno"),
+        code(b"nogr"),
+    ];
+    let ours = our_commits("c-SAK-1", 12000, |h, units, _| {
+        units
+            .iter()
+            .filter(|u| kinds.contains(&u.type_id))
+            .position(|u| u.handle == h)
+            .map_or(-1, |i| i as i32)
+    });
+    eprintln!("first differences: {:?}", report(&game, &ours));
+}

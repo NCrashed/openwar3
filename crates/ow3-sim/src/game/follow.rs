@@ -302,6 +302,12 @@ fn others(state: &State, h: u32) -> Others {
         let Some(Object::Unit(u)) = state.objects.get(&o) else {
             continue;
         };
+        // A unit in Wind Walk is in no one's way, from its cast on
+        // (SPEC-0040; c-SAK-1: footman 4 walked past the standing
+        // Blademaster at 433, before his fade ended).
+        if u.wind_walk.is_some_and(|w| w.on(state.ticks)) {
+            continue;
+        }
         // A worker in the gathering cycle is seen by no one (SPEC-0029).
         if !u.alive || u.hidden || super::harvest::passes_through(state, o) {
             continue;

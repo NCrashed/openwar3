@@ -261,6 +261,14 @@ fn others(state: &State, h: u32) -> Others {
         by_cell: HashMap::new(),
         units: HashMap::new(),
     };
+    // A unit in Wind Walk sees no one in its way either (SPEC-0040;
+    // c-SAK-1: the Blademaster walked through kobold 9 at 847).
+    if state
+        .unit(Some(h))
+        .is_some_and(|u| u.wind_walk.is_some_and(|w| w.on(state.ticks)))
+    {
+        return others;
+    }
     // Nor does such a worker see any unit (SPEC-0029), but for its searches
     // the workers waiting at a mine are in the way (c-RXI-1: worker 4's
     // search of 1279 touched two of them).

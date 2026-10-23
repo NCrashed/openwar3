@@ -504,6 +504,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         return false;
     }
     let busy = u.movement.filter(|m| m.ordered());
+    state.quiet_paths.remove(&h);
     let given = state.orders_given + 1;
     let moving = match busy {
         // Taken at the next update, which the unit keeps.
@@ -3205,7 +3206,14 @@ pub(super) fn chasing(state: &State, h: u32, target: u32) -> bool {
 /// (SPEC-0019): the goal is where the target is now, its path is searched
 /// at once, the unit moves from its next update on, and at its 12th
 /// update it takes a new goal with an update standing.
-pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew_at: Option<u64>) {
+pub(super) fn chase(
+    state: &mut State,
+    h: u32,
+    target: u32,
+    order_id: i32,
+    renew_at: Option<u64>,
+    in_reach: bool,
+) {
     // After the swing: where the target is by its position formula with
     // the movement clock of the tick that holds the backswing end
     // (c-RXR-1: rifleman 9, 5053; c-RXD-1: creep 6 at 6978, its backswing
@@ -3276,7 +3284,13 @@ pub(super) fn chase(state: &mut State, h: u32, target: u32, order_id: i32, renew
             arrive: None,
             place: None,
         };
-        follow::search(state, &walker, tick);
+        // Right after a swing with the target in reach the new group is
+        // not handled: no search (SPEC-0021; c-RZJ-1: footman 2 at 7210).
+        if in_reach {
+            follow::quiet(state, h);
+        } else {
+            follow::search(state, &walker, tick);
+        }
     }
 }
 

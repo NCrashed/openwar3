@@ -421,6 +421,7 @@ pub struct PathEvent {
 /// search is held it stands and turns to its goal (c-RXD-1: creep 9 from
 /// 8018 to 8066).
 pub(super) fn new_group(state: &mut State, h: u32) {
+    state.quiet_paths.remove(&h);
     if let Some(f) = state.paths.get_mut(&h) {
         f.new_group = true;
     }
@@ -486,6 +487,12 @@ pub fn search(state: &mut State, walker: &Walker, tick: u64) {
 fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: bool) -> Steer {
     if state.grid.is_none() {
         return Steer::Walk(walker.order);
+    }
+    // A group made by the chase right after a swing, its target in reach,
+    // is not handled: no search, no look-ahead (SPEC-0021; c-RZJ-1:
+    // footman 2 from 7210, the elemental from 7244).
+    if state.quiet_paths.contains(&walker.handle) {
+        return Steer::Stand(walker.order);
     }
     let (at, order_cells) = (to_cells(walker.here), to_cells(walker.order));
     // The high-level search ignores units, and the footprint of the
@@ -1264,10 +1271,18 @@ fn farthest_seen(
 /// then (c-RZJ-1: the Paladin at his cooldown end 7218, last search 7190,
 /// searched at 7250).
 pub(super) fn regroup(state: &mut State, h: u32) {
+    state.quiet_paths.remove(&h);
     let tick = state.ticks;
     if let Some(f) = state.paths.remove(&h)
         && f.hold_until > tick
     {
         state.path_holds.insert(h, f.hold_until);
     }
+}
+
+/// Unit `h`'s new group comes from the chase right after a swing with its
+/// target in reach: its path is not handled until its next group
+/// (SPEC-0021).
+pub(super) fn quiet(state: &mut State, h: u32) {
+    state.quiet_paths.insert(h);
 }

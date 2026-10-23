@@ -216,7 +216,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 // A chase that took its new goal at this update searches
                 // it at the next one (SPEC-0019, "After the swing").
                 if !super::movement::chasing(s, h, a.target) {
-                    super::movement::chase(s, h, a.target, a.order_id, None);
+                    super::movement::chase(s, h, a.target, a.order_id, None, false);
                 }
                 continue;
             }
@@ -360,7 +360,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
         {
             // A target in reach keeps the swing timed by the cooldown.
             let in_reach = super::movement::reaches(&s, h, a.target);
-            super::movement::chase(&mut s, h, a.target, a.order_id, a.renew_at);
+            super::movement::chase(&mut s, h, a.target, a.order_id, a.renew_at, in_reach);
             if in_reach && let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.attack = Some(a);
             }

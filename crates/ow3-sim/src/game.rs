@@ -799,6 +799,10 @@ pub struct State {
     /// The held searches of units whose path went with a new group: the
     /// tick their next search may run (SPEC-0019, "A held search").
     path_holds: std::collections::BTreeMap<u32, u64>,
+    /// Units whose group was made by the chase right after a swing with
+    /// the target in reach: no search and no look-ahead until their next
+    /// group (SPEC-0021).
+    quiet_paths: std::collections::BTreeSet<u32>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
     /// The hits of weapons without a missile, when a test asks for them:
@@ -954,6 +958,7 @@ impl State {
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_holds: std::collections::BTreeMap::new(),
+            quiet_paths: std::collections::BTreeSet::new(),
             path_trace: None,
             hit_trace: None,
             agent_trace: None,

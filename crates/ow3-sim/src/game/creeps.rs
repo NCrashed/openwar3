@@ -539,10 +539,9 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
 /// The most creeps that join one group (SPEC-0030, "Groups").
 const GROUP_SIZE: usize = 12;
 /// How near the first living member of a group a creep must be to join it:
-/// 26 path cells, the 676 of SPEC-0030 being its square (c-SAK-1: the
-/// second camp, 800 from the first, joined the first camp's group).
-///
-/// PROVISIONAL: inferred from the relay of 706 reaching both camps.
+/// 26 path cells, CreepCampPathingCellDistance, the 676 of SPEC-0030 being
+/// its square; the distance must be below it (c-SAK-1: kobold 14, 800 from
+/// kobold 8, joined its group; kobold 15, 854, started another).
 const GROUP_REACH: f32 = 26.0 * 32.0;
 
 /// New unit `h` joins a group if it is a creep (SPEC-0030, "Groups"): the
@@ -566,7 +565,7 @@ pub(super) fn join_group(state: &mut State, h: u32) {
         };
         let (dx, dy) = (f32::from_bits(first.x) - x, f32::from_bits(first.y) - y);
         let distance = dx * dx + dy * dy;
-        if distance <= GROUP_REACH * GROUP_REACH && best.is_none_or(|(d, _)| distance < d) {
+        if distance < GROUP_REACH * GROUP_REACH && best.is_none_or(|(d, _)| distance < d) {
             best = Some((distance, i));
         }
     }

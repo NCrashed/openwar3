@@ -94,6 +94,7 @@ fn play_replay(name: &str, until: u64) -> Option<Ours> {
         code(b"hwat"),
         code(b"hwt2"),
         code(b"hwt3"),
+        code(b"Obla"),
     ];
     let mut index: BTreeMap<u32, i32> = BTreeMap::new();
     let mut at: BTreeMap<i32, BTreeMap<u64, [f32; 2]>> = BTreeMap::new();
@@ -428,4 +429,16 @@ fn heroes_two_walks_report() {
         return;
     };
     assert_eq!(first, u64::MAX, "first difference at tick {first}");
+}
+
+/// `c-SAK-1`: the third hero test (a Mountain King, a Blademaster with
+/// Wind Walk and mirror images, footmen and two creep camps).
+///
+/// PROVISIONAL: reports the first difference (Mirror Image is not done).
+#[test]
+fn heroes_three_walks_report() {
+    let Some(first) = report("c-SAK-1", 12000) else {
+        return;
+    };
+    eprintln!("heroes three: first difference at tick {first}");
 }

@@ -1497,6 +1497,7 @@ impl<'a> Game<'a> {
         // with them by expiry.
         if let Some(at) = at {
             attack::hits_before(&mut self.vm, &self.state, Some(at));
+            movement::resumes_before(&mut self.state.borrow_mut(), at);
         }
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);

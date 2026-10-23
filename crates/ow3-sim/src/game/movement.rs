@@ -1608,6 +1608,7 @@ fn point_order_taken(
             point: target,
             next_check: add(state.timers.time(), AFTER_DEATH),
             resume_at: None,
+            resume_q: None,
         });
         set_attack_move(state, h, attack_move);
     }
@@ -1805,6 +1806,11 @@ pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
 /// A new point order stops a walking unit at once; it starts again as
 /// from standing at its next update (SPEC-0019, "Stop, hold position and
 /// new orders while walking").
+/// [`freeze`] for other modules.
+pub(super) fn freeze_now(state: &mut State, h: u32) {
+    freeze(state, h);
+}
+
 fn freeze(state: &mut State, h: u32) {
     let (clock, later) = (state.move_clock, state.player_orders);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
@@ -1827,6 +1833,26 @@ fn freeze(state: &mut State, h: u32) {
         m.velocity = [0, 0];
         m.walking = false;
         let record = (state.ticks, h, m.origin, m.velocity, m.heading, [0, 0]);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push(record);
+        }
+    }
+}
+
+/// Walking unit `h` stops where it is at queue time `at`.
+fn stop_at(state: &mut State, h: u32, at: u32) {
+    let tick = state.ticks;
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+        && m.walking
+    {
+        m.commit(at);
+        m.velocity = [0, 0];
+        m.walking = false;
+        let at = absolute(m.origin, min);
+        (u.x, u.y) = (at[0], at[1]);
+        let record = (tick, h, m.origin, m.velocity, m.heading, [0, 0]);
         if let Some(trace) = state.agent_trace.as_mut() {
             trace.push(record);
         }
@@ -2327,6 +2353,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         } else {
                             motion(&mut m, place, false, speed, limit, turn_rate, window);
                             cast_turn = true;
+                            // Turning in place it has no goal (c-RZJ-1: the
+                            // Paladin's Holy Light from 7808).
+                            m.aim = [0, 0];
                         }
                     } else {
                         m.target = at;
@@ -3322,6 +3351,9 @@ pub struct AttackMove {
     /// The expiry of its next check on the timer queue.
     next_check: u32,
     resume_at: Option<u64>,
+    /// After a target's death in a backswing, the queue time of that
+    /// backswing's end, when the move is taken up again.
+    resume_q: Option<u32>,
 }
 
 fn set_attack_move(state: &mut State, h: u32, attack_move: Option<AttackMove>) {
@@ -3345,7 +3377,10 @@ pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
     }
 }
 
-/// Within this distance of its guard point a unit does not walk back.
+/// The value of a walk back to the guard point: within it plus its own
+/// collision size a unit does not walk back, an equal distance counting as
+/// there (SPEC-0019; c-RZJ-1: elemental 16, collision 32, 79.9 from its
+/// point at 2625).
 const GUARD_ACCEPT: f32 = 50.0;
 
 /// Attack-moves going on after a kill, and ending at their point; units
@@ -3377,7 +3412,13 @@ pub(super) fn attack_moves(state: &mut State) {
             real_of(u.x) - real_of(home[0]),
             real_of(u.y) - real_of(home[1]),
         );
-        if idle && dx * dx + dy * dy > GUARD_ACCEPT * GUARD_ACCEPT {
+        let accept = GUARD_ACCEPT
+            + state
+                .data
+                .units
+                .get(&u.type_id)
+                .map_or(0.0, |t| real_of(t.collision));
+        if idle && dx * dx + dy * dy > accept * accept + 1e-3 {
             order(state, h, Order::Point, 0, home);
         }
     }
@@ -3391,18 +3432,7 @@ pub(super) fn attack_moves(state: &mut State) {
         .collect();
     for (h, a) in units {
         if a.resume_at == Some(tick) {
-            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-                u.attack = None;
-            }
-            order(state, h, Order::Point, ORDER_ATTACK, a.point);
-            set_attack_move(
-                state,
-                h,
-                Some(AttackMove {
-                    resume_at: None,
-                    ..a
-                }),
-            );
+            take_up(state, h, a);
             continue;
         }
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
@@ -3692,8 +3722,20 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         };
         // A walking unit stops for its reaction delay (c-RXR-1: footman 2
         // in 2581).
+        // An idle unit with no walk back pending stores where it stands as
+        // its guard point when its check acquires (SPEC-0019; c-RZJ-1:
+        // elemental 16 at 2625 and 3825; c-RXR-1: grunt 14, walking back at
+        // 4813, keeps its point). A creep keeps its own (SPEC-0030).
+        let standing = state.unit(Some(h)).is_some_and(|u| u.movement.is_none());
         freeze(state, h);
         if order(state, h, Order::Attack { target }, order_id, at) {
+            if idle
+                && standing
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && u.owner != super::creeps::CREEPS
+            {
+                u.home = [u.x, u.y];
+            }
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
@@ -4492,6 +4534,49 @@ fn walking_attack_move(u: &super::Unit) -> bool {
             .is_some_and(|m| m.order == Order::Point && m.ordered())
 }
 
+/// Unit `h` takes up its attack-move `a` again after a backswing.
+fn take_up(state: &mut State, h: u32, a: AttackMove) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.attack = None;
+    }
+    order(state, h, Order::Point, ORDER_ATTACK, a.point);
+    set_attack_move(
+        state,
+        h,
+        Some(AttackMove {
+            resume_at: None,
+            resume_q: None,
+            ..a
+        }),
+    );
+}
+
+/// The attack-moves taken up again at backswing ends before the update time
+/// `at`: before the updates (SPEC-0018; c-RZJ-1: the Archmage at 37.40833,
+/// before the update of 7484).
+pub(super) fn resumes_before(state: &mut State, at: u32) {
+    let due: Vec<(u32, AttackMove)> = state
+        .units
+        .iter()
+        .filter_map(|&h| match state.objects.get(&h) {
+            Some(Object::Unit(u)) if u.alive => u.attack_move.map(|a| (h, a)),
+            _ => None,
+        })
+        .filter(|(_, a)| a.resume_q.is_some_and(|q| real_of(q) <= real_of(at)))
+        .collect();
+    for (h, a) in due {
+        take_up(state, h, a);
+        // Before the updates of this tick it takes part in them.
+        let tick = state.ticks;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+            && m.next_update > tick
+        {
+            m.next_update = tick;
+        }
+    }
+}
+
 /// The cooldowns that expire in this tick for units attacking another
 /// target than that of their last swing: each unit is tested with its
 /// target's position now; in range of the attack and turned within 0.2
@@ -4640,6 +4725,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             {
                 if left > 0.0 {
                     a.resume_at = Some(at);
+                    a.resume_q = Some(from);
                 } else {
                     walk_on = Some(a.point);
                 }
@@ -4668,6 +4754,10 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.attack = None;
             }
+            // A walker stops where it is at the death (c-RZJ-1: footmen 4
+            // and 7 at the Ogre Lord's death in 7430, standing for the
+            // searches of that tick).
+            stop_at(state, h, now);
             order(state, h, Order::Point, ORDER_ATTACK, point);
         }
         if own {

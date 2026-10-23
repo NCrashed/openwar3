@@ -270,10 +270,7 @@ fn hero_agents_report() {
 }
 
 /// `c-RZJ-1`: the second hero test (an Archmage, a Paladin, footmen, the
-/// water elementals and a creep camp).
-///
-/// PROVISIONAL: reports the first differences (the abilities of the
-/// test are not specified yet).
+/// water elementals and a creep camp): the commits match.
 #[test]
 fn heroes_two_agents_report() {
     let Some(game) = game_commits("c-RZJ-1") else {
@@ -299,5 +296,6 @@ fn heroes_two_agents_report() {
             .position(|u| u.handle == h)
             .map_or(-1, |i| i as i32)
     });
-    eprintln!("first differences: {:?}", report(&game, &ours));
+    let first = report(&game, &ours);
+    assert!(first.is_empty(), "first differences: {first:?}");
 }

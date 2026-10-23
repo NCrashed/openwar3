@@ -420,13 +420,12 @@ fn hero_walks_report() {
     assert_eq!(first, u64::MAX, "first difference at tick {first}");
 }
 
-/// `c-RZJ-1`: the second hero test.
-///
-/// PROVISIONAL: reports the first difference.
+/// `c-RZJ-1`: the second hero test (an Archmage, a Paladin, footmen, the
+/// water elementals and a creep camp): the path events match.
 #[test]
 fn heroes_two_walks_report() {
     let Some(first) = report("c-RZJ-1", 17000) else {
         return;
     };
-    eprintln!("heroes two: first difference at tick {first}");
+    assert_eq!(first, u64::MAX, "first difference at tick {first}");
 }

@@ -203,6 +203,9 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         set(state);
         start(state, h, tick);
     } else if in_range {
+        // A walker stops where it is (c-RZJ-1: the Paladin's Holy Light
+        // at 7802, a stop commit in that tick).
+        movement::freeze_now(state, h);
         movement::stop(state, h);
         set(state);
         if !movement::cast_order(state, h, target, order_id) {

@@ -1017,14 +1017,46 @@ An idle unit with a weapon attacks an enemy unit on its own:
   attack has its generator 9 draw and its reaction delay. A unit on
   attack-move also takes up its move to the point again at that moment
   (a new search towards the point at its next update, which may come
-  before the check).
+  before the check). Taking up the move stops the unit where it is at
+  that moment (the death's time, or the backswing's end): a walker
+  that was still chasing makes no further motion in the ticks up to
+  its next update, and the units map used by other units' searches in
+  between holds it at that place. `c-RZJ-1`: the Ogre Lord died at
+  queue time 37.137806, before the updates of tick 7430; footman 4,
+  the Paladin, footman 7 and another footman took up their attack-move
+  to (300, 0) at that time, each searched at its update of 7430, and
+  the search of footman 4 (56 iterations) went round footman 7 standing
+  at its stop position.
   An idle unit that acquired the target takes up the walk back to its
-  guard point (the place where it stood or was placed; the stored entry
-  held that point and the value 50) in the same way: grunt 14 in
+  guard point (the stored entry: a point and the value 50, see below)
+  in the same way: grunt 14 in
   `c-RXR-1` lost its target in its backswing, the backswing ended at
   24.0499172 (tick 4811), at its update of tick 4813 it searched
   towards its start point (400, 150), and the 0.01 s check later in
   that tick gave it footman 2 (reaction delay 0.156090).
+  **Already there.** Taking up the walk back first tests whether the
+  unit is at its point: it is if the squared distance from the unit's
+  path position to the point, in path cells, is less than
+  `(value / 32 + c)^2`, `c` its collision size in cells (footman
+  31 / 32, a hero, grunt or Water Elemental 1.0, Ogre Lord 1.5), or
+  equal to it within a tiny tolerance. So the reach is value +
+  collision size (82 for a unit of collision 32). A unit that is there
+  does not move and is plainly idle again. Grunt 14 above was 170
+  from its point and walked. Water Elemental 16 of `c-RZJ-1` lost its
+  target in its backswing; at the backswing end 13.109992 its point
+  (-395.0, 55.25), the summon point, was 79.9 away: squared distance
+  6.2413 < 2.5625^2 = 6.566406, so it stood.
+  **Writing the entry.** An acquisition by the unit's own periodic
+  check, when the unit is idle with no walk back pending, writes the
+  entry anew with the unit's position at that moment and the value 50.
+  An acquisition while a walk back is the unit's order does not: grunt
+  14's check above left its point at (400, 150). Water Elemental 16 of
+  `c-RZJ-1` had its entry written at 3.919724 (its first acquisition,
+  at the summon point), 13.119991 (the check right after the walk back
+  above ended at once) and 19.119989, both at (-315.168, 51.0146), the
+  place where it had stood since the end of its first approach (tick
+  883). At the Ogre Lord's death (37.137806) it took up the walk back
+  to that point, was there, and stood.
   Measured in `c-RXR-1`:
   - footman 4 died in the missile part of tick 2360 (now 11.7990208);
     grunts 14, 15 and trolls 19, 18 had their checks at 11.8090200

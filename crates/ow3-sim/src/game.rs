@@ -688,6 +688,9 @@ struct Context {
     trained_type: Option<i32>,
     /// `GetIssuedOrderId` (SPEC-0027).
     issued_order: Option<i32>,
+    /// `GetSummonedUnit` and `GetSummoningUnit` (SPEC-0044).
+    summoned_unit: Option<u32>,
+    summoning_unit: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -874,6 +877,9 @@ pub struct State {
     /// Buildings started (false) and finished (true) in this tick, whose
     /// events run after the timers (SPEC-0026).
     constructions: Vec<(bool, u32)>,
+    /// Units summoned in this tick: (summoner, summoned), for their events
+    /// (SPEC-0044).
+    summons: Vec<(u32, u32)>,
     /// The gold mines being worked, and the workers that reached their
     /// mine, tree (false) or drop-off (true) at the updates of this tick
     /// (SPEC-0029).
@@ -988,6 +994,7 @@ impl State {
             engine_started: 0,
             in_tick: false,
             constructions: Vec::new(),
+            summons: Vec::new(),
             mines: BTreeMap::new(),
             harvest_reached: Vec::new(),
             deliveries: Vec::new(),
@@ -1537,6 +1544,7 @@ impl<'a> Game<'a> {
         attack::hits(&mut self.vm, &self.state);
         // Casts of abilities (SPEC-0035).
         cast::tick(&mut self.vm, &self.state);
+        widgets::summons(&mut self.vm, &self.state);
         // Creeps waking, giving up their chases and home again (SPEC-0030).
         creeps::tick(&mut self.state.borrow_mut());
         // What the units see (SPEC-0032).

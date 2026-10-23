@@ -437,6 +437,79 @@ pub(super) fn create_unit(
     Some(h)
 }
 
+const EVENT_PLAYER_UNIT_SUMMON: i32 = 47;
+const EVENT_UNIT_SUMMON: i32 = 84;
+
+/// Runs the triggers of `EVENT_PLAYER_UNIT_SUMMON` for the units summoned
+/// in this tick, for the summoned unit's player, then `EVENT_UNIT_SUMMON`
+/// of the summoner (SPEC-0044). The filter sees the summoner as
+/// `GetFilterUnit`; in the actions `GetTriggerUnit` is the summoned unit,
+/// or the summoner in the unit event (probe c-SAM).
+///
+/// PROVISIONAL: the order of the two events in the tick.
+pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let queued = std::mem::take(&mut state.borrow_mut().summons);
+    for (summoner, summoned) in queued {
+        let (registrations, owner) = {
+            let mut state = state.borrow_mut();
+            let Some(owner) = state.unit(Some(summoned)).map(|u| u.owner) else {
+                continue;
+            };
+            let owner_handle = state.player_handle(owner);
+            (state.events.clone(), (owner, owner_handle))
+        };
+        for registration in &registrations {
+            if let Registration::PlayerUnit {
+                trigger,
+                player,
+                event: e,
+                filter,
+            } = *registration
+                && e == EVENT_PLAYER_UNIT_SUMMON
+                && player == owner.0
+            {
+                let filter_context = Context {
+                    filter_unit: Some(summoner),
+                    triggering_player: Some(owner.1),
+                    event_id: Some(EVENT_PLAYER_UNIT_SUMMON),
+                    ..Context::default()
+                };
+                if test_boolexpr(vm, state, filter, filter_context) {
+                    let context = Context {
+                        event_id: Some(EVENT_PLAYER_UNIT_SUMMON),
+                        triggering_player: Some(owner.1),
+                        triggering_unit: Some(summoned),
+                        triggering_widget: Some(summoned),
+                        summoned_unit: Some(summoned),
+                        summoning_unit: Some(summoner),
+                        ..Context::default()
+                    };
+                    fire_trigger(vm, state, trigger, context);
+                }
+            }
+        }
+        for registration in &registrations {
+            if let Registration::Unit {
+                trigger,
+                unit,
+                event: EVENT_UNIT_SUMMON,
+            } = *registration
+                && unit == summoner
+            {
+                let context = Context {
+                    event_id: Some(EVENT_UNIT_SUMMON),
+                    triggering_unit: Some(summoner),
+                    triggering_widget: Some(summoner),
+                    summoned_unit: Some(summoned),
+                    summoning_unit: Some(summoner),
+                    ..Context::default()
+                };
+                fire_trigger(vm, state, trigger, context);
+            }
+        }
+    }
+}
+
 const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
 const EVENT_PLAYER_UNIT_CONSTRUCT_FINISH: i32 = 28;
 
@@ -1863,6 +1936,19 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             Ok(Some(Value::Handle(state.borrow().context.triggering_unit)))
         });
     }
+    // The units of a summon event (SPEC-0044).
+    native!(
+        add,
+        state,
+        "constant native GetSummonedUnit takes nothing returns unit",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.summoned_unit))) }
+    );
+    native!(
+        add,
+        state,
+        "constant native GetSummoningUnit takes nothing returns unit",
+        |vm, state, args| { Ok(Some(Value::Handle(state.borrow().context.summoning_unit))) }
+    );
     // The unit and type of a training event (SPEC-0027).
     native!(
         add,

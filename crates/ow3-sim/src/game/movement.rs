@@ -4062,7 +4062,22 @@ impl Targets {
                     let data = state.data.units.get(&o.type_id);
                     let collision = data.map_or(0, |d| d.collision);
                     let structure = data.is_some_and(|d| d.building);
-                    Some((real_of(o.x), real_of(o.y), collision, o.owner, structure, h))
+                    // Where its path agent was at its last commit (SPEC-0019;
+                    // c-SAK-1: kobold 10 did not see footman 7 at 678).
+                    let at = match o.movement {
+                        Some(m) => {
+                            absolute(m.origin, [state.world_bounds[0], state.world_bounds[1]])
+                        }
+                        _ => [o.x, o.y],
+                    };
+                    Some((
+                        real_of(at[0]),
+                        real_of(at[1]),
+                        collision,
+                        o.owner,
+                        structure,
+                        h,
+                    ))
                 }
                 _ => None,
             })

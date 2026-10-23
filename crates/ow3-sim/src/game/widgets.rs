@@ -382,6 +382,7 @@ pub(super) fn create_unit(
         aura_learned: None,
         invulnerable_until: None,
         wind_walk: None,
+        illusion: None,
         weapon_ready: 0,
         cooldown_end: 0,
         cooldown_target: 0,
@@ -935,6 +936,16 @@ fn damage_unit(
         let damage = state
             .combat
             .damage(amount, armor, data.armor_type, attack_type, damage_type);
+        // An illusion deals its factor of damage and takes its own
+        // (SPEC-0040; c-SAK-1: the image's hits 0, hits on it doubled).
+        let damage = match state.unit(source).and_then(|u| u.illusion) {
+            Some(i) => ow3_math::mul(damage, i.dealt),
+            None => damage,
+        };
+        let damage = match unit.illusion {
+            Some(i) => ow3_math::mul(damage, i.taken),
+            None => damage,
+        };
         (damage, state.events.clone())
     };
     let Some(target) = target else {

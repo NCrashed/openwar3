@@ -97,6 +97,10 @@ pub(super) fn death(state: &mut State, dying: u32) {
     let Some(d) = state.unit(Some(dying)) else {
         return;
     };
+    // An illusion's death gives no experience (SPEC-0040; probe c-SAO).
+    if d.illusion.is_some() {
+        return;
+    }
     let (owner, at, type_id) = (d.owner, [d.x, d.y], d.type_id);
     let base = if is_hero(type_id) {
         state.combat.heroes.grant_hero_xp.value(d.level)
@@ -124,7 +128,7 @@ pub(super) fn death(state: &mut State, dying: u32) {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
-        if !u.alive || !is_hero(u.type_id) || !near(u) {
+        if !u.alive || !is_hero(u.type_id) || u.illusion.is_some() || !near(u) {
             continue;
         }
         if !super::movement::enemies(state, u.owner, owner) {

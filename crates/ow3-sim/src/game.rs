@@ -251,6 +251,8 @@ pub struct Unit {
     invulnerable_until: Option<u64>,
     /// Its Wind Walk (SPEC-0040).
     wind_walk: Option<cast::WindWalk>,
+    /// Set for an illusion (SPEC-0040, Mirror Image).
+    illusion: Option<cast::Illusion>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// When the cooldown of its last swing expires, on the queue: a new
@@ -811,6 +813,8 @@ pub struct State {
     /// the target in reach: no search and no look-ahead until their next
     /// group (SPEC-0021).
     quiet_paths: std::collections::BTreeSet<u32>,
+    /// Mirror Images under way (SPEC-0040).
+    mirrors: Vec<cast::Mirror>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -973,6 +977,7 @@ impl State {
             paths: std::collections::BTreeMap::new(),
             path_holds: std::collections::BTreeMap::new(),
             quiet_paths: std::collections::BTreeSet::new(),
+            mirrors: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,

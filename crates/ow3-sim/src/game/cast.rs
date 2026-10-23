@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 8] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 9] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -52,6 +52,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 8] = [
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
     ("windwalk", *b"AOwk", 852_129, Aim::Nothing),
+    ("mirrorimage", *b"AOmi", 852_123, Aim::Nothing),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -819,6 +820,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         // (SPEC-0047; c-RZJ-1: the second Shockwave, effect and first hits
         // at 2543).
         shockwaves(s, &mut deferred);
+        // Mirror Images: their units and missiles (SPEC-0040).
+        mirrors(s);
     }
     // Summons whose time ran out die (SPEC-0044).
     let expired: Vec<u32> = {
@@ -918,6 +921,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // order of 4401 refused, at the end's queue time 22.0).
         // PROVISIONAL: the bonus damage and the end at an attack or cast
         // are not done (no hit of his in c-SAK-1).
+        // Mirror Image (SPEC-0040).
+        b"AOmi" => mirror_image(s, h, c.ability, &n),
         b"AOwk" => {
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
             let until = tick + 1 + duration(hero);
@@ -1035,4 +1040,193 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             .push((c.ability, tick + super::attack::ticks(n.cooldown)));
     }
     true
+}
+
+/// A Mirror Image under way (SPEC-0040): the hero, the tick its units
+/// appear, the numbers of its level, and once they are made, each unit
+/// with the tick its missile arrives, the hero's place among them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mirror {
+    hero: u32,
+    appear: u64,
+    numbers: crate::data::AbilityLevel,
+    missile_speed: u32,
+    made: Vec<(u32, u64)>,
+    hero_place: usize,
+}
+
+/// 1 degree in radians.
+const DEGREE: u32 = 0x3C8E_FA35;
+
+/// The places of Mirror Image round `(x, y)` with facing `f` (radians):
+/// `n` places at `distance`, place `k` at `f + 90 - k * 360 / n` degrees,
+/// snapped to the cell grid as SPEC-0040 gives.
+fn mirror_places(x: u32, y: u32, f: u32, n: u32, distance: u32) -> Vec<[u32; 2]> {
+    let i2r = ow3_math::i2r;
+    let floor = ow3_math::floor;
+    let thirty_two = i2r(32);
+    (0..n)
+        .map(|k| {
+            let degrees = sub(i2r(90), div(i2r(k as i32 * 360), i2r(n as i32)));
+            let t = add(f, mul(degrees, DEGREE));
+            let (px, py) = (add(x, mul(distance, cos(t))), add(y, mul(distance, sin(t))));
+            let snap = |v: u32, low: i32| {
+                add(
+                    mul(thirty_two, floor(div(sub(v, i2r(low)), thirty_two))),
+                    i2r(16),
+                )
+            };
+            [snap(px, 32), snap(py, 64)]
+        })
+        .collect()
+}
+
+/// Mirror Image takes effect for hero `h`: hidden at once, its target
+/// checks stopped, its attackers dropping it; the units come DataD later
+/// (SPEC-0040; c-SAK-1: effect 7162, units 7262).
+fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLevel) {
+    let tick = s.ticks;
+    if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+        u.hidden = true;
+        u.checks_off = true;
+    }
+    movement::stop(s, h);
+    movement::target_died(s, h);
+    let missile_speed = s
+        .data
+        .abilities
+        .get(&ability)
+        .map_or(0, |a| a.missile_speed);
+    s.mirrors.push(Mirror {
+        hero: h,
+        appear: tick + super::attack::ticks(n.data_d),
+        numbers: *n,
+        missile_speed,
+        made: Vec::new(),
+        hero_place: 0,
+    });
+}
+
+/// The Mirror Images of this tick: their units appear, and the missiles
+/// to their places arrive (SPEC-0040).
+fn mirrors(s: &mut State) {
+    let tick = s.ticks;
+    let mut list = std::mem::take(&mut s.mirrors);
+    for m in &mut list {
+        if m.appear == tick {
+            mirror_appear(s, m);
+        }
+        let arrived: Vec<(usize, u32)> = m
+            .made
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, at))| *at == tick)
+            .map(|(k, (unit, _))| (k, *unit))
+            .collect();
+        for (k, unit) in arrived {
+            if k == m.hero_place {
+                mirror_hero_back(s, m.hero, unit);
+            } else {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&unit) {
+                    u.hidden = false;
+                }
+                s.summons.push((m.hero, unit));
+            }
+        }
+    }
+    let last = |m: &Mirror| m.made.iter().map(|&(_, at)| at).max().unwrap_or(m.appear);
+    list.retain(|m| m.appear > tick || last(m) > tick);
+    s.mirrors.extend(list);
+}
+
+/// The units of Mirror Image `m` appear, all hidden: a draw of game
+/// generator 12 chooses the hero's place, then for each place in order an
+/// illusion of the hero is made (its own draws of generator 2 and of the
+/// script generator); the one at the hero's place stands in for him until
+/// his missile arrives. Each lasts `Dur` from now (SPEC-0040; c-SAK-1).
+///
+/// PROVISIONAL: a missile arrives after its straight distance at the
+/// ability's missile speed (the game's 0.133 and 0.178 s for 97.8 and
+/// 171.6 are not read yet).
+fn mirror_appear(s: &mut State, m: &mut Mirror) {
+    let tick = s.ticks;
+    let Some(hero) = s.unit(Some(m.hero)).filter(|u| u.alive).cloned() else {
+        return;
+    };
+    let images = f32::from_bits(m.numbers.data[0]) as u32;
+    let n = images + 1;
+    let places = mirror_places(hero.x, hero.y, hero.facing, n, m.numbers.range);
+    let r = s.game_random[MIRROR_PLACE].fraction();
+    m.hero_place = ((u64::from(r) * u64::from(n)) >> 32) as usize;
+    let lasts = super::attack::ticks(m.numbers.duration);
+    let facing = super::facing::to_degrees(hero.facing);
+    for place in places {
+        let Some(e) =
+            super::widgets::create_unit(s, hero.owner, hero.type_id, [place[0], place[1], facing])
+        else {
+            continue;
+        };
+        s.random.fraction();
+        if let Some(Object::Unit(u)) = s.objects.get_mut(&e) {
+            u.hidden = true;
+            u.illusion = Some(Illusion {
+                dealt: m.numbers.data[1],
+                taken: m.numbers.data[2],
+            });
+            u.level = 0;
+            u.xp = 0;
+            u.life.max = hero.life.max;
+            u.life.set(hero.life.value());
+            u.mana.max = hero.mana.max;
+            u.mana.set(hero.mana.value());
+            u.skills = hero.skills.clone();
+            u.strength = hero.strength;
+            u.agility = hero.agility;
+            u.intelligence = hero.intelligence;
+        }
+        s.timed_life.push((tick + lasts + SUMMON_OVER, e));
+        let (dx, dy) = (
+            f32::from_bits(sub(place[0], hero.x)),
+            f32::from_bits(sub(place[1], hero.y)),
+        );
+        let speed = f32::from_bits(m.missile_speed).max(1.0);
+        let flight = (dx * dx + dy * dy).sqrt() / speed;
+        let at = tick
+            + (flight / f32::from_bits(crate::timers::TICK))
+                .ceil()
+                .max(1.0) as u64;
+        m.made.push((e, at));
+    }
+}
+
+/// The missile to the hero's place arrives: the hero stands there and
+/// shows again, the stand-in goes, and his target checks start again with
+/// 0.01 s (SPEC-0040; c-SAK-1: 7298).
+fn mirror_hero_back(s: &mut State, hero: u32, stand_in: u32) {
+    let at = s.unit(Some(stand_in)).map(|u| [u.x, u.y]);
+    let now = s.move_clock;
+    if let (Some(at), Some(Object::Unit(u))) = (at, s.objects.get_mut(&hero)) {
+        u.x = at[0];
+        u.y = at[1];
+        u.hidden = false;
+        u.checks_off = false;
+        if u.acquire_phase != super::NO_PHASE {
+            u.next_acquire = add(now, movement::AFTER_DEATH);
+        }
+    }
+    super::obstacles::died(s, stand_in);
+    s.objects.remove(&stand_in);
+    s.units.retain(|&u| u != stand_in);
+}
+
+/// The game generator of the hero's place among Mirror Image's places
+/// (SPEC-0040).
+const MIRROR_PLACE: usize = 12;
+
+/// What makes a unit an illusion (SPEC-0040): the factors of the damage
+/// it deals and takes (`DataB`, `DataC` of Mirror Image).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Illusion {
+    pub dealt: u32,
+    pub taken: u32,
 }

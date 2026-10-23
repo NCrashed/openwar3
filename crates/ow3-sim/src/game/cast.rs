@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 7] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 8] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -51,6 +51,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 7] = [
     ("holybolt", *b"AHhb", 852_092, Aim::Friend),
     ("thunderbolt", *b"AHtb", 852_095, Aim::Enemy),
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
+    ("windwalk", *b"AOwk", 852_129, Aim::Nothing),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -212,13 +213,19 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
             return Some(false);
         }
         set(state);
-    } else if movement::cast_order(state, h, target, order_id) {
-        set(state);
     } else {
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-            u.casting = None;
+        // Out of range a walker also stops at the order and walks on from
+        // its next update (c-SAK-1: the Mountain King's Storm Bolt at 500,
+        // standing 502 to 505).
+        movement::freeze_now(state, h);
+        if movement::cast_order(state, h, target, order_id) {
+            set(state);
+        } else {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.casting = None;
+            }
+            return Some(false);
         }
-        return Some(false);
     }
     Some(true)
 }
@@ -252,6 +259,32 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.attack_move = None;
             u.checks_off = true;
+        }
+        return Some(true);
+    }
+    // Wind Walk too, ending the order the unit had (SPEC-0040; c-SAK-1:
+    // the Blademaster's attack-move ended at 400).
+    // PROVISIONAL: refused while it lasts (c-SAK-1: the script's orders
+    // between 400 and 4400 were not accepted, the next at 4501 was).
+    if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") && wind_walking(state, h) {
+        return Some(false);
+    }
+    if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") {
+        movement::stop(state, h);
+        let c = Casting {
+            order_id,
+            ability,
+            level,
+            target: None,
+            effect_at: None,
+            end_at: 0,
+            effect_q: 0,
+            point: None,
+        };
+        let mut deferred = Vec::new();
+        effect(state, h, &c, &mut deferred);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.attack_move = None;
         }
         return Some(true);
     }
@@ -627,6 +660,22 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
 }
 
 /// Whether unit `h` is invulnerable now (SPEC-0045).
+/// Whether unit `h` walks invisible (SPEC-0040, Wind Walk).
+pub(super) fn wind_walking(state: &State, h: u32) -> bool {
+    let tick = state.ticks;
+    state
+        .unit(Some(h))
+        .and_then(|u| u.wind_walk)
+        .is_some_and(|(t, _)| tick < t)
+}
+
+/// The speed factor of unit `h`'s Wind Walk, if it walks invisible.
+pub(super) fn wind_walk_speed(state: &State, h: u32) -> Option<u32> {
+    let tick = state.ticks;
+    let (until, bonus) = state.unit(Some(h))?.wind_walk?;
+    (tick < until).then(|| add(0x3F80_0000, bonus))
+}
+
 pub(super) fn invulnerable(state: &State, h: u32) -> bool {
     let tick = state.ticks;
     state
@@ -811,6 +860,19 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         }
         // Invulnerable from the next tick for its duration (SPEC-0045); the
         // units attacking it drop it.
+        // Invisible and faster for its duration (SPEC-0040, Wind Walk;
+        // c-SAK-1: the Blademaster at 400, 20 s at level 1, speed 300 to
+        // about 329.2).
+        // PROVISIONAL: the bonus damage and the end at an attack or cast
+        // are not done (no hit of his in c-SAK-1).
+        b"AOwk" => {
+            let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
+            let until = tick + duration(hero);
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                u.wind_walk = Some((until, n.data[1]));
+            }
+            movement::target_died(s, h);
+        }
         b"AHds" => {
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
             let until = tick + 1 + duration(hero);

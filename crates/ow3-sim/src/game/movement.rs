@@ -2176,6 +2176,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // A member of a group may be held or slowed (SPEC-0025); its own
         // limit stays.
         let limit = data.map_or(0, |t| t.speed);
+        // Wind Walk (SPEC-0040).
+        let limit = super::cast::wind_walk_speed(state, h).map_or(limit, |k| mul(limit, k));
         // Endurance and unholy aura (SPEC-0038).
         let limit = match state.unit(Some(h)) {
             Some(u) if !u.buffs.is_empty() => mul(limit, super::auras::speed_factor(state, u)),
@@ -3595,6 +3597,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             starts += 1;
             u.acquire_seq = starts;
         }
+        // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster
+        // took no target in his first Wind Walk, 400 to 4400).
+        if u.wind_walk.is_some_and(|(t, _)| tick < t) {
+            continue;
+        }
         if u.paused {
             continue;
         }
@@ -4043,7 +4050,10 @@ impl Targets {
             .filter_map(|&h| match state.objects.get(&h) {
                 // An invulnerable unit is no target (SPEC-0045).
                 Some(Object::Unit(o))
-                    if o.alive && !o.hidden && !super::cast::invulnerable(state, h) =>
+                    if o.alive
+                        && !o.hidden
+                        && !super::cast::invulnerable(state, h)
+                        && !super::cast::wind_walking(state, h) =>
                 {
                     let data = state.data.units.get(&o.type_id);
                     let collision = data.map_or(0, |d| d.collision);
@@ -4237,6 +4247,9 @@ pub(super) fn retaliate(
     let answers = |h: u32| match state.objects.get(&h) {
         Some(Object::Unit(u)) => {
             u.alive
+                // Not one walking invisible (SPEC-0040; c-SAK-1: the
+                // Blademaster hit nothing).
+                && u.wind_walk.is_none_or(|(t, _)| tick >= t)
                 && !swinging_back(u)
                 && !u.paused
                 && !u.creep.sleeping
@@ -4277,6 +4290,7 @@ pub(super) fn retaliate(
             && !swinging_back(u)
             && !u.paused
             && !u.creep.returning
+            && u.wind_walk.is_none_or(|(t, _)| tick >= t)
             && u.casting.is_none()
             && u.stunned_until.is_none_or(|t| state.ticks >= t)
             && target != attacker)

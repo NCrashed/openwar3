@@ -381,6 +381,7 @@ pub(super) fn create_unit(
         buffs: Vec::new(),
         aura_learned: None,
         invulnerable_until: None,
+        wind_walk: None,
         weapon_ready: 0,
         cooldown_end: 0,
         cooldown_target: 0,

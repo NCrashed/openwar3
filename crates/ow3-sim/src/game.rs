@@ -249,6 +249,8 @@ pub struct Unit {
     /// Invulnerable (Divine Shield) up to this tick, exclusive
     /// (SPEC-0045).
     invulnerable_until: Option<u64>,
+    /// The end of its Wind Walk, and the speed bonus of it (SPEC-0040).
+    wind_walk: Option<(u64, u32)>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// When the cooldown of its last swing expires, on the queue: a new

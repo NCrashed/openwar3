@@ -1,7 +1,7 @@
 //! The object table of `c-SAK-1` (SPEC-0024): every taking and freeing of
 //! an entry read in the game (`c-SAK-1.objects.tsv`), compared in order
-//! with the simulation's. Report only while the table is being built up
-//! mechanic by mechanic. Skipped without the game data.
+//! with the simulation's: all 11848 rows match. Skipped without the game
+//! data.
 
 use std::path::PathBuf;
 
@@ -49,7 +49,7 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
 }
 
 #[test]
-fn heroes_three_objects_report() {
+fn heroes_three_objects() {
     let name = "c-SAK-1";
     let Some(game) = game_rows(name) else {
         return;
@@ -136,6 +136,7 @@ fn heroes_three_objects_report() {
         });
         eprintln!("{k}: game {g:?}\n{k}: ours {o:?}");
     }
+    assert_eq!(first, None, "the object tables part at row {first:?}");
 }
 
 /// The turn checksums of `c-SAK-1` with the object table from 1.0 s on:

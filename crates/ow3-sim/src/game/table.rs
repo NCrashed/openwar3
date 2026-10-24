@@ -207,6 +207,8 @@ pub struct UnitEntries {
     pub target_death: Vec<(u32, u32)>,
     /// It attacks by an order of its own from an acquisition.
     pub own_attack: bool,
+    /// Its order is one of the game (a creep's return home).
+    pub game_order: bool,
     /// The objects of an order it gave up in this tick, freed at its end.
     pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
@@ -342,6 +344,7 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
         // The objects of its attack on a target go first, then those of
         // its acquisition and of the order (c-SAK-1: the Mountain King's
         // new order at 2501).
+        e.game_order = false;
         e.own_attack = false;
         let mut old: Vec<u32> = Vec::new();
         // A reaction delay still running ends with it (c-SAK-1: 2701).
@@ -391,6 +394,7 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     let extra = state.table.take(tick, "game order: extra object");
     if let Some(e) = entries(state, h) {
         e.order = ability[..6].iter().rev().copied().collect();
+        e.game_order = true;
         e.death.splice(0..0, [order, extra]);
     }
 }
@@ -666,7 +670,12 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     for e in old.unwrap_or_default() {
         state.table.defer(e, "acquisition: attack object");
     }
-    let own = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_none());
+    // A unit without any order makes an attack order of its own; one on
+    // attack-move or with an order of the game (a creep going home) not
+    // (c-SAK-1: ogre 18 at 2915).
+    let own = state
+        .unit(Some(h))
+        .is_some_and(|u| u.attack_move.is_none() && !u.entries.game_order);
     let n = if own { 10 } else { 7 };
     let a = state.table.take_n(tick, n, "acquisition: attack object");
     state.table.defer(a[n - 1], "acquisition: attack object");

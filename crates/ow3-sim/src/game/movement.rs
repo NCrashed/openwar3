@@ -1988,7 +1988,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Boolean(false)));
             };
             let target = [real(&args[2]), real(&args[3])];
-            let done = point_order(&mut state.borrow_mut(), h, name, target);
+            let mut s = state.borrow_mut();
+            let done = point_order(&mut s, h, name, target);
+            // Its objects of the engine's table (SPEC-0024).
+            if done && name == "attack" {
+                super::table::attack_point_ordered(&mut s, h);
+            }
+            drop(s);
             Ok(Some(Value::Boolean(done)))
         }
     );
@@ -2311,6 +2317,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         m.commit(state.move_clock);
         // The regions are tested at the commit (SPEC-0049).
         super::regions::committed(state, h, m.origin);
+        // The walk objects it gave up are freed at its update (SPEC-0024).
+        super::table::unit_updated(state, h);
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };

@@ -130,6 +130,13 @@ pub struct UnitEntries {
     pub level: Vec<u32>,
     /// It holds the objects of a creep camp (it was its first creep).
     pub camp: bool,
+    /// The objects of its current order, freed in this order when the
+    /// order ends.
+    pub order: Vec<u32>,
+    /// Its walk: the path and the cluster.
+    pub walk: Vec<u32>,
+    /// Walks it gave up, freed at its next update.
+    pub stale: Vec<u32>,
 }
 
 /// The objects a unit made by `CreateUnit` takes (SPEC-0024, the analyst's
@@ -204,6 +211,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             death: making.death.iter().map(|&k| entries[k]).collect(),
             level: making.level.iter().map(|&k| entries[k]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
+            ..UnitEntries::default()
         };
     }
 }
@@ -243,6 +251,72 @@ pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64) {
     let new = table.take_n(tick, 3, "time of day");
     for e in std::mem::replace(&mut table.day, new) {
         table.defer(e, "time of day");
+    }
+}
+
+/// The entries of unit `h`, if it is one.
+fn entries(state: &mut super::State, h: u32) -> Option<&mut UnitEntries> {
+    match state.objects.get_mut(&h) {
+        Some(super::Object::Unit(u)) => Some(&mut u.entries),
+        _ => None,
+    }
+}
+
+/// The order of unit `h` ends: its objects are freed 0.0001 s later.
+pub(super) fn order_ended(state: &mut super::State, h: u32) {
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.order));
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "order end");
+    }
+}
+
+/// Unit `h` takes a script's attack order to a point (c-SAK-1, 1.5 s):
+/// the order and its record, the old order ends, then the 11 objects of
+/// the attack ability for the order and the walk. The record and the
+/// last 6 of the ability are freed 0.0001 s later (the ability's from
+/// the last), the order and the first 5 of the ability when the order
+/// ends (`order_ended`, the ability's from the last, then the order).
+///
+/// PROVISIONAL: read for script attack orders to a point only.
+pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let order = state.table.take(tick, "script point order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 11, "attack ability: order start");
+    for &e in ability[5..].iter().rev() {
+        state.table.defer(e, "attack ability: order start");
+    }
+    let mut kept: Vec<u32> = ability[..5].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+    walk_made(state, h);
+}
+
+/// Unit `h` gets a new walk (an event `cluster` of the path lists): a
+/// search helper freed at once, the cluster and the path. The walk it
+/// had is freed at its next update (`unit_updated`), the path first.
+pub(super) fn walk_made(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let helper = state.table.take(tick, "search: helper");
+    let cluster = state.table.take(tick, "walk: cluster");
+    let path = state.table.take(tick, "walk: path");
+    state.table.free(tick, helper, "search: helper");
+    if let Some(e) = entries(state, h) {
+        let old = std::mem::replace(&mut e.walk, vec![path, cluster]);
+        e.stale.extend(old);
+    }
+}
+
+/// Unit `h` updates: the walks it gave up are freed.
+pub(super) fn unit_updated(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let stale = entries(state, h).map(|e| std::mem::take(&mut e.stale));
+    for e in stale.unwrap_or_default() {
+        state.table.free(tick, e, "walk");
     }
 }
 

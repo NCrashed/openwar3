@@ -125,9 +125,8 @@ pub(super) fn death(state: &mut State, dying: u32) {
         dx * dx + dy * dy <= range * range
     };
     // The heroes in range of each player for whom it is an enemy.
-    // The last made first (c-SAK-1: the Blademaster's level event before
-    // the Mountain King's at 6052). PROVISIONAL: one case only; the order
-    // may be another of the units' (the grid's).
+    // The last made first, whatever their places (SPEC-0033; c-SAK-1: the
+    // Blademaster before the Mountain King at 6052; probe c-SBF).
     let mut by_player: std::collections::BTreeMap<i32, Vec<(u32, i64)>> = Default::default();
     for &h in state.units.iter().rev() {
         if h == dying {

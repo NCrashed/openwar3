@@ -614,6 +614,11 @@ impl Regenerating {
         }
     }
 
+    /// The rate, per second.
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
     /// One tick of game time: `now` is the clock of the tick before, at
     /// which the changes of that tick were made, `next` the clock of this
     /// tick.
@@ -1227,6 +1232,7 @@ impl State {
             .collect();
         for h in heroes {
             table::mana_watches(self, h, 0);
+            table::watches_checked(self, h);
         }
         for h in std::mem::take(&mut self.table.ends_late) {
             table::old_order_ended(self, h);

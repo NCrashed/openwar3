@@ -291,6 +291,9 @@ pub struct UnitEntries {
     /// Watches on its mana, one per ability with a cost: the cost, the
     /// entry, and whether the mana is at or above it.
     pub mana_watches: Vec<(i32, u32, bool)>,
+    /// The next check of each watch below its cost, by its entry
+    /// (`watches_checked`).
+    pub watch_checks: Vec<(u32, u32)>,
     /// The objects of an order it gave up in this tick, freed at its end.
     pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
@@ -379,6 +382,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
 /// `SetHeroXP` of the map start replaced the parts each hero was made
 /// with, the level-up at 30.26 s those of `SetHeroXP`).
 pub(super) fn level_changed(state: &mut super::State, h: u32) {
+    watches_rescheduled(state, h);
     let tick = state.table.now;
     let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) else {
         return;
@@ -1038,10 +1042,109 @@ pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
         if now == above {
             continue;
         }
+        // Back above the cost, the watch fires at its next check
+        // (`watches_checked`).
+        if now {
+            continue;
+        }
         let new = state.table.take(tick, "unit state: limit watch");
         state.table.defer(entry, "unit state: limit watch");
         if let Some(e) = entries(state, h) {
             e.mana_watches[k] = (cost, new, now);
+            e.watch_checks.retain(|&(w, _)| w != entry);
+        }
+        watch_scheduled(state, h, new);
+    }
+}
+
+/// The step of a watch's checks while its cost is far (c-SAK-1: the
+/// Mountain King's 3914, made at 22.397242, checked at 26.39724).
+const WATCH_STEP: f32 = 4.0;
+
+/// A watch `entry` of unit `h` below its cost is made: its first check
+/// comes 4.0 s on, by the world clock.
+pub(super) fn watch_scheduled(state: &mut super::State, h: u32, entry: u32) {
+    let next = ow3_math::add(state.move_clock, WATCH_STEP.to_bits());
+    if let Some(e) = entries(state, h) {
+        e.watch_checks.push((entry, next));
+    }
+}
+
+/// Unit `h`'s mana rate changed: the checks of its watches below their
+/// costs start again, 4.0 s from the change (c-SAK-1: the Mountain King's
+/// level-up, rate changed at 30.256021, next check 34.25602).
+pub(super) fn watches_rescheduled(state: &mut super::State, h: u32) {
+    // The change is stamped 0.0001 s after the clock of the tick
+    // (30.255922 + 0.0001).
+    let change = ow3_math::add(state.move_clock, crate::timers::MIN_TIMEOUT);
+    let next = ow3_math::add(change, WATCH_STEP.to_bits());
+    if let Some(e) = entries(state, h) {
+        for c in &mut e.watch_checks {
+            c.1 = next;
+        }
+    }
+}
+
+/// The checks of unit `h`'s watches below their costs, on the world
+/// clock at the start of the next tick: one whose cost is passed fires,
+/// made anew above it and the old freed 0.0001 s later; else the next
+/// check comes 4.0 s on, or 0.1 s after the crossing when that is nearer
+/// (c-SAK-1: the Mountain King's at 38.25602, next 39.50853, fired 7903).
+///
+/// PROVISIONAL: the near interval is a fit to one case.
+pub(super) fn watches_checked(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let clock = ow3_math::add(state.move_clock, crate::timers::TICK);
+    let due: Vec<(u32, u32)> = entries(state, h)
+        .map(|e| {
+            e.watch_checks
+                .iter()
+                .filter(|&&(_, n)| f32::from_bits(n) <= f32::from_bits(clock))
+                .copied()
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some((mana, rate)) = state.unit(Some(h)).map(|u| {
+        (
+            f32::from_bits(u.mana.value()),
+            f32::from_bits(u.mana.rate()),
+        )
+    }) else {
+        return;
+    };
+    for (entry, at) in due {
+        let cost = entries(state, h)
+            .and_then(|e| e.mana_watches.iter().find(|w| w.1 == entry).map(|w| w.0));
+        let Some(cost) = cost else {
+            if let Some(e) = entries(state, h) {
+                e.watch_checks.retain(|&(w, _)| w != entry);
+            }
+            continue;
+        };
+        if mana >= cost as f32 {
+            let new = state.table.take(tick, "unit state: limit watch");
+            state.table.defer(entry, "unit state: limit watch");
+            if let Some(e) = entries(state, h) {
+                e.watch_checks.retain(|&(w, _)| w != entry);
+                if let Some(w) = e.mana_watches.iter_mut().find(|w| w.1 == entry) {
+                    w.1 = new;
+                    w.2 = true;
+                }
+            }
+            continue;
+        }
+        let near = if rate > 0.0 {
+            (cost as f32 - mana) / rate + 0.1
+        } else {
+            f32::INFINITY
+        };
+        let step = if near < WATCH_STEP { near } else { WATCH_STEP };
+        // Counted from the check's own time (26.397 -> 30.397).
+        let next = ow3_math::add(at, step.to_bits());
+        if let Some(e) = entries(state, h)
+            && let Some(c) = e.watch_checks.iter_mut().find(|c| c.0 == entry)
+        {
+            c.1 = next;
         }
     }
 }
@@ -1342,6 +1445,11 @@ pub(super) fn mirror_hero_back(state: &mut super::State, h: u32, stand_in: u32) 
         }
         e.mirror_effect.take()
     });
+    for (&cost, &w) in costs.iter().zip(&watches) {
+        if mana < cost as f32 {
+            watch_scheduled(state, h, w);
+        }
+    }
     state.table.defer(record, "order record");
     for &e in [p[4], p[3], p[2]].iter() {
         state.table.defer(e, "Mirror Image: hero placed");

@@ -291,6 +291,9 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
                 .mana_watches
                 .push((cost, objects[1], mana >= cost as f32));
         }
+        if mana < cost as f32 {
+            super::table::watch_scheduled(state, h, objects[1]);
+        }
     }
 }
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {

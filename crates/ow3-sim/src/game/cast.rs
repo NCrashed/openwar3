@@ -920,7 +920,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // PROVISIONAL: the bonus damage and the end at an attack or cast
         // are not done (no hit of his in c-SAK-1).
         // Mirror Image (SPEC-0040).
-        b"AOmi" => mirror_image(s, h, c.ability, &n),
+        b"AOmi" => mirror_image(s, h, c.ability, &n, c.effect_q),
         b"AOwk" => {
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
             let until = tick + 1 + duration(hero);
@@ -1055,6 +1055,10 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
 pub struct Mirror {
     hero: u32,
     appear: u64,
+    /// The queue time of the timer that makes the units: the effect's
+    /// plus DataD; their checks count from it (SPEC-0019; c-SAK-1:
+    /// 36.299999 at 7262).
+    appear_q: u32,
     numbers: crate::data::AbilityLevel,
     missile_speed: u32,
     made: Vec<(u32, u64)>,
@@ -1090,7 +1094,7 @@ fn mirror_places(x: u32, y: u32, f: u32, n: u32, distance: u32) -> Vec<[u32; 2]>
 /// Mirror Image takes effect for hero `h`: hidden at once, its target
 /// checks stopped, its attackers dropping it; the units come DataD later
 /// (SPEC-0040; c-SAK-1: effect 7162, units 7262).
-fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLevel) {
+fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLevel, effect_q: u32) {
     let tick = s.ticks;
     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
         u.hidden = true;
@@ -1106,6 +1110,7 @@ fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLev
     s.mirrors.push(Mirror {
         hero: h,
         appear: tick + super::attack::ticks(n.data_d),
+        appear_q: add(effect_q, n.data_d),
         numbers: *n,
         missile_speed,
         made: Vec::new(),
@@ -1187,6 +1192,7 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         s.random.fraction();
         if let Some(Object::Unit(u)) = s.objects.get_mut(&e) {
             u.hidden = true;
+            u.next_acquire = add(m.appear_q, mul(u.acquire_phase, 0x3F00_0000));
             u.illusion = Some(Illusion {
                 dealt: m.numbers.data[1],
                 taken: m.numbers.data[2],

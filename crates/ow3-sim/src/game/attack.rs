@@ -1472,6 +1472,38 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             u.entries.quiet_walk = true;
         }
     }
+    // A unit that took a new target in its backswing (by a check or a
+    // call) takes its goal at the backswing's end (c-SAK-1: footmen 2 and
+    // 6 on kobold 10 at 47.079254 and 47.108826).
+    let next = add(state.move_clock, crate::timers::TICK);
+    let mut chasing: Vec<(u32, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state
+                .unit(Some(h))
+                .filter(|u| u.alive && u.attack.is_none())?;
+            let m = u.movement?;
+            let super::movement::Order::Attack { target } = m.order else {
+                return None;
+            };
+            state.unit(Some(target)).filter(|t| t.alive)?;
+            let end = f32::from_bits(u.backswing_end);
+            (end > f32::from_bits(state.move_clock)
+                && end <= f32::from_bits(next)
+                && before.is_none_or(|b| end < f32::from_bits(b))
+                && u.entries.swing_goal_at != Some(u.backswing_end))
+            .then_some((h, u.backswing_end))
+        })
+        .collect();
+    chasing.sort_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
+    for (h, end) in chasing {
+        state.table_at(end);
+        super::table::walk_made_at_order(state, h);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.swing_goal_at = Some(end);
+        }
+    }
     attack_move_resumes(state, before);
     // Creeps whose target died in their backswing walk back at its end, in
     // the order of those ends (c-SAK-1: gnoll 12 at 5460, q 27.299561).

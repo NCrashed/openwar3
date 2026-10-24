@@ -239,6 +239,9 @@ pub struct UnitEntries {
     /// The goal after its swing was taken at the backswing's end; the
     /// chase takes no other.
     pub early_goal: bool,
+    /// The backswing end at which it took the goal of a target it chases
+    /// with no attack under way (`attack::after_swing_walks`).
+    pub swing_goal_at: Option<u32>,
     /// Its walk is that of a goal taken in reach after a swing, which ends
     /// when it faces its target.
     pub quiet_walk: bool,

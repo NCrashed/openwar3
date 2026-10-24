@@ -4806,6 +4806,14 @@ pub(super) fn retaliate(
                 // Its attack over with its target's death (c-SAK-1: footmen
                 // 2 and 4 at 6072, ogre 13 dead at 6052).
                 && u.attack.is_none_or(|a| state.unit(Some(a.target)).is_none_or(|t| !t.alive))
+                // Nor one going on to a live target (c-SAK-1: footmen 2 and
+                // 6 on kobold 10 at 9397, swinging back from a hit on it).
+                && u.movement.is_none_or(|m| match m.order {
+                    Order::Attack { target } => {
+                        state.unit(Some(target)).is_none_or(|t| !t.alive)
+                    }
+                    _ => true,
+                })
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state

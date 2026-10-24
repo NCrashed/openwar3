@@ -270,6 +270,9 @@ pub struct Moving {
     /// A move to a point that takes up an attack on this target when it
     /// is done (SPEC-0040, the end of a Wind Walk's fade).
     then_attack: Option<u32>,
+    /// A creep's move to where its target died arrived: it stands and
+    /// turns to this point (relative), then the order ends (SPEC-0030).
+    face_point: Option<[u32; 2]>,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
     given: u64,
@@ -534,6 +537,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             swing_waits: false,
             unlimited: false,
             then_attack: None,
+            face_point: None,
             ..m
         },
         None => Moving {
@@ -572,6 +576,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             aim: [0, 0],
             unlimited: false,
             then_attack: None,
+            face_point: None,
         },
     };
     state.orders_given = given;
@@ -2238,6 +2243,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     moving.sort_by_key(key);
     let mut still = Vec::with_capacity(moving.len());
     let mut attacks_after = Vec::new();
+    let mut faced_ends = Vec::new();
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
@@ -2311,30 +2317,72 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
             continue;
         }
-        // A move to a point of a Wind Walk's fade ends within 181 of the
-        // point: the unit stands, and the next entry of its queue comes
-        // (SPEC-0040; c-SAK-1: the Blademaster at 4801, 182.8 away at
-        // 4795, then his attack-move of 4601).
-        if let Some(target) = m.then_attack
-            && m.order == Order::Point
-        {
+        // A move to a point of a Wind Walk's fade, or a creep's move to
+        // where its target died, ends within 181 of the point: the unit
+        // stands, and the next entry of its queue comes (SPEC-0040,
+        // SPEC-0030; c-SAK-1: the Blademaster at 4801, 182.8 away at
+        // 4795, then his attack-move of 4601; ogre 18 at 5173, 178.9 away,
+        // 183.6 at 5167).
+        let queued_move = u.creep.queued_home && u.checks_off && m.going_back();
+        if (m.then_attack.is_some() || queued_move) && m.order == Order::Point {
             let p = absolute(m.origin, [state.world_bounds[0], state.world_bounds[1]]);
             let (dx, dy) = (sub(p[0], m.target[0]), sub(p[1], m.target[1]));
             if real_of(add(mul(dx, dx), mul(dy, dy))) <= MOVE_TO_TARGET * MOVE_TO_TARGET {
                 m.velocity = [0, 0];
                 m.walking = false;
-                m.then_attack = None;
-                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-                    u.movement = Some(m);
+                let then = m.then_attack.take();
+                if queued_move {
+                    // The creep turns to the point first (c-SAK-1: ogre
+                    // 18 at 5173 and 5179, the order ending at 5185).
+                    m.face_point = Some(relative(
+                        m.target,
+                        [state.world_bounds[0], state.world_bounds[1]],
+                    ));
+                } else {
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                        u.movement = Some(m);
+                    }
+                    if let Some(trace) = state.agent_trace.as_mut() {
+                        trace.push((tick, h, m.origin, m.velocity, m.heading, [0, 0]));
+                    }
+                    state.updated.insert(h);
+                    still.push(h);
+                    if let Some(target) = then {
+                        attacks_after.push((h, target, m.order_id));
+                    }
+                    continue;
                 }
-                if let Some(trace) = state.agent_trace.as_mut() {
-                    trace.push((tick, h, m.origin, m.velocity, m.heading, [0, 0]));
-                }
-                state.updated.insert(h);
-                still.push(h);
-                attacks_after.push((h, target, m.order_id));
-                continue;
             }
+        }
+        // Turning to the point it arrived at, standing, its aim kept; the
+        // order ends at the update that finds it facing the point, and its
+        // checks start again 0.01 s later (SPEC-0030; c-SAK-1: ogre 18 at
+        // 5185, its check of 5187).
+        if let Some(p) = m.face_point {
+            let (heading, d) = heading_and_turn(&m, p);
+            if d == 0 {
+                m.face_point = None;
+                m.arrived = true;
+                m.aim = [0, 0];
+                faced_ends.push(h);
+            } else {
+                m.heading = wrapped(if real_of(d).abs() <= real_of(turn_rate) {
+                    add(heading, d)
+                } else if real_of(d) > 0.0 {
+                    add(heading, turn_rate)
+                } else {
+                    add(heading, turn_rate ^ SIGN)
+                });
+            }
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.movement = Some(m);
+            }
+            if let Some(trace) = state.agent_trace.as_mut() {
+                trace.push((tick, h, m.origin, m.velocity, m.heading, m.aim));
+            }
+            state.updated.insert(h);
+            still.push(h);
+            continue;
         }
         let here = m.origin;
         let mut begin_attack = None;
@@ -3106,6 +3154,20 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    // A creep's move to its dead target's point ended: its checks start
+    // again, and its walk home comes next.
+    // PROVISIONAL: the walk home as a walk to its guard point, order id 0.
+    for h in faced_ends {
+        let at = add(state.update_time, AFTER_DEATH);
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        u.checks_off = false;
+        u.creep.queued_home = false;
+        u.next_acquire = at;
+        let home = u.home;
+        order(state, h, Order::Point, 0, home);
+    }
     // The queue after a fade's move: an attack-move it had goes on, else
     // the attack is taken again.
     // PROVISIONAL: the attack without an attack-move was not seen.

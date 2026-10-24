@@ -22,7 +22,10 @@ What is checked against the game:
   random numbers match the game bit for bit;
 - 22 of 30 replays of our test maps (one mechanic each) match the game turn
   by turn, including the turn checksum the game uses to detect desyncs;
-- the hero test (Mountain King, Blademaster, creeps) is the current work.
+- in the hero test (Mountain King, Blademaster, creeps) every one of the
+  engine's 11848 internal object changes and every turn checksum to 62 s
+  match the game (one part of the checksum, a per-player sum, is still
+  taken from the game).
 
 ## Roadmap
 

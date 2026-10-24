@@ -1161,7 +1161,9 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
     let images = f32::from_bits(m.numbers.data[0]) as u32;
     let n = images + 1;
     let places = mirror_places(hero.x, hero.y, hero.facing, n, m.numbers.range);
-    let r = s.game_random[MIRROR_PLACE].fraction();
+    // A die of `n` sides on the raw output (SPEC-0040; c-SAK-1: 0xEA8CF3FD
+    // at 7262, place 1).
+    let r = s.game_random[MIRROR_PLACE].step();
     m.hero_place = ((u64::from(r) * u64::from(n)) >> 32) as usize;
     let lasts = super::attack::ticks(m.numbers.duration);
     let facing = super::facing::to_degrees(hero.facing);

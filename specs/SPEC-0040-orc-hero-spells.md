@@ -50,6 +50,11 @@ order (tick `o`). Targets were footmen of `Player(15)` (not paused).
 - The hero takes place `k = floor(r * n / 2^32)`, `r` one output of
   game generator 12 (SPEC-0007) drawn at that moment; the images take
   the others. Four casts, four draws, all four places as this rule.
+  Places are counted in the order in which they are made. `c-SAK-1`
+  (read in the game): the first draw of generator 12 in that game, from
+  its seed state `a = 0xC5F37156`, `b = 0x901C14D4`, gave `r =
+  0xEA8CF3FD`, so with `n = 2` the hero took place 1, (1200, -176), and
+  the image place 0.
   After that draw come one draw of generator 2 and one of the script
   generator for each of the `n` units placed (test RYJ, one image: two
   such pairs in the same tick).

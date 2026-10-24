@@ -4567,6 +4567,10 @@ pub(super) fn retaliate(
             && !swinging_back(u)
             && !u.paused
             && !u.creep.returning
+            // Nor one whose return in progress is beyond its distance
+            // (SPEC-0030; c-SAK-1: gnoll 17 kept footman 4 at gnoll 16's
+            // call in 6131).
+            && super::creeps::may_answer(state, u)
             && u.wind_walk.is_none_or(|w| !w.invisible(tick))
             && u.casting.is_none()
             && u.stunned_until.is_none_or(|t| state.ticks >= t)

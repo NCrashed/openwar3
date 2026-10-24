@@ -1206,7 +1206,9 @@ fn mirrors(s: &mut State) {
             .collect();
         for (k, unit) in arrived {
             if k == m.hero_place {
+                super::table::mirror_hero_back(s, m.hero, unit);
                 mirror_hero_back(s, m.hero, unit);
+                s.summons.push((m.hero, unit));
             } else {
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&unit) {
                     u.hidden = false;
@@ -1285,6 +1287,10 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
             u.intelligence = hero.intelligence;
         }
         s.timed_life.push((tick + lasts + SUMMON_OVER, e));
+        let at = s.table.now;
+        s.table_at(m.appear_q);
+        super::table::mirror_copy(s, e);
+        s.table.now = at;
         let (dx, dy) = (
             f32::from_bits(sub(place[0], launch[0])),
             f32::from_bits(sub(place[1], launch[1])),
@@ -1295,6 +1301,12 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         let steps = ((dx * dx + dy * dy).sqrt() / step).ceil().max(1.0) as u64;
         m.made.push((e, tick + steps));
     }
+    let at = s.table.now;
+    s.table_at(m.appear_q);
+    for &(e, _) in &m.made {
+        super::table::mirror_missile(s, e);
+    }
+    s.table.now = at;
 }
 
 /// The missile to the hero's place arrives: the hero stands there and

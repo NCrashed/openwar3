@@ -468,7 +468,13 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     for (summoner, summoned) in queued {
         let (registrations, owner) = {
             let mut state = state.borrow_mut();
-            let Some(owner) = state.unit(Some(summoned)).map(|u| u.owner) else {
+            // A Mirror Image's stand-in is gone by its event (c-SAK-1:
+            // 7297): the summoner's owner.
+            let Some(owner) = state
+                .unit(Some(summoned))
+                .or(state.unit(Some(summoner)))
+                .map(|u| u.owner)
+            else {
                 continue;
             };
             let owner_handle = state.player_handle(owner);
@@ -527,6 +533,8 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
         super::end_event(state);
+        // A Mirror Image's missile to its place (SPEC-0024).
+        super::table::mirror_arrived(&mut state.borrow_mut(), summoned);
     }
 }
 

@@ -51,6 +51,14 @@ pub struct ObjectTable {
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
     rest: Vec<(u32, &'static str)>,
+    /// Mirror Image (`mirror_copy`, `mirror_missile`): the objects kept by
+    /// each copy of the hero, in the order they go, and those of the
+    /// missile to each copy's place.
+    copies: std::collections::BTreeMap<u32, Vec<u32>>,
+    /// The parts of the copies' states freed after their enter events
+    /// (`copies_freed`).
+    copy_parts: Vec<u32>,
+    missiles: std::collections::BTreeMap<u32, Vec<u32>>,
     rest_q: Vec<(u32, u32)>,
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
@@ -82,6 +90,9 @@ impl ObjectTable {
             resumed: Vec::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
+            copies: Default::default(),
+            copy_parts: Vec::new(),
+            missiles: Default::default(),
             timed: Vec::new(),
             timed_q: Vec::new(),
             ends_late: Vec::new(),
@@ -269,8 +280,10 @@ pub struct UnitEntries {
     pub lose_acquisition: bool,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
-    /// Its Mirror Image's effect object (`mirror_effect`).
+    /// Its Mirror Image's effect object and the costs of the mana watches
+    /// it gave up when hidden (`mirror_effect`).
     pub mirror_effect: Option<u32>,
+    pub hidden_watches: Vec<i32>,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -1232,6 +1245,11 @@ pub(super) fn mirror_effect(state: &mut super::State, h: u32, cost: i32) {
     }
     let level = entries(state, h).map(|e| {
         e.mirror_effect = Some(effect);
+        e.hidden_watches = watches
+            .iter()
+            .filter(|w| crossed.contains(&w.1))
+            .map(|w| w.0)
+            .collect();
         // The watches that did not cross stay with the hero.
         e.mana_watches = watches
             .into_iter()
@@ -1241,6 +1259,110 @@ pub(super) fn mirror_effect(state: &mut super::State, h: u32, cost: i32) {
     });
     for e in level.unwrap_or_default() {
         state.table.defer(e, "hero level");
+    }
+}
+
+/// A copy `unit` of a hero is made by its Mirror Image (c-SAK-1: the
+/// image and the stand-in at 7261): 36 objects, 12 of them, parts of its
+/// state, freed 0.0001 s later, after the 0 s timers of the copies' enter
+/// events (`copies_freed`); the others are kept to its removal.
+///
+/// PROVISIONAL: what each of the 36 holds is not read.
+pub(super) fn mirror_copy(state: &mut super::State, unit: u32) {
+    let tick = state.table.now;
+    let o = state.table.take_n(tick, 36, "Mirror Image: copy");
+    for k in [17, 18, 23, 22, 19, 20, 24, 25, 26, 27, 32, 29] {
+        state.table.copy_parts.push(o[k]);
+    }
+    // In the order they go at the stand-in's removal (c-SAK-1: 7297).
+    let kept = [
+        35, 33, 34, 10, 11, 31, 30, 28, 21, 16, 15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0,
+    ]
+    .map(|k| o[k])
+    .to_vec();
+    state.table.copies.insert(unit, kept);
+}
+
+/// The parts of the copies' states made by a Mirror Image go, before
+/// the objects of their enter events (c-SAK-1: 7261).
+pub(super) fn copies_freed(state: &mut super::State) {
+    for e in std::mem::take(&mut state.table.copy_parts) {
+        state.table.defer(e, "Mirror Image: copy");
+    }
+}
+
+/// The missile of a Mirror Image to the place of copy `unit`: 5 objects,
+/// freed at its arrival after the copy's summon event (`mirror_arrived`).
+pub(super) fn mirror_missile(state: &mut super::State, unit: u32) {
+    let tick = state.table.now;
+    let o = state.table.take_n(tick, 5, "Mirror Image: missile");
+    state
+        .table
+        .missiles
+        .insert(unit, vec![o[4], o[2], o[3], o[1], o[0]]);
+}
+
+/// The missile to copy `unit`'s place arrived: its objects go 0.0001 s
+/// later, after the summon event's (c-SAK-1: 7288, 7297).
+pub(super) fn mirror_arrived(state: &mut super::State, unit: u32) {
+    copies_freed(state);
+    for e in state.table.missiles.remove(&unit).unwrap_or_default() {
+        state.table.defer(e, "Mirror Image: missile");
+    }
+}
+
+/// Hero `h` comes back at its stand-in's place (c-SAK-1: 7297): an order
+/// record and 5 objects of the placing, its mana watches and the parts of
+/// its level made anew, one more of the placing, and the record and 5
+/// objects of its order after the return. Freed 0.0001 s later: the
+/// record, 3 of the placing, the stand-in's objects with one more of the
+/// placing among them, the first of the placing, the order's, the last of
+/// the placing and the effect's object.
+pub(super) fn mirror_hero_back(state: &mut super::State, h: u32, stand_in: u32) {
+    let tick = state.table.now;
+    let record = state.table.take(tick, "order record");
+    let p = state.table.take_n(tick, 5, "Mirror Image: hero placed");
+    let costs = entries(state, h)
+        .map(|e| std::mem::take(&mut e.hidden_watches))
+        .unwrap_or_default();
+    let watches = state
+        .table
+        .take_n(tick, costs.len(), "unit state: limit watch");
+    let level = state.table.take_n(tick, 2, "hero level");
+    let last = state.table.take(tick, "Mirror Image: hero placed");
+    let record2 = state.table.take(tick, "order record");
+    let order = state.table.take_n(tick, 5, "order objects");
+    let mana = state
+        .unit(Some(h))
+        .map_or(0.0, |u| f32::from_bits(u.mana.value()));
+    let effect = entries(state, h).and_then(|e| {
+        e.level = level;
+        for (&cost, &w) in costs.iter().zip(&watches) {
+            e.mana_watches.push((cost, w, mana >= cost as f32));
+        }
+        e.mirror_effect.take()
+    });
+    state.table.defer(record, "order record");
+    for &e in [p[4], p[3], p[2]].iter() {
+        state.table.defer(e, "Mirror Image: hero placed");
+    }
+    let copy = state.table.copies.remove(&stand_in).unwrap_or_default();
+    let (a, b) = copy.split_at(copy.len().min(5));
+    for &e in a {
+        state.table.defer(e, "Mirror Image: copy");
+    }
+    state.table.defer(p[1], "Mirror Image: hero placed");
+    for &e in b {
+        state.table.defer(e, "Mirror Image: copy");
+    }
+    state.table.defer(p[0], "Mirror Image: hero placed");
+    state.table.defer(record2, "order record");
+    for &e in order.iter().rev() {
+        state.table.defer(e, "order objects");
+    }
+    state.table.defer(last, "Mirror Image: hero placed");
+    if let Some(e) = effect {
+        state.table.defer(e, "Mirror Image effect");
     }
 }
 

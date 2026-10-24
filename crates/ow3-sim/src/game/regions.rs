@@ -346,6 +346,7 @@ pub(super) fn fire(
     if region(&state.borrow(), Some(event.region)).is_none() {
         return;
     }
+    super::table::copies_freed(&mut state.borrow_mut());
     let context = Context {
         event_id: Some(if event.enter {
             EVENT_ENTER

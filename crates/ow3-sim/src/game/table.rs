@@ -40,6 +40,8 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// The spell order being taken starts its cast at once.
+    pub cast_at_once: bool,
     /// The unit whose death is being handled, and the objects of its
     /// attackers going on with their attack-moves (`attack_move_resumed`).
     pub dying: Option<u32>,
@@ -68,6 +70,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            cast_at_once: false,
             dying: None,
             resumed: Vec::new(),
             timed: Vec::new(),
@@ -636,6 +639,22 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
+    // In range and turned, the cast starts at once: 11 objects, the last 6
+    // freed 0.0001 s later, the first 5 and the order at the order's end
+    // (c-SAK-1: the Storm Bolt of 4400).
+    if !walks && state.table.cast_at_once {
+        state.table.cast_at_once = false;
+        let ability = state.table.take_n(tick, 11, "spell ability: order start");
+        for &e in ability[5..].iter().rev() {
+            state.table.defer(e, "spell ability: order start");
+        }
+        let mut kept: Vec<u32> = ability[..5].iter().rev().copied().collect();
+        kept.push(order);
+        if let Some(e) = entries(state, h) {
+            e.order = kept;
+        }
+        return;
+    }
     let ability = state.table.take_n(tick, 12, "spell ability: order start");
     for &e in ability[6..].iter().rev() {
         state.table.defer(e, "spell ability: order start");

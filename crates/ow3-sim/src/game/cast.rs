@@ -205,6 +205,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
     if in_range && movement::turned_to(state, h, there) {
         movement::stop(state, h);
         set(state);
+        state.table.cast_at_once = true;
         super::table::spell_ordered(state, h, false);
         start(state, h, tick);
     } else if in_range {

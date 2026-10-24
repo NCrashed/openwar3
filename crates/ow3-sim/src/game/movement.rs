@@ -4786,8 +4786,9 @@ pub(super) fn retaliate(
                 && !u.paused
                 && !u.creep.sleeping
                 && super::creeps::may_answer(state, u)
-                && u.attack.is_none()
-                && u.attack_move.is_none()
+                // Its attack over with its target's death (c-SAK-1: footmen
+                // 2 and 4 at 6072, ogre 13 dead at 6052).
+                && u.attack.is_none_or(|a| state.unit(Some(a.target)).is_none_or(|t| !t.alive))
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state

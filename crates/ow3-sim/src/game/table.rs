@@ -593,22 +593,6 @@ pub(super) fn path_searched(state: &mut super::State, h: u32) {
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
-    if std::env::var("OW3_DBG").is_ok() && (5866..5882).contains(&state.table.now) {
-        let bt = std::backtrace::Backtrace::force_capture().to_string();
-        let fr: Vec<&str> = bt
-            .lines()
-            .filter(|l| l.contains("ow3_sim::game"))
-            .take(4)
-            .map(|l| l.trim())
-            .collect();
-        let now = state.table.now;
-        eprintln!(
-            "wd {} {h} walk {:?} {:?}",
-            now,
-            entries(state, h).map(|e| e.walk.clone()),
-            fr
-        );
-    }
     // A walk made early for a chase to come stays through its order.
     if let Some(e) = entries(state, h)
         && std::mem::take(&mut e.early_walk)
@@ -974,7 +958,9 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
     // (SPEC-0019, "During such a backswing"; c-SAK-1: gnoll 17 at 4766).
     let now = state.event_time.unwrap_or_else(|| state.timers.time());
     let recording = state.unit(Some(h)).is_some_and(|u| {
-        u.attack.is_none() && f32::from_bits(u.backswing_end) > f32::from_bits(now)
+        u.attack
+            .is_none_or(|a| state.unit(Some(a.target)).is_none_or(|t| !t.alive))
+            && f32::from_bits(u.backswing_end) > f32::from_bits(now)
     });
     if recording {
         return;

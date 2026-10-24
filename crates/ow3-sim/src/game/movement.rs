@@ -2802,6 +2802,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 && (m.renew_at.is_none() || m.renew_cooldown);
                             !timed && (fresh || tick + point >= u.weapon_ready)
                         });
+                        let expired = state.unit(Some(h)).is_some_and(|u| {
+                            real_of(u.cooldown_end)
+                                <= real_of(add(state.move_clock, crate::timers::TICK))
+                        });
                         let (h, d) = heading_and_turn(&m, goal);
                         let gate_open = cooled
                             && m.swing_gate.is_none_or(|from| tick >= from)
@@ -2822,7 +2826,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             let off = now.is_some_and(|p| {
                                 real_of(heading_and_turn(&m, p).1).abs() > ATTACK_HALF_ANGLE
                             });
-                            if gate_open && off {
+                            // That new facing waits for the cooldown's expiry
+                            // itself (c-SAK-1: the image of the Blademaster
+                            // stood from 9783 to its expiry at 9854).
+                            if gate_open && off && !expired {
+                            } else if gate_open && off {
                                 m.target = now.map_or(m.target, |p| absolute(p, min));
                             } else if gate_open {
                                 m.arrived = true;
@@ -5004,7 +5012,9 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
                 return None;
             };
             let e = real_of(u.cooldown_end);
-            (target != u.cooldown_target && e > start && e <= end)
+            // The same target too when the unit stands after a face movement
+            // (c-SAK-1: the Blademaster's image at 9854).
+            ((target != u.cooldown_target || m.faced) && e > start && e <= end)
                 .then_some((h, target, m.order_id))
         })
         .collect();
@@ -5034,6 +5044,23 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
         // tick (c-RXD-1: creep 9 at 6859).
         let in_reach = in_range(here, at, reach);
         let turned = real_of(heading_and_turn(&m, at).1).abs() <= ATTACK_HALF_ANGLE;
+        // In reach but not facing it: a face movement to where the target
+        // stands now, a fixed point (SPEC-0019, "Cooldown expiry").
+        if in_reach && !turned && m.faced {
+            let p = position_of(state, target);
+            stop_commit(state, h);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+                && let Some(p) = p
+            {
+                m.target = p;
+                m.unlimited = true;
+                m.chase = Some(u32::MAX);
+                m.renew_at = None;
+                m.renew_stands = false;
+            }
+            continue;
+        }
         freeze(state, h);
         if in_reach && turned {
             super::attack::begin(state, h, target, tick, order_id);

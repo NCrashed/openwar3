@@ -1482,10 +1482,18 @@ impl<'a> Game<'a> {
                 state.night = night;
                 widgets::night_changed(state);
             }
-            // Life and mana regenerate every tick (SPEC-0013).
+            // Life and mana regenerate every tick (SPEC-0013), not while a
+            // hero is away in a Mirror Image (SPEC-0040).
+            let away: Vec<u32> = state
+                .units
+                .iter()
+                .copied()
+                .filter(|&h| cast::mirrored(state, h))
+                .collect();
             for h in &state.units {
                 if let Some(Object::Unit(unit)) = state.objects.get_mut(h)
                     && unit.alive
+                    && !away.contains(h)
                 {
                     unit.life.advance();
                     unit.mana.advance();

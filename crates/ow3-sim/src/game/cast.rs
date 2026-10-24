@@ -1276,3 +1276,13 @@ pub(super) fn fades(state: &mut State) {
         movement::regive_attack(state, h, clock);
     }
 }
+
+/// Whether hero `h` is away in a Mirror Image (hidden from its effect until
+/// it comes back): its life and mana do not regenerate then (SPEC-0040;
+/// c-SAK-1: the Blademaster's mana stood still from 7162 to 7298).
+///
+/// PROVISIONAL: the first and last ticks of the pause; mine differs by
+/// about one tick of regeneration (0.004 of mana) afterwards.
+pub(super) fn mirrored(state: &State, h: u32) -> bool {
+    state.mirrors.iter().any(|m| m.hero == h) && state.unit(Some(h)).is_some_and(|u| u.hidden)
+}

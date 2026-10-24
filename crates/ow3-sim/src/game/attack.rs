@@ -1425,7 +1425,13 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             let u = state.unit(Some(h)).filter(|u| u.alive)?;
             let a = u.attack?;
             let due = before.is_none_or(|b| f32::from_bits(u.backswing_end) < f32::from_bits(b));
-            (a.resume == Some(tick + 1)
+            // Also a backswing whose end, a tick later by the tick count,
+            // falls before this tick's end on the queue (c-SAK-1: the
+            // Mountain King's at 41.520134 in the tick ending 41.520397).
+            let in_tick = a.resume == Some(tick + 2)
+                && f32::from_bits(u.backswing_end)
+                    <= f32::from_bits(add(state.move_clock, crate::timers::TICK));
+            ((a.resume == Some(tick + 1) || in_tick)
                 && standing(state, a.target)
                 && due
                 && !u.entries.early_walk
@@ -1435,6 +1441,16 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             .then_some((h, u.backswing_end))
         })
         .collect();
+    // In the order of the ends, as the queue runs them.
+    // Equal ends by the order their swings started (c-SAK-1: footmen 4
+    // and 6 at 41.559853).
+    let mut ending = ending;
+    let seq = |h: u32| state.unit(Some(h)).map_or(0, |u| u.cooldown_seq);
+    ending.sort_by(|a, b| {
+        f32::from_bits(a.1)
+            .total_cmp(&f32::from_bits(b.1))
+            .then(seq(a.0).cmp(&seq(b.0)))
+    });
     for (h, end) in ending {
         state.table_at(end);
         super::table::walk_made_at_order(state, h);

@@ -2414,6 +2414,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             continue;
         }
         let here = m.origin;
+        let was_walking = m.walking;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
         let waiting = m.reaction_end.is_some()
@@ -2849,6 +2850,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             && m.swing_gate.is_none_or(|from| tick >= from)
                             && exact_swing.is_none();
                         if real_of(d).abs() < ATTACK_ANGLE {
+                            // Standing in reach since the last update, the
+                            // chase's walk ends (c-SAK-1: footman 2, in reach
+                            // at 8354, walk freed at 41.815235).
+                            if !was_walking {
+                                super::table::walk_dropped(state, unit);
+                            }
                             m.heading = h;
                             m.walking = false;
                             m.velocity = [0, 0];

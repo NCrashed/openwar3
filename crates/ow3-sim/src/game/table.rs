@@ -651,11 +651,19 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     // On attack-move, still attacking an acquired target: the object kept
     // to that target's death goes 0.0001 s later, and the same 2 and walk
     // (c-SAK-1: footman 7 answering a call at 965).
-    let attacking = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some())
+    let attacking = state
+        .unit(Some(h))
+        .is_some_and(|u| u.attack_move.is_some() || u.entries.game_order)
         && entries(state, h).is_some_and(|e| !e.target_death.is_empty());
     if attacking {
-        let old = entries(state, h).map(|e| std::mem::take(&mut e.target_death));
-        for (_, o) in old.unwrap_or_default() {
+        // A reaction delay still running goes first (c-SAK-1: ogre 18 at
+        // 2927).
+        let old = entries(state, h).map(|e| {
+            let mut old = std::mem::take(&mut e.reaction);
+            old.extend(std::mem::take(&mut e.target_death).into_iter().map(|(_, o)| o));
+            old
+        });
+        for o in old.unwrap_or_default() {
             state.table.defer(o, "acquisition: attack object");
         }
         let a = state.table.take_n(tick, 2, "acquisition: extra object");

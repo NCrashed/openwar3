@@ -166,6 +166,15 @@ within `MaxGuardDistance` (1000, read in the game) of its home point
 start of its return timer until its walk home ends. This also holds
 when the creep keeps its order because it already attacks the
 caller's target. The creep's zone (`GuardDistance`) plays no part.
+A creep whose return is in progress and that stands farther from home
+does not answer the call at all: the distance test is the one of the
+walk back's "already there" (SPEC-0019), squared distance in path cells
+against `(1000 / 32 + c)^2`, `c` its collision size in cells, so the
+reach is 1000 plus its collision. Nor does such a creep answer while it
+is walking back with at most 0.6 of its maximum life. `c-SAK-1`, tick
+2587: gnoll 16, its walk home ordered at 2566 and still standing at
+(64.292, -335.255), 1089.05 from its home (1150, -250), was looked at
+by seven calls and answered none.
 The same restart comes from every event that reaches the creep this
 way, not only from a creep that acquires a target:
 - the call of a camp creep that is hit while it is busy fighting

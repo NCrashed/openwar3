@@ -1071,7 +1071,15 @@ pub(super) fn spell_hit(
     amount: u32,
     stun: (u32, u32),
 ) {
+    // Each damage is a hit: its relay and the victim's call come first
+    // (c-SAK-1: the bolt on kobold 14 at 4513 called ogre 18).
     for damage in [0, amount] {
+        {
+            let mut s = state.borrow_mut();
+            if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                super::movement::retaliate(&mut s, target, h, None);
+            }
+        }
         super::widgets::damage_widget(vm, state, Some(h), Some(target), damage, 0, 0);
     }
     let mut s = state.borrow_mut();

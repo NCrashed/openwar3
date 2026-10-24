@@ -37,7 +37,7 @@ pub struct Creep {
     /// The queue time of its next guard check, while they go on.
     checks_next: Option<u32>,
     /// The queue time its return timer expires.
-    return_time: Option<u32>,
+    pub(super) return_time: Option<u32>,
     /// The order in which the creeps' timers were started: timers with
     /// equal expiries fire in that order (c-RXD-1: 7, 8, 6, 9).
     started: u64,
@@ -46,6 +46,9 @@ pub struct Creep {
     /// Its move order home has not ended (it may be answering a call):
     /// its acquisition check looks for no target (SPEC-0030).
     pub(super) homebound: bool,
+    /// It answered a call on its way home: the walk home lies below the
+    /// attack in its order queue, after a move to the target (SPEC-0030).
+    pub(super) queued_home: bool,
     /// Where its last walk home ended: it walks back there when it loses
     /// its target.
     pub(super) guard: Option<[u32; 2]>,
@@ -388,6 +391,12 @@ pub(super) fn tick(state: &mut State) {
         if creep.homebound && idle {
             ended.push(h);
         }
+        // The move to its dead target done, the walk home below it comes
+        // next. PROVISIONAL: not reached in c-SAK-1.
+        if creep.queued_home && idle {
+            go_home(state, h);
+            continue;
+        }
         if creep.returning {
             if !ordered {
                 let here = [u.x, u.y];
@@ -457,9 +466,13 @@ fn go_home(state: &mut State, h: u32) {
         u.next_acquire = add(t, movement::AFTER_DEATH);
     }
     // The give-up stops it with a commit first.
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.checks_off = false;
+    }
     movement::stop_commit(state, h);
     let walks = movement::move_home(state, h, home);
     set(state, h, |c| {
+        c.queued_home = false;
         c.return_time = None;
         c.returning = walks;
         c.homebound = walks;

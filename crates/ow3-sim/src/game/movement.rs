@@ -4676,6 +4676,9 @@ pub(super) fn retaliate(
                 u.creep.returning = false;
                 u.creep.homebound = false;
             }
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.creep.queued_home = true;
+            }
             freeze(state, h);
         }
         let id = if walker { ORDER_ATTACK } else { 0 };
@@ -4927,6 +4930,10 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
     }
 }
 
+/// The value of a move-to-target entry of an order queue: its arrival
+/// distance before the collision size (SPEC-0030; c-SAK-1).
+const MOVE_TO_TARGET: f32 = 181.0;
+
 /// 0.01 s, the delay of the checks of the attackers of a unit that died.
 pub(super) const AFTER_DEATH: u32 = 0x3C23_D70A;
 
@@ -4958,6 +4965,46 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
     attackers.sort_unstable();
     let mut to_guard = Vec::new();
     for (_, h, own) in attackers {
+        // A creep that took a target on its way home goes on to the next
+        // entry of its queue: a move to where the target stood, without
+        // checks, its return timer started again; already there (within
+        // 181 and its collision), that entry ends and its walk home comes,
+        // as below (SPEC-0030; c-SAK-1: at footman 7's death in 4765 ogre
+        // 18 walked there, kobold 19 was there).
+        let queued = state
+            .unit(Some(h))
+            .filter(|u| u.creep.queued_home)
+            .zip(position_of(state, dead))
+            .is_some_and(|(u, p)| {
+                let reach = MOVE_TO_TARGET
+                    + state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .map_or(0.0, |t| real_of(t.collision));
+                let (dx, dy) = (sub(u.x, p[0]), sub(u.y, p[1]));
+                real_of(add(mul(dx, dx), mul(dy, dy))) > reach * reach
+            });
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.creep.queued_home = false;
+        }
+        if queued && let Some(point) = position_of(state, dead) {
+            let back = state.combat.guard_return_time;
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.attack = None;
+                u.creep.return_time = Some(add(now, back));
+            }
+            // Stopped where it stands by the world clock (c-SAK-1: ogre 18
+            // at 4765, at its position of the tick).
+            let clock = state.move_clock;
+            stop_at(state, h, clock);
+            order(state, h, Order::Point, 0, point);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.checks_off = true;
+                u.creep.queued_home = true;
+            }
+            continue;
+        }
         let mut walk_on = None;
         state.acquire_starts += 1;
         let seq = state.acquire_starts;

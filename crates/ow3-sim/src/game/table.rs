@@ -269,6 +269,8 @@ pub struct UnitEntries {
     pub lose_acquisition: bool,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
+    /// Its Mirror Image's effect object (`mirror_effect`).
+    pub mirror_effect: Option<u32>,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -1185,6 +1187,61 @@ fn spell_effect_event(state: &mut super::State, h: u32) {
         })
         .count();
     event_without_triggers(state, registrations);
+}
+
+/// Hero `h`'s Mirror Image takes effect, its `cost` not spent yet
+/// (c-SAK-1: the Blademaster at 7161): the effect's object and its
+/// event's, a new mana watch for each costed ability whose cost the mana
+/// crosses, and the effect's own object, kept. Then, 0.0001 s later: the
+/// effect's two, the old watches (the last first), the first new watch,
+/// the order's objects (the order ends with the effect), the other new
+/// watches and the parts of its level: hidden, the hero has no rate, and
+/// its watches go with it.
+///
+/// PROVISIONAL: what the hero takes at its return is not read.
+pub(super) fn mirror_effect(state: &mut super::State, h: u32, cost: i32) {
+    let tick = state.table.now;
+    spell_effect_event(state, h);
+    let Some(mana) = state
+        .unit(Some(h))
+        .map(|u| f32::from_bits(u.mana.value()) - cost as f32)
+    else {
+        return;
+    };
+    let watches = entries(state, h)
+        .map(|e| std::mem::take(&mut e.mana_watches))
+        .unwrap_or_default();
+    let crossed: Vec<u32> = watches
+        .iter()
+        .filter(|&&(cost, _, above)| (mana >= cost as f32) != above)
+        .map(|&(_, entry, _)| entry)
+        .collect();
+    let new = state
+        .table
+        .take_n(tick, crossed.len(), "unit state: limit watch");
+    let effect = state.table.take(tick, "Mirror Image effect");
+    for &e in crossed.iter().rev() {
+        state.table.defer(e, "unit state: limit watch");
+    }
+    if let Some(&first) = new.first() {
+        state.table.defer(first, "unit state: limit watch");
+    }
+    order_ended(state, h);
+    for &e in new.iter().skip(1) {
+        state.table.defer(e, "unit state: limit watch");
+    }
+    let level = entries(state, h).map(|e| {
+        e.mirror_effect = Some(effect);
+        // The watches that did not cross stay with the hero.
+        e.mana_watches = watches
+            .into_iter()
+            .filter(|w| !crossed.contains(&w.1))
+            .collect();
+        std::mem::take(&mut e.level)
+    });
+    for e in level.unwrap_or_default() {
+        state.table.defer(e, "hero level");
+    }
 }
 
 /// Unit `h`'s Storm Bolt takes effect (c-SAK-1, 3.04 s): the spell effect

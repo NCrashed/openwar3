@@ -1161,6 +1161,7 @@ fn mirror_places(x: u32, y: u32, f: u32, n: u32, distance: u32) -> Vec<[u32; 2]>
 /// (SPEC-0040; c-SAK-1: effect 7162, units 7262).
 fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLevel, effect_q: u32) {
     let tick = s.ticks;
+    super::table::mirror_effect(s, h, n.cost);
     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
         u.hidden = true;
         u.checks_off = true;

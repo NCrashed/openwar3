@@ -1991,6 +1991,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let target = [real(&args[2]), real(&args[3])];
             let mut s = state.borrow_mut();
+            // A hero away in its Mirror Image takes the order and does
+            // nothing with it (c-SAK-1: the Blademaster's attack-move of
+            // 36.0 accepted, his order staying 0, no objects).
+            // PROVISIONAL: read for an attack-move only.
+            if s.unit(Some(h)).is_some_and(|u| u.hidden && u.alive) && name == "attack" {
+                return Ok(Some(Value::Boolean(true)));
+            }
             let done = point_order(&mut s, h, name, target);
             // Its objects of the engine's table (SPEC-0024).
             if done && name == "attack" {

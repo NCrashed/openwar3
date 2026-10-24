@@ -4869,33 +4869,6 @@ fn relay(state: &mut State, victim: u32, attacker: u32, now: f32, reached: &mut 
     any
 }
 
-/// A hit killed creep `victim`: its group still relays the hit (SPEC-0030,
-/// "Groups"; c-RZJ-1: ogre 14 killed by the elemental at 3722). The units
-/// the calls reach remember `attacker`, restart their returns and may cast
-/// their spells, as at a call.
-pub(super) fn relay_death(state: &mut State, victim: u32, attacker: u32) {
-    let (Some(v), Some(a)) = (state.unit(Some(victim)), state.unit(Some(attacker))) else {
-        return;
-    };
-    if !enemies(state, v.owner, a.owner) {
-        return;
-    }
-    let when = state.event_time.unwrap_or_else(|| state.timers.time());
-    let mut reached = Vec::new();
-    if !relay(state, victim, attacker, real_of(when), &mut reached) {
-        return;
-    }
-    for &h in &reached {
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-            u.remembered = Some(attacker);
-        }
-        super::creeps::restart_return(state, h, when);
-    }
-    for &h in &reached {
-        super::creeps::consider_spell(state, h, victim, attacker);
-    }
-}
-
 /// Whether `u` walks an attack-move with no target.
 fn walking_attack_move(u: &super::Unit) -> bool {
     u.attack.is_none()

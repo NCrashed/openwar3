@@ -488,6 +488,23 @@ fn strike(
         .as_ref()
         .map(|area| splash(&state.borrow(), h, target, area, amount))
         .unwrap_or_default();
+    // The victim and its friends answer the hit before its damage, also a
+    // fatal one, whose call sees the attacker still attacking the victim
+    // (SPEC-0019; c-SAK-1: kobold 10 took the Mountain King at gnoll 16's
+    // call in 6131, the hit killing it).
+    // A creep hit may cast its spell at the attacker (SPEC-0047).
+    {
+        let mut s = state.borrow_mut();
+        super::creeps::consider_spell(&mut s, target, target, h);
+        if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+            super::movement::retaliate(
+                &mut s,
+                target,
+                h,
+                impact.map(|p| (p, super::movement::IMPACT_REACH)),
+            );
+        }
+    }
     super::widgets::damage_widget(
         vm,
         state,
@@ -511,19 +528,6 @@ fn strike(
     // A kill on an attack-move: the unit walks on after its
     // backswing (SPEC-0019).
     let mut s = state.borrow_mut();
-    // The victim and its friends answer the hit (SPEC-0019).
-    // A creep hit may cast its spell at the attacker (SPEC-0047).
-    super::creeps::consider_spell(&mut s, target, target, h);
-    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-        super::movement::retaliate(
-            &mut s,
-            target,
-            h,
-            impact.map(|p| (p, super::movement::IMPACT_REACH)),
-        );
-    } else {
-        super::movement::relay_death(&mut s, target, h);
-    }
     if !standing(&s, target) {
         let tick = s.ticks;
         let backswing = match s.objects.get(&h) {

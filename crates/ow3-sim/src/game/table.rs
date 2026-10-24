@@ -220,6 +220,9 @@ impl ObjectTable {
 pub struct UnitEntries {
     /// Freed at its death, in this order.
     pub death: Vec<u32>,
+    /// The objects of its making kept to its corpse's end, in the order
+    /// they go then (`unit_died`).
+    pub corpse: Vec<u32>,
     /// The parts of its state a hero's level replaces (`level_changed`).
     pub level: Vec<u32>,
     /// It holds the objects of a creep camp (it was its first creep).
@@ -334,6 +337,8 @@ struct Making {
     deferred: &'static [usize],
     death: &'static [usize],
     level: &'static [usize],
+    /// The rest, kept to the corpse's end, in the order they go then.
+    corpse: &'static [usize],
 }
 
 const HERO: Making = Making {
@@ -341,24 +346,30 @@ const HERO: Making = Making {
     deferred: &[17, 18, 23, 22],
     death: &[],
     level: &[19, 20],
+    corpse: &[],
 };
+// PROVISIONAL: the corpse orders but a creep's are taken by the creep's
+// pattern (c-SAK-1: kobold 9's corpse at 106.758).
 const UNIT: Making = Making {
     count: 18,
     deferred: &[17, 16],
     death: &[10, 11],
     level: &[],
+    corpse: &[15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
 const CREEP: Making = Making {
     count: 28,
     deferred: &[16, 15, 20, 25, 24, 23, 22, 21, 19, 27, 26],
     death: &[10, 11, 17, 18],
     level: &[],
+    corpse: &[14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
 const CAMP_CREEP: Making = Making {
     count: 29,
     deferred: &[16, 15, 21, 26, 25, 24, 23, 22, 20, 28, 27],
     death: &[10, 11, 18, 19],
     level: &[],
+    corpse: &[17, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
 
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
@@ -390,6 +401,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
             death: making.death.iter().map(|&k| entries[k]).collect(),
+            corpse: making.corpse.iter().map(|&k| entries[k]).collect(),
             level: making.level.iter().map(|&k| entries[k]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
             ..UnitEntries::default()
@@ -2011,7 +2023,30 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     state.table.rest_q.push((three, queue[4]));
     state.table.rest_q.push((three, queue[3]));
     state.table.rest_q.push((five, queue[2]));
+    // Its corpse goes at the end of its decay, DecayTime and BoneDecayTime
+    // on (2 and 88 s): the second of the queue, the objects of its making
+    // it still has, the first of the queue (c-SAK-1: kobold 9 at 106.758).
+    // A hero leaves no corpse that decays.
+    let corpse = entries(state, h)
+        .map(|e| std::mem::take(&mut e.corpse))
+        .unwrap_or_default();
+    if !state
+        .unit(Some(h))
+        .is_some_and(|u| crate::data::is_hero(u.type_id))
+    {
+        let gone = ow3_math::add(five, (CORPSE_DECAY - 2.0).to_bits());
+        state.table.rest_q.push((gone, queue[1]));
+        for e in corpse {
+            state.table.rest_q.push((gone, e));
+        }
+        state.table.rest_q.push((gone, queue[0]));
+    }
 }
+
+/// DecayTime + BoneDecayTime of the game's constants, from the end of the
+/// death time (c-SAK-1: 2 + 88).
+/// PROVISIONAL: read for the creeps of c-SAK-1 only.
+const CORPSE_DECAY: f32 = 90.0;
 
 /// The last frees of a death (`unit_died`), after the levels its
 /// experience gave.

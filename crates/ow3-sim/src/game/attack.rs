@@ -1408,7 +1408,17 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             u.entries.early_walk = true;
         }
     }
-    for (h, q) in super::movement::attack_moves_resuming(state, before) {
+    attack_move_resumes(state, before);
+    state.table.now = tick;
+}
+
+/// The attack-moves going on at backswing ends due before `before` (all
+/// of this tick without it), in the order of those ends.
+pub(super) fn attack_move_resumes(state: &mut State, before: Option<u32>) {
+    let tick = state.ticks;
+    let mut resuming = super::movement::attack_moves_resuming(state, before);
+    resuming.sort_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
+    for (h, q) in resuming {
         state.table_at(q);
         super::table::attack_move_resumed(state, h);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {

@@ -1729,6 +1729,9 @@ impl<'a> Game<'a> {
             self.park();
         }
         self.state.borrow_mut().timers.end_tick(tick);
+        // The attack-moves going on at backswing ends of this tick, in the
+        // order of those ends (c-SAK-1: footmen 2 and 3 at 3285).
+        attack::attack_move_resumes(&mut self.state.borrow_mut(), None);
         movement::attack_moves(&mut self.state.borrow_mut());
         // The checks of the auras (SPEC-0038).
         auras::tick(&mut self.state.borrow_mut());

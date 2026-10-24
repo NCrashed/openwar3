@@ -1145,9 +1145,8 @@ fn mirrors(s: &mut State) {
 /// script generator); the one at the hero's place stands in for him until
 /// his missile arrives. Each lasts `Dur` from now (SPEC-0040; c-SAK-1).
 ///
-/// PROVISIONAL: a missile arrives after its straight distance at the
-/// ability's missile speed (the game's 0.133 and 0.178 s for 97.8 and
-/// 171.6 are not read yet).
+/// The missiles fly straight from the hero's launch point at the
+/// ability's missile speed (c-SAK-1: arrivals at 7288 and 7297).
 fn mirror_appear(s: &mut State, m: &mut Mirror) {
     let tick = s.ticks;
     let Some(hero) = s.unit(Some(m.hero)).filter(|u| u.alive).cloned() else {
@@ -1160,6 +1159,17 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
     m.hero_place = ((u64::from(r) * u64::from(n)) >> 32) as usize;
     let lasts = super::attack::ticks(m.numbers.duration);
     let facing = super::facing::to_degrees(hero.facing);
+    // The missiles leave from the hero's launch point (`launchY` ahead,
+    // `launchX` to the right), floored to whole units (c-SAK-1: from
+    // (1227, -1)).
+    let launch = {
+        let [side, ahead] = s.data.units.get(&hero.type_id).map_or([0, 0], |t| t.launch);
+        let (fx, fy) = (cos(hero.facing), sin(hero.facing));
+        [
+            ow3_math::floor(add(hero.x, add(mul(fx, ahead), mul(fy, side)))),
+            ow3_math::floor(add(hero.y, sub(mul(fy, ahead), mul(fx, side)))),
+        ]
+    };
     for place in places {
         let Some(e) =
             super::widgets::create_unit(s, hero.owner, hero.type_id, [place[0], place[1], facing])
@@ -1186,16 +1196,14 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         }
         s.timed_life.push((tick + lasts + SUMMON_OVER, e));
         let (dx, dy) = (
-            f32::from_bits(sub(place[0], hero.x)),
-            f32::from_bits(sub(place[1], hero.y)),
+            f32::from_bits(sub(place[0], launch[0])),
+            f32::from_bits(sub(place[1], launch[1])),
         );
-        let speed = f32::from_bits(m.missile_speed).max(1.0);
-        let flight = (dx * dx + dy * dy).sqrt() / speed;
-        let at = tick
-            + (flight / f32::from_bits(crate::timers::TICK))
-                .ceil()
-                .max(1.0) as u64;
-        m.made.push((e, at));
+        // Its missile moves speed x 0.005 a tick, its first step in this
+        // tick, and arrives at the start of the tick it reaches the place.
+        let step = f32::from_bits(m.missile_speed).max(1.0) * f32::from_bits(crate::timers::TICK);
+        let steps = ((dx * dx + dy * dy).sqrt() / step).ceil().max(1.0) as u64;
+        m.made.push((e, tick + steps - 1));
     }
 }
 

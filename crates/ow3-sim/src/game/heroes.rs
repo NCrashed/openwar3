@@ -68,7 +68,11 @@ fn set_level(state: &mut State, h: u32, level: i64) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.level = level;
     }
-    super::table::level_changed(state, h);
+    // Its parts of the level are made anew with its level events
+    // (`widgets::hero_levels`).
+    if !state.level_parts.contains(&h) {
+        state.level_parts.push(h);
+    }
     // Its level events, one a level (SPEC-0034).
     // PROVISIONAL: one event a level when it gains several at once.
     for _ in old..level {
@@ -121,8 +125,11 @@ pub(super) fn death(state: &mut State, dying: u32) {
         dx * dx + dy * dy <= range * range
     };
     // The heroes in range of each player for whom it is an enemy.
+    // The last made first (c-SAK-1: the Blademaster's level event before
+    // the Mountain King's at 6052). PROVISIONAL: one case only; the order
+    // may be another of the units' (the grid's).
     let mut by_player: std::collections::BTreeMap<i32, Vec<(u32, i64)>> = Default::default();
-    for &h in &state.units {
+    for &h in state.units.iter().rev() {
         if h == dying {
             continue;
         }

@@ -943,6 +943,9 @@ pub struct State {
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
+    /// Heroes whose parts of the level are made anew before their level
+    /// events (`table::level_changed`).
+    pub(super) level_parts: Vec<u32>,
     /// Entries into cells of the grid of calls for help so far.
     pub(super) call_entries: u64,
     /// Groups ordered together whose formation is laid out at their first
@@ -1096,6 +1099,7 @@ impl State {
             waves: Vec::new(),
             impact_now: false,
             leveled: Vec::new(),
+            level_parts: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),
             orders_given: 0,
@@ -1723,6 +1727,11 @@ impl<'a> Game<'a> {
         // Reaction delays that end now: new goals, before the updates.
         // Without updates in the tick, those before its first hit (c-SAK-1:
         // the hit at 14.299965 before a reaction end at 14.299970 in 2861).
+        // The goals of backswings ending before `U` (c-SAK-1: the Mountain
+        // King's at 5880, before ogre 13's update freed its old walk).
+        if let Some(at) = at {
+            attack::after_swing_walks(&mut self.state.borrow_mut(), Some(at));
+        }
         let bound = at.or_else(|| attack::first_hit_in_tick(&self.state.borrow()));
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());

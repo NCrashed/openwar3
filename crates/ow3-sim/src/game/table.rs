@@ -48,6 +48,10 @@ pub struct ObjectTable {
     /// attackers going on with their attack-moves (`attack_move_resumed`).
     pub dying: Option<u32>,
     pub resumed: Vec<u32>,
+    /// The last frees of a death, after the experience it gives
+    /// (`death_rest`): deferred ones and those at a queue time.
+    rest: Vec<(u32, &'static str)>,
+    rest_q: Vec<(u32, u32)>,
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
     timed_q: Vec<(u32, u32, &'static str)>,
@@ -76,6 +80,8 @@ impl ObjectTable {
             at_fade: false,
             dying: None,
             resumed: Vec::new(),
+            rest: Vec::new(),
+            rest_q: Vec::new(),
             timed: Vec::new(),
             timed_q: Vec::new(),
             ends_late: Vec::new(),
@@ -587,6 +593,22 @@ pub(super) fn path_searched(state: &mut super::State, h: u32) {
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
+    if std::env::var("OW3_DBG").is_ok() && (5866..5882).contains(&state.table.now) {
+        let bt = std::backtrace::Backtrace::force_capture().to_string();
+        let fr: Vec<&str> = bt
+            .lines()
+            .filter(|l| l.contains("ow3_sim::game"))
+            .take(4)
+            .map(|l| l.trim())
+            .collect();
+        let now = state.table.now;
+        eprintln!(
+            "wd {} {h} walk {:?} {:?}",
+            now,
+            entries(state, h).map(|e| e.walk.clone()),
+            fr
+        );
+    }
     // A walk made early for a chase to come stays through its order.
     if let Some(e) = entries(state, h)
         && std::mem::take(&mut e.early_walk)
@@ -1427,14 +1449,16 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     if let Some(o) = other {
         state.table.defer(o, "death order");
     }
+    // The rest go after the levels its experience gives (`death_rest`;
+    // c-SAK-1: ogre 13 at 6052, both heroes' levels before 1143, 1144).
     for e in stun_end {
-        state.table.defer(e, "unit death");
+        state.table.rest.push((e, "unit death"));
     }
     for e in core {
-        state.table.defer(e, "unit death");
+        state.table.rest.push((e, "unit death"));
     }
     // The fourth from the last after them (c-SAK-1: 2851 at 2753).
-    state.table.defer(queue[5], "death order queue");
+    state.table.rest.push((queue[5], "death order queue"));
     // Of the first 5 queue objects 2 go at the end of the unit's death
     // time (`death` of its type, from the death), 1 2.0 s after that, 2
     // stay (c-SAK-1: 2753 -> 3353, 3353, 3753; footman 7's death time
@@ -1447,9 +1471,20 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         .map_or(3.0f32.to_bits(), |t| t.death_time);
     let three = ow3_math::add(at, death);
     let five = ow3_math::add(three, 2.0f32.to_bits());
-    state.table.free_at_q(three, queue[4], "death order queue");
-    state.table.free_at_q(three, queue[3], "death order queue");
-    state.table.free_at_q(five, queue[2], "death order queue");
+    state.table.rest_q.push((three, queue[4]));
+    state.table.rest_q.push((three, queue[3]));
+    state.table.rest_q.push((five, queue[2]));
+}
+
+/// The last frees of a death (`unit_died`), after the levels its
+/// experience gave.
+pub(super) fn death_rest(state: &mut super::State) {
+    for (e, tag) in std::mem::take(&mut state.table.rest) {
+        state.table.defer(e, tag);
+    }
+    for (q, e) in std::mem::take(&mut state.table.rest_q) {
+        state.table.free_at_q(q, e, "death order queue");
+    }
 }
 
 /// The number of objects a native of the script takes when called

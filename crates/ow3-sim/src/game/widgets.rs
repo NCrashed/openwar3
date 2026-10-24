@@ -624,6 +624,10 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
         let dying_thread = state.context;
         (state.events.clone(), owner.zip(owner_handle), dying_thread)
     };
+    // The levels its experience gave, then the last frees of its death
+    // (SPEC-0034, SPEC-0024; c-SAK-1: ogre 13 at 6052).
+    hero_levels(vm, state);
+    super::table::death_rest(&mut state.borrow_mut());
     let unit = owner.is_some().then_some(widget);
     let base = Context {
         triggering_widget: Some(widget),
@@ -690,8 +694,6 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
             fire_trigger(vm, state, trigger, context);
         }
     }
-    // The levels its experience gave (SPEC-0034).
-    hero_levels(vm, state);
     // Queues waiting for food go on (SPEC-0027).
     if let Some((owner, _)) = owner {
         super::training::food_freed(vm, state, owner);
@@ -713,6 +715,12 @@ pub(super) fn hero_levels(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 return;
             }
             let h = s.leveled.remove(0);
+            // Its parts of the level first, then its events, hero by hero
+            // (c-SAK-1: the Mountain King and the Blademaster at 6052).
+            if let Some(k) = s.level_parts.iter().position(|&p| p == h) {
+                s.level_parts.remove(k);
+                super::table::level_changed(&mut s, h);
+            }
             let owner = s.unit(Some(h)).map(|u| u.owner);
             let owner = owner.map(|id| (id, s.player_handle(id)));
             (h, s.events.clone(), owner)

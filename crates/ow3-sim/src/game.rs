@@ -1542,6 +1542,13 @@ impl<'a> Game<'a> {
         // Wind Walk fades, at the start of the tick before the updates
         // (SPEC-0040).
         cast::fades(&mut self.state.borrow_mut());
+        // The checks that expire before `U` (SPEC-0019).
+        // PROVISIONAL: after the hits before `U`, not interleaved with them
+        // by expiry.
+        if let Some(at) = at {
+            let acquired = movement::acquisitions_before(&mut self.state.borrow_mut(), Some(at));
+            widgets::acquired(&mut self.vm, &self.state, &acquired);
+        }
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());

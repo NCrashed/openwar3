@@ -3776,8 +3776,17 @@ fn stun_ends(state: &mut State) {
 
 pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
     stun_ends(state);
+    acquisitions_before(state, None)
+}
+
+/// The checks of this tick whose expiries lie below `bound` (all of them
+/// without one): the checks before the updates come first (SPEC-0019;
+/// c-SAK-1: the Mountain King's check at 31.168348 took kobold 15 before
+/// the update at 31.169281 in 6235, standing for his reaction delay).
+pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<u32> {
     let tick = state.ticks;
-    let next_clock = add(state.move_clock, crate::timers::TICK);
+    // Below `bound`, as the bits of a positive float grow with it.
+    let next_clock = bound.map_or(add(state.move_clock, crate::timers::TICK), |b| b - 1);
     let alive: BTreeSet<u32> = state
         .units
         .iter()
@@ -3797,6 +3806,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         }
         // No check and no timer until its next order (SPEC-0045).
         if u.checks_off {
+            continue;
+        }
+        // One whose stun ends now checks after the stun's end.
+        if bound.is_some() && u.stunned_until == Some(tick) {
             continue;
         }
         // The unit's own timer runs whatever it does: the check runs in the

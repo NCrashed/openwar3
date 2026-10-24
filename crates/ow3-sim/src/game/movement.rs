@@ -5531,9 +5531,13 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                     super::table::acquisition_lost_with(state, h);
                 }
             }
-            // One that took the target by its own check and stays has its
-            // order end with it (c-SAK-1: kobold 10 at 4764).
-            if !walked && state.unit(Some(h)).is_some_and(|u| !u.entries.by_call) {
+            // One that stays has its order end with it, unless it is in
+            // its backswing (c-SAK-1: kobold 10 at 4764 and at 5442; gnolls
+            // 12 and 17, swinging back at 5442, kept theirs).
+            let swinging = state
+                .unit(Some(h))
+                .is_some_and(|u| f32::from_bits(u.backswing_end) > f32::from_bits(now));
+            if !walked && !swinging {
                 super::table::order_lost_with(state, h);
             }
         }

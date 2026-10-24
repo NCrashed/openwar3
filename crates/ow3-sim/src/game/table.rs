@@ -1432,14 +1432,18 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     }
     // The fourth from the last after them (c-SAK-1: 2851 at 2753).
     state.table.defer(queue[5], "death order queue");
-    // Of the first 5 queue objects 2 go 3.0 s on, 1 5.0 s on, 2 stay.
-    // PROVISIONAL: which of them, and 1000 ticks for "about 5.0 s"
-    // (c-SAK-1: 2753 -> 3353, 3353, 3753).
+    // Of the first 5 queue objects 2 go at the end of the unit's death
+    // time (`death` of its type, from the death), 1 2.0 s after that, 2
+    // stay (c-SAK-1: 2753 -> 3353, 3353, 3753; footman 7's death time
+    // 3.04 at 4764 -> 5372, 5772).
+    // PROVISIONAL: which of the five.
     let at = state.event_time.unwrap_or_else(|| state.timers.time());
-    let (three, five) = (
-        ow3_math::add(at, 3.0f32.to_bits()),
-        ow3_math::add(at, 5.0f32.to_bits()),
-    );
+    let death = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(3.0f32.to_bits(), |t| t.death_time);
+    let three = ow3_math::add(at, death);
+    let five = ow3_math::add(three, 2.0f32.to_bits());
     state.table.free_at_q(three, queue[4], "death order queue");
     state.table.free_at_q(three, queue[3], "death order queue");
     state.table.free_at_q(five, queue[2], "death order queue");

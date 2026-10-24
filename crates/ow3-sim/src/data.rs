@@ -112,6 +112,9 @@ pub struct UnitType {
     pub prop_window: u32,
     /// The collision size (`collision`), as a real (SPEC-0019).
     pub collision: u32,
+    /// How long its death lasts (`death` of `UnitData.slk`, `udtm` of a
+    /// map), as a real (SPEC-0024, "Unit death").
+    pub death_time: u32,
     /// How far the unit looks for enemies on its own (`acquire`, SPEC-0019).
     pub acquire: u32,
     /// Where its missiles start: `launchX` to the side and `launchY`
@@ -557,6 +560,7 @@ impl ObjectData {
                 "prio",
                 "movetp",
                 "race",
+                "death",
             ],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
@@ -586,6 +590,7 @@ impl ObjectData {
                     .as_deref()
                     .map(|r| r.trim().trim_matches('"').to_ascii_lowercase())
                     .unwrap_or_default();
+                unit.death_time = real(values[10].as_ref());
             }
         }
         // The weapons (SPEC-0016): those `weapsOn` turns on, with their
@@ -949,6 +954,7 @@ impl ObjectData {
             }
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
+            unit.death_time = def.number(b"udtm").unwrap_or(unit.death_time);
             unit.sight = def.number(b"usid").unwrap_or(unit.sight);
             unit.night_sight = def.number(b"usin").unwrap_or(unit.night_sight);
             if let Some(level) = def.number(b"ulev") {

@@ -83,6 +83,10 @@ pub struct Marks {
     pub walking: u32,
     pub constructing: u32,
     pub selections: u32,
+    /// The next entry and the next creation number of the object table
+    /// (`C` and `D` of SPEC-0024).
+    pub c: u32,
+    pub d: u32,
 }
 
 impl Marks {
@@ -180,6 +184,8 @@ impl<'a> Playback<'a> {
             r,
             handles: self.game.handles_made(),
             objects: self.game.objects_changed(),
+            c: self.game.table_next().0,
+            d: self.game.table_next().1,
             ..Marks::default()
         };
         let mut walking = std::collections::BTreeSet::new();

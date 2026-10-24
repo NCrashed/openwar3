@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use ow3_formats::replay::Replay;
+use ow3_sim::checksum::{Parts, Statics, time_part, turn_checksum, turns};
 use ow3_sim::game::table::ObjectTable;
 use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
@@ -115,5 +116,52 @@ fn heroes_three_objects_report() {
             )
         });
         eprintln!("{k}: game {g:?}\n{k}: ours {o:?}");
+    }
+}
+
+/// The turn checksums of `c-SAK-1` with the object table from 1.0 s on:
+/// without `B`, `N`, `C`, `D`, `E` and `R` what is left of each recorded
+/// checksum depends on the game sum `G` and the constants only, so it
+/// changes only where a player's units or selections change. Report the
+/// turns where it changes.
+#[test]
+fn heroes_three_checksum_report() {
+    let name = "c-SAK-1";
+    if game_rows(name).is_none() {
+        return;
+    }
+    let dir = game_data().join("replays");
+    let replay = Replay::parse(&std::fs::read(dir.join(format!("{name}.w3g"))).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
+    table.day = vec![767, 647, 819];
+    playback.game.set_table(table, false);
+    playback.run();
+    let turns = turns(&replay);
+    let mut last = None;
+    for (k, (turn, marks)) in turns.iter().zip(&playback.marks).enumerate() {
+        let parts = Parts {
+            b: time_part(turn.before),
+            n: turn.n,
+            c: marks.c,
+            d: marks.d,
+            e: marks.e,
+            r: marks.r,
+            g: 0,
+        };
+        let rest = turn.recorded ^ turn_checksum(&Statics::default(), &parts);
+        if last != Some(rest) {
+            eprintln!(
+                "turn {} ({} ms): rest {rest:08X}, C {} D {}",
+                k + 1,
+                turn.after,
+                marks.c,
+                marks.d
+            );
+            last = Some(rest);
+        }
     }
 }

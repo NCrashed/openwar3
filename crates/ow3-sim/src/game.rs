@@ -2249,6 +2249,12 @@ impl<'a> Game<'a> {
         self.state.borrow_mut().table = table;
     }
 
+    /// The next entry and the next creation number of the object table.
+    pub fn table_next(&self) -> (u32, u32) {
+        let s = self.state.borrow();
+        (s.table.next_entry(), s.table.next_creation())
+    }
+
     /// The takings and freeings of the object table kept so far.
     pub fn table_log(&self) -> Vec<table::TableEvent> {
         self.state.borrow().table.log.clone().unwrap_or_default()

@@ -3981,7 +3981,9 @@ pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<
         let idle = matches!(check, Check::Idle { .. });
         let Some(target) = targets
             .nearest_enemy(state, h)
-            .or_else(|| remembered().filter(|_| idle))
+            // Also on an attack-move with no target (c-SAK-1: footman 4
+            // took kobold 19, 1236 away, at 10005).
+            .or_else(|| remembered().filter(|_| idle || matches!(check, Check::AttackMove { .. })))
         else {
             continue;
         };
@@ -4788,6 +4790,22 @@ pub(super) fn retaliate(
     let calls = calls || relayed;
     if calls {
         for &h in &reached {
+            // The victim itself stores nothing; the others store the
+            // attacker within 2000 of them (c-SAK-1: footman 4 kept
+            // kobold 19 from footman 2's calls, not kobold 10, who hit
+            // footman 4 himself).
+            // PROVISIONAL: the positions of that test.
+            if h == victim
+                || !state
+                    .unit(Some(h))
+                    .zip(state.unit(Some(attacker)))
+                    .is_some_and(|(u, a)| {
+                        let (dx, dy) = (real_of(a.x) - real_of(u.x), real_of(a.y) - real_of(u.y));
+                        dx * dx + dy * dy <= REMEMBERED_REACH * REMEMBERED_REACH
+                    })
+            {
+                continue;
+            }
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.remembered = Some(attacker);
             }

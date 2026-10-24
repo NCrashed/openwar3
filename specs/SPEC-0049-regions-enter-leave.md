@@ -3,7 +3,7 @@ id: SPEC-0049
 title: Regions and their enter and leave events
 status: draft
 reference_version: 1.27b
-analysts: ["analyst workspace (script test maps c-SAQ and c-SAR, values written by the map's script)"]
+analysts: ["analyst workspace (script test maps c-SAQ, c-SAR and c-SAS, values written by the map's script)"]
 ---
 
 ## Behaviour
@@ -100,11 +100,21 @@ trigger 4 (footman, rifleman), all on A, then on B trigger 2 (footman,
 rifleman, footman) and trigger 4 (footman, rifleman, footman). The leave
 events of a call came after its enter events (c-SAQ).
 
-When the queue runs: units entering inside a timer callback had their
-actions run with the map's 0.005 s tick counter one higher than at the
-entry, but before a 0 s timer started in that callback right after the
-`CreateUnit` calls. A walking unit's enter, made at its commit, had its
-actions one count later as well.
+When the queue runs: each event is put on the game's timer queue
+(SPEC-0002) like a 0 s timer started right after its filter returned
+(or at the crossing, with no filter). It runs in the timer phase of the
+next tick, in the queue order of such a timer. Read in c-SAS (a 0.005 s
+periodic counter `N`, started before everything else):
+- footman created by `CreateUnit` in a timer callback in the tick of
+  count 99, then timers of 0, 0.002, 0.005 and 0.0075 s started in that
+  callback: next tick `N` (100), the enter action, then the 0, 0.002
+  and 0.005 s timers, all in that tick; the 0.0075 s timer in the
+  tick after;
+- rifleman walking in, its enter found at a commit in the tick of count
+  357; its filter started a 0 s and a 0.005 s timer before returning:
+  next tick `N` (358), the filter's 0 s timer, the enter action, a
+  periodic 0.005 s timer of the map started earlier, then the filter's
+  0.005 s timer.
 
 ## Edge cases
 
@@ -118,9 +128,9 @@ actions one count later as well.
 
 ## Open questions
 
-1. The exact slot of the event queue within a tick, relative to the
-   timer queue (SPEC-0002) and the unit updates. Only the counts above
-   were read. c-SAK-1 logs the two Mirror Image units (created in the
+1. Whether the queue entry of an event is exactly that of a 0 s timer
+   in all phases (only a timer callback and a walker's commit were
+   read). c-SAK-1 logs the two Mirror Image units (created in the
    ability's timer at tick 7262) with the label 7262.
 2. Leave filters were not tested with a filter; the y extent of
    `RegionAddRect` was tested only at (-0.01, -0.01) and (0, 0).
@@ -129,10 +139,9 @@ actions one count later as well.
 
 ## Sources
 
-- Test maps c-SAQ and c-SAR on 1.27b under Wine, 2026-10-24: regions
-  made by `CreateRegion`, `RegionAddRect` and `RegionAddCell`; footmen
-  and a rifleman of `Player(0)` created,
-  moved by `SetUnitX`, `SetUnitY` and `SetUnitPosition`, hidden,
+- Test maps c-SAQ, c-SAR and c-SAS on 1.27b under Wine, 2026-10-24:
+  regions made by `CreateRegion`, `RegionAddRect` and `RegionAddCell`;
+  footmen and a rifleman of `Player(0)` created, moved by `SetUnitX`, `SetUnitY` and `SetUnitPosition`, hidden,
   shown, killed, removed, and walking by a `move` order. The map's
   script logged `IsPointInRegion` tests, the filter calls, the
   conditions and actions, and the walker's position every tick.

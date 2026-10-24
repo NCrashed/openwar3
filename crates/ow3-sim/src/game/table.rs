@@ -641,6 +641,10 @@ pub(super) fn walk_made(state: &mut super::State, h: u32) {
     state.table.free(tick, helper, "search: helper");
     if let Some(e) = entries(state, h) {
         e.walk = vec![path, cluster];
+        // A goal in reach after a swing is that walk's alone (c-SAK-1: the
+        // Mountain King's attack-move walk of 10000 kept through his stop
+        // at 10557).
+        e.quiet_walk = false;
     }
 }
 /// Unit `h` made a walk at its order: its first search takes none.
@@ -657,6 +661,14 @@ pub(super) fn path_searched(state: &mut super::State, h: u32) {
         Some(e) if e.walk_ready => e.walk_ready = false,
         Some(_) => walk_made(state, h),
         None => {}
+    }
+}
+
+/// Unit `h` stands in reach of its target, facing it: the walk of its
+/// chase ends (c-SAK-1: the image 20 at 48.718559).
+pub(super) fn chase_walk_ended(state: &mut super::State, h: u32) {
+    if entries(state, h).is_some_and(|e| !e.walk.is_empty()) {
+        walk_dropped(state, h);
     }
 }
 

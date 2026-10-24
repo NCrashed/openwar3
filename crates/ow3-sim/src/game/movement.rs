@@ -2853,7 +2853,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // chase's walk with it (c-SAK-1: footman 2, walk
                             // freed at 41.815235; the image 20 at its update
                             // of 48.718559).
-                            super::table::walk_dropped(state, unit);
+                            super::table::chase_walk_ended(state, unit);
                             m.heading = h;
                             m.walking = false;
                             m.velocity = [0, 0];

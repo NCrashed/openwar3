@@ -4369,7 +4369,10 @@ pub(super) fn retaliate(
     let current = |h: u32| {
         let u = state.unit(Some(h))?;
         let target = match (u.attack, u.movement) {
-            (Some(a), _) if a.order_id == 0 => a.target,
+            // Also a swing of an attack-move waiting for its cooldown: the
+            // unit has that target (c-SAK-1: the Mountain King switched at
+            // the call of 3689).
+            (Some(a), _) if a.order_id == 0 || u.attack_move.is_some() => a.target,
             // Also one chasing on an attack-move (c-RZH-1: footmen 1 and 3
             // took creep 9 at footman 5's call in 989).
             (None, Some(m)) if m.order_id == 0 || u.attack_move.is_some() => match m.order {

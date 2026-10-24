@@ -28,6 +28,7 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
             let w: Vec<&str> = l.split('\t').collect();
             let tick = w.first()?.parse().ok()?;
             let new = *w.get(3)? == "new";
+            // Objects of the second pool (`p2:n`) are not in the table.
             let entry = w.get(4)?.parse().ok()?;
             let creation = w
                 .get(5)?
@@ -37,16 +38,6 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
             let tag = w.get(6).map_or("", |t| t.trim()).to_string();
             Some((tick, new, entry, creation, tag))
         })
-        .collect::<Vec<Row>>();
-    // A taking read twice in the list (c-SAK-1: entry 1103 with the
-    // creation number of the next row, 1010) is left out.
-    let rows = (0..rows.len())
-        .filter(|&k| {
-            !rows
-                .get(k + 1)
-                .is_some_and(|n| rows[k].1 && n.1 && rows[k].3.is_some() && rows[k].3 == n.3)
-        })
-        .map(|k| rows[k].clone())
         .collect();
     Some(rows)
 }

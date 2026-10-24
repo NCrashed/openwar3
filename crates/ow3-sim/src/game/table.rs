@@ -188,6 +188,9 @@ pub struct UnitEntries {
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
+    /// The goal after its swing was taken at the backswing's end; the
+    /// chase takes no other.
+    pub early_goal: bool,
     /// Its walk is that of a goal taken in reach after a swing, which ends
     /// when it faces its target.
     pub quiet_walk: bool,

@@ -3176,8 +3176,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // starts with the stored heading on the goal direction, and its walk
         // is given up (SPEC-0024; c-SAK-1: kobold 8 at 1087, gnoll 11 at
         // 1093, kobold 9 at 1123, gnoll 12 at 1129).
-        if m.heading == start_heading && u.entries.quiet_walk {
+        // A goal taken early at the backswing's end, the unit facing its
+        // target from the swing, ends at once (c-SAK-1: 3973).
+        if u.entries.quiet_walk && (m.heading == start_heading || u.entries.early_walk) {
             u.entries.quiet_walk = false;
+            u.entries.early_walk = false;
             super::table::walk_dropped(state, h);
         }
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -3604,11 +3607,19 @@ pub(super) fn chase(
             // Still a new goal with its walk (SPEC-0024; c-SAK-1: kobold
             // 8 at 1085, gnoll 11 at 1087).
             // (made at the backswing's end, `attack::after_swing_walks`).
-            if !state.unit(Some(h)).is_some_and(|u| u.entries.walk_ready) {
+            let early = state
+                .objects
+                .get_mut(&h)
+                .and_then(|o| match o {
+                    Object::Unit(u) => Some(std::mem::take(&mut u.entries.early_goal)),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            if !early {
                 super::table::walk_made_at_order(state, h);
-            }
-            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-                u.entries.quiet_walk = true;
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.quiet_walk = true;
+                }
             }
             // Its update in this tick came before (the goal is due at the
             // backswing's end, the tick before): that update ends it (c-SAK-1:
@@ -3621,6 +3632,12 @@ pub(super) fn chase(
                 super::table::walk_dropped(state, h);
             }
         } else {
+            // A goal taken at the backswing's end has its walk already.
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && std::mem::take(&mut u.entries.early_goal)
+            {
+                u.entries.walk_ready = true;
+            }
             follow::search(state, &walker, tick);
         }
     }

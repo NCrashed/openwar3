@@ -1397,7 +1397,8 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             (a.resume == Some(tick + 1)
                 && standing(state, a.target)
                 && due
-                && !u.entries.early_walk)
+                && !u.entries.early_walk
+                && !u.entries.early_goal)
                 .then_some((h, u.backswing_end))
         })
         .collect();
@@ -1405,7 +1406,20 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
         state.table_at(end);
         super::table::walk_made_at_order(state, h);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.early_goal = true;
+        }
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.early_walk = true;
+        }
+        // A goal in reach ends at the unit's first update that starts with
+        // its heading on the target, which may come before the chase here
+        // (c-SAK-1: the Mountain King, goal 3972, update 3973, freed 3979).
+        let in_reach = state
+            .unit(Some(h))
+            .and_then(|u| u.attack)
+            .is_some_and(|a| super::movement::reaches(state, h, a.target));
+        if in_reach && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.quiet_walk = true;
         }
     }
     attack_move_resumes(state, before);

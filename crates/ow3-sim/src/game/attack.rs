@@ -118,6 +118,8 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
     if !state.attacking.contains(&h) {
         state.attacking.push(h);
     }
+    // The walk to the target stops (SPEC-0024, "Walks").
+    super::table::walk_dropped(state, h);
 }
 
 /// The hits due at this tick, in the order the attacks began.

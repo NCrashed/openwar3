@@ -2614,6 +2614,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.renew_at = None;
                                 after_swing = true;
                                 follow::new_group(state, h);
+                                super::table::walk_made_at_order(state, h);
                                 m.target = at;
                                 // A goal of a timer: the countdown starts at
                                 // the search, the next update, which does not

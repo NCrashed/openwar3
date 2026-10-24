@@ -488,6 +488,41 @@ pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
     }
 }
 
+/// Unit `h`'s move to the point of a Wind Walk's fade ends and its
+/// attack-move is taken up again from its order queue, in its update: a
+/// new goal with its walk, then the "attack ends" kept from the fade and
+/// its last acquisition's objects are freed 0.0001 s later, the latter
+/// from the last (c-SAK-1: the Blademaster at 4800).
+pub(super) fn attack_move_taken_up(state: &mut super::State, h: u32) {
+    walk_made_at_order(state, h);
+    let old = entries(state, h).map(|e| {
+        e.current
+            .take()
+            .into_iter()
+            .chain(std::mem::take(&mut e.acquisition))
+            .collect::<Vec<_>>()
+    });
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "acquisition: attack object");
+    }
+}
+
+/// Unit `h`, whose target died in its backswing, walks back to its guard
+/// point at the backswing's end: a new goal with its walk, and its last
+/// acquisition's objects are freed 0.0001 s later, from the last
+/// (SPEC-0030, "Losing the target in a backswing"; c-SAK-1: gnoll 17 at
+/// 4824).
+pub(super) fn guard_walk_made(state: &mut super::State, h: u32) {
+    walk_made_at_order(state, h);
+    let old = entries(state, h).map(|e| {
+        e.guard_walk = true;
+        std::mem::take(&mut e.acquisition)
+    });
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "acquisition: attack object");
+    }
+}
+
 /// Unit `h` takes a script's attack order to a point (c-SAK-1, 1.5 s):
 /// the order and its record, the old order ends, then the 11 objects of
 /// the attack ability for the order and the walk. The record and the

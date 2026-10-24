@@ -3240,7 +3240,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             .and_then(|u| u.attack_move)
             .map(|a| a.point);
         if let Some(point) = point {
-            order(state, h, Order::Point, ORDER_ATTACK, point);
+            if order(state, h, Order::Point, ORDER_ATTACK, point) {
+                super::table::attack_move_taken_up(state, h);
+            }
         } else if let Some(at) = position_of(state, target) {
             order(state, h, Order::Attack { target }, order_id, at);
         }
@@ -3745,8 +3747,11 @@ pub(super) fn attack_moves(state: &mut State) {
                 .units
                 .get(&u.type_id)
                 .map_or(0.0, |t| real_of(t.collision));
-        if idle && dx * dx + dy * dy > accept * accept + 1e-3 {
-            order(state, h, Order::Point, 0, home);
+        if idle
+            && dx * dx + dy * dy > accept * accept + 1e-3
+            && order(state, h, Order::Point, 0, home)
+        {
+            super::table::guard_walk_made(state, h);
         }
     }
     let units: Vec<(u32, AttackMove)> = state

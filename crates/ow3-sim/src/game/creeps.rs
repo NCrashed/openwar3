@@ -184,27 +184,7 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
                     && (u.creep.returning
                         || u.creep.homebound
                         || u.movement.is_none_or(|m| !m.ordered()))
-                    // But one whose return is in progress answers only within
-                    // MaxGuardDistance plus its collision of its home, and not
-                    // when walking back at 0.6 of its life or less (SPEC-0030;
-                    // c-SAK-1: gnoll 16, 1089 from home, refused at 2587).
-                    && (!(u.creep.returning || u.creep.homebound) || {
-                        let home = u.creep.guard.unwrap_or(u.home);
-                        let collision = state
-                            .data
-                            .units
-                            .get(&u.type_id)
-                            .map_or(0.0, |t| f32::from_bits(t.collision));
-                        let far = f32::from_bits(state.combat.max_guard_distance) + collision;
-                        let (hx, hy) = (
-                            f32::from_bits(u.x) - f32::from_bits(home[0]),
-                            f32::from_bits(u.y) - f32::from_bits(home[1]),
-                        );
-                        let weak = u.creep.returning
-                            && f32::from_bits(u.life.value())
-                                <= 0.6 * f32::from_bits(u.life.max);
-                        !weak && hx * hx + hy * hy < far * far
-                    })
+                    && may_answer(state, u)
                     // Within the call's radius plus its own collision size
                     // (c-SAK-1: ogre 13's call took kobolds 14 and 15,
                     // 618.5 away).
@@ -629,4 +609,29 @@ pub(super) fn group_of(state: &State, h: u32) -> Vec<u32> {
         .find(|g| g.contains(&h))
         .cloned()
         .unwrap_or_default()
+}
+
+/// Whether creep `u` may answer a call: one whose return is in progress
+/// answers only within MaxGuardDistance plus its collision of its home,
+/// and not when walking back at 0.6 of its life or less (SPEC-0030;
+/// c-SAK-1: gnoll 16, 1089 from home, refused at 2587; ogre 18 answered
+/// at 2915).
+pub(super) fn may_answer(state: &State, u: &super::Unit) -> bool {
+    if !(u.creep.returning || u.creep.homebound) {
+        return true;
+    }
+    let home = u.creep.guard.unwrap_or(u.home);
+    let collision = state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0.0, |t| f32::from_bits(t.collision));
+    let far = f32::from_bits(state.combat.max_guard_distance) + collision;
+    let (hx, hy) = (
+        f32::from_bits(u.x) - f32::from_bits(home[0]),
+        f32::from_bits(u.y) - f32::from_bits(home[1]),
+    );
+    let weak =
+        u.creep.returning && f32::from_bits(u.life.value()) <= 0.6 * f32::from_bits(u.life.max);
+    !weak && hx * hx + hy * hy < far * far
 }

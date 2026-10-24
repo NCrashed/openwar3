@@ -35,7 +35,21 @@ the damage event (`GetEventDamage`).
     1/128 cell, towards the target's per-tick position (SPEC-0018) in
     that tick.
   - It moves at the missile speed (1000 = 0.15625 cells per tick) along
-    that direction and does not follow the target afterwards.
+    that direction. Every 0.1 s after the launch a homing update looks
+    at the target: if the target has not moved since the last aim,
+    nothing changes (no new measure, no hit test), and the straight
+    flight goes on to its end; if it has moved, the bolt is aimed anew
+    from its logical point (the launch point moved 100 towards the aim
+    point per 0.1 s step), and if the target's per-tick position is
+    then less than one step (100) away the bolt hits (a 0.0001 s timer,
+    so in the same tick): its agent is placed at the target, makes one
+    last step and the impact follows. `c-SAK-1`: the first bolt (a
+    standing kobold, `d` = 20.5378) had six updates without effect,
+    also the sixth with 1.79 cells left, and landed at `e + 132`; the
+    second (a gnoll walking away, launch q 12.969920, 4.21 cells to its
+    per-tick position) was re-aimed at its first update, found the gnoll
+    1.909 cells (61.1) away and hit in that tick (`e + 20`), not after
+    the straight count.
   - Impact (damage and stun) in tick `e + n`, with `n = ceil(d /
     0.15625)` and `d` the launch distance in cells. The impact position
     is the launch point plus `n` steps, so it slightly overshoots.

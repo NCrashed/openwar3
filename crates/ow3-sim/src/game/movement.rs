@@ -4304,13 +4304,16 @@ pub(super) fn retaliate(
                 && !swinging_back(u)
                 && !u.paused
                 && !u.creep.sleeping
-                && !u.creep.returning
+                // One on its way home answers within MaxGuardDistance of it
+                // (SPEC-0030).
+                && super::creeps::may_answer(state, u)
                 && u.attack.is_none()
                 // Idle, or walking an attack-move with no target (SPEC-0019,
                 // "Spell damage"; c-RZJ-1: footmen 2, 5, 6 and 7 at 788).
                 && (walking_attack_move(u)
                     || (u.attack_move.is_none()
-                        && u.movement.is_none_or(|m| !m.ordered() || m.going_back())))
+                        && (u.movement.is_none_or(|m| !m.ordered() || m.going_back())
+                            || u.creep.homebound)))
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state
@@ -4533,6 +4536,18 @@ pub(super) fn retaliate(
         // an acquisition.
         let walker = state.unit(Some(h)).is_some_and(walking_attack_move);
         if walker {
+            freeze(state, h);
+        }
+        // A creep on its way home stops and comes (SPEC-0030; c-SAK-1: ogre
+        // 18 at 2915).
+        if state
+            .unit(Some(h))
+            .is_some_and(|u| u.creep.returning || u.creep.homebound)
+        {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.creep.returning = false;
+                u.creep.homebound = false;
+            }
             freeze(state, h);
         }
         let id = if walker { ORDER_ATTACK } else { 0 };

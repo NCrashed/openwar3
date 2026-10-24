@@ -3896,7 +3896,9 @@ pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<
         // better target (SPEC-0019, "Checks while attacking").
         // Nor a creep whose move order home has not ended (SPEC-0030;
         // c-RXD-1: creep 6 kept unit 2 at 6359).
-        if u.creep.homebound {
+        // Also while that order waits behind an attack taken at a call
+        // (c-SAK-1: ogre 18 kept the Mountain King at 7046).
+        if u.creep.homebound || u.creep.queued_home {
             continue;
         }
         if let (Some(expiry), Some((current, 0))) = (expired, target) {

@@ -1095,6 +1095,19 @@ An idle unit with a weapon attacks an enemy unit on its own:
   4465 (speed 0) its heading went 6.204931 -> 5.704931 -> 5.210267 (the
   direction to the new target), then stayed until 4561. (Implemented
   this way, the replay's path events match to 4747.)
+  The end of that backswing then runs the attack once more against the
+  new target, as any backswing end: out of reach it starts the chase
+  anew, even though the unit already chases that target (a commit with
+  velocity 0, no aim, heading kept; at its next update a new search).
+  `c-SAK-1` (read in the game), both on kobold 10 while kobold 19 (hit,
+  alive) walked away:
+  - footman 6: hit 9325, check takes kobold 10 at 9347 (commit), search
+    and path at 9351, walks; backswing end at 9425 (commit, no aim),
+    new search at 9429;
+  - footman 2: hit 9319, check takes kobold 10 at 9371 (commit), search
+    at 9375, turns where he stands (wait4 for footman 6 at 9387, 9417);
+    backswing end at 9419 (commit, no aim), new search at 9423 (same
+    path).
 - **Cooldown expiry.** When the cooldown of the last swing expires, the
   swing starts in that timer's callback if the unit's last update found
   it ready (target in range and heading within 0.2 rad of it, the test

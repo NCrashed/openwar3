@@ -4037,12 +4037,15 @@ pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<
 /// creep 8 switched at 2007, backswing end 2081, turned at 2083).
 fn attack_checks(state: &mut State) {
     let tick = state.ticks;
+    // Those whose backswings end in this tick come too: out of reach their
+    // chase starts again at the end itself (c-SAK-1: footman 6, backswing
+    // end 9425); in reach they wait for the check of the next tick.
     let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.attack_checks)
         .into_iter()
-        .partition(|&(t, _, _)| t <= tick);
+        .partition(|&(t, _, _)| t <= tick + 1);
     state.attack_checks = later;
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    for (_, h, target) in due {
+    for (t, h, target) in due {
         let at = match state.objects.get(&target) {
             Some(Object::Unit(u)) => u
                 .movement
@@ -4063,7 +4066,24 @@ fn attack_checks(state: &mut State) {
             mul(collision_of(state, target), CELL),
         );
         let here = relative([u.x, u.y], min);
-        if !in_range(here, relative(at, min), reach) {
+        let reached = in_range(here, relative(at, min), reach);
+        if t > tick && reached {
+            state.attack_checks.push((t, h, target));
+            continue;
+        }
+        if !reached {
+            // Out of reach the attack starts its chase anew, although it
+            // already chases that target: a stop, and a new search at the
+            // next update (SPEC-0019; c-SAK-1: footman 2 at 9419, footman 6
+            // at 9425).
+            let order_id = u
+                .movement
+                .filter(|m| m.order == (Order::Attack { target }))
+                .map(|m| m.order_id);
+            if let (Some(id), Some(pos)) = (order_id, position_of(state, target)) {
+                stop_commit(state, h);
+                order(state, h, Order::Attack { target }, id, pos);
+            }
             continue;
         }
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h)

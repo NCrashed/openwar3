@@ -3552,6 +3552,11 @@ fn stun_ends(state: &mut State) {
             });
         if acquired {
             halt(state, h);
+            // Its order back is none: it is idle, and its check is an idle
+            // unit's (c-SAK-1: kobold 10 took footman 7 at 1745).
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.movement = None;
+            }
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                 && u.acquire_phase != super::NO_PHASE
             {

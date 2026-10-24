@@ -5250,6 +5250,23 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
                     m.given = state.orders_given;
                 }
             }
+            // A chase out of reach is a new goal with its walk, at the
+            // cooldown's expiry (SPEC-0024; c-SAK-1: footman 3 at 18.119986).
+            // Not in a reaction delay (c-SAK-1: footman 6 at 3193, whose
+            // chase came at its reaction end).
+            if !in_reach
+                && let Some(end) = state
+                    .unit(Some(h))
+                    .filter(|u| {
+                        u.movement
+                            .is_none_or(|m| m.reaction_end.is_none() && m.reaction.is_none())
+                    })
+                    .map(|u| u.cooldown_end)
+            {
+                state.table_at(end);
+                super::table::walk_made_at_order(state, h);
+                state.table.now = state.ticks;
+            }
         }
     }
 }

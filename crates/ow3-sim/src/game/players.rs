@@ -800,6 +800,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 if s == 2 {
                     setup.clock_base = value;
                     setup.clock_start = setup.clock_time;
+                    let tick = state.ticks;
+                    super::table::time_of_day_set(&mut state.table, tick);
                 }
             }
             Ok(None)

@@ -37,6 +37,16 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
             let tag = w.get(6).map_or("", |t| t.trim()).to_string();
             Some((tick, new, entry, creation, tag))
         })
+        .collect::<Vec<Row>>();
+    // A taking read twice in the list (c-SAK-1: entry 1103 with the
+    // creation number of the next row, 1010) is left out.
+    let rows = (0..rows.len())
+        .filter(|&k| {
+            !rows
+                .get(k + 1)
+                .is_some_and(|n| rows[k].1 && n.1 && rows[k].3.is_some() && rows[k].3 == n.3)
+        })
+        .map(|k| rows[k].clone())
         .collect();
     Some(rows)
 }
@@ -55,17 +65,35 @@ fn heroes_three_objects_report() {
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     // The table as the game has it at 1.0 s (the first takings of the
     // list come from the free list 806, 805, 818, then it grows from 821).
-    playback
-        .game
-        .set_table(ObjectTable::new(821, vec![818, 805, 806], 821), true);
+    // The time of day holds 767, 647 and 819 (two watches, the rate).
+    let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
+    table.day = vec![767, 647, 819];
+    playback.game.set_table(table, true);
     let until = game.last().map_or(0, |r| r.0);
     while playback.game.ticks() <= until && playback.step_tick() {}
     let ours = playback.game.table_log();
+    // OW3_OBJECTS="from to": our rows in that range of positions.
+    if let Ok(range) = std::env::var("OW3_OBJECTS") {
+        let w: Vec<usize> = range
+            .split_whitespace()
+            .filter_map(|v| v.parse().ok())
+            .collect();
+        for (k, o) in ours.iter().enumerate().take(w[1]).skip(w[0]) {
+            eprintln!(
+                "{k}: {} {} {} {} {}",
+                o.tick, o.new, o.entry, o.creation, o.tag
+            );
+        }
+    }
     let first = game
         .iter()
         .zip(&ours)
         .position(|(g, o)| {
-            g.0 != o.tick || g.1 != o.new || g.2 != o.entry || g.3.is_some_and(|c| c != o.creation)
+            g.0 != o.tick
+                || g.1 != o.new
+                || g.2 != o.entry
+                || g.3
+                    .is_some_and(|c| o.creation != u32::MAX && c != o.creation)
         })
         .or((game.len() != ours.len()).then(|| game.len().min(ours.len())));
     eprintln!(

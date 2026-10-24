@@ -423,6 +423,7 @@ pub(super) fn create_unit(
         rally: None,
         shown_order: None,
         region_test: Default::default(),
+        entries: Default::default(),
     };
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
@@ -785,6 +786,7 @@ pub(super) fn kill_unit(
         }
     };
     if let (true, Some(h)) = (killed, h) {
+        super::table::unit_died(&mut state.borrow_mut(), h);
         super::movement::target_died(&mut state.borrow_mut(), h);
     }
     if let (true, Some(h)) = (killed, h) {
@@ -1068,6 +1070,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let at = [real(&args[2]), real(&args[3]), real(&args[4])];
             let h = create_unit_by_script(&mut s, owner, integer(&args[1]), at);
+            if let Some(h) = h {
+                super::table::unit_made(&mut s, h);
+            }
             drop(s);
             // The filters of its regions run before the call returns
             // (SPEC-0049).

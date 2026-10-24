@@ -313,6 +313,8 @@ pub struct Unit {
     shown_order: Option<(i32, u64)>,
     /// Its last region test (SPEC-0049).
     region_test: regions::Tested,
+    /// The entries of the object table it holds (SPEC-0024).
+    entries: table::UnitEntries,
 }
 
 /// A building under construction (SPEC-0026, "Construction progress"):
@@ -1165,6 +1167,7 @@ impl State {
     /// its queue interval holds.
     fn objects_due(&mut self) {
         let tick = self.ticks;
+        self.table.flush(tick);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
         let before = self.object_ticks.len() + self.object_timers.len();
         self.object_ticks.retain(|&t| t != tick);
@@ -2468,6 +2471,14 @@ fn execute_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: 
 /// A trigger's event happened: if it is enabled and its conditions hold,
 /// its actions run.
 fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Context) {
+    // The event takes an object of the engine's table for 0.0001 s
+    // (SPEC-0024). PROVISIONAL: one a trigger fired.
+    {
+        let mut s = state.borrow_mut();
+        let tick = s.ticks;
+        let e = s.table.take(tick, "event object");
+        s.table.defer(e, "event object");
+    }
     let enabled = state
         .borrow_mut()
         .trigger(Some(trigger))
@@ -2532,6 +2543,26 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         // the map from starting.
         let f = if declaration.trim_end().ends_with("returns string") {
             players::noting_config(f, shared.clone())
+        } else {
+            f
+        };
+        // The objects of the engine's table it takes (SPEC-0024).
+        let objects = table::native_objects(players::native_name(declaration));
+        let f: NativeFn = if objects > 0 {
+            let state = shared.clone();
+            let tag: &'static str = Box::leak(
+                players::native_name(declaration)
+                    .to_string()
+                    .into_boxed_str(),
+            );
+            Rc::new(move |vm: &mut Vm, args: &[Value]| {
+                {
+                    let mut s = state.borrow_mut();
+                    let tick = s.ticks;
+                    s.table.take_n(tick, objects, tag);
+                }
+                f(vm, args)
+            })
         } else {
             f
         };

@@ -68,6 +68,7 @@ fn set_level(state: &mut State, h: u32, level: i64) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.level = level;
     }
+    super::table::level_changed(state, h);
     // Its level events, one a level (SPEC-0034).
     // PROVISIONAL: one event a level when it gains several at once.
     for _ in old..level {
@@ -266,6 +267,13 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
         }
         u.spent += 1;
     }
+    // Its objects of the engine's table (SPEC-0024): 2 for an ability
+    // with a cooldown, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
+    // and AOcr 1). PROVISIONAL: read for learning the first level only.
+    let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
+    state
+        .table
+        .take_n(tick, if cooled { 2 } else { 1 }, "hero skill");
 }
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
     native!(

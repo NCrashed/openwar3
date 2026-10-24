@@ -11,7 +11,37 @@ the game data; this repository contains no Blizzard assets or code.
 
 ## Status
 
-Early setup. Nothing is playable yet.
+The engine loads every map of the 1.27b install, runs its scripts, and
+plays units, orders, combat, creeps, gathering, building and several hero
+abilities. A viewer shows the maps in 3D, and you can select units and
+order them. There is no full melee game yet, and no multiplayer.
+
+What is checked against the game:
+
+- file formats, the JASS language and VM, the number arithmetic and the
+  random numbers match the game bit for bit;
+- 22 of 30 replays of our test maps (one mechanic each) match the game turn
+  by turn, including the turn checksum the game uses to detect desyncs;
+- the hero test (Mountain King, Blademaster, creeps) is the current work.
+
+## Roadmap
+
+1. **Foundations.** File formats, JASS, deterministic arithmetic, timers,
+   map loading. Done.
+2. **Viewer.** See a map, select units, give orders. Usable, with known
+   differences from the game.
+3. **Simulation that matches the game exactly.** Every mechanic checked
+   against replays, down to the turn checksum. In progress: movement,
+   combat, creeps, Human economy and the first heroes are done.
+4. **Full melee game.** All four races, buildings, upgrades, items, all
+   abilities, computer opponents. Not started beyond Human basics.
+5. **Multiplayer with the original 1.27b client.** Not started.
+6. **Beyond compatibility.** Lifted engine limits, new script APIs and
+   modding, decided in the open.
+
+There are no dates. Stages 3 and 4 are by far the largest, and parts of
+them cannot be sized yet. [docs/roadmap.md](docs/roadmap.md) lists every
+area with its state and marks where the amount of work is still unknown.
 
 ## Principles
 

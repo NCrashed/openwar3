@@ -906,6 +906,30 @@ An idle unit with a weapon attacks an enemy unit on its own:
   of 32.0905838 (tick 6420), radius 500, found no enemy; it took
   rifleman 9, 718 away, remembered from a call for help of grunt 15 at
   30.5558720.
+  Details read in the game (test maps c-SAU .. c-SAX, footmen, collision
+  31, and `c-SAK-1`):
+  - The remembered enemy is stored only if it is within 2000 plus both
+    collision sizes of the unit at that moment (center distance 2060
+    stored, 2090 not), and the same reach holds at the check (taken at
+    1960 .. 2060, not at 2090 or 2120; an enemy not stored at 2100 was
+    not taken later at 1900).
+  - Besides calls of other units, a hit on the unit itself stores its
+    attacker the same way, except when the attacker is the unit's own
+    current target. `c-SAK-1` footman 4, attacking kobold 10 from 8046
+    on and hit by it six times, kept kobold 19 (stored from footman 2's
+    calls at q 41.958847 and 46.008842). After kobold 10's death his
+    check of q 50.008579 found no enemy within 500 and took kobold 19,
+    1236 away (event in 10005, reaction delay 0.012422).
+  - A unit with a direct `attack` order on a target stored nothing from
+    such calls (c-SAV: it answered and left before the reach test). The
+    same units on an attack-move did.
+  - The fallback runs at the check of a unit without a target (the
+    0.01 s check after its target died, also on an attack-move).
+  - The enemy must be visible to the unit's player: with fog of war on
+    (c-SAY, the enemies 1500 .. 2120 away, out of sight, `IsUnitVisible`
+    false) none was taken; the same map with fog off (c-SAX) took every
+    one within the reach. Whether this is tested at the store, at the
+    check or at both was not separated.
 - **Reaction delay.** After acquiring, the unit waits the reaction delay
   of attack orders (generator 9, `ReactionDelay`, see above), counted
   from the expiry of the check (the queue's time during the check, also

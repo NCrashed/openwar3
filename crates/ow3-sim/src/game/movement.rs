@@ -3975,6 +3975,10 @@ pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<
             let o = state
                 .unit(Some(r))
                 .filter(|o| o.alive && enemies(state, u.owner, o.owner))?;
+            // Only one its player sees (SPEC-0019, "Remembered enemy").
+            if !super::fog::unit_visible(state, r, u.owner) {
+                return None;
+            }
             let (dx, dy) = (real_of(o.x) - real_of(u.x), real_of(o.y) - real_of(u.y));
             (dx * dx + dy * dy <= REMEMBERED_REACH * REMEMBERED_REACH).then_some(r)
         };

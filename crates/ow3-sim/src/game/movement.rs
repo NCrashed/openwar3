@@ -1878,8 +1878,8 @@ pub(super) fn stop_commit(state: &mut State, h: u32) {
 
 /// Unit `h` stands where it is now, keeping its order (a stun,
 /// SPEC-0037).
-pub(super) fn stand_still(state: &mut State, h: u32) {
-    let clock = state.move_clock;
+pub(super) fn stand_still(state: &mut State, h: u32, at: Option<u32>) {
+    let clock = at.unwrap_or(state.move_clock);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(m) = u.movement.as_mut()
     {

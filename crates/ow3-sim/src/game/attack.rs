@@ -346,6 +346,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                         h,
                         if hero { hero_stun } else { unit_stun },
                         at,
+                        false,
                     );
                 }
             }
@@ -1079,7 +1080,14 @@ pub(super) fn spell_hit(
         // The impact comes at the end of the tick, and the stun counts from
         // there (c-RZH-1: bolt 943, order back at 1946).
         let at = s.event_time.unwrap_or_else(|| s.timers.time());
-        super::cast::stun(&mut s, target, h, if hero { stun.1 } else { stun.0 }, at);
+        super::cast::stun(
+            &mut s,
+            target,
+            h,
+            if hero { stun.1 } else { stun.0 },
+            at,
+            true,
+        );
     }
 }
 

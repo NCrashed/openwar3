@@ -504,7 +504,7 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
 /// longer if it already is (SPEC-0037): it stops at once. The stun ends
 /// on a timer of the queue, and its order comes back on a timer of 0.01 s
 /// from that expiry, in the tick whose end that time does not pass.
-pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u32) {
+pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u32, impact: bool) {
     let back = add(add(at, duration), STUN_BACK);
     let (mut tick, mut clock) = (state.ticks, state.move_clock);
     while f32::from_bits(back) > f32::from_bits(add(clock, crate::timers::TICK)) {
@@ -518,7 +518,10 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         u.stun_back = Some(back);
         u.stunner = Some(source);
     }
-    movement::stand_still(state, h);
+    // A missile's impact at the end of the tick stops it where it is then
+    // (c-SAK-1: gnoll 16 at the bolt of 2615); a melee hit, at the start of
+    // the tick (c-RXD-1: worker 5's bash).
+    movement::stand_still(state, h, impact.then_some(at));
     // Its order goes on after the stun with a new path (c-RXD-1: worker 5
     // stunned in 4337, new path at its update of 4741).
     state.paths.remove(&h);

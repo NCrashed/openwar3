@@ -3649,8 +3649,15 @@ pub(super) fn attack_moves(state: &mut State) {
         }
         match u.movement {
             Some(m) if m.ordered() => {}
-            // Arrived at the point: the order ends.
-            Some(m) if m.order == Order::Point => set_attack_move(state, h, None),
+            // Arrived at the point: the order ends. Its check timer is the
+            // unit's own and goes on (c-SAK-1: the Blademaster, at his
+            // point, checked at 45.51 and 46.01 after the order of 45.0).
+            Some(m) if m.order == Order::Point => {
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.next_acquire = a.next_check;
+                }
+                set_attack_move(state, h, None);
+            }
             // PROVISIONAL: the target is gone without a hit of this unit
             // (not measured); it walks on.
             _ => {

@@ -49,9 +49,16 @@ spread a fight through a camp.
 
 - **Joining.** A creep joins a group when it is created. It joins the
   nearest group that has had fewer than 12 joiners and whose first
-  living member is within 676 of it (distance between centres; it was
-  not settled whether this is 676 in world units or a squared distance
-  of 26 cells). If there is no such group, it starts a new one. A creep
+  living member is near it: squared distance in path cells (32 world
+  units) below 676, i.e. less than 26 cells (832 world units) between
+  the centres, measured to that first member only. If there is no
+  such group, it starts a new one. `c-SAK-1`: kobold 14 at (1050,
+  -150) is 800 (25 cells, 625) from kobold 8 at (250, -150), the first
+  of the camp made before, and joins it; kobold 15 at (1050, 150) is
+  854.4 (26.7 cells, 713) from kobold 8 and starts a second group, which
+  the later creeps join. A reach of 676 world units would have split
+  them at kobold 14. The first creep of a group takes one more entry of
+  the object table at its creation (SPEC-0024). A creep
   is in one group only and stays in it: walking away from its camp
   does not change its group. A dead member drops out; its place can be
   taken by a later joiner. In `c-RZJ-1` all eight creeps of the camp

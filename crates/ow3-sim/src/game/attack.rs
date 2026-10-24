@@ -1227,7 +1227,8 @@ pub(super) fn spell_hit(
         super::widgets::damage_widget(vm, state, Some(h), Some(target), damage, 0, 0);
     }
     let mut s = state.borrow_mut();
-    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+    // Also a target the hit killed, for the objects kept to the stun's end.
+    if matches!(s.objects.get(&target), Some(Object::Unit(_))) {
         let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
         // The impact comes at the end of the tick, and the stun counts from
         // there (c-RZH-1: bolt 943, order back at 1946).

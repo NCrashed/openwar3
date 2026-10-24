@@ -534,6 +534,11 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         clock = add(clock, crate::timers::TICK);
         end_tick += 1;
     }
+    // Dead of the hit: only the objects kept to the stun's end.
+    if state.unit(Some(h)).is_some_and(|u| !u.alive) {
+        super::table::stunned_dead(state, h, end_tick);
+        return;
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.stunned_until.is_none_or(|t| t <= tick)
     {

@@ -55,6 +55,8 @@ pub struct ObjectTable {
     /// each copy of the hero, in the order they go, and those of the
     /// missile to each copy's place.
     copies: std::collections::BTreeMap<u32, Vec<u32>>,
+    /// The missile objects of units killed by the hit that stunned them.
+    dead_missiles: std::collections::BTreeMap<u32, Vec<u32>>,
     /// The parts of the copies' states freed after their enter events
     /// (`copies_freed`).
     copy_parts: Vec<u32>,
@@ -91,6 +93,7 @@ impl ObjectTable {
             rest: Vec::new(),
             rest_q: Vec::new(),
             copies: Default::default(),
+            dead_missiles: Default::default(),
             copy_parts: Vec::new(),
             missiles: Default::default(),
             timed: Vec::new(),
@@ -471,6 +474,15 @@ pub(super) fn old_order_ended(state: &mut super::State, h: u32) {
 /// PROVISIONAL: read for a creep's return only.
 pub(super) fn game_order(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    // Given before its stun's order has come back, it is the order that
+    // comes back (`stuns_with`; c-SAK-1: the creep stunned by a bash, its
+    // walk home back at 8952).
+    if let Some(e) = entries(state, h)
+        && e.stun_ticks.is_some()
+    {
+        e.stun_game_order = true;
+        return;
+    }
     let order = state.table.take(tick, "game order");
     let record = state.table.take(tick, "order record");
     // An order of the game before it goes: its extra object first, its
@@ -1415,6 +1427,15 @@ pub(super) fn mirror_copy(state: &mut super::State, unit: u32) {
     state.table.copies.insert(unit, kept);
 }
 
+/// Unit `h` died of the hit that stunned it: the stun's missile objects
+/// go at the tick its stun would have ended (c-SAK-1: gnoll 17, killed by
+/// the bolt of 7981, its objects freed at 8981).
+pub(super) fn stunned_dead(state: &mut super::State, h: u32, end_tick: u64) {
+    for e in state.table.dead_missiles.remove(&h).unwrap_or_default() {
+        state.table.free_at(end_tick, e, "missile");
+    }
+}
+
 /// The parts of the copies' states made by a Mirror Image go, before
 /// the objects of their enter events (c-SAK-1: 7261).
 pub(super) fn copies_freed(state: &mut super::State) {
@@ -1778,10 +1799,18 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let Some((game, pair, own, core, stun_order, stun_end, missile, end_tick)) = held else {
         return;
     };
-    if let Some(end) = end_tick.filter(|&t| t != u64::MAX) {
-        for e in missile {
-            state.table.free_at(end, e, "missile");
+    match end_tick {
+        Some(end) if end != u64::MAX => {
+            for e in missile {
+                state.table.free_at(end, e, "missile");
+            }
         }
+        // Killed by the hit that stuns it: they wait for the stun's end
+        // (`stunned_dead`).
+        None if !missile.is_empty() => {
+            state.table.dead_missiles.insert(h, missile);
+        }
+        _ => {}
     }
     for e in pair.into_iter().chain(game).chain(stun_order) {
         state.table.defer(e, "unit death");

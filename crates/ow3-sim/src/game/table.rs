@@ -518,14 +518,16 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
 }
 
 /// Unit `h`'s order of the game (a creep's walk home) ends at its point:
-/// one more object, then 0.0001 s later the order's objects, those of the
-/// order of the game, that object and a stun's buff end it still held
-/// (c-SAK-1: 9786).
+/// with a stun's buff end still held, one more object; then 0.0001 s
+/// later the order's objects, those of the order of the game, that object
+/// and the buff end (c-SAK-1: 9786, 10020).
 ///
 /// PROVISIONAL: what the one more object is, is not read.
 pub(super) fn game_order_arrived(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    let other = state.table.take(tick, "game order: end");
+    // Only with a stun's buff end held (c-SAK-1: none at 10020).
+    let buffed = entries(state, h).is_some_and(|e| e.buff_end.is_some());
+    let other = buffed.then(|| state.table.take(tick, "game order: end"));
     order_ended(state, h);
     let (game, buff) = entries(state, h)
         .map(|e| {
@@ -536,7 +538,9 @@ pub(super) fn game_order_arrived(state: &mut super::State, h: u32) {
     for e in game {
         state.table.defer(e, "game order");
     }
-    state.table.defer(other, "game order: end");
+    if let Some(o) = other {
+        state.table.defer(o, "game order: end");
+    }
     if let Some(b) = buff {
         state.table.defer(b, "buff end");
     }

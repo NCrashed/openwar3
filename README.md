@@ -24,8 +24,7 @@ What is checked against the game:
   by turn, including the turn checksum the game uses to detect desyncs;
 - in the hero test (Mountain King, Blademaster, creeps) every one of the
   engine's 11848 internal object changes and every turn checksum to 62 s
-  match the game (one part of the checksum, a per-player sum, is still
-  taken from the game).
+  match the game.
 
 ## Roadmap
 

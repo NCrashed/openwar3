@@ -54,6 +54,26 @@ within `HeroExpRange` (1200) of the dying unit gets a share:
 4. The result is rounded to the nearest integer, halves up (17.5 -> 18,
    42.5 -> 43, 12.5 -> 13), and no hero goes beyond 5400.
 
+When a creep's share (step 3) takes the hero past the threshold of his
+next level, only the part up to the threshold uses the factor of his
+current level. The rest is turned back into unreduced experience
+(divided by that factor) and given again with the factor of the new
+level, and so on for each level passed. The sum is kept as a real
+number, and only the new total is rounded (step 4). Test map c-SAZ (one
+paladin, kills by `UnitDamageTarget`; levels at 200, 500 and 900):
+
+| XP before | Kill | Naive | Game | Arithmetic |
+|---|---|---|---|---|
+| 490 (level 2) | kobold, 25 | 508 | 506 | 10 at 0.7, then (7.5 / 0.7) x 0.6 = 6.43; 506.43 |
+| 495 (level 2) | kobold | 513 | 511 | 5, then (12.5 / 0.7) x 0.6 = 10.71; 510.71 |
+| 190 (level 1) | ogre, 60 | 238 | 233 | 10 at 0.8, then (38 / 0.8) x 0.7 = 33.25; 233.25 |
+| 486 (level 2) | ogre | 528 | 524 | 14 at 0.7, then (28 / 0.7) x 0.6 = 24; 524 |
+| 1190 (level 4) | kobold | 1203 | 1203 | 12.5 at 0.5, no level passed |
+
+`c-SAK-1`: ogre 13 (60) shared by the two heroes, both at 486 and level
+2: 30 x 0.7 = 21 would pass 500, so 14 at 0.7 and (7 / 0.7) x 0.6 = 6,
+20 each (486 -> 506; their level-up events come from this award).
+
 Measured (tests RXU, RXV, RXW, all kills with `UnitDamageTarget` from
 the paladin, values read with `GetHeroXP` right after):
 

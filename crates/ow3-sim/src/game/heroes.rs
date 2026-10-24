@@ -139,19 +139,55 @@ pub(super) fn death(state: &mut State, dying: u32) {
     for heroes in by_player.values() {
         let share = base as f64 / heroes.len() as f64;
         for &(h, level) in heroes {
-            let factor = if owner == CREEPS {
-                let list = &state.combat.heroes.factor_xp;
+            let rules = &state.combat.heroes;
+            let factor = |level: i64| {
+                if owner != CREEPS {
+                    return 1.0;
+                }
+                let list = &rules.factor_xp;
                 let i = (level - 1).max(0) as usize;
                 list.get(i).or(list.last()).copied().unwrap_or(100) as f64 / 100.0
-            } else {
-                1.0
             };
-            // Halves up.
-            let gain = (share * factor + 0.5).floor() as i64;
             let xp = state.unit(Some(h)).map_or(0, |u| u.xp);
-            set_xp(state, h, xp + gain);
+            // Only the part up to the next level's threshold takes this
+            // level's factor; the rest, back as unreduced experience, takes
+            // the next level's, and so on. The new total is rounded once,
+            // halves up (SPEC-0033; c-SAK-1: 486 + 30 from ogre 13 at
+            // level 2 -> 506).
+            let total = award(xp, share, level, rules.max_level, factor, |l| {
+                rules.xp_for_level(l)
+            });
+            set_xp(state, h, total);
         }
     }
+}
+
+/// The new experience of a hero with `xp` at `level` given `share` of
+/// unreduced experience: each level's `factor` applies up to the next
+/// level's threshold (`need`), and the total is rounded once, halves up
+/// (SPEC-0033).
+fn award(
+    xp: i64,
+    share: f64,
+    level: i64,
+    max_level: i64,
+    factor: impl Fn(i64) -> f64,
+    need: impl Fn(i64) -> i64,
+) -> i64 {
+    let (mut total, mut raw, mut level) = (xp as f64, share, level);
+    loop {
+        let f = factor(level);
+        let next = need(level + 1) as f64;
+        if level < max_level && f > 0.0 && total + raw * f >= next {
+            raw -= (next - total) / f;
+            total = next;
+            level += 1;
+        } else {
+            total += raw * f;
+            break;
+        }
+    }
+    (total + 0.5).floor() as i64
 }
 
 /// The skill points hero `u` has left: one a level, the first only for a
@@ -322,6 +358,23 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
 #[cfg(test)]
 mod tests {
     /// SPEC-0033, rounding: halves up.
+    /// SPEC-0033: a share that passes a level threshold (test map c-SAZ).
+    #[test]
+    fn award_across_levels() {
+        let factor = |l: i64| [0.8, 0.7, 0.6, 0.5][(l - 1) as usize];
+        let need = |l: i64| [0, 0, 200, 500, 900, 1400][l as usize];
+        for (xp, share, level, total) in [
+            (490, 25.0, 2, 506),
+            (495, 25.0, 2, 511),
+            (190, 60.0, 1, 233),
+            (486, 60.0, 2, 524),
+            (1190, 25.0, 4, 1203),
+            (486, 30.0, 2, 506),
+        ] {
+            assert_eq!(super::award(xp, share, level, 4, factor, need), total);
+        }
+    }
+
     #[test]
     fn halves_up() {
         for (x, rounded) in [(17.5f64, 18i64), (42.5, 43), (12.5, 13), (12.4, 12)] {

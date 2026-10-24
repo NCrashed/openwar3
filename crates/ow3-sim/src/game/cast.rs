@@ -518,12 +518,25 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         clock = add(clock, crate::timers::TICK);
         tick += 1;
     }
+    // The tick its end passes, for the objects of the stun (SPEC-0024).
+    let end = add(at, duration);
+    let (mut end_tick, mut clock) = (state.ticks, state.move_clock);
+    while f32::from_bits(end) > f32::from_bits(add(clock, crate::timers::TICK)) {
+        clock = add(clock, crate::timers::TICK);
+        end_tick += 1;
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.stunned_until.is_none_or(|t| t <= tick)
     {
         u.stunned_until = Some(tick);
         u.stun_back = Some(back);
         u.stunner = Some(source);
+    }
+    if state
+        .unit(Some(h))
+        .is_some_and(|u| u.stunned_until == Some(tick))
+    {
+        super::table::stun_ticks(state, h, end_tick, tick);
     }
     // A missile's impact at the end of the tick stops it where it is then
     // (c-SAK-1: gnoll 16 at the bolt of 2615); a melee hit, at the start of
@@ -779,6 +792,7 @@ enum Deferred {
         target: u32,
         amount: u32,
         stun: (u32, u32),
+        objects: Vec<u32>,
     },
     /// Damage of a thunder clap.
     Damage {
@@ -820,6 +834,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .collect();
         for (h, c) in casting {
             if c.effect_at == Some(tick) {
+                // Its objects count in the tick of its queue time.
+                s.table_at(c.effect_q);
                 // A spell on a target that died ends the cast at once
                 // (SPEC-0035, edge cases; c-RZJ-1: the Paladin's order
                 // ended at the effect time 3227 and he acquired at 3229).
@@ -835,6 +851,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
             if c.effect_at.is_some() && tick >= c.end_at {
                 movement::end_cast(s, h);
+                // Its order ends (SPEC-0024), counted by the game in the
+                // tick of the end's queue time, the effect's plus the
+                // ticks after it.
+                let after = (tick - c.effect_at.unwrap_or(tick)) as f32 * 0.005;
+                s.table_at(add(c.effect_q, after.to_bits()));
+                super::table::order_ended(s, h);
+                s.table.now = tick;
             }
         }
         // A wave made at an effect has its first update in that tick
@@ -862,7 +885,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 target,
                 amount,
                 stun,
-            } => super::attack::spell_hit(vm, state, caster, target, amount, stun),
+                objects,
+            } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
             Deferred::Damage {
                 caster,
                 target,
@@ -883,6 +907,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
     }
+    let mut s = state.borrow_mut();
+    s.table.now = s.ticks;
 }
 
 /// The effect of cast `c` of `h`; the mana is paid and the cooldown starts
@@ -1000,13 +1026,19 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     .get(&c.ability)
                     .map_or(0, |a| a.missile_speed);
                 let stun = (seconds(false), seconds(true));
+                // Its effect event and missile objects (SPEC-0024).
+                let objects = super::table::bolt_effect(s, h);
                 match super::attack::launch_spell(s, h, target, n.data[0], stun, speed) {
-                    Some(missile) => s.missiles.push(missile),
+                    Some(mut missile) => {
+                        missile.objects = objects;
+                        s.missiles.push(missile);
+                    }
                     None => deferred.push(Deferred::SpellHit {
                         caster: h,
                         target,
                         amount: n.data[0],
                         stun,
+                        objects,
                     }),
                 }
             }

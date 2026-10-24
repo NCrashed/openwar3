@@ -195,7 +195,7 @@ const FACING_SITE: u32 = 0x3E4C_CCCD;
 /// A unit following an order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moving {
-    order: Order,
+    pub(super) order: Order,
     /// The id `GetUnitCurrentOrder` gives.
     order_id: i32,
     /// The point walked to (for an attack, where the target stood at the
@@ -3403,6 +3403,7 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
         }
         let given = state.orders_given + 1;
         state.orders_given = given;
+        super::table::reaction_ended(state, h);
         let (timed, target) = match state.objects.get_mut(&h) {
             Some(Object::Unit(u)) => match u.movement.as_mut() {
                 Some(m) => {
@@ -3427,6 +3428,10 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
             m.target = at;
             m.chase = None;
             m.goal_taken = true;
+        }
+        // The chase's walk is made at the end of the delay (SPEC-0024).
+        if timed {
+            super::table::walk_made_at_order(state, h);
         }
     }
 }

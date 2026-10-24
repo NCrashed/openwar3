@@ -273,7 +273,7 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
     state
         .table
-        .take_n(tick, if cooled { 2 } else { 1 }, "hero skill");
+        .take_n(state.table.now, if cooled { 2 } else { 1 }, "hero skill");
 }
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
     native!(

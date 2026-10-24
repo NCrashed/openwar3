@@ -30,7 +30,11 @@ pub struct ObjectTable {
     live: std::collections::BTreeMap<u32, u32>,
     /// Entries freed by a 0.0001 s timer of the world clock, in the order
     /// they were given up.
-    deferred: Vec<(u32, &'static str)>,
+    deferred: Vec<(u64, u32, &'static str)>,
+    /// The tick the game counts what happens now in: the tick, or the
+    /// next one after the tick's queue time reached its end (SPEC-0018:
+    /// the game's tick of a queue time is that of the world clock).
+    pub now: u64,
     /// The parts of the time of day (its rate and the watches of the hours
     /// where something happens), replaced when the time is set.
     pub day: Vec<u32>,
@@ -48,6 +52,7 @@ impl ObjectTable {
             next,
             live: Default::default(),
             deferred: Vec::new(),
+            now: 0,
             day: Vec::new(),
             log: None,
         }
@@ -108,13 +113,17 @@ impl ObjectTable {
     /// The object holding `entry` is freed by a 0.0001 s timer of the
     /// world clock (`flush`).
     pub fn defer(&mut self, entry: u32, tag: &'static str) {
-        self.deferred.push((entry, tag));
+        self.deferred.push((self.now, entry, tag));
     }
 
     /// The 0.0001 s timers of the tick expire: their objects are freed in
     /// the order they were given up.
     pub fn flush(&mut self, tick: u64) {
-        for (entry, tag) in std::mem::take(&mut self.deferred) {
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)
+            .into_iter()
+            .partition(|&(t, _, _)| t <= tick);
+        self.deferred = later;
+        for (_, entry, tag) in due {
             self.free(tick, entry, tag);
         }
     }
@@ -146,6 +155,21 @@ pub struct UnitEntries {
     pub lasting: Vec<u32>,
     /// The object of its order freed when its cast starts.
     pub cast_start: Vec<u32>,
+    /// The object of its order freed at its spell's impact.
+    pub impact: Vec<u32>,
+    /// A stun: its objects freed at its end, its order's objects freed
+    /// when the order comes back, the ticks of both, and the object of
+    /// its buff's end.
+    pub stun_end: Vec<u32>,
+    pub stun_order: Vec<u32>,
+    pub stun_ticks: Option<(u64, u64)>,
+    pub buff_end: Option<u32>,
+    /// The objects of its acquisition freed at the end of its reaction
+    /// delay and at its target's death.
+    /// The objects of its last acquisition freed at the next.
+    pub acquisition: Vec<u32>,
+    pub reaction: Vec<u32>,
+    pub target_death: Option<(u32, u32)>,
 }
 
 /// The objects a unit made by `CreateUnit` takes (SPEC-0024, the analyst's
@@ -210,7 +234,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     } else {
         &UNIT
     };
-    let tick = state.ticks;
+    let tick = state.table.now;
     let entries = state.table.take_n(tick, making.count, "map start: unit");
     for &k in making.deferred {
         state.table.defer(entries[k], "map start: unit");
@@ -230,7 +254,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
 /// `SetHeroXP` of the map start replaced the parts each hero was made
 /// with, the level-up at 30.26 s those of `SetHeroXP`).
 pub(super) fn level_changed(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) else {
         return;
     };
@@ -288,7 +312,7 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
 ///
 /// PROVISIONAL: read for script attack orders to a point only.
 pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let order = state.table.take(tick, "script point order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
@@ -310,7 +334,7 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
 /// had is given up (`walk_dropped`).
 pub(super) fn walk_made(state: &mut super::State, h: u32) {
     walk_dropped(state, h);
-    let tick = state.ticks;
+    let tick = state.table.now;
     let helper = state.table.take(tick, "search: helper");
     let cluster = state.table.take(tick, "walk: cluster");
     let path = state.table.take(tick, "walk: path");
@@ -340,7 +364,7 @@ pub(super) fn path_searched(state: &mut super::State, h: u32) {
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     if let Some(e) = entries(state, h) {
         let old = std::mem::take(&mut e.walk);
         e.stale.extend(old.into_iter().map(|w| (tick, w)));
@@ -350,7 +374,7 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
 
 /// Unit `h` updates: the walks it gave up in earlier ticks are freed.
 pub(super) fn unit_updated(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let due = entries(state, h).map(|e| {
         let (due, kept) = std::mem::take(&mut e.stale)
             .into_iter()
@@ -373,7 +397,7 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
 /// PROVISIONAL: read for Storm Bolt only; when the ability's sixth goes
 /// is not read.
 pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
@@ -387,6 +411,7 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
     if let Some(e) = entries(state, h) {
         e.order = kept;
         e.cast_start = vec![ability[4]];
+        e.impact = vec![ability[5]];
     }
     if walks {
         walk_made_at_order(state, h);
@@ -398,19 +423,88 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
 ///
 /// PROVISIONAL: when it is freed is not read (not by 60 s in c-SAK-1).
 pub(super) fn spell_ordered_again(state: &mut super::State) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     state.table.take(tick, "script target order");
 }
 
 /// Unit `h` starts a cast: the object of its order kept to then is freed.
 pub(super) fn cast_started(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let start = entries(state, h).map(|e| std::mem::take(&mut e.cast_start));
     for e in start.unwrap_or_default() {
         state.table.free(tick, e, "spell ability: order start");
     }
     // The walk into range ends.
     walk_dropped(state, h);
+}
+
+/// Unit `h` takes a target at an acquisition (SPEC-0024, "Acquisition";
+/// c-SAK-1 from 3.51 s): 7 objects after the event's. The last two are
+/// freed 0.0001 s later (the last first), the fifth at the end of the
+/// reaction delay, the fourth at the target's death, the first three at
+/// the unit's next acquisition. Its order (an attack-move) goes on.
+///
+/// PROVISIONAL: the 10 objects of some checks of c-SAK-1 are not done.
+pub(super) fn acquired(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "acquisition: attack object");
+    }
+    // A unit without an attack-move order makes an attack order of its
+    // own: 3 objects more, kept with the order.
+    let own = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_none());
+    let n = if own { 10 } else { 7 };
+    let a = state.table.take_n(tick, n, "acquisition: attack object");
+    state.table.defer(a[n - 1], "acquisition: attack object");
+    state.table.defer(a[n - 2], "acquisition: attack object");
+    let target = state.unit(Some(h)).and_then(|u| {
+        u.movement.and_then(|m| match m.order {
+            super::movement::Order::Attack { target } => Some(target),
+            _ => None,
+        })
+    });
+    if own {
+        order_ended(state, h);
+    }
+    if let Some(e) = entries(state, h) {
+        e.reaction = vec![a[n - 3]];
+        if own {
+            // All the others go with the order.
+            e.order = a[..7].iter().rev().copied().collect();
+        } else {
+            e.acquisition = vec![a[2], a[1], a[0]];
+            e.target_death = target.map(|t| (t, a[n - 4]));
+        }
+    }
+}
+
+/// Unit `h`'s reaction delay ends: its acquisition's object kept to then
+/// is freed 0.0001 s later.
+pub(super) fn reaction_ended(state: &mut super::State, h: u32) {
+    let reaction = entries(state, h).map(|e| std::mem::take(&mut e.reaction));
+    for e in reaction.unwrap_or_default() {
+        state.table.defer(e, "acquisition: attack object");
+    }
+}
+
+/// Unit `dead` died: the acquisitions that took it free their objects
+/// kept to its death.
+pub(super) fn target_died(state: &mut super::State, dead: u32) {
+    let tick = state.table.now;
+    let units = state.units.clone();
+    for h in units {
+        let held = entries(state, h).and_then(|e| match e.target_death {
+            Some((t, o)) if t == dead => {
+                e.target_death = None;
+                Some(o)
+            }
+            _ => None,
+        });
+        if let Some(o) = held {
+            state.table.free(tick, o, "acquisition: attack object");
+        }
+    }
 }
 
 /// `EVENT_UNIT_SPELL_EFFECT` of common.j.
@@ -424,13 +518,121 @@ fn event_without_triggers(state: &mut super::State, registrations: usize) {
     if registrations == 0 {
         return;
     }
-    let tick = state.ticks;
+    let tick = state.table.now;
     let event = state.table.take(tick, "event");
     for _ in 0..registrations {
         let e = state.table.take(tick, "event object");
         state.table.defer(e, "event object");
     }
     state.table.defer(event, "event");
+}
+
+/// The objects of the spell effect event of unit `h` (SPEC-0024, "Event
+/// objects").
+fn spell_effect_event(state: &mut super::State, h: u32) {
+    let registrations = state
+        .events
+        .iter()
+        .filter(|r| {
+            matches!(**r, super::widgets::Registration::Unit { unit, event, .. }
+                if unit == h && event == EVENT_UNIT_SPELL_EFFECT)
+        })
+        .count();
+    event_without_triggers(state, registrations);
+}
+
+/// Unit `h`'s Storm Bolt takes effect (c-SAK-1, 3.04 s): the spell effect
+/// event, then the 5 objects of the missile, kept to the end of the stun
+/// of its hit; gives them in the order they are freed then.
+///
+/// PROVISIONAL: read for Storm Bolt in c-SAK-1 only.
+pub(super) fn bolt_effect(state: &mut super::State, h: u32) -> Vec<u32> {
+    spell_effect_event(state, h);
+    let tick = state.table.now;
+    let m = state.table.take_n(tick, 5, "missile");
+    vec![m[4], m[2], m[3], m[1], m[0]]
+}
+
+/// A spell's missile of `caster` stuns `target` (c-SAK-1: the bolt of
+/// 3.7 s), between the two damage events of its hit: the stun object,
+/// kept to the stun's end with the missile's `objects`; the stun order and
+/// its record, the target's order ending; 10 objects of the stun order, 4
+/// of them freed 0.0001 s later, the others and the order when the order
+/// comes back; and the caster's order object kept to the impact is freed
+/// 0.0001 s later.
+///
+/// PROVISIONAL: read for Storm Bolt in c-SAK-1 only, on a target not
+/// stunned before.
+pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, objects: Vec<u32>) {
+    let tick = state.table.now;
+    let stun = state.table.take(tick, "stun");
+    let order = state.table.take(tick, "stun: order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, target);
+    let parts = state.table.take_n(tick, 10, "stun: order objects");
+    for &e in parts[6..].iter().rev() {
+        state.table.defer(e, "stun: order objects");
+    }
+    let impact = entries(state, caster).map(|e| std::mem::take(&mut e.impact));
+    for e in impact.unwrap_or_default() {
+        state.table.defer(e, "spell ability: order start");
+    }
+    if let Some(e) = entries(state, target) {
+        e.stun_end = std::iter::once(stun).chain(objects).collect();
+        e.stun_order = parts[..6].iter().rev().copied().chain([order]).collect();
+    }
+}
+
+/// Unit `h` is stunned to the end tick `end`, its order coming back in
+/// tick `back`.
+pub(super) fn stun_ticks(state: &mut super::State, h: u32, end: u64, back: u64) {
+    if let Some(e) = entries(state, h) {
+        e.stun_ticks = Some((end, back));
+    }
+}
+
+/// The stuns that end and the orders that come back in this tick (c-SAK-1:
+/// 8.70 s and 8.71 s): at the end the buff's end takes an object, and the
+/// stun and missile objects are freed 0.0001 s later; when the order comes
+/// back it takes an object kept to the next order and one freed 0.0001 s
+/// later, and the stun order and the buff's end object go 0.0001 s later.
+pub(super) fn stuns(state: &mut super::State) {
+    let tick = state.table.now;
+    let units: Vec<u32> = state.units.clone();
+    for h in units {
+        let Some((end, back)) = entries(state, h).and_then(|e| e.stun_ticks) else {
+            continue;
+        };
+        if end == tick {
+            let buff = state.table.take(tick, "buff end");
+            let ended = entries(state, h).map(|e| {
+                e.buff_end = Some(buff);
+                std::mem::take(&mut e.stun_end)
+            });
+            for e in ended.unwrap_or_default() {
+                state.table.defer(e, "stun end");
+            }
+        }
+        if back == tick {
+            let order = state.table.take(tick, "order back after a stun");
+            let other = state.table.take(tick, "order back: other");
+            let (parts, buff) = entries(state, h)
+                .map(|e| {
+                    e.order = vec![order];
+                    e.stun_ticks = None;
+                    (std::mem::take(&mut e.stun_order), e.buff_end.take())
+                })
+                .unwrap_or_default();
+            for e in parts {
+                state.table.defer(e, "stun: order objects");
+            }
+            state.table.defer(other, "order back: other");
+            if let Some(b) = buff {
+                state.table.defer(b, "buff end");
+            }
+        }
+    }
 }
 
 /// Unit `h` casts Wind Walk at a script's immediate order (c-SAK-1, 2.0
@@ -442,20 +644,12 @@ fn event_without_triggers(state: &mut super::State, registrations: usize) {
 /// PROVISIONAL: read in c-SAK-1 only; the triggers of the spell effect
 /// event are not run yet, only their objects are taken.
 pub(super) fn wind_walk_cast(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let order = state.table.take(tick, "script immediate order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
-    let registrations = state
-        .events
-        .iter()
-        .filter(|r| {
-            matches!(**r, super::widgets::Registration::Unit { unit, event, .. }
-                if unit == h && event == EVENT_UNIT_SPELL_EFFECT)
-        })
-        .count();
-    event_without_triggers(state, registrations);
+    spell_effect_event(state, h);
     let lasting = state.table.take_n(tick, 2, "wind walk");
     let fading = state.table.take_n(tick, 2, "wind walk: state parts");
     state.table.defer(order, "script immediate order");
@@ -467,7 +661,7 @@ pub(super) fn wind_walk_cast(state: &mut super::State, h: u32) {
 
 /// Unit `h`'s Wind Walk fades: its state parts are freed.
 pub(super) fn wind_walk_faded(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let fade = entries(state, h).map(|e| std::mem::take(&mut e.fade));
     for e in fade.unwrap_or_default() {
         state.table.free(tick, e, "wind walk: state parts");
@@ -484,11 +678,21 @@ pub(super) fn wind_walk_ended(state: &mut super::State, h: u32) {
 
 /// Unit `h` died: the objects it holds until its death are freed.
 pub(super) fn unit_died(state: &mut super::State, h: u32) {
-    let tick = state.ticks;
+    let tick = state.table.now;
     let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) else {
         return;
     };
-    for e in std::mem::take(&mut u.entries.death) {
+    let e = &mut u.entries;
+    let held: Vec<u32> = e
+        .target_death
+        .take()
+        .map(|(_, o)| o)
+        .into_iter()
+        .chain(std::mem::take(&mut e.order))
+        .chain(std::mem::take(&mut e.acquisition))
+        .chain(std::mem::take(&mut e.death))
+        .collect();
+    for e in held {
         state.table.free(tick, e, "unit death");
     }
 }

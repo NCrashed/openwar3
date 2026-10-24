@@ -1157,6 +1157,14 @@ impl State {
     /// `expiry` (SPEC-0024).
     /// Unit `h` drops its path: a new one is searched at its next update,
     /// and its walk's objects go (SPEC-0024, "Walks").
+    /// The tick the game counts an event at queue time `q` in: this one,
+    /// or the next when `q` reaches the next tick's clock (the game's
+    /// tick of a queue time is that of the world clock, SPEC-0018).
+    fn table_at(&mut self, q: u32) {
+        let next = add(self.move_clock, crate::timers::TICK);
+        self.table.now = self.ticks + u64::from(f32::from_bits(q) >= f32::from_bits(next));
+    }
+
     fn drop_path(&mut self, h: u32) {
         self.paths.remove(&h);
         table::walk_dropped(self, h);
@@ -1549,6 +1557,7 @@ impl<'a> Game<'a> {
             state.ticks += 1;
             state.in_tick = true;
             let tick = state.ticks;
+            state.table.now = tick;
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less
@@ -1715,6 +1724,7 @@ impl<'a> Game<'a> {
         // What the units see (SPEC-0032).
         fog::tick(&mut self.state.borrow_mut());
         // Internal objects of the checksum freed or made now (SPEC-0024).
+        table::stuns(&mut self.state.borrow_mut());
         self.state.borrow_mut().objects_due();
         self.park();
         self.state.borrow_mut().in_tick = false;
@@ -2508,7 +2518,7 @@ fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Con
     // PROVISIONAL: other events take only the registration's.
     {
         let mut s = state.borrow_mut();
-        let tick = s.ticks;
+        let tick = s.table.now;
         if let Some(None) = s.event_objects.last() {
             let e = s.table.take(tick, "event");
             *s.event_objects.last_mut().unwrap() = Some(e);
@@ -2595,7 +2605,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             Rc::new(move |vm: &mut Vm, args: &[Value]| {
                 {
                     let mut s = state.borrow_mut();
-                    let tick = s.ticks;
+                    let tick = s.table.now;
                     s.table.take_n(tick, objects, tag);
                 }
                 f(vm, args)

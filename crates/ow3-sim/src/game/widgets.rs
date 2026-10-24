@@ -795,6 +795,7 @@ pub(super) fn kill_unit(
     };
     if let (true, Some(h)) = (killed, h) {
         super::table::unit_died(&mut state.borrow_mut(), h);
+        super::table::target_died(&mut state.borrow_mut(), h);
         super::movement::target_died(&mut state.borrow_mut(), h);
     }
     if let (true, Some(h)) = (killed, h) {
@@ -915,6 +916,8 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
             }
         }
         super::end_event(state);
+        // The objects of the attack it takes (SPEC-0024, "Acquisition").
+        super::table::acquired(&mut state.borrow_mut(), h);
     }
 }
 

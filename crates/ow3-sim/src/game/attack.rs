@@ -610,6 +610,9 @@ pub struct Missile {
     /// A missile of an ability: the stun of its hit, for units and for
     /// heroes, in seconds (SPEC-0037).
     spell: Option<(u32, u32)>,
+    /// The objects of the engine's table of a spell's missile, kept to
+    /// the end of the stun of its hit (SPEC-0024).
+    pub(super) objects: Vec<u32>,
 }
 
 /// 1/32: world units to path cells.
@@ -697,6 +700,7 @@ fn launch(
         attack_type,
         area,
         spell: None,
+        objects: Vec::new(),
     })
 }
 
@@ -794,7 +798,16 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     state.borrow_mut().impact_now = true;
     for m in arrived {
         if let Some(stun) = m.spell {
-            spell_hit(vm, state, m.attacker, m.target, m.amount, stun);
+            {
+                let mut s = state.borrow_mut();
+                let at = s.event_time.unwrap_or(s.move_clock);
+                s.table_at(at);
+            }
+            spell_hit(vm, state, m.attacker, m.target, m.amount, stun, m.objects);
+            {
+                let mut s = state.borrow_mut();
+                s.table.now = s.ticks;
+            }
             continue;
         }
         match (m.artillery, &m.area) {
@@ -1111,6 +1124,7 @@ pub(super) fn launch_spell(
         attack_type: 0,
         area: None,
         spell: Some(stun),
+        objects: Vec::new(),
     })
 }
 
@@ -1124,10 +1138,18 @@ pub(super) fn spell_hit(
     target: u32,
     amount: u32,
     stun: (u32, u32),
+    objects: Vec<u32>,
 ) {
     // Each damage is a hit: its relay and the victim's call come first
     // (c-SAK-1: the bolt on kobold 14 at 4513 called ogre 18).
-    for damage in [0, amount] {
+    for (k, damage) in [0, amount].into_iter().enumerate() {
+        // The objects of the stun come between the two (SPEC-0024).
+        if k == 1 {
+            let mut s = state.borrow_mut();
+            if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                super::table::stun_objects(&mut s, h, target, objects.clone());
+            }
+        }
         {
             let mut s = state.borrow_mut();
             if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {

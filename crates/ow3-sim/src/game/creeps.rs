@@ -630,16 +630,22 @@ pub(super) fn may_answer(state: &State, u: &super::Unit) -> bool {
     if !(u.creep.returning || u.creep.homebound) {
         return true;
     }
-    let home = u.creep.guard.unwrap_or(u.home);
+    let home = u.home;
     let collision = state
         .data
         .units
         .get(&u.type_id)
         .map_or(0.0, |t| f32::from_bits(t.collision));
+    // From its path agent's position, its last commit (c-SAK-1: kobold
+    // 19 at 3557, 1034.5 from home there).
+    let at = match u.movement {
+        Some(m) => movement::absolute(m.origin, [state.world_bounds[0], state.world_bounds[1]]),
+        _ => [u.x, u.y],
+    };
     let far = f32::from_bits(state.combat.max_guard_distance) + collision;
     let (hx, hy) = (
-        f32::from_bits(u.x) - f32::from_bits(home[0]),
-        f32::from_bits(u.y) - f32::from_bits(home[1]),
+        f32::from_bits(at[0]) - f32::from_bits(home[0]),
+        f32::from_bits(at[1]) - f32::from_bits(home[1]),
     );
     let weak =
         u.creep.returning && f32::from_bits(u.life.value()) <= 0.6 * f32::from_bits(u.life.max);

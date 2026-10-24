@@ -329,7 +329,7 @@ pub(super) fn relative(p: [u32; 2], min: [u32; 2]) -> [u32; 2] {
     [add(p[0], min[0] ^ SIGN), add(p[1], min[1] ^ SIGN)]
 }
 
-fn absolute(r: [u32; 2], min: [u32; 2]) -> [u32; 2] {
+pub(super) fn absolute(r: [u32; 2], min: [u32; 2]) -> [u32; 2] {
     [sub(r[0], min[0] ^ SIGN), sub(r[1], min[1] ^ SIGN)]
 }
 
@@ -3996,7 +3996,8 @@ fn rating(
     let in_range = distance <= reach * reach;
     let creep = rates_as_creep(state, h);
     let big = creep && ud.is_some_and(|d| d.level >= 7);
-    let hero = crate::data::is_hero(o.type_id);
+    // An illusion is no hero here (c-SAK-1, SPEC-0040).
+    let hero = crate::data::is_hero(o.type_id) && o.illusion.is_none();
     // A big creep and a hero within its range + 150 between centres (part
     // 2; c-RZJ-1: the Ogre Lord, range 100, kept no hero at 262 from the
     // Paladin at 1307).

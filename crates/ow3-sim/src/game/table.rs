@@ -40,6 +40,10 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// The unit whose death is being handled, and the objects of its
+    /// attackers going on with their attack-moves (`attack_move_resumed`).
+    pub dying: Option<u32>,
+    pub resumed: Vec<u32>,
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
@@ -61,6 +65,8 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            dying: None,
+            resumed: Vec::new(),
             timed: Vec::new(),
             ends_late: Vec::new(),
             log: None,
@@ -408,9 +414,27 @@ pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
         return;
     }
     walk_made_at_order(state, h);
-    let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
+    // At a target's death its objects kept to the death go with these,
+    // after those of the other attackers (`target_died`; c-SAK-1: 3185).
+    let dying = state.table.dying.is_some();
+    let old = entries(state, h).map(|e| {
+        let mut old: Vec<u32> = Vec::new();
+        if dying {
+            old.extend(
+                std::mem::take(&mut e.target_death)
+                    .into_iter()
+                    .map(|(_, o)| o),
+            );
+        }
+        old.extend(std::mem::take(&mut e.acquisition));
+        old
+    });
     for e in old.unwrap_or_default() {
-        state.table.defer(e, "acquisition: attack object");
+        if dying {
+            state.table.resumed.push(e);
+        } else {
+            state.table.defer(e, "acquisition: attack object");
+        }
     }
 }
 
@@ -660,7 +684,11 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
         // 2927).
         let old = entries(state, h).map(|e| {
             let mut old = std::mem::take(&mut e.reaction);
-            old.extend(std::mem::take(&mut e.target_death).into_iter().map(|(_, o)| o));
+            old.extend(
+                std::mem::take(&mut e.target_death)
+                    .into_iter()
+                    .map(|(_, o)| o),
+            );
             old
         });
         for o in old.unwrap_or_default() {
@@ -763,6 +791,10 @@ pub(super) fn target_died(state: &mut super::State, dead: u32) {
             state.table.defer(o, "acquisition: attack object");
         }
     }
+    for o in std::mem::take(&mut state.table.resumed) {
+        state.table.defer(o, "acquisition: attack object");
+    }
+    state.table.dying = None;
 }
 
 /// `EVENT_UNIT_ACQUIRED_TARGET` of common.j.
@@ -975,8 +1007,6 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let record = state.table.take(tick, "death order record");
     let queue = state.table.take_n(tick, 9, "death order queue");
     let other = (owner != super::creeps::CREEPS).then(|| state.table.take(tick, "death order"));
-    // The objects the attackers kept to its death go first.
-    target_died(state, h);
     let held = entries(state, h).map(|e| {
         let death = std::mem::take(&mut e.death);
         // The last two of a creep's (its pair) before its order, the

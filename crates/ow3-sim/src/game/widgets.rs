@@ -794,8 +794,12 @@ pub(super) fn kill_unit(
         }
     };
     if let (true, Some(h)) = (killed, h) {
-        super::table::unit_died(&mut state.borrow_mut(), h);
+        // The attackers' objects and new goals come before the death's own
+        // (SPEC-0024; c-SAK-1: kobold 8 at 3185).
+        state.borrow_mut().table.dying = Some(h);
         super::movement::target_died(&mut state.borrow_mut(), h);
+        super::table::target_died(&mut state.borrow_mut(), h);
+        super::table::unit_died(&mut state.borrow_mut(), h);
     }
     if let (true, Some(h)) = (killed, h) {
         died(vm, state, h, killer);

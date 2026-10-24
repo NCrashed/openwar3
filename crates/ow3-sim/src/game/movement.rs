@@ -5372,6 +5372,8 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             };
             stop_at(state, h, clock);
             order(state, h, Order::Point, ORDER_ATTACK, point);
+            // Its new goal and walk (SPEC-0024; c-SAK-1: 3185).
+            super::table::attack_move_resumed(state, h);
         }
         if own {
             halt(state, h);

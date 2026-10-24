@@ -275,7 +275,7 @@ pub struct Moving {
     face_point: Option<[u32; 2]>,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
-    given: u64,
+    pub(super) given: u64,
 }
 
 impl Moving {
@@ -2822,6 +2822,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             real_of(u.cooldown_end)
                                 <= real_of(add(state.move_clock, crate::timers::TICK))
                         });
+                        let unit = h;
                         let (h, d) = heading_and_turn(&m, goal);
                         let gate_open = cooled
                             && m.swing_gate.is_none_or(|from| tick >= from)
@@ -2848,6 +2849,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             if gate_open && off && !expired {
                             } else if gate_open && off {
                                 m.target = now.map_or(m.target, |p| absolute(p, min));
+                                // The face movement is a new goal, with a
+                                // walk of its own (SPEC-0024; c-SAK-1:
+                                // kobold 19 at 925), first among the units
+                                // handled from the next tick (SPEC-0021).
+                                super::table::walk_made_at_order(state, unit);
+                                state.orders_given += 1;
+                                m.given = state.orders_given;
                             } else if gate_open {
                                 m.arrived = true;
                                 m.swing_gate = None;
@@ -4861,6 +4869,7 @@ pub(super) fn retaliate(
         if switching.contains(&h) {
             switch_target(state, h, attacker);
             state.call_acquired.push(h);
+            super::table::call_answered(state, h);
             continue;
         }
         // A unit walking an attack-move stops and takes the attacker as at
@@ -4887,6 +4896,7 @@ pub(super) fn retaliate(
         let id = if walker { ORDER_ATTACK } else { 0 };
         if order(state, h, Order::Attack { target: attacker }, id, at) {
             state.call_acquired.push(h);
+            super::table::call_answered(state, h);
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,

@@ -929,6 +929,8 @@ pub struct State {
     /// The unit events being dispatched, with the object each took once
     /// one of its registrations fired (SPEC-0024, "Event objects").
     event_objects: Vec<Option<u32>>,
+    /// Events fired now took their objects already (`table::call_answered`).
+    quiet_events: bool,
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
@@ -1086,6 +1088,7 @@ impl State {
             attack_checks: Vec::new(),
             table: table::ObjectTable::default(),
             event_objects: Vec::new(),
+            quiet_events: false,
             timed_life: Vec::new(),
             waves: Vec::new(),
             impact_now: false,
@@ -1671,6 +1674,7 @@ impl<'a> Game<'a> {
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        table::walks_freed(&mut self.state.borrow_mut());
         // The filters of the walkers that crossed region edges at their
         // commits (SPEC-0049). PROVISIONAL: after all the updates, at the
         // queue time `U` of the updates.
@@ -1713,7 +1717,7 @@ impl<'a> Game<'a> {
         // The units that took a target at a call fire their events too
         // (c-SAK-1: creeps 15, 17, 18 and 19 at 1127, switching).
         let called = std::mem::take(&mut self.state.borrow_mut().call_acquired);
-        widgets::acquired(&mut self.vm, &self.state, &called);
+        widgets::acquired_at_call(&mut self.vm, &self.state, &called);
         // Casts of abilities (SPEC-0035).
         cast::tick(&mut self.vm, &self.state);
         // The units the casts made enter their regions (SPEC-0049).
@@ -2516,7 +2520,7 @@ fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Con
     // registration that fires, and every registration that fires one
     // more, all freed 0.0001 s later (SPEC-0024, "Event objects").
     // PROVISIONAL: other events take only the registration's.
-    {
+    if !state.borrow().quiet_events {
         let mut s = state.borrow_mut();
         let tick = s.table.now;
         if let Some(None) = s.event_objects.last() {

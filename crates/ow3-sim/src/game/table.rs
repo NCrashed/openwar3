@@ -38,6 +38,8 @@ pub struct ObjectTable {
     /// The parts of the time of day (its rate and the watches of the hours
     /// where something happens), replaced when the time is set.
     pub day: Vec<u32>,
+    /// The walks freed after the updates of this tick (`walks_freed`).
+    pub walks_due: Vec<Vec<u32>>,
     /// The takings and freeings, when kept.
     pub log: Option<Vec<TableEvent>>,
 }
@@ -54,6 +56,7 @@ impl ObjectTable {
             deferred: Vec::new(),
             now: 0,
             day: Vec::new(),
+            walks_due: Vec::new(),
             log: None,
         }
     }
@@ -62,6 +65,11 @@ impl ObjectTable {
     /// the size of the table when it is empty.
     pub fn next_entry(&self) -> u32 {
         self.free.last().copied().unwrap_or(self.size)
+    }
+
+    /// The creation number of the object holding `entry`.
+    pub fn creation_of(&self, entry: u32) -> u32 {
+        self.live.get(&entry).copied().unwrap_or(u32::MAX)
     }
 
     /// The next creation number (`D` of SPEC-0024).
@@ -398,8 +406,27 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
         e.stale = kept;
         due
     });
-    for (_, e) in due.unwrap_or_default() {
-        state.table.free(tick, e, "walk");
+    let due: Vec<u32> = due
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, e)| e)
+        .collect();
+    for walk in due.chunks(2) {
+        state.table.walks_due.push(walk.to_vec());
+    }
+}
+
+/// The walks the units gave up are freed after the updates of the tick,
+/// the newest walk first, each path before its cluster (c-SAK-1: 709,
+/// 931, 1027).
+pub(super) fn walks_freed(state: &mut super::State) {
+    let tick = state.table.now;
+    let mut due = std::mem::take(&mut state.table.walks_due);
+    due.sort_by_key(|w| std::cmp::Reverse(state.table.creation_of(w[0])));
+    for walk in due {
+        for e in walk {
+            state.table.free(tick, e, "walk");
+        }
     }
 }
 
@@ -493,6 +520,24 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
         walk_made_at_order(state, h);
         return;
     }
+    // On attack-move, still attacking an acquired target: the object kept
+    // to that target's death goes 0.0001 s later, and the same 2 and walk
+    // (c-SAK-1: footman 7 answering a call at 965).
+    let attacking = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some())
+        && entries(state, h).is_some_and(|e| !e.target_death.is_empty());
+    if attacking {
+        let old = entries(state, h).map(|e| std::mem::take(&mut e.target_death));
+        for (_, o) in old.unwrap_or_default() {
+            state.table.defer(o, "acquisition: attack object");
+        }
+        let a = state.table.take_n(tick, 2, "acquisition: extra object");
+        state.table.defer(a[1], "acquisition: extra object");
+        if let (Some(e), Some(t)) = (entries(state, h), target) {
+            e.target_death = vec![(t, a[0])];
+        }
+        walk_made_at_order(state, h);
+        return;
+    }
     let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
     for e in old.unwrap_or_default() {
         state.table.defer(e, "acquisition: attack object");
@@ -559,6 +604,26 @@ pub(super) fn target_died(state: &mut super::State, dead: u32) {
             state.table.defer(o, "acquisition: attack object");
         }
     }
+}
+
+/// `EVENT_UNIT_ACQUIRED_TARGET` of common.j.
+const EVENT_UNIT_ACQUIRED_TARGET: i32 = 60;
+
+/// Unit `h` answers a call (SPEC-0019): its acquired-target event's
+/// objects and those of the attack are taken at the call, before the hit
+/// that made it ends (c-SAK-1: footman 7 at 965); its triggers run later
+/// without objects (`widgets::acquired_at_call`).
+pub(super) fn call_answered(state: &mut super::State, h: u32) {
+    let registrations = state
+        .events
+        .iter()
+        .filter(|r| {
+            matches!(**r, super::widgets::Registration::Unit { unit, event, .. }
+                if unit == h && event == EVENT_UNIT_ACQUIRED_TARGET)
+        })
+        .count();
+    event_without_triggers(state, registrations);
+    acquired(state, h);
 }
 
 /// `EVENT_UNIT_SPELL_EFFECT` of common.j.

@@ -892,6 +892,18 @@ pub(super) fn damage_widget(
 /// a target at their check (SPEC-0019), unit by unit in the order of the
 /// acquisitions, each unit's in the order registered.
 pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
+    acquired_with(vm, state, units, true);
+}
+
+/// `acquired` for the units that took a target at a call: their objects
+/// were taken at the call (`table::call_answered`).
+pub(super) fn acquired_at_call(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
+    state.borrow_mut().quiet_events = true;
+    acquired_with(vm, state, units, false);
+    state.borrow_mut().quiet_events = false;
+}
+
+fn acquired_with(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32], objects: bool) {
     if units.is_empty() {
         return;
     }
@@ -917,7 +929,9 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
         }
         super::end_event(state);
         // The objects of the attack it takes (SPEC-0024, "Acquisition").
-        super::table::acquired(&mut state.borrow_mut(), h);
+        if objects {
+            super::table::acquired(&mut state.borrow_mut(), h);
+        }
     }
 }
 

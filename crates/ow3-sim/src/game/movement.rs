@@ -3161,6 +3161,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.facing_step = step;
         }
         let facing_done = u.facing == heading;
+        // A goal taken in reach after a swing ends when the unit faces its
+        // target, and its walk is given up (SPEC-0024; c-SAK-1: kobold 8
+        // at 1087, gnoll 11 at 1093, kobold 9 at 1123, gnoll 12 at 1129).
+        if facing_done && u.entries.quiet_walk {
+            u.entries.quiet_walk = false;
+            super::table::walk_dropped(state, h);
+        }
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
         if m.arrived && facing_done && begin_attack.is_none() {
             u.movement = None;
             // An attack-move that arrived at its place ends there; a group

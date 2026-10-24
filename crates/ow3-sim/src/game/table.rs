@@ -159,7 +159,7 @@ pub struct UnitEntries {
     /// takes no new one.
     pub walk_ready: bool,
     /// Its walk is that of a goal taken in reach after a swing, which ends
-    /// at its next update (c-SAK-1: kobold 8, 1085, freed at 1093).
+    /// when it faces its target.
     pub quiet_walk: bool,
     /// The objects of its Wind Walk freed at the fade and at the end.
     pub fade: Vec<u32>,
@@ -417,10 +417,6 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
     for walk in due.chunks(2) {
         state.table.walks_due.push(walk.to_vec());
     }
-    // A goal taken in reach after a swing ends at the first update.
-    if entries(state, h).is_some_and(|e| std::mem::take(&mut e.quiet_walk)) {
-        walk_dropped(state, h);
-    }
 }
 
 /// The walks the units gave up are freed after the updates of the tick,
@@ -519,10 +515,12 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
         let a = state.table.take_n(tick, 2, "acquisition: extra object");
         state.table.defer(a[1], "acquisition: extra object");
         if let (Some(e), Some(t)) = (entries(state, h), target) {
-            let kept = std::mem::take(&mut e.target_death);
-            e.target_death = std::iter::once((t, a[0]))
-                .chain(kept.into_iter().map(|(_, o)| (t, o)))
-                .collect();
+            // The first is the new target's object (c-SAK-1: freed at the
+            // next change at 1127, at the target's death at 4764).
+            e.current = Some(a[0]);
+            for d in &mut e.target_death {
+                d.0 = t;
+            }
         }
         walk_made_at_order(state, h);
         return;

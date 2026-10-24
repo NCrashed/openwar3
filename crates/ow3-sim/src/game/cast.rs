@@ -277,6 +277,8 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
         return Some(false);
     }
     if base_code(state, ability) == i32::from_be_bytes(*b"AOwk") {
+        // A walker stops with a commit (c-SAK-1: the Blademaster at 4501).
+        movement::freeze_now(state, h);
         movement::stop(state, h);
         let c = Casting {
             order_id,

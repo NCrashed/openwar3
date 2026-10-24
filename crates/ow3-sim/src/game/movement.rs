@@ -3229,7 +3229,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         u.creep.queued_home = false;
         u.next_acquire = at;
         let home = u.home;
-        order(state, h, Order::Point, 0, home);
+        if order(state, h, Order::Point, 0, home) {
+            super::table::queue_taken_up(state, h);
+        }
     }
     // The queue after a fade's move: an attack-move it had goes on, else
     // the attack is taken again.
@@ -3241,7 +3243,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             .map(|a| a.point);
         if let Some(point) = point {
             if order(state, h, Order::Point, ORDER_ATTACK, point) {
-                super::table::attack_move_taken_up(state, h);
+                super::table::queue_taken_up(state, h);
             }
         } else if let Some(at) = position_of(state, target) {
             order(state, h, Order::Attack { target }, order_id, at);
@@ -3783,6 +3785,9 @@ pub(super) fn attack_moves(state: &mut State) {
                     u.next_acquire = a.next_check;
                 }
                 set_attack_move(state, h, None);
+                // Its objects go with it (c-SAK-1: the Blademaster at
+                // 5118).
+                super::table::order_ended(state, h);
             }
             // PROVISIONAL: the target is gone without a hit of this unit
             // (not measured); it walks on.

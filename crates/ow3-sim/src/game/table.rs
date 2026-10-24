@@ -488,12 +488,13 @@ pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
     }
 }
 
-/// Unit `h`'s move to the point of a Wind Walk's fade ends and its
-/// attack-move is taken up again from its order queue, in its update: a
-/// new goal with its walk, then the "attack ends" kept from the fade and
-/// its last acquisition's objects are freed 0.0001 s later, the latter
-/// from the last (c-SAK-1: the Blademaster at 4800).
-pub(super) fn attack_move_taken_up(state: &mut super::State, h: u32) {
+/// Unit `h`'s move from its order queue ends and the next entry is taken
+/// up, in its update: a new goal with its walk, then the "attack ends"
+/// kept with the move and its last acquisition's objects are freed
+/// 0.0001 s later, the latter from the last (c-SAK-1: the Blademaster's
+/// attack-move after the move of his fade at 4800, ogre 18's walk home
+/// after its move to footman 7's death point at 5184).
+pub(super) fn queue_taken_up(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
     let old = entries(state, h).map(|e| {
         e.current
@@ -1026,8 +1027,12 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
     let tick = state.table.now;
     let o = state.table.take(tick, "attack ends at the target death");
     if kept {
+        // Kept with the move it goes on to (`queue_taken_up`).
         if let Some(e) = entries(state, h) {
-            e.order.insert(0, o);
+            match e.current {
+                None => e.current = Some(o),
+                Some(_) => e.order.insert(0, o),
+            }
         }
     } else {
         state.table.defer(o, "attack ends at the target death");

@@ -263,6 +263,10 @@ pub struct Moving {
     renew_stands: bool,
     /// The point the last update steered to, for the trace.
     aim: [u32; 2],
+    /// An attack taken by a check with its target in reach: no reach
+    /// limit, it only turns to the target and arrives (SPEC-0019; c-SAK-1:
+    /// the Mountain King on gnoll 16 at 3616).
+    unlimited: bool,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
     given: u64,
@@ -525,6 +529,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             given,
             swing_gate: None,
             swing_waits: false,
+            unlimited: false,
             ..m
         },
         None => Moving {
@@ -561,6 +566,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             swing_gate: None,
             swing_waits: false,
             aim: [0, 0],
+            unlimited: false,
         },
     };
     state.orders_given = given;
@@ -2509,6 +2515,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         in_reach = in_range(here, relative(m.target, min), full_reach);
                         // Or by the mark of touching its target at a block.
                         in_reach = in_reach || follow::touching(state, h);
+                        in_reach = in_reach || m.unlimited;
                     }
                     _ => {
                         m.arrived = true;
@@ -3103,6 +3110,23 @@ fn countdown(a: [u32; 2], b: [u32; 2]) -> u32 {
 }
 
 /// Whether unit `h` reaches `target` from where both stand now.
+/// [`reaches`] with the target where its path agent last committed, as a
+/// check sees it (SPEC-0019).
+fn reaches_at_commit(state: &State, h: u32, target: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let collision = |u: &super::Unit| state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
+    let (Some(u), Some(t)) = (state.unit(Some(h)), state.unit(Some(target))) else {
+        return false;
+    };
+    let at = t.movement.map_or([t.x, t.y], |m| absolute(m.origin, min));
+    let range = super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
+    let reach = add(
+        add(mul(range, CELL), mul(collision(u), CELL)),
+        mul(collision(t), CELL),
+    );
+    in_range(relative([u.x, u.y], min), relative(at, min), reach)
+}
+
 pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let collision = |u: &super::Unit| state.data.units.get(&u.type_id).map(|t| (t, t.collision));
@@ -3777,6 +3801,14 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
         let standing = state.unit(Some(h)).is_some_and(|u| u.movement.is_none());
         freeze(state, h);
         if order(state, h, Order::Attack { target }, order_id, at) {
+            // A target in reach takes an order with no reach limit
+            // (SPEC-0019; c-SAK-1: the Mountain King on gnoll 16 at 3616).
+            if reaches_at_commit(state, h, target)
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+            {
+                m.unlimited = true;
+            }
             if idle
                 && standing
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&h)

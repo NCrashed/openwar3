@@ -1174,3 +1174,48 @@ pub(super) fn zero_hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         }
     }
 }
+
+/// Hero `h`'s agility changed from `old` at the queue time `now`: the time
+/// left of its running cooldown is multiplied by the old attack-speed
+/// factor over the new, and a swing waiting for that cooldown starts at
+/// the new end with the damage point of the new factor (SPEC-0034;
+/// c-SAK-1: the Mountain King at his level-up in 6053, 0.121019 left
+/// becoming 0.117236).
+///
+/// PROVISIONAL: a damage point already running was not seen.
+pub(super) fn agility_changed(state: &mut State, h: u32, old: i32, now: u32) {
+    let Some(u) = state.unit(Some(h)).filter(|u| is_hero(u.type_id)) else {
+        return;
+    };
+    let end = u.cooldown_end;
+    if f32::from_bits(end) <= f32::from_bits(now) {
+        return;
+    }
+    let bonus = state.combat.heroes.agi_attack_speed;
+    let factor = |agility: i32| add(1.0f32.to_bits(), mul(bonus, ow3_math::i2r(agility)));
+    let ratio = div(factor(old), factor(u.agility));
+    let new_end = add(now, mul(sub(end, now), ratio));
+    let point = u.attack.filter(|a| a.swing_q == end).map(|a| {
+        let weapon = weapon_for(state, u.type_id, Some(a.target)).unwrap_or_default();
+        slowed(state, h, hero_cooldown(state, h, weapon.damage_point))
+    });
+    let shift =
+        |from: u32, to: u32| (f64::from(f32::from_bits(sub(to, from))) * 200.0).round() as i64;
+    let moved = |tick: u64, by: i64| (tick as i64 + by).max(0) as u64;
+    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        return;
+    };
+    u.cooldown_end = new_end;
+    if let (Some(point), Some(a)) = (point, u.attack.as_mut()) {
+        let hit = add(new_end, point);
+        let by = a
+            .hit_at
+            .map_or(shift(end, new_end), |old_hit| shift(old_hit, hit));
+        a.swing_q = new_end;
+        a.hit_at = Some(hit);
+        a.next = moved(a.next, by);
+        u.weapon_ready = moved(u.weapon_ready, by);
+    } else {
+        u.weapon_ready = moved(u.weapon_ready, shift(end, new_end));
+    }
+}

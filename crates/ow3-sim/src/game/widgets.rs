@@ -181,6 +181,13 @@ pub(super) fn set_attribute(
         }
         Attribute::Agility => {}
     }
+    // The running cooldown follows the new attack speed (SPEC-0034).
+    if matches!(attribute, Attribute::Agility)
+        && let Some(h) = h
+    {
+        let now = state.event_time.unwrap_or_else(|| state.timers.time());
+        super::attack::agility_changed(state, h, old, now);
+    }
     None
 }
 

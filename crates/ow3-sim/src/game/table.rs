@@ -40,6 +40,8 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// Objects freed in a later tick's batch (`free_at`).
+    timed: Vec<(u64, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
     pub ends_late: Vec<u32>,
     /// The takings and freeings, when kept.
@@ -59,6 +61,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            timed: Vec::new(),
             ends_late: Vec::new(),
             log: None,
         }
@@ -127,6 +130,12 @@ impl ObjectTable {
         self.deferred.push((self.now, entry, tag));
     }
 
+    /// The object holding `entry` is freed in the 0.0001 s batch of tick
+    /// `tick`.
+    pub fn free_at(&mut self, tick: u64, entry: u32, tag: &'static str) {
+        self.timed.push((tick, entry, tag));
+    }
+
     /// The 0.0001 s timers of the tick expire: their objects are freed in
     /// the order they were given up.
     pub fn flush(&mut self, tick: u64) {
@@ -134,6 +143,13 @@ impl ObjectTable {
             .into_iter()
             .partition(|&(t, _, _)| t <= tick);
         self.deferred = later;
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed)
+            .into_iter()
+            .partition(|&(t, _, _)| t <= tick);
+        self.timed = later;
         for (_, entry, tag) in due {
             self.free(tick, entry, tag);
         }
@@ -376,6 +392,21 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.order = ability[..6].iter().rev().copied().collect();
         e.death.splice(0..0, [order, extra]);
+    }
+}
+
+/// Unit `h` takes up its attack-move again after its target's death: a
+/// new goal with its walk, and its last acquisition's objects are freed
+/// 0.0001 s later.
+pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
+    // Done at the backswing's end already (`attack::after_swing_walks`).
+    if entries(state, h).is_some_and(|e| e.walk_ready) {
+        return;
+    }
+    walk_made_at_order(state, h);
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "acquisition: attack object");
     }
 }
 
@@ -919,26 +950,68 @@ pub(super) fn wind_walk_ended(state: &mut super::State, h: u32) {
 /// Unit `h` died: the objects it holds until its death are freed.
 pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) else {
+    let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
         return;
     };
-    let e = &mut u.entries;
-    let held: Vec<u32> = e
-        .current
-        .take()
-        .into_iter()
-        .chain(
-            std::mem::take(&mut e.target_death)
-                .into_iter()
-                .map(|(_, o)| o),
-        )
-        .chain(std::mem::take(&mut e.order))
-        .chain(std::mem::take(&mut e.acquisition))
-        .chain(std::mem::take(&mut e.death))
-        .collect();
-    for e in held {
-        state.table.free(tick, e, "unit death");
+    // Its death order: a record and 9 queue objects, and for a unit not
+    // of the creeps 1 more (SPEC-0024, "Unit death").
+    let record = state.table.take(tick, "death order record");
+    let queue = state.table.take_n(tick, 9, "death order queue");
+    let other = (owner != super::creeps::CREEPS).then(|| state.table.take(tick, "death order"));
+    // The objects the attackers kept to its death go first.
+    target_died(state, h);
+    let held = entries(state, h).map(|e| {
+        let death = std::mem::take(&mut e.death);
+        // The last two of a creep's (its pair) before its order, the
+        // first two after all (c-SAK-1: kobold 9 at 2753).
+        let (core, pair) = death.split_at(death.len().min(2));
+        let own: Vec<u32> = std::mem::take(&mut e.reaction)
+            .into_iter()
+            .chain(e.current.take())
+            .chain(
+                std::mem::take(&mut e.target_death)
+                    .into_iter()
+                    .map(|(_, o)| o),
+            )
+            .chain(std::mem::take(&mut e.acquisition))
+            .chain(std::mem::take(&mut e.order))
+            .collect();
+        e.own_attack = false;
+        (pair.to_vec(), own, core.to_vec())
+    });
+    let Some((pair, own, core)) = held else {
+        return;
+    };
+    for e in pair {
+        state.table.defer(e, "unit death");
     }
+    state.table.defer(record, "death order record");
+    for e in own {
+        state.table.defer(e, "unit death");
+    }
+    for &e in queue[6..].iter().rev() {
+        state.table.defer(e, "death order queue");
+    }
+    if let Some(o) = other {
+        state.table.defer(o, "death order");
+    }
+    for e in core {
+        state.table.defer(e, "unit death");
+    }
+    // The fourth from the last after them (c-SAK-1: 2851 at 2753).
+    state.table.defer(queue[5], "death order queue");
+    // Of the first 5 queue objects 2 go 3.0 s on, 1 5.0 s on, 2 stay.
+    // PROVISIONAL: which of them, and 1000 ticks for "about 5.0 s"
+    // (c-SAK-1: 2753 -> 3353, 3353, 3753).
+    state
+        .table
+        .free_at(tick + 600, queue[4], "death order queue");
+    state
+        .table
+        .free_at(tick + 600, queue[3], "death order queue");
+    state
+        .table
+        .free_at(tick + 1000, queue[2], "death order queue");
 }
 
 /// The number of objects a native of the script takes when called

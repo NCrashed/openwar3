@@ -795,7 +795,6 @@ pub(super) fn kill_unit(
     };
     if let (true, Some(h)) = (killed, h) {
         super::table::unit_died(&mut state.borrow_mut(), h);
-        super::table::target_died(&mut state.borrow_mut(), h);
         super::movement::target_died(&mut state.borrow_mut(), h);
     }
     if let (true, Some(h)) = (killed, h) {

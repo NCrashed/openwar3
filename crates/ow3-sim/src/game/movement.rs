@@ -5054,6 +5054,9 @@ fn take_up(state: &mut State, h: u32, a: AttackMove) {
         u.attack = None;
     }
     order(state, h, Order::Point, ORDER_ATTACK, a.point);
+    // A new goal with its walk; the acquisition's objects go (SPEC-0024,
+    // "Unit death"; c-SAK-1: footmen 4 and 5 at 2757).
+    super::table::attack_move_resumed(state, h);
     set_attack_move(
         state,
         h,
@@ -5481,6 +5484,26 @@ pub(super) fn face_at_expiry(state: &mut State, h: u32) -> bool {
     true
 }
 
+/// The units whose attack-move goes on at a backswing's end due before
+/// the next tick's clock (and before `before`), with that end: the game
+/// takes the new goal there, a tick or two before the walk on here
+/// (SPEC-0024; c-SAK-1: footmen 4 and 5 at 2757).
+pub(super) fn attack_moves_resuming(state: &State, before: Option<u32>) -> Vec<(u32, u32)> {
+    let next = real_of(add(state.move_clock, crate::timers::TICK));
+    state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| u.alive)?;
+            let q = u.attack_move?.resume_q?;
+            (u.attack_move?.resume_at.is_some()
+                && real_of(q) < next
+                && before.is_none_or(|b| real_of(q) < real_of(b))
+                && !u.entries.early_walk)
+                .then_some((h, q))
+        })
+        .collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

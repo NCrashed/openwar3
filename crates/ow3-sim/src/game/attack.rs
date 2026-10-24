@@ -1408,5 +1408,12 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             u.entries.early_walk = true;
         }
     }
+    for (h, q) in super::movement::attack_moves_resuming(state, before) {
+        state.table_at(q);
+        super::table::attack_move_resumed(state, h);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.early_walk = true;
+        }
+    }
     state.table.now = tick;
 }

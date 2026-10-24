@@ -360,18 +360,6 @@ pub(super) fn walk_made(state: &mut super::State, h: u32) {
         e.walk = vec![path, cluster];
     }
 }
-
-/// Unit `h` takes a new goal for its chase at its update (SPEC-0019, the
-/// new group after a swing): a new walk, the old one freed at once
-/// (c-SAK-1: kobold 19 at 925).
-pub(super) fn walk_renewed(state: &mut super::State, h: u32) {
-    let old = entries(state, h).map(|e| std::mem::take(&mut e.walk));
-    walk_made(state, h);
-    let tick = state.table.now;
-    for e in old.unwrap_or_default() {
-        state.table.free(tick, e, "walk");
-    }
-}
 /// Unit `h` made a walk at its order: its first search takes none.
 pub(super) fn walk_made_at_order(state: &mut super::State, h: u32) {
     walk_made(state, h);

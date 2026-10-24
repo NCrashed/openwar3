@@ -1505,7 +1505,7 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
         }
     }
     attack_move_resumes(state, before);
-    // Creeps whose target died in their backswing walk back at its end, in
+    // Units whose target died in their backswing walk back at its end, in
     // the order of those ends (c-SAK-1: gnoll 12 at 5460, q 27.299561).
     let next = add(state.move_clock, crate::timers::TICK);
     let mut back: Vec<(u32, u32, [u32; 2])> = state
@@ -1516,8 +1516,18 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             u.guard_return?;
             let end = f32::from_bits(u.backswing_end);
             let due = end <= f32::from_bits(next) && before.is_none_or(|b| end < f32::from_bits(b));
-            (u.owner == super::creeps::CREEPS && due)
-                .then(|| (h, u.backswing_end, u.creep.guard.unwrap_or(u.home)))
+            // Another unit too, at the end of a backswing in this tick
+            // (c-SAK-1: the image 20 at 55.907589).
+            let creep = u.owner == super::creeps::CREEPS;
+            let in_tick = end > f32::from_bits(state.move_clock);
+            (due && (creep || in_tick)).then(|| {
+                let home = if creep {
+                    u.creep.guard.unwrap_or(u.home)
+                } else {
+                    u.home
+                };
+                (h, u.backswing_end, home)
+            })
         })
         .collect();
     back.sort_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));

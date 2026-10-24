@@ -303,6 +303,13 @@ pub(super) fn call_for_help(
 pub(super) fn restart_return(state: &mut State, h: u32, at: u32) {
     let far = f32::from_bits(state.combat.max_guard_distance);
     let back = state.combat.guard_return_time;
+    // Plus its collision size, as the walk back's distance test (SPEC-0030;
+    // c-SAK-1: kobold 19 at 2105).
+    let collision = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(0.0, |t| f32::from_bits(t.collision));
+    let far = far + collision;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         let (hx, hy) = (
             f32::from_bits(u.x) - f32::from_bits(u.home[0]),

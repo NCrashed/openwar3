@@ -205,6 +205,10 @@ pub struct UnitEntries {
     pub stun_order: Vec<u32>,
     pub stun_ticks: Option<(u64, u64)>,
     pub buff_end: Option<u32>,
+    /// The queue time of its stun's end.
+    pub stun_end_q: u32,
+    /// It had an order of the game when stunned.
+    pub stun_game_order: bool,
     /// The objects of its acquisition freed at the end of its reaction
     /// delay and at its target's death.
     /// The objects of its last acquisition freed at the next.
@@ -879,6 +883,11 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     let order = state.table.take(tick, "stun: order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
+    // An order of the game the target had comes back after the stun.
+    let had = entries(state, target).is_some_and(|e| e.game_order);
+    if let Some(e) = entries(state, target) {
+        e.stun_game_order = had;
+    }
     order_ended(state, target);
     let parts = state.table.take_n(tick, 10, "stun: order objects");
     for &e in parts[6..].iter().rev() {
@@ -906,10 +915,23 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
 
 /// Unit `h` is stunned to the end tick `end`, its order coming back in
 /// tick `back`.
-pub(super) fn stun_ticks(state: &mut super::State, h: u32, end: u64, back: u64) {
+pub(super) fn stun_ticks(state: &mut super::State, h: u32, end: u64, back: u64, end_q: u32) {
     if let Some(e) = entries(state, h) {
         e.stun_ticks = Some((end, back));
+        e.stun_end_q = end_q;
     }
+}
+
+/// The earliest queue time of a stun ending in this tick still to come.
+pub(super) fn next_stun_end(state: &super::State) -> Option<u32> {
+    let tick = state.ticks;
+    state
+        .units
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)))
+        .filter(|u| u.entries.stun_ticks.is_some_and(|(end, _)| end == tick))
+        .map(|u| u.entries.stun_end_q)
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
 }
 
 /// The stuns that end and the orders that come back in this tick (c-SAK-1:
@@ -918,6 +940,15 @@ pub(super) fn stun_ticks(state: &mut super::State, h: u32, end: u64, back: u64) 
 /// back it takes an object kept to the next order and one freed 0.0001 s
 /// later, and the stun order and the buff's end object go 0.0001 s later.
 pub(super) fn stuns(state: &mut super::State) {
+    stuns_with(state, true);
+}
+
+/// The ends of stuns in this tick only, not the orders coming back.
+pub(super) fn stun_ends(state: &mut super::State) {
+    stuns_with(state, false);
+}
+
+fn stuns_with(state: &mut super::State, backs: bool) {
     let tick = state.table.now;
     let units: Vec<u32> = state.units.clone();
     for h in units {
@@ -928,13 +959,43 @@ pub(super) fn stuns(state: &mut super::State) {
             let buff = state.table.take(tick, "buff end");
             let ended = entries(state, h).map(|e| {
                 e.buff_end = Some(buff);
+                e.stun_ticks = Some((u64::MAX, back));
                 std::mem::take(&mut e.stun_end)
             });
             for e in ended.unwrap_or_default() {
                 state.table.defer(e, "stun end");
             }
         }
-        if back == tick {
+        if backs && back == tick && entries(state, h).is_some_and(|e| e.stun_game_order) {
+            // Its order of the game comes back: 13 objects of the move
+            // ability (the last 7 freed 0.0001 s later, after the stun
+            // order's, the first 6 kept with the order) and a walk; the
+            // object of the order's coming back goes 2 ticks on (c-SAK-1:
+            // gnoll 16 at 3618).
+            let back_object = state.table.take(tick, "order back after a stun");
+            state
+                .table
+                .free_at(tick + 2, back_object, "order back after a stun");
+            let ability = state.table.take_n(tick, 13, "move ability: order start");
+            walk_made_at_order(state, h);
+            let parts = entries(state, h)
+                .map(|e| {
+                    e.stun_ticks = None;
+                    e.stun_game_order = false;
+                    e.game_order = true;
+                    e.order = ability[..6].iter().rev().copied().collect();
+                    std::mem::take(&mut e.stun_order)
+                })
+                .unwrap_or_default();
+            for e in parts {
+                state.table.defer(e, "stun: order objects");
+            }
+            for &e in ability[6..].iter().rev() {
+                state.table.defer(e, "move ability: order start");
+            }
+            continue;
+        }
+        if backs && back == tick {
             let order = state.table.take(tick, "order back after a stun");
             let other = state.table.take(tick, "order back: other");
             let (parts, buff) = entries(state, h)
@@ -1002,6 +1063,15 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
         return;
     };
+    // A stunned unit's order comes back first; that object goes 2 ticks
+    // on (c-SAK-1: gnoll 13 at 3509, freed at 3511).
+    let stunned = entries(state, h).is_some_and(|e| e.stun_ticks.is_some());
+    if stunned {
+        let back = state.table.take(tick, "order back after a stun");
+        state
+            .table
+            .free_at(tick + 2, back, "order back after a stun");
+    }
     // Its death order: a record and 9 queue objects, and for a unit not
     // of the creeps 1 more (SPEC-0024, "Unit death").
     let record = state.table.take(tick, "death order record");
@@ -1024,12 +1094,20 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             .chain(std::mem::take(&mut e.order))
             .collect();
         e.own_attack = false;
-        (pair.to_vec(), own, core.to_vec())
+        // A stun's objects: its order's after the pair, its own after the
+        // queue's (c-SAK-1: 3509).
+        e.stun_ticks = None;
+        let stun_order = std::mem::take(&mut e.stun_order);
+        let stun_end: Vec<u32> = std::mem::take(&mut e.stun_end)
+            .into_iter()
+            .chain(e.buff_end.take())
+            .collect();
+        (pair.to_vec(), own, core.to_vec(), stun_order, stun_end)
     });
-    let Some((pair, own, core)) = held else {
+    let Some((pair, own, core, stun_order, stun_end)) = held else {
         return;
     };
-    for e in pair {
+    for e in pair.into_iter().chain(stun_order) {
         state.table.defer(e, "unit death");
     }
     state.table.defer(record, "death order record");
@@ -1041,6 +1119,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     }
     if let Some(o) = other {
         state.table.defer(o, "death order");
+    }
+    for e in stun_end {
+        state.table.defer(e, "unit death");
     }
     for e in core {
         state.table.defer(e, "unit death");

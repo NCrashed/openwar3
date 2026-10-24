@@ -744,8 +744,9 @@ fn searches_share_a_budget() {
 /// the ticks of the spec's table since the update cycle has the game's
 /// phase (SPEC-0018, "Phase from the start of the game"). Row 1: swings from the
 /// updates 322 and 688, chase resumed with first motion at 533 and 893,
-/// one update standing at 598 and 958, damage at 427 (428 here) and 788;
-/// row 4: a swing from 706, damage at 806.
+/// one update standing at 598 and 958, damage at 427 and 788 (the hits before that tick's script timer, one queue);
+/// row 4: a swing from 706 (its damage is not read; the script stops
+/// counting at 800).
 #[test]
 fn chases_by_paths() {
     let Some(output) = run("c-CH1.w3x", 6.0) else {
@@ -768,13 +769,20 @@ fn chases_by_paths() {
                 _ => {}
             }
         }
+        // A stand lasting to the end of the log (the script stops logging
+        // at 800, as in the game).
+        if let Some(s) = since {
+            out.push((s, u32::MAX));
+        }
         out
     };
+    // The stands of the spec's table up to 800 (893, 958 and 911 lie
+    // after the end of the log).
     let row1 = stands(2);
-    for stand in [(323, 533), (599, 605), (689, 893), (959, 965)] {
+    for stand in [(323, 533), (599, 605), (689, u32::MAX)] {
         assert!(row1.contains(&stand), "{stand:?} not in {row1:?}");
     }
-    assert!(stands(0).contains(&(707, 911)), "{:?}", stands(0));
+    assert!(stands(0).contains(&(707, u32::MAX)), "{:?}", stands(0));
     let damage: Vec<(u32, u32)> = output
         .iter()
         .filter_map(|l| {
@@ -784,10 +792,9 @@ fn chases_by_paths() {
         })
         .collect();
     assert!(
-        damage.contains(&(2, 428)) && damage.contains(&(2, 788)),
+        damage.contains(&(2, 427)) && damage.contains(&(2, 788)),
         "{damage:?}"
     );
-    assert!(damage.contains(&(0, 806)), "{damage:?}");
 }
 
 /// A walker of SPEC-0022: map, unit, position at tick 292, the tick its

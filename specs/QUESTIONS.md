@@ -156,9 +156,10 @@ spec is silent:
 - **`TimerGetTimeout` after `ResumeTimer`** still reads the timeout given
   to `TimerStart`, while `TimerGetElapsed` counts from the resume, and a
   periodic timer goes on with its original period. Is that so?
-- **`PauseTimer` inside the timer's own callback** does nothing, since the
-  timer is not in the queue then; the periodic timer restarts after the
-  callback. Is that so?
+- **`PauseTimer` inside the timer's own callback** stops a periodic timer:
+  it does not start again after the callback (c-CH1: MV_Tick paused at
+  mv_t 800 counted no more in the game). What `ResumeTimer` does then is
+  not read; here it runs a full period.
 - **Script execution time.** Our scripts take no real time, so test CU
   (stall) cannot be reproduced from the script; catch-up is tested by
   adding real time directly.

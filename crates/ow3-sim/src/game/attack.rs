@@ -1444,3 +1444,31 @@ pub(super) fn first_hit_in_tick(state: &State) -> Option<u32> {
         .filter(|e| f32::from_bits(*e) <= f32::from_bits(next))
         .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
 }
+
+/// The earliest hit timed in this tick that expires before `limit`.
+pub(super) fn next_hit_before(state: &State, limit: u32) -> Option<u32> {
+    // Only those of this tick: a hit held back (by a stun) is not one.
+    let now = f32::from_bits(state.move_clock);
+    state
+        .attacking
+        .iter()
+        .filter_map(|&h| {
+            state
+                .unit(Some(h))
+                .filter(|u| u.alive)
+                .and_then(|u| u.attack)
+        })
+        .filter_map(|a| a.hit_at)
+        .filter(|e| f32::from_bits(*e) > now && f32::from_bits(*e) < f32::from_bits(limit))
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
+}
+
+/// The hits of this tick that expire before the script timer due at
+/// `expiry`: the queue runs them first (SPEC-0018).
+pub(super) fn hits_ahead_of(vm: &mut Vm, state: &Rc<RefCell<State>>, expiry: u32) {
+    if next_hit_before(&state.borrow(), expiry).is_none() {
+        return;
+    }
+    state.borrow_mut().timers.move_to(expiry);
+    hits_before(vm, state, Some(expiry));
+}

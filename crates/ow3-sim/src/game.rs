@@ -1667,6 +1667,10 @@ impl<'a> Game<'a> {
                     break;
                 };
                 attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
+                // The hits due before this timer come first, as one queue
+                // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script
+                // order at 17.0 in 3401).
+                attack::hits_ahead_of(&mut self.vm, &self.state, fired.expiry);
                 self.fire(fired);
                 self.park();
             }
@@ -1725,6 +1729,10 @@ impl<'a> Game<'a> {
                 break;
             };
             attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
+            // The hits due before this timer come first, as one queue
+            // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script
+            // order at 17.0 in 3401).
+            attack::hits_ahead_of(&mut self.vm, &self.state, fired.expiry);
             self.fire(fired);
             self.park();
         }
@@ -1743,6 +1751,16 @@ impl<'a> Game<'a> {
         // The checks and the hits are timers of the queue: in the order of
         // their expiries (c-SAK-1: the hit at 7.009974 before the Mountain
         // King's check at 7.010000 in 1403).
+        // The ends of stuns are timers before the checks (c-SAK-1: 18.073807
+        // before the check at 18.077003 in 3616).
+        // The goals of backswings ending before them come first (2583).
+        {
+            let mut s = self.state.borrow_mut();
+            if let Some(q) = table::next_stun_end(&s) {
+                attack::after_swing_walks(&mut s, Some(q));
+            }
+        }
+        table::stun_ends(&mut self.state.borrow_mut());
         let mut first_batch = true;
         // Bounded: each round takes at least one hit (a guard against a
         // hit that never comes off the queue).
@@ -2771,6 +2789,14 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                 if let Some(timer) = state.timer(Some(h)) {
                     timer.paused = Some(remaining);
                 }
+            } else if let Some(timer) = state.timer(Some(h))
+                && timer.periodic
+                && timer.paused.is_none()
+            {
+                // Inside its own callback a periodic timer does not start
+                // again (c-CH1: MV_Tick paused at mv_t 800 counted no more).
+                // PROVISIONAL: a resume runs a full period.
+                timer.paused = Some(timer.timeout);
             }
             Ok(None)
         }

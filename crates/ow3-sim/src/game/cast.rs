@@ -537,7 +537,7 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         .unit(Some(h))
         .is_some_and(|u| u.stunned_until == Some(tick))
     {
-        super::table::stun_ticks(state, h, end_tick, tick);
+        super::table::stun_ticks(state, h, end_tick, tick, end);
     }
     // A missile's impact at the end of the tick stops it where it is then
     // (c-SAK-1: gnoll 16 at the bolt of 2615); a melee hit, at the start of

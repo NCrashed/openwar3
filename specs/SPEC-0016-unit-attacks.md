@@ -80,6 +80,10 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
   time 30.259863; footman 4's hit killed it first, footman 6 dealt
   nothing and his cooldown ran on to 31.109863, where his next swing
   started (damage tick 6323).
+- A swing that has started is not ended by distance: when the target
+  walks out of reach during the swing, the hit still comes at the hit
+  timer. `c-SAK-1` (log): footman 3 swung at ogre 18 in tick 8937, the
+  ogre walked out of his reach from 9014, and the hit came in 9037.
 - When the first hit comes is SPEC-0019: after the random reaction
   delay (one output of game generator 9) the attack begins at an update
   once the attacker is in range and turned towards the target, and the

@@ -50,6 +50,10 @@ the damage event (`GetEventDamage`).
     per-tick position) was re-aimed at its first update, found the gnoll
     1.909 cells (61.1) away and hit in that tick (`e + 20`), not after
     the straight count.
+  - A target already within one step (100) at the launch is hit at
+    once, in the effect tick. `c-SAK-1` (log): the effect on gnoll 17,
+    89.3 away, and its damage events (0.00, then 100.00) are all in
+    tick 7982.
   - Impact (damage and stun) in tick `e + n`, with `n = ceil(d /
     0.15625)` and `d` the launch distance in cells. The impact position
     is the launch point plus `n` steps, so it slightly overshoots.

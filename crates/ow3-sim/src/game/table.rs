@@ -40,6 +40,8 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// Units whose order ends at the end of the tick.
+    pub ends_late: Vec<u32>,
     /// The takings and freeings, when kept.
     pub log: Option<Vec<TableEvent>>,
 }
@@ -57,6 +59,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            ends_late: Vec::new(),
             log: None,
         }
     }
@@ -155,9 +158,14 @@ pub struct UnitEntries {
     /// The objects of walks it gave up and the tick it gave them up,
     /// freed at its first update after that tick.
     pub stale: Vec<(u64, u32)>,
+    /// The update at which those walks go if the unit stands by then.
+    pub stale_update: Option<u64>,
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
+    /// Its walk was made at a backswing's end for the chase of the next
+    /// tick, whose order keeps it.
+    pub early_walk: bool,
     /// Its walk is that of a goal taken in reach after a swing, which ends
     /// when it faces its target.
     pub quiet_walk: bool,
@@ -183,6 +191,8 @@ pub struct UnitEntries {
     pub target_death: Vec<(u32, u32)>,
     /// It attacks by an order of its own from an acquisition.
     pub own_attack: bool,
+    /// The objects of an order it gave up in this tick, freed at its end.
+    pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
     pub current: Option<u32>,
 }
@@ -331,6 +341,15 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
     }
 }
 
+/// The order unit `h` gave up in this tick ends at the end of the tick:
+/// its objects are freed 0.0001 s later.
+pub(super) fn old_order_ended(state: &mut super::State, h: u32) {
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.old_order));
+    for e in old.unwrap_or_default() {
+        state.table.defer(e, "order end");
+    }
+}
+
 /// Unit `h` takes a script's attack order to a point (c-SAK-1, 1.5 s):
 /// the order and its record, the old order ends, then the 11 objects of
 /// the attack ability for the order and the walk. The record and the
@@ -391,9 +410,26 @@ pub(super) fn path_searched(state: &mut super::State, h: u32) {
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
+    // A walk made early for a chase to come stays through its order.
+    if let Some(e) = entries(state, h)
+        && std::mem::take(&mut e.early_walk)
+    {
+        return;
+    }
     let tick = state.table.now;
+    // The unit's next update: walks given up by a unit that stands then
+    // still go at it (c-SAK-1: the Blademaster at his point, 1573 -> 1579).
+    let next = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .map(|m| m.next_update);
     if let Some(e) = entries(state, h) {
         let old = std::mem::take(&mut e.walk);
+        if !old.is_empty() {
+            // Dropped in its update, the stored next update is still this
+            // one: the next comes 6 ticks on (SPEC-0018).
+            e.stale_update = next.map(|n| if n > tick { n } else { tick + 6 });
+        }
         e.stale.extend(old.into_iter().map(|w| (tick, w)));
         e.walk_ready = false;
     }
@@ -424,6 +460,29 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
 /// 931, 1027).
 pub(super) fn walks_freed(state: &mut super::State) {
     let tick = state.table.now;
+    // Units that stand: their walks go at the update they would have had.
+    let standing: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| state.unit(Some(h)).is_some_and(|u| u.movement.is_none()))
+        .collect();
+    for h in standing {
+        let due = entries(state, h).and_then(|e| {
+            (e.stale_update.is_some_and(|n| n <= tick) && !e.stale.is_empty()).then(|| {
+                e.stale_update = None;
+                std::mem::take(&mut e.stale)
+            })
+        });
+        let due: Vec<u32> = due
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, e)| e)
+            .collect();
+        for walk in due.chunks(2) {
+            state.table.walks_due.push(walk.to_vec());
+        }
+    }
     let mut due = std::mem::take(&mut state.table.walks_due);
     due.sort_by_key(|w| std::cmp::Reverse(state.table.creation_of(w[0])));
     for walk in due {
@@ -553,7 +612,25 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     state.table.defer(a[n - 1], "acquisition: attack object");
     state.table.defer(a[n - 2], "acquisition: attack object");
     if own {
-        order_ended(state, h);
+        // Its old order ends at the end of the tick (c-SAK-1: kobold 10's
+        // order back after its stun, freed after the hit of 1745).
+        let old = entries(state, h).map(|e| {
+            let mut old: Vec<u32> = Vec::new();
+            if std::mem::take(&mut e.own_attack) {
+                old.extend(e.current.take());
+                old.extend(
+                    std::mem::take(&mut e.target_death)
+                        .into_iter()
+                        .map(|(_, o)| o),
+                );
+            }
+            old.extend(std::mem::take(&mut e.order));
+            old
+        });
+        if let Some(e) = entries(state, h) {
+            e.old_order = old.unwrap_or_default();
+        }
+        state.table.ends_late.push(h);
     }
     if let Some(e) = entries(state, h) {
         e.reaction = vec![a[n - 3]];

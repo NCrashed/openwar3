@@ -204,7 +204,7 @@ pub struct Moving {
     /// The direction of motion, in radians.
     pub(super) heading: u32,
     /// The tick of the next update.
-    next_update: u64,
+    pub(super) next_update: u64,
     /// Moving since the heading came within the propulsion window.
     walking: bool,
     /// The committed position, relative to the world's lower left corner,
@@ -3593,9 +3593,22 @@ pub(super) fn chase(
             follow::quiet(state, h);
             // Still a new goal with its walk (SPEC-0024; c-SAK-1: kobold
             // 8 at 1085, gnoll 11 at 1087).
-            super::table::walk_made_at_order(state, h);
+            // (made at the backswing's end, `attack::after_swing_walks`).
+            if !state.unit(Some(h)).is_some_and(|u| u.entries.walk_ready) {
+                super::table::walk_made_at_order(state, h);
+            }
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.entries.quiet_walk = true;
+            }
+            // Its update in this tick came before (the goal is due at the
+            // backswing's end, the tick before): that update ends it (c-SAK-1:
+            // the Mountain King, goal 1572, update 1573).
+            if state.updated.contains(&h) && state.table.now < state.ticks {
+                state.table.now = state.ticks;
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.quiet_walk = false;
+                }
+                super::table::walk_dropped(state, h);
             }
         } else {
             follow::search(state, &walker, tick);

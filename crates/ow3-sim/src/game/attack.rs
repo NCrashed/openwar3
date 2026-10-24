@@ -1358,3 +1358,29 @@ pub(super) fn next_hit(state: &State) -> Option<u32> {
         .filter_map(|a| a.hit_at)
         .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
 }
+
+/// The walks of the goals after the swings whose backswings end in this
+/// tick: the game takes the goal at the backswing's end, a tick before the
+/// chase here (SPEC-0024; c-SAK-1: kobold 8 at 1895, before the frees of
+/// that tick).
+pub(super) fn after_swing_walks(state: &mut State) {
+    let tick = state.ticks;
+    let ending: Vec<(u32, u32)> = state
+        .attacking
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| u.alive)?;
+            let a = u.attack?;
+            (a.resume == Some(tick + 1) && standing(state, a.target))
+                .then_some((h, u.backswing_end))
+        })
+        .collect();
+    for (h, end) in ending {
+        state.table_at(end);
+        super::table::walk_made_at_order(state, h);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.early_walk = true;
+        }
+    }
+    state.table.now = tick;
+}

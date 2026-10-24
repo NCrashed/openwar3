@@ -5291,6 +5291,17 @@ fn cluster_pending(state: &State, h: u32) -> bool {
                 .any(|x| state.start_origins.contains_key(x) && !state.updated.contains(x))
         })
 }
+/// Unit `h`'s chase begun at a cooldown's expiry replaces the renewal after
+/// its swing: it searches at its next update.
+pub(super) fn no_renewal(state: &mut State, h: u32) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.renew_at = None;
+        m.renew_stands = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

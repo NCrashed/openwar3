@@ -205,6 +205,28 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 }
                 _ => None,
             };
+            // The cooldown expires in this tick with the target out of
+            // reach: the attack start chases it at once, searching at the
+            // next update (c-SAK-1: image 20 of the Blademaster, cooldown
+            // end 9584, search at 9585).
+            let clock = s.move_clock;
+            let expiring = s.unit(Some(h)).is_some_and(|u| {
+                let e = f32::from_bits(u.cooldown_end);
+                e > f32::from_bits(clock) && e <= f32::from_bits(add(clock, crate::timers::TICK))
+            });
+            if let Some((a, start)) = next_swing
+                && expiring
+                && tick < start
+                && standing(s, a.target)
+                && !super::movement::reaches(s, h, a.target)
+            {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                    u.attack = None;
+                }
+                super::movement::chase(s, h, a.target, a.order_id, None, false);
+                super::movement::no_renewal(s, h);
+                continue;
+            }
             // A target out of reach when the next swing would start, or at
             // the new goal after the swing: chased from the new goal on,
             // the attacker standing until then (SPEC-0019).

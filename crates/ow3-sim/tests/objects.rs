@@ -66,8 +66,8 @@ fn heroes_three_objects_report() {
     let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
     table.day = vec![767, 647, 819];
     playback.game.set_table(table, true);
-    // (A tick or two past the list's last, whose ticks may run one short.)
-    let until = game.last().map_or(0, |r| r.0) + 2;
+    // (Some ticks past the list's last, whose tick column runs ahead.)
+    let until = game.last().map_or(0, |r| r.0) + 10;
     while playback.game.ticks() <= until && playback.step_tick() {}
     let ours = playback.game.table_log();
     // OW3_OBJECTS="from to": our rows in that range of positions.

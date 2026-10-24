@@ -294,6 +294,9 @@ pub struct UnitEntries {
     pub lost_later: Vec<u32>,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
+    /// Its attack-move was taken up again after an attack
+    /// (`attack_move_arrived`).
+    pub resumed_move: bool,
     /// Its Mirror Image's effect object and the costs of the mana watches
     /// it gave up when hidden (`mirror_effect`).
     pub mirror_effect: Option<u32>,
@@ -550,10 +553,41 @@ pub(super) fn game_order_arrived(state: &mut super::State, h: u32) {
     }
 }
 
+/// Unit `h`'s attack-move ends at its arrival at its point (c-SAK-1:
+/// footman 3 at 57.388206): the first of its order's kept objects is
+/// freed, then, for an attack-move taken up again after an attack, the
+/// ending takes 3 objects, freed at once after it (the last first), then
+/// the rest of its order's objects.
+///
+/// PROVISIONAL: what the 3 objects are, and what makes them, is not read
+/// (the taking up again is the one difference seen).
+pub(super) fn attack_move_arrived(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(f) = first {
+        state.table.defer(f, "order end");
+    }
+    // Only an attack-move taken up again after an attack (c-SAK-1: none
+    // for the Blademaster's, never interrupted, at 1573).
+    let resumed = entries(state, h).is_some_and(|e| std::mem::take(&mut e.resumed_move));
+    let ending = if resumed {
+        state.table.take_n(tick, 3, "attack-move: arrival")
+    } else {
+        Vec::new()
+    };
+    for &e in ending.iter().rev() {
+        state.table.defer(e, "attack-move: arrival");
+    }
+    order_ended(state, h);
+}
+
 /// Unit `h` takes up its attack-move again after its target's death: a
 /// new goal with its walk, and its last acquisition's objects are freed
 /// 0.0001 s later.
 pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.resumed_move = true;
+    }
     // Done at the backswing's end already (`attack::after_swing_walks`).
     if entries(state, h).is_some_and(|e| e.walk_ready) {
         return;

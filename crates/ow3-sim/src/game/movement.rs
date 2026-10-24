@@ -3216,7 +3216,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     // the updates (c-SAK-1: 9786).
                     state.table.homes.push(h);
                     super::table::walk_dropped(state, h);
-                } else if attack_move || !u.entries.order.is_empty() {
+                } else if attack_move {
+                    super::table::attack_move_arrived(state, h);
+                    super::table::walk_dropped(state, h);
+                } else if !u.entries.order.is_empty() {
                     super::table::order_ended(state, h);
                     super::table::walk_dropped(state, h);
                 }
@@ -3817,7 +3820,7 @@ pub(super) fn attack_moves(state: &mut State) {
                 set_attack_move(state, h, None);
                 // Its objects go with it (c-SAK-1: the Blademaster at
                 // 5118).
-                super::table::order_ended(state, h);
+                super::table::attack_move_arrived(state, h);
             }
             // PROVISIONAL: the target is gone without a hit of this unit
             // (not measured); it walks on.

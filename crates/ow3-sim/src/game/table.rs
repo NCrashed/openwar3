@@ -248,6 +248,9 @@ pub struct UnitEntries {
     pub target_death: Vec<(u32, u32)>,
     /// It attacks by an order of its own from an acquisition.
     pub own_attack: bool,
+    /// The creation number at its last acquisition, for the order of the
+    /// attackers at a target's death.
+    pub taken_at: u32,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -464,27 +467,15 @@ pub(super) fn attack_move_resumed(state: &mut super::State, h: u32) {
         return;
     }
     walk_made_at_order(state, h);
-    // At a target's death its objects kept to the death go with these,
-    // after those of the other attackers (`target_died`; c-SAK-1: 3185).
-    let dying = state.table.dying.is_some();
-    let old = entries(state, h).map(|e| {
-        let mut old: Vec<u32> = Vec::new();
-        if dying {
-            old.extend(
-                std::mem::take(&mut e.target_death)
-                    .into_iter()
-                    .map(|(_, o)| o),
-            );
-        }
-        old.extend(std::mem::take(&mut e.acquisition));
-        old
-    });
+    // At a target's death its objects go in `target_died`, in its place
+    // among the attackers (c-SAK-1: 3185, 4700).
+    if state.table.dying.is_some() {
+        state.table.resumed.push(h);
+        return;
+    }
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
     for e in old.unwrap_or_default() {
-        if dying {
-            state.table.resumed.push(e);
-        } else {
-            state.table.defer(e, "acquisition: attack object");
-        }
+        state.table.defer(e, "acquisition: attack object");
     }
 }
 
@@ -718,6 +709,10 @@ pub(super) fn cast_started(state: &mut super::State, h: u32) {
 ///   later (c-SAK-1: gnoll 12 at 908).
 pub(super) fn acquired(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    let at = state.table.next_creation();
+    if let Some(e) = entries(state, h) {
+        e.taken_at = at;
+    }
     let target = state.unit(Some(h)).and_then(|u| {
         u.movement.and_then(|m| match m.order {
             super::movement::Order::Attack { target } => Some(target),
@@ -842,8 +837,14 @@ pub(super) fn reaction_ended(state: &mut super::State, h: u32) {
 /// Unit `dead` died: the acquisitions that took it free their objects
 /// kept to its death.
 pub(super) fn target_died(state: &mut super::State, dead: u32) {
-    let units = state.units.clone();
+    // The attackers in the order they took their targets, each one's
+    // objects from the last (c-SAK-1: footman 2 before the Mountain King
+    // at 4700).
+    let mut units = state.units.clone();
+    units.sort_by_key(|&h| state.unit(Some(h)).map_or(u32::MAX, |u| u.entries.taken_at));
+    let resumed = std::mem::take(&mut state.table.resumed);
     for h in units {
+        let goes_on = resumed.contains(&h);
         let held = entries(state, h).map(|e| {
             let (gone, kept) = std::mem::take(&mut e.target_death)
                 .into_iter()
@@ -855,17 +856,21 @@ pub(super) fn target_died(state: &mut super::State, dead: u32) {
             } else {
                 e.current.take()
             };
+            // One going on with its attack-move frees its acquisition too.
+            let acquisition = if goes_on {
+                std::mem::take(&mut e.acquisition)
+            } else {
+                Vec::new()
+            };
             current
                 .into_iter()
                 .chain(gone.into_iter().map(|(_, o)| o))
+                .chain(acquisition)
                 .collect::<Vec<_>>()
         });
         for o in held.unwrap_or_default() {
             state.table.defer(o, "acquisition: attack object");
         }
-    }
-    for o in std::mem::take(&mut state.table.resumed) {
-        state.table.defer(o, "acquisition: attack object");
     }
     state.table.dying = None;
 }
@@ -1227,17 +1232,35 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         e.own_attack = false;
         // A stun's objects: its order's after the pair, its own after the
         // queue's (c-SAK-1: 3509).
-        e.stun_ticks = None;
+        // A missile's objects stay to the stun's own end (c-SAK-1: kobold
+        // 14 dead at 4700, the bolt's objects freed at 5513).
+        let end_tick = e.stun_ticks.take().map(|(end, _)| end);
         let stun_order = std::mem::take(&mut e.stun_order);
-        let stun_end: Vec<u32> = std::mem::take(&mut e.stun_end)
-            .into_iter()
-            .chain(e.buff_end.take())
-            .collect();
-        (pair.to_vec(), own, core.to_vec(), stun_order, stun_end)
+        let mut stun_end = std::mem::take(&mut e.stun_end);
+        let missile: Vec<u32> = if stun_end.len() > 1 {
+            stun_end.split_off(1)
+        } else {
+            Vec::new()
+        };
+        stun_end.extend(e.buff_end.take());
+        (
+            pair.to_vec(),
+            own,
+            core.to_vec(),
+            stun_order,
+            stun_end,
+            missile,
+            end_tick,
+        )
     });
-    let Some((pair, own, core, stun_order, stun_end)) = held else {
+    let Some((pair, own, core, stun_order, stun_end, missile, end_tick)) = held else {
         return;
     };
+    if let Some(end) = end_tick.filter(|&t| t != u64::MAX) {
+        for e in missile {
+            state.table.free_at(end, e, "missile");
+        }
+    }
     for e in pair.into_iter().chain(stun_order) {
         state.table.defer(e, "unit death");
     }

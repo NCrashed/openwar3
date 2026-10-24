@@ -288,6 +288,10 @@ pub struct UnitEntries {
     pub lost: Vec<u32>,
     pub lose_order: bool,
     pub lose_acquisition: bool,
+    /// The objects kept to a target's death that wait for the end of the
+    /// unit's backswing (`lost_at_backswing_end`).
+    pub keep_lost: bool,
+    pub lost_later: Vec<u32>,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
     /// Its Mirror Image's effect object and the costs of the mana watches
@@ -1336,6 +1340,10 @@ pub(super) fn attacker_done(state: &mut super::State, h: u32) {
     }
     let goes_on = state.table.resumed.contains(&h);
     let rest = entries(state, h).map(|e| {
+        if std::mem::take(&mut e.keep_lost) {
+            let lost = std::mem::take(&mut e.lost);
+            e.lost_later.extend(lost);
+        }
         let mut rest = std::mem::take(&mut e.lost);
         // One walking back frees its acquisition's too (c-SAK-1: kobold 19
         // at 4764, 3533 .. 3531).
@@ -1351,6 +1359,31 @@ pub(super) fn attacker_done(state: &mut super::State, h: u32) {
     for o in rest.unwrap_or_default() {
         state.table.defer(o, "acquisition: attack object");
     }
+}
+
+/// Attacker `h`, in its backswing at its target's death, keeps the
+/// objects it held to the death to its backswing's end
+/// (`backswing_ended_idle`).
+pub(super) fn lost_at_backswing_end(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.keep_lost = true;
+    }
+}
+
+/// Unit `h`'s backswing after its target's death ended and it stays: the
+/// objects it kept to the death go, then its order ends (c-SAK-1: the
+/// image 20, 6455 .. 6453 and its order 6452 .. 6450 at 10950).
+pub(super) fn backswing_ended_idle(state: &mut super::State, h: u32) {
+    let lost = entries(state, h)
+        .map(|e| std::mem::take(&mut e.lost_later))
+        .unwrap_or_default();
+    if lost.is_empty() {
+        return;
+    }
+    for e in lost {
+        state.table.defer(e, "acquisition: attack object");
+    }
+    order_ended(state, h);
 }
 
 /// Attacker `h`'s order ends with its attack at a death (`attacker_done`).

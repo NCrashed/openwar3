@@ -3757,6 +3757,10 @@ pub(super) fn guard_back(state: &mut State, h: u32, home: [u32; 2]) {
     if idle && dx * dx + dy * dy > accept * accept + 1e-3 && order(state, h, Order::Point, 0, home)
     {
         super::table::guard_walk_made(state, h);
+    } else if idle {
+        // It stays: what it kept from the attack goes, and its order ends
+        // (c-SAK-1: the image 20 at 10950).
+        super::table::backswing_ended_idle(state, h);
     }
 }
 
@@ -5608,6 +5612,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 .is_some_and(|u| f32::from_bits(u.backswing_end) > f32::from_bits(now));
             if !walked && !swinging {
                 super::table::order_lost_with(state, h);
+            }
+            // In its backswing, the objects it kept to the death go at the
+            // backswing's end (c-SAK-1: the image 20 at ogre 18's death in
+            // 10880, freed at 10950 with its order).
+            if !walked && swinging {
+                super::table::lost_at_backswing_end(state, h);
             }
         }
         super::table::attacker_done(state, h);

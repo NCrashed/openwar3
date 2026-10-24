@@ -1343,10 +1343,22 @@ pub(super) fn fades(state: &mut State) {
         })
         .collect();
     for (h, clock) in faded {
-        super::table::wind_walk_faded(state, h);
+        // An attack under way ends and is taken up again as a new goal with
+        // its walk, before the state parts of the fade go (SPEC-0024;
+        // c-SAK-1: the Blademaster at 4620).
+        let attacking = movement::attacks(state, h);
+        if attacking {
+            super::table::attack_ended_at_fade(state, h);
+        }
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.checks_off = true;
         }
+        state.table.at_fade = true;
         movement::regive_attack(state, h, clock);
+        state.table.at_fade = false;
+        if attacking {
+            super::table::walk_made_at_order(state, h);
+        }
+        super::table::wind_walk_faded(state, h);
     }
 }

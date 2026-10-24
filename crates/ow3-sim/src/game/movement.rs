@@ -5585,6 +5585,14 @@ pub(super) fn attack_moves_resuming(state: &State, before: Option<u32>) -> Vec<(
         })
         .collect()
 }
+/// Whether unit `h` moves under an attack order.
+pub(super) fn attacks(state: &State, h: u32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

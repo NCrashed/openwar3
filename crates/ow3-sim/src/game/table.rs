@@ -42,6 +42,8 @@ pub struct ObjectTable {
     pub walks_due: Vec<Vec<u32>>,
     /// The spell order being taken starts its cast at once.
     pub cast_at_once: bool,
+    /// A Wind Walk's fade is being handled (`walk_dropped`).
+    pub at_fade: bool,
     /// The unit whose death is being handled, and the objects of its
     /// attackers going on with their attack-moves (`attack_move_resumed`).
     pub dying: Option<u32>,
@@ -71,6 +73,7 @@ impl ObjectTable {
             day: Vec::new(),
             walks_due: Vec::new(),
             cast_at_once: false,
+            at_fade: false,
             dying: None,
             resumed: Vec::new(),
             timed: Vec::new(),
@@ -551,7 +554,14 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     {
         return;
     }
-    let tick = state.table.now;
+    // Given up at a fade, before the updates of the tick, the unit's update
+    // in this tick frees it (c-SAK-1: the Blademaster's fade at 4620).
+    // PROVISIONAL: read for a fade only.
+    let tick = if !state.table.at_fade {
+        state.table.now
+    } else {
+        state.table.now.saturating_sub(1)
+    };
     // The unit's next update: walks given up by a unit that stands then
     // still go at it (c-SAK-1: the Blademaster at his point, 1573 -> 1579).
     let next = state
@@ -908,6 +918,34 @@ pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
         if let Some(e) = entries(state, h) {
             e.mana_watches[k] = (cost, new, now);
         }
+    }
+}
+
+/// Unit `h`'s attack ends at its Wind Walk's fade (c-SAK-1: the
+/// Blademaster at 4620): one object kept with its order, and the objects
+/// kept to its target's death freed at once.
+pub(super) fn attack_ended_at_fade(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "attack ends");
+    // Its objects kept to the target's death go now; the new one goes
+    // first at its next order (4800).
+    let gone = entries(state, h).map(|e| {
+        let gone: Vec<u32> = e
+            .current
+            .replace(o)
+            .into_iter()
+            .chain(
+                std::mem::take(&mut e.target_death)
+                    .into_iter()
+                    .map(|(_, t)| t),
+            )
+            .collect();
+        gone
+    });
+    // They go after the fade's state parts (`wind_walk_faded`).
+    let gone = gone.unwrap_or_default();
+    if let Some(e) = entries(state, h) {
+        e.fade.extend(gone);
     }
 }
 

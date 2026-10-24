@@ -1398,8 +1398,10 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
                 && standing(state, a.target)
                 && due
                 && !u.entries.early_walk
-                && !u.entries.early_goal)
-                .then_some((h, u.backswing_end))
+                && !u.entries.early_goal
+                // Not a stunned unit (c-SAK-1: kobold 14 at 4619).
+                && !super::cast::stunned(state, h))
+            .then_some((h, u.backswing_end))
         })
         .collect();
     for (h, end) in ending {

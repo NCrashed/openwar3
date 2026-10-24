@@ -253,6 +253,11 @@ pub struct UnitEntries {
     pub taken_at: u32,
     /// Its last target was taken by answering a call.
     pub by_call: bool,
+    /// At a death being handled: the objects it kept to it, and whether
+    /// its order ends too.
+    pub lost: Vec<u32>,
+    pub lose_order: bool,
+    pub lose_acquisition: bool,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -973,6 +978,66 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
         }
     } else {
         state.table.defer(o, "attack ends at the target death");
+    }
+}
+
+/// Attacker `h` of unit `dead` is handled at the death: the object of its
+/// current target is freed 0.0001 s later now, the others it kept to the
+/// death at the end of its handling (`attacker_done`), after its attack's
+/// end (c-SAK-1: kobold 19 at 4764: 3593, "attack ends", 3533 .. 3531).
+pub(super) fn attacker_lost(state: &mut super::State, h: u32, dead: u32) {
+    let current = entries(state, h).and_then(|e| {
+        let (gone, kept) = std::mem::take(&mut e.target_death)
+            .into_iter()
+            .partition::<Vec<_>, _>(|&(t, _)| t == dead);
+        e.target_death = kept;
+        let mut gone: Vec<u32> = gone.into_iter().map(|(_, o)| o).collect();
+        // The current target's object, or the first kept to the death.
+        let first = if gone.is_empty() {
+            None
+        } else {
+            e.current.take().or_else(|| Some(gone.remove(0)))
+        };
+        e.lost = gone;
+        first
+    });
+    if let Some(c) = current {
+        state.table.defer(c, "acquisition: attack object");
+    }
+}
+
+/// The end of attacker `h`'s handling at a death (`attacker_lost`).
+pub(super) fn attacker_done(state: &mut super::State, h: u32) {
+    let goes_on = state.table.resumed.contains(&h);
+    let rest = entries(state, h).map(|e| {
+        let mut rest = std::mem::take(&mut e.lost);
+        // One walking back frees its acquisition's too (c-SAK-1: kobold 19
+        // at 4764, 3533 .. 3531).
+        if goes_on || std::mem::take(&mut e.lose_acquisition) {
+            rest.extend(std::mem::take(&mut e.acquisition));
+        }
+        if std::mem::take(&mut e.lose_order) {
+            rest.extend(std::mem::take(&mut e.order));
+            e.own_attack = false;
+        }
+        rest
+    });
+    for o in rest.unwrap_or_default() {
+        state.table.defer(o, "acquisition: attack object");
+    }
+}
+
+/// Attacker `h`'s order ends with its attack at a death (`attacker_done`).
+/// Attacker `h`'s acquisition ends with its attack at a death.
+pub(super) fn acquisition_lost_with(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.lose_acquisition = true;
+    }
+}
+
+pub(super) fn order_lost_with(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.lose_order = true;
     }
 }
 

@@ -5323,6 +5323,9 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
     attackers.sort_unstable();
     let mut to_guard = Vec::new();
     for (_, h, own) in attackers {
+        // Its objects kept to the target's death go with its handling, the
+        // current target's first (SPEC-0024; c-SAK-1: 4764).
+        super::table::attacker_lost(state, h, dead);
         super::attack::swing_cut(state, h, now);
         // A creep that took a target on its way home goes on to the next
         // entry of its queue: a move to where the target stood, without
@@ -5376,6 +5379,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // is a new goal with its walk (SPEC-0024; c-SAK-1: 4764).
             super::table::attack_ended(state, h, true);
             super::table::walk_made_at_order(state, h);
+            super::table::attacker_done(state, h);
             continue;
         }
         let mut walk_on = None;
@@ -5451,6 +5455,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // Its new goal and walk (SPEC-0024; c-SAK-1: 3185).
             super::table::attack_move_resumed(state, h);
         }
+        let mut walked = false;
         if own {
             halt(state, h);
             // An attack taken by answering a call ends with an object, freed
@@ -5482,9 +5487,17 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 if dx * dx + dy * dy > accept * accept + 1e-3 {
                     order(state, h, Order::Point, 0, guard);
                     super::table::walk_made_at_order(state, h);
+                    walked = true;
+                    super::table::acquisition_lost_with(state, h);
                 }
             }
+            // One that took the target by its own check and stays has its
+            // order end with it (c-SAK-1: kobold 10 at 4764).
+            if !walked && state.unit(Some(h)).is_some_and(|u| !u.entries.by_call) {
+                super::table::order_lost_with(state, h);
+            }
         }
+        super::table::attacker_done(state, h);
     }
 }
 

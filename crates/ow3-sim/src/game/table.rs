@@ -1873,6 +1873,40 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             .table
             .free_at(tick + 2, back, "order back after a stun");
     }
+    // A Mirror Image copy: a record and 7 queue objects; freed at once
+    // the record, the last 3 of the queue, the first 5 objects it kept
+    // from its making and the fourth of the queue; the first 3 of the
+    // queue at the end of its death time (c-SAK-1: the image 20 at 96.3 s,
+    // 6986 .. 6993, the 3 before 98.25 s).
+    // PROVISIONAL: what the second stage frees beyond those 3 is not read.
+    if state.unit(Some(h)).is_some_and(|u| u.illusion.is_some()) {
+        let record = state.table.take(tick, "death order record");
+        let queue = state.table.take_n(tick, 7, "death order queue");
+        state.table.defer(record, "death order record");
+        for &e in queue[4..].iter().rev() {
+            state.table.defer(e, "death order queue");
+        }
+        let copy = state.table.copies.remove(&h).unwrap_or_default();
+        for &e in copy.iter().take(5) {
+            state.table.defer(e, "Mirror Image: copy");
+        }
+        state.table.defer(queue[3], "death order queue");
+        // At the end of its type's death time (the Blademaster's 1.9 s).
+        let at = state.event_time.unwrap_or_else(|| state.timers.time());
+        let death = state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .map_or(3.0f32.to_bits(), |t| t.death_time);
+        let later = ow3_math::add(at, death);
+        for &e in queue[..3].iter().rev() {
+            state.table.free_at_q(later, e, "death order queue");
+        }
+        state
+            .table
+            .copies
+            .insert(h, copy.into_iter().skip(5).collect());
+        return;
+    }
     // Its death order: a record and 9 queue objects, and for a unit not
     // of the creeps 1 more (SPEC-0024, "Unit death").
     let record = state.table.take(tick, "death order record");

@@ -992,11 +992,13 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             // (SPEC-0040; c-SAK-1: 0.5994 after the casts at 2.0 and
             // 22.497225).
             // PROVISIONAL: read for DataA 0.6 only, where 0.6 * 0.999 and
-            // 0.6 - 0.0006 are the same float.
+            // 0.6 - 0.0006 are the same float. It fires at the end of the
+            // tick before the one counted here, its frees before the turn
+            // checksum of 2.6 s (c-SAK-1.parts.tsv, C = 1097).
             let fade = mul(n.data[0], 0.999f32.to_bits());
             if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.wind_walk = Some(WindWalk {
-                    fade: tick + super::attack::ticks(fade),
+                    fade: tick + super::attack::ticks(fade) - 1,
                     fade_clock: add(s.move_clock, fade),
                     until,
                     bonus: n.data[1],
@@ -1272,7 +1274,6 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         let now = s.event_time.replace(m.appear_q);
         super::regions::test_unit(s, e);
         s.event_time = now;
-        s.random.fraction();
         if let Some(Object::Unit(u)) = s.objects.get_mut(&e) {
             u.hidden = true;
             u.next_acquire = add(m.appear_q, mul(u.acquire_phase, 0x3F00_0000));

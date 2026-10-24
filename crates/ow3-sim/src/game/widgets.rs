@@ -350,6 +350,13 @@ pub(super) fn create_unit(
     if data.building {
         state.game_random[ALARM].fraction();
     }
+    // A hero draws the script generator once (c-SAK-1: E of the turn
+    // checksum changes with the heroes made at 1.0 s; a Mirror Image's
+    // units too).
+    // PROVISIONAL: taken to be the choice of its proper name.
+    if is_hero(type_id) {
+        state.random.fraction();
+    }
     let unit = Unit {
         owner,
         type_id,

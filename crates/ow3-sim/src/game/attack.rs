@@ -172,6 +172,18 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 continue;
             }
         }
+        // The goals of backswings that end before this hit come first.
+        {
+            let mut s = state.borrow_mut();
+            let at = s
+                .unit(Some(h))
+                .and_then(|u| u.attack)
+                .filter(|a| due(&s, a))
+                .and_then(|a| a.hit_at);
+            if at.is_some() {
+                after_swing_walks(&mut s, at);
+            }
+        }
         // A stunned unit does not attack: its hit waits (SPEC-0037).
         // PROVISIONAL: what a stun does to a swing under way is not
         // measured.
@@ -1362,8 +1374,10 @@ pub(super) fn next_hit(state: &State) -> Option<u32> {
 /// The walks of the goals after the swings whose backswings end in this
 /// tick: the game takes the goal at the backswing's end, a tick before the
 /// chase here (SPEC-0024; c-SAK-1: kobold 8 at 1895, before the frees of
-/// that tick).
-pub(super) fn after_swing_walks(state: &mut State) {
+/// that tick); with `before`, those ending before that queue time, as
+/// timers of the queue ahead of the script timer due then (c-SAK-1: kobold
+/// 15 at 9.499967 before the script order at 9.5 in 1901).
+pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
     let tick = state.ticks;
     let ending: Vec<(u32, u32)> = state
         .attacking
@@ -1371,7 +1385,11 @@ pub(super) fn after_swing_walks(state: &mut State) {
         .filter_map(|&h| {
             let u = state.unit(Some(h)).filter(|u| u.alive)?;
             let a = u.attack?;
-            (a.resume == Some(tick + 1) && standing(state, a.target))
+            let due = before.is_none_or(|b| f32::from_bits(u.backswing_end) < f32::from_bits(b));
+            (a.resume == Some(tick + 1)
+                && standing(state, a.target)
+                && due
+                && !u.entries.early_walk)
                 .then_some((h, u.backswing_end))
         })
         .collect();

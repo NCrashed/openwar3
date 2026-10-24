@@ -1660,6 +1660,7 @@ impl<'a> Game<'a> {
                 let Some(fired) = fired else {
                     break;
                 };
+                attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
                 self.fire(fired);
                 self.park();
             }
@@ -1710,6 +1711,7 @@ impl<'a> Game<'a> {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
                 break;
             };
+            attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
             self.fire(fired);
             self.park();
         }
@@ -1753,7 +1755,7 @@ impl<'a> Game<'a> {
         // The zero hits after stuns, after the checks (SPEC-0037).
         attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);
-        attack::after_swing_walks(&mut self.state.borrow_mut());
+        attack::after_swing_walks(&mut self.state.borrow_mut(), None);
         // The units that took a target at a call fire their events too
         // (c-SAK-1: creeps 15, 17, 18 and 19 at 1127, switching).
         let called = std::mem::take(&mut self.state.borrow_mut().call_acquired);

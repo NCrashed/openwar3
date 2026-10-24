@@ -932,7 +932,7 @@ pub struct State {
     /// Events fired now took their objects already (`table::call_answered`).
     quiet_events: bool,
     /// Units whose acquisition in this tick only recorded a target.
-    record_only: BTreeSet<u32>,
+    record_only: Vec<u32>,
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
@@ -1091,7 +1091,7 @@ impl State {
             table: table::ObjectTable::default(),
             event_objects: Vec::new(),
             quiet_events: false,
-            record_only: BTreeSet::new(),
+            record_only: Vec::new(),
             timed_life: Vec::new(),
             waves: Vec::new(),
             impact_now: false,

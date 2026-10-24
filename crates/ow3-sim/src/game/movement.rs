@@ -4134,7 +4134,7 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         };
         // A check that only records: the event, no draw and no attack.
         if matches!(check, Check::Record) {
-            state.record_only.insert(h);
+            state.record_only.push(h);
             acquired.push(h);
             continue;
         }
@@ -4748,6 +4748,30 @@ pub(super) fn retaliate(
         }
         _ => false,
     };
+    // A unit in its backswing after a kill answers by recording the
+    // attacker only: its acquired-target event fires, its attack waits for
+    // the check after the backswing (SPEC-0019, "During such a backswing";
+    // c-SAK-1: gnoll 17 at 4766).
+    let records = |h: u32| match state.objects.get(&h) {
+        Some(Object::Unit(u)) => {
+            u.alive
+                && swinging_back(u)
+                && u.wind_walk.is_none_or(|w| !w.invisible(tick))
+                && !u.paused
+                && !u.creep.sleeping
+                && super::creeps::may_answer(state, u)
+                && u.attack.is_none()
+                && u.attack_move.is_none()
+                && u.casting.is_none()
+                && u.stunned_until.is_none_or(|t| state.ticks >= t)
+                && state
+                    .data
+                    .units
+                    .get(&u.type_id)
+                    .is_some_and(|t| t.weapon.is_some() && !t.worker)
+        }
+        _ => false,
+    };
     // A unit attacking a target it took on its own answers by switching to
     // the attacker at once when its checks would rate the attacker better
     // (c-RXR-1: troll 16, chasing rifleman 7 far away, took footman 4 in
@@ -4865,7 +4889,7 @@ pub(super) fn retaliate(
                     && !responders.contains(&h)
                     && dx * dx + dy * dy <= reach_of(u, first) * reach_of(u, first)
                     && state.setup.helps(u.owner, owner)
-                    && (answers(h) || switches(h))
+                    && (answers(h) || switches(h) || records(h))
             })
             .collect();
         responders.extend(call_order(state, near));
@@ -4880,7 +4904,7 @@ pub(super) fn retaliate(
                 || v.movement
                     .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
         });
-    if !answers(victim) && !switches(victim) {
+    if !answers(victim) && !switches(victim) && !records(victim) {
         responders.remove(0);
     }
     // The victim's own call comes after its group's (c-SAK-1: at 1025
@@ -4909,7 +4933,7 @@ pub(super) fn retaliate(
                         && !responders.contains(&h)
                         && dx * dx + dy * dy <= reach_of(u, false) * reach_of(u, false)
                         && state.setup.helps(u.owner, owner)
-                        && (answers(h) || switches(h))
+                        && (answers(h) || switches(h) || records(h))
                 })
                 .collect();
             responders.extend(call_order(state, near));
@@ -4920,6 +4944,7 @@ pub(super) fn retaliate(
         .filter(|h| !responders.contains(h))
         .collect();
     responders.extend(own_call);
+    let recording: Vec<u32> = responders.iter().copied().filter(|&h| records(h)).collect();
     let switching: Vec<u32> = responders
         .iter()
         .copied()
@@ -4985,6 +5010,11 @@ pub(super) fn retaliate(
         super::creeps::restart_return(state, victim, when);
     }
     for h in responders {
+        if recording.contains(&h) {
+            state.call_acquired.push(h);
+            super::table::call_answered(state, h);
+            continue;
+        }
         if switching.contains(&h) {
             switch_target(state, h, attacker);
             state.call_acquired.push(h);

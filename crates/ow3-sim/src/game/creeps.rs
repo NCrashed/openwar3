@@ -232,6 +232,8 @@ pub(super) fn call_for_help(
     restart_returns(state, caller, at);
     enter_fight(state, caller, at);
     let mut came = Vec::new();
+    // Those that came and those that only recorded the target, in order.
+    let mut answered = Vec::new();
     let callers: Vec<u32> = group_of(state, caller)
         .into_iter()
         .filter(|&m| m != caller)
@@ -261,11 +263,15 @@ pub(super) fn call_for_help(
             // switch (c-RXD-1: creeps 6 and 7 at 6667, turning at 6673).
             // One standing in the backswing of the kill of its target takes
             // nothing from the call (SPEC-0030, "Losing the target in a
-            // backswing"; c-RXD-1: creep 9 at 6667).
+            // backswing"; c-RXD-1: creep 9 at 6667). Its acquired-target
+            // event fires all the same (SPEC-0019, "During such a
+            // backswing"; c-SAK-1: gnoll 17 at 4766).
             let now = state.move_clock;
             if state.unit(Some(h)).is_some_and(|u| {
                 f32::from_bits(u.backswing_end) > f32::from_bits(now) && u.guard_return.is_some()
             }) {
+                state.record_only.push(h);
+                answered.push(h);
                 continue;
             }
             // One already attacking that target goes on as it is (c-RXD-1:
@@ -286,6 +292,7 @@ pub(super) fn call_for_help(
                     enter_fight(state, h, at);
                 }
                 came.push(h);
+                answered.push(h);
             }
         }
     }
@@ -294,7 +301,7 @@ pub(super) fn call_for_help(
     for h in reached {
         consider_spell(state, h, caller, target);
     }
-    came
+    answered
 }
 
 /// A call by `caller` reaches every creep of its camp: one whose return is

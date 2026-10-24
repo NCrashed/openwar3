@@ -258,6 +258,8 @@ pub struct UnitEntries {
     pub lost: Vec<u32>,
     pub lose_order: bool,
     pub lose_acquisition: bool,
+    /// It walks back to its guard point after its target's death.
+    pub guard_walk: bool,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -785,9 +787,16 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     // A unit without any order makes an attack order of its own; one on
     // attack-move or with an order of the game (a creep going home) not
     // (c-SAK-1: ogre 18 at 2915).
-    let own = state
-        .unit(Some(h))
-        .is_some_and(|u| u.attack_move.is_none() && !u.entries.game_order);
+    let own = state.unit(Some(h)).is_some_and(|u| {
+        u.attack_move.is_none()
+                && !u.entries.game_order
+                // Nor one walking back to its guard point after its target's
+                // death (c-SAK-1: gnoll 12 at 4766).
+                && !u.entries.guard_walk
+    });
+    if let Some(e) = entries(state, h) {
+        e.guard_walk = false;
+    }
     let n = if own { 10 } else { 7 };
     let a = state.table.take_n(tick, n, "acquisition: attack object");
     state.table.defer(a[n - 1], "acquisition: attack object");
@@ -900,6 +909,15 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
         })
         .count();
     event_without_triggers(state, registrations);
+    // In the backswing after a kill the answer only records the target
+    // (SPEC-0019, "During such a backswing"; c-SAK-1: gnoll 17 at 4766).
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
+    let recording = state.unit(Some(h)).is_some_and(|u| {
+        u.attack.is_none() && f32::from_bits(u.backswing_end) > f32::from_bits(now)
+    });
+    if recording {
+        return;
+    }
     acquired(state, h);
     if let Some(e) = entries(state, h) {
         e.by_call = true;
@@ -1008,6 +1026,10 @@ pub(super) fn attacker_lost(state: &mut super::State, h: u32, dead: u32) {
 
 /// The end of attacker `h`'s handling at a death (`attacker_lost`).
 pub(super) fn attacker_done(state: &mut super::State, h: u32) {
+    // Its attack on the dead unit is over.
+    if let Some(e) = entries(state, h) {
+        e.own_attack = false;
+    }
     let goes_on = state.table.resumed.contains(&h);
     let rest = entries(state, h).map(|e| {
         let mut rest = std::mem::take(&mut e.lost);
@@ -1032,6 +1054,7 @@ pub(super) fn attacker_done(state: &mut super::State, h: u32) {
 pub(super) fn acquisition_lost_with(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.lose_acquisition = true;
+        e.guard_walk = true;
     }
 }
 

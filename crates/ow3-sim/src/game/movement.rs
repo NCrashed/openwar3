@@ -2311,6 +2311,31 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
             continue;
         }
+        // A move to a point of a Wind Walk's fade ends within 181 of the
+        // point: the unit stands, and the next entry of its queue comes
+        // (SPEC-0040; c-SAK-1: the Blademaster at 4801, 182.8 away at
+        // 4795, then his attack-move of 4601).
+        if let Some(target) = m.then_attack
+            && m.order == Order::Point
+        {
+            let p = absolute(m.origin, [state.world_bounds[0], state.world_bounds[1]]);
+            let (dx, dy) = (sub(p[0], m.target[0]), sub(p[1], m.target[1]));
+            if real_of(add(mul(dx, dx), mul(dy, dy))) <= MOVE_TO_TARGET * MOVE_TO_TARGET {
+                m.velocity = [0, 0];
+                m.walking = false;
+                m.then_attack = None;
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.movement = Some(m);
+                }
+                if let Some(trace) = state.agent_trace.as_mut() {
+                    trace.push((tick, h, m.origin, m.velocity, m.heading, [0, 0]));
+                }
+                state.updated.insert(h);
+                still.push(h);
+                attacks_after.push((h, target, m.order_id));
+                continue;
+            }
+        }
         let here = m.origin;
         let mut begin_attack = None;
         // Still in the reaction delay: the unit stands.
@@ -3064,12 +3089,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if m.order == Order::Point {
                 u.attack_move = None;
             }
-            // PROVISIONAL: the attack after a move of a Wind Walk's fade
-            // is taken as a new attack order (SPEC-0040; not reached in
-            // c-SAK-1).
-            if let Some(target) = m.then_attack {
-                attacks_after.push((h, target, m.order_id));
-            }
         } else {
             u.movement = Some(m);
             still.push(h);
@@ -3087,8 +3106,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    // The queue after a fade's move: an attack-move it had goes on, else
+    // the attack is taken again.
+    // PROVISIONAL: the attack without an attack-move was not seen.
     for (h, target, order_id) in attacks_after {
-        if let Some(at) = position_of(state, target) {
+        let point = state
+            .unit(Some(h))
+            .and_then(|u| u.attack_move)
+            .map(|a| a.point);
+        if let Some(point) = point {
+            order(state, h, Order::Point, ORDER_ATTACK, point);
+        } else if let Some(at) = position_of(state, target) {
             order(state, h, Order::Attack { target }, order_id, at);
         }
     }

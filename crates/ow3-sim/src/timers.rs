@@ -125,7 +125,14 @@ impl<T> TimerQueue<T> {
     /// A periodic timer is started again by its owner when it fires; the
     /// queue time is then its expiry, so periods do not drift.
     pub fn start(&mut self, timeout: u32, payload: T) -> TimerId {
-        let expiry = add(self.time, clamp_timeout(timeout));
+        self.start_from(self.time, timeout, payload)
+    }
+
+    /// Starts a timer as [`start`](Self::start) does, as if the queue time
+    /// were `time`: for what happened at that time and is handled later.
+    /// An expiry before the queue time fires first in the next tick.
+    pub fn start_from(&mut self, time: u32, timeout: u32, payload: T) -> TimerId {
+        let expiry = add(time, clamp_timeout(timeout));
         let id = TimerId(self.next_start);
         self.next_start += 1;
         self.pending.insert((expiry, id.0), payload);

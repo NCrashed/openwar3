@@ -1539,6 +1539,9 @@ impl<'a> Game<'a> {
             attack::hits_before(&mut self.vm, &self.state, Some(at));
             movement::resumes_before(&mut self.state.borrow_mut(), at);
         }
+        // Wind Walk fades, at the start of the tick before the updates
+        // (SPEC-0040).
+        cast::fades(&mut self.state.borrow_mut());
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());

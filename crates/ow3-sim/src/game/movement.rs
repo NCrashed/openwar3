@@ -1809,6 +1809,46 @@ pub(super) fn hostile(state: &State, a: u32, b: u32) -> bool {
     }
 }
 
+/// Unit `h` takes its attack anew inside a timer of the world clock's
+/// queue that expires at `clock`: it stops where it is then, and searches
+/// towards its target's position then at its update (SPEC-0040; c-SAK-1:
+/// the Blademaster at 4621).
+pub(super) fn regive_attack(state: &mut State, h: u32, clock: u32) {
+    let Some((target, order_id)) =
+        state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .and_then(|m| match m.order {
+                Order::Attack { target } => Some((target, m.order_id)),
+                _ => None,
+            })
+    else {
+        return;
+    };
+    let (tick, min) = (state.ticks, [state.world_bounds[0], state.world_bounds[1]]);
+    let Some(at) = (match state.unit(Some(target)).and_then(|u| u.movement) {
+        Some(t) => Some(absolute(t.position(clock), min)),
+        None => position_of(state, target),
+    }) else {
+        return;
+    };
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+        && m.walking
+    {
+        m.commit(clock);
+        m.velocity = [0, 0];
+        m.walking = false;
+        let p = absolute(m.origin, min);
+        (u.x, u.y) = (p[0], p[1]);
+        let record = (tick, h, m.origin, m.velocity, m.heading, [0, 0]);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push(record);
+        }
+    }
+    order(state, h, Order::Attack { target }, order_id, at);
+}
+
 /// A new point order stops a walking unit at once; it starts again as
 /// from standing at its next update (SPEC-0019, "Stop, hold position and
 /// new orders while walking").

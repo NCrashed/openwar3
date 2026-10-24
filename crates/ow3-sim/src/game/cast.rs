@@ -675,10 +675,12 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
 
 /// Whether unit `h` is invulnerable now (SPEC-0045).
 /// A Wind Walk (SPEC-0040): the tick its fade ends and the unit is
-/// invisible, the tick it ends, and its speed bonus.
+/// invisible, the clock of that end, the tick it ends, and its speed
+/// bonus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindWalk {
     fade: u64,
+    fade_clock: u32,
     until: u64,
     bonus: u32,
 }
@@ -788,16 +790,6 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let mut s = state.borrow_mut();
         let s = &mut *s;
         let tick = s.ticks;
-        // At the end of a Wind Walk's fade the unit's target checks stop
-        // until its next order (SPEC-0040; c-SAK-1: the Blademaster's check
-        // due at 3.01 did not run).
-        for &h in &s.units {
-            if let Some(Object::Unit(u)) = s.objects.get_mut(&h)
-                && u.wind_walk.is_some_and(|w| w.fade == tick)
-            {
-                u.checks_off = true;
-            }
-        }
         let casting: Vec<(u32, Casting)> = s
             .units
             .iter()
@@ -932,9 +924,17 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         b"AOwk" => {
             let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
             let until = tick + 1 + duration(hero);
+            // The fade is a timer of the world clock's queue, of DataA
+            // less a thousandth, firing in the first tick that reaches it
+            // (SPEC-0040; c-SAK-1: 0.5994 after the casts at 2.0 and
+            // 22.497225).
+            // PROVISIONAL: read for DataA 0.6 only, where 0.6 * 0.999 and
+            // 0.6 - 0.0006 are the same float.
+            let fade = mul(n.data[0], 0.999f32.to_bits());
             if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.wind_walk = Some(WindWalk {
-                    fade: tick + super::attack::ticks(n.data[0]),
+                    fade: tick + super::attack::ticks(fade),
+                    fade_clock: add(s.move_clock, fade),
                     until,
                     bonus: n.data[1],
                 });
@@ -1243,4 +1243,28 @@ const MIRROR_PLACE: usize = 12;
 pub struct Illusion {
     pub dealt: u32,
     pub taken: u32,
+}
+
+/// The Wind Walk fades that end in this tick, at the start of the tick
+/// before the unit updates, read at the fade timer's expiry (SPEC-0040):
+/// the unit's target checks stop until its next order, and an attack it
+/// has is reset and taken up again, the unit stopping where it is and
+/// searching towards its target's position at its update (c-SAK-1: the
+/// Blademaster at 520 and 4621).
+pub(super) fn fades(state: &mut State) {
+    let tick = state.ticks;
+    let faded: Vec<(u32, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let w = state.unit(Some(h))?.wind_walk?;
+            (w.fade == tick && w.on(tick)).then_some((h, w.fade_clock))
+        })
+        .collect();
+    for (h, clock) in faded {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.checks_off = true;
+        }
+        movement::regive_attack(state, h, clock);
+    }
 }

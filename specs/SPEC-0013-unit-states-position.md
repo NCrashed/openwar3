@@ -71,6 +71,39 @@ normal. Non-heroes (footman, sorceress) and heroes whose state is set
 0.5 s after creation show full first steps. That intelligence changes
 restart mana regeneration in the same way is an inference, not tested.
 
+**The stored record.** Read in the game for the heroes of `c-SAK-1`.
+Mana (and life) is kept as a value `v`, a rate `r` per second and a
+stamp `s` on the world clock (SPEC-0018). It reads as `v + r * (clock -
+s)`, clamped to 0 .. max. A change re-bases it: the current value goes
+into `v`, the clock into `s`, then the change is applied. The rate is
+a running float sum of parts. A change of the regeneration (a level-up
+or an attribute change) adds the new part at once (mountain king: 0.9
++ 1.0 = 1.9) and removes the old part 0.0001 s later on the world clock
+(1.9 - 0.9 = `0x3F7FFFFE`, not 1.0). That removal sets the stamp
+without folding in the elapsed 0.0001 s, which is why no regeneration
+is seen in between (above). A cost is taken from the re-based value. A
+hero hidden by Mirror Image has his mana rate set to 0 (no fold of the
+0.0001 s either) and his life rate dropped to 0.25 while hidden. At his
+return his level's parts are added again (mana rate exactly 1.0 for the
+blademaster).
+
+**Cost watches.** Each ability with a mana cost keeps a watch on the
+mana at its cost. A watch is checked on a schedule of the world clock
+(at the start of a tick's processing): every 4.0 s, re-set to re-base
++ 4.0 at every re-base of the record (a rate change, a cost). When the
+crossing is nearer, the next check comes where the value reaches cost +
+0.1: interval `(cost + 0.1 - value) / rate` if that is below 4.0. A
+check that finds the cost passed fires: the ability makes a new watch
+(for the other direction) and the old one is freed (SPEC-0024). A cast
+that takes the mana below a cost makes the watch anew at once. Read in
+`c-SAK-1`: the mountain king's Storm Bolt watch, made at 22.397242, was
+checked at 26.397 and set anew at the level-up's re-base 30.256021 to
+34.256020. At 38.256020 the value was 73.972742 at rate 0.8999999, so
+the interval was (75.1 - 73.972742) / 0.8999999 = 1.252509. It fired at
+39.508526, about 0.1 s after the mana passed 75. The blademaster's,
+checked at 52.478168 (71.972824, rate 1.0), got 3.127174 and fired at
+55.605343.
+
 **Night.** For `regenType` `night` it counts as night while the
 clock runs from 18.01 to 6.01 hours (not from 18 to 6). With the clock
 running (`GAME_STATE_TIME_OF_DAY` advancing, at time-of-day scale 0.5, 1

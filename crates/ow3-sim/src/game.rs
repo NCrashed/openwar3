@@ -1230,14 +1230,18 @@ impl State {
                     .is_some_and(|u| u.alive && !u.entries.mana_watches.is_empty())
             })
             .collect();
-        for h in heroes {
+        for &h in &heroes {
             table::mana_watches(self, h, 0);
-            table::watches_checked(self, h);
         }
         for h in std::mem::take(&mut self.table.ends_late) {
             table::old_order_ended(self, h);
         }
         self.table.flush(tick);
+        // The watches' checks come after the 0.0001 s frees (c-SAK-1: the
+        // Mountain King's watch at 7903 after the frees of 7902).
+        for &h in &heroes {
+            table::watches_checked(self, h);
+        }
         // Then the timers of the queue (c-SAK-1: the death queue objects at
         // 3353, after the 0.0001 s frees).
         let limit = self.timers.time();

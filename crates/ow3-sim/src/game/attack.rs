@@ -854,12 +854,21 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     state.borrow_mut().impact_now = true;
     for m in arrived {
         if let Some(stun) = m.spell {
-            {
+            // At its expiry: the end of the tick, or the clock of this tick
+            // for a bolt launched within a step (c-SAK-1: 39.901287).
+            let previous = {
                 let mut s = state.borrow_mut();
-                let at = s.event_time.unwrap_or(s.move_clock);
+                let end = s.event_time.unwrap_or(s.move_clock);
+                let at = if f32::from_bits(m.expiry) < f32::from_bits(end) {
+                    m.expiry
+                } else {
+                    end
+                };
                 s.table_at(at);
-            }
+                s.event_time.replace(at)
+            };
             spell_hit(vm, state, m.attacker, m.target, m.amount, stun, m.objects);
+            state.borrow_mut().event_time = previous;
             {
                 let mut s = state.borrow_mut();
                 s.table.now = s.ticks;
@@ -1115,8 +1124,7 @@ fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
 
 /// The missile of an ability of `h` launched now at `target` from the
 /// caster's centre: homing at `speed`, `amount` of spell damage and a stun
-/// of `stun` seconds (for units, for heroes) on its hit (SPEC-0037). `None`
-/// when the target is nearer than `speed * 0.1`: it is hit at once.
+/// of `stun` seconds (for units, for heroes) on its hit (SPEC-0037).
 pub(super) fn launch_spell(
     state: &State,
     h: u32,
@@ -1152,11 +1160,13 @@ pub(super) fn launch_spell(
     // target, measured again at each step's end (c-SAK-1: the bolt of 2595).
     let step = mul(speed, HOMING_STEP);
     let flight = distance(from, to);
-    // Within a step at the launch it hits at once (c-SAK-1: the bolt of
-    // 7982 at gnoll 17, 89.3 away, damage in the same tick).
-    if f32::from_bits(flight) <= f32::from_bits(step) {
-        return None;
-    }
+    // Within a step at the launch it hits in the next tick (c-SAK-1: the
+    // bolt at gnoll 17, 89.3 away: effect at 39.896290, hit at 39.901287).
+    let expiry = if f32::from_bits(flight) <= f32::from_bits(step) {
+        start
+    } else {
+        expiry
+    };
     let (at, homing) = if f32::from_bits(flight) > f32::from_bits(step) {
         let k = div(step, flight);
         (

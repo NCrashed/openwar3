@@ -294,6 +294,9 @@ pub struct UnitEntries {
     /// The next check of each watch below its cost, by its entry
     /// (`watches_checked`).
     pub watch_checks: Vec<(u32, u32)>,
+    /// The world clock of the last re-base of its mana (a cost paid or a
+    /// change of the rate), from which the watches count.
+    pub watch_base: u32,
     /// The objects of an order it gave up in this tick, freed at its end.
     pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
@@ -1027,6 +1030,15 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
 /// PROVISIONAL: the watch's limit taken to be the cost; the crossing back
 /// up is checked at the end of each tick.
 pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
+    mana_watches_crossed(state, h, spent);
+    // A cost paid re-bases the mana (c-SAK-1: 39.896290).
+    if spent > 0 {
+        let clock = state.move_clock;
+        watches_rebased(state, h, clock);
+    }
+}
+
+fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
     let tick = state.table.now;
     let Some(mana) = state
         .unit(Some(h))
@@ -1062,39 +1074,54 @@ pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
 const WATCH_STEP: f32 = 4.0;
 
 /// A watch `entry` of unit `h` below its cost is made: its first check
-/// comes 4.0 s on, by the world clock.
+/// comes 4.0 s after the last re-base of the mana, by the world clock
+/// (c-SAK-1: the watch learned at the level-up of 30.255922 counts from
+/// the rate change of 30.256021).
 pub(super) fn watch_scheduled(state: &mut super::State, h: u32, entry: u32) {
-    let next = ow3_math::add(state.move_clock, WATCH_STEP.to_bits());
+    let clock = state.move_clock;
     if let Some(e) = entries(state, h) {
-        e.watch_checks.push((entry, next));
+        let base = if f32::from_bits(e.watch_base) > f32::from_bits(clock) {
+            e.watch_base
+        } else {
+            clock
+        };
+        e.watch_checks
+            .push((entry, ow3_math::add(base, WATCH_STEP.to_bits())));
     }
 }
 
-/// Unit `h`'s mana rate changed: the checks of its watches below their
-/// costs start again, 4.0 s from the change (c-SAK-1: the Mountain King's
-/// level-up, rate changed at 30.256021, next check 34.25602).
-pub(super) fn watches_rescheduled(state: &mut super::State, h: u32) {
-    // The change is stamped 0.0001 s after the clock of the tick
-    // (30.255922 + 0.0001).
-    let change = ow3_math::add(state.move_clock, crate::timers::MIN_TIMEOUT);
-    let next = ow3_math::add(change, WATCH_STEP.to_bits());
+/// Unit `h`'s mana is re-based at world clock `base`: every watch below
+/// its cost is checked next 4.0 s from it (c-SAK-1: the Mountain King's
+/// watches at the fourth bolt's cost, 39.896290 -> 43.896290).
+pub(super) fn watches_rebased(state: &mut super::State, h: u32, base: u32) {
+    let next = ow3_math::add(base, WATCH_STEP.to_bits());
     if let Some(e) = entries(state, h) {
+        e.watch_base = base;
         for c in &mut e.watch_checks {
             c.1 = next;
         }
     }
 }
 
+/// Unit `h`'s mana rate changed (c-SAK-1: the Mountain King's level-up,
+/// rate changed at 30.256021, next checks 34.25602).
+pub(super) fn watches_rescheduled(state: &mut super::State, h: u32) {
+    // The change is stamped 0.0001 s after the clock of the tick
+    // (30.255922 + 0.0001).
+    let change = ow3_math::add(state.move_clock, crate::timers::MIN_TIMEOUT);
+    watches_rebased(state, h, change);
+}
+
 /// The checks of unit `h`'s watches below their costs, on the world
 /// clock at the start of the next tick: one whose cost is passed fires,
 /// made anew above it and the old freed 0.0001 s later; else the next
-/// check comes 4.0 s on, or 0.1 s after the crossing when that is nearer
-/// (c-SAK-1: the Mountain King's at 38.25602, next 39.50853, fired 7903).
-///
-/// PROVISIONAL: the near interval is a fit to one case.
+/// check comes where the mana reaches the cost + 0.1, or 4.0 s on when
+/// that is later (c-SAK-1: the Mountain King's at 38.25602, next
+/// 39.508526, fired 7903; the Blademaster's at 52.478168, next
+/// 55.605343).
 pub(super) fn watches_checked(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    let clock = ow3_math::add(state.move_clock, crate::timers::TICK);
+    let clock = state.move_clock;
     let due: Vec<(u32, u32)> = entries(state, h)
         .map(|e| {
             e.watch_checks
@@ -1121,7 +1148,9 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
             }
             continue;
         };
-        if mana >= cost as f32 {
+        // The value at the check's own time.
+        let value = mana + rate * (f32::from_bits(at) - f32::from_bits(state.move_clock));
+        if value >= cost as f32 {
             let new = state.table.take(tick, "unit state: limit watch");
             state.table.defer(entry, "unit state: limit watch");
             if let Some(e) = entries(state, h) {
@@ -1134,7 +1163,7 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
             continue;
         }
         let near = if rate > 0.0 {
-            (cost as f32 - mana) / rate + 0.1
+            (cost as f32 + 0.1 - value) / rate
         } else {
             f32::INFINITY
         };
@@ -1686,7 +1715,10 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     };
     // A stunned unit's order comes back first; that object goes 2 ticks
     // on (c-SAK-1: gnoll 13 at 3509, freed at 3511).
-    let stunned = entries(state, h).is_some_and(|e| e.stun_ticks.is_some());
+    // Also one whose stun came with the hit that kills it (c-SAK-1: gnoll
+    // 17 at the bolt of 7981).
+    let stunned =
+        entries(state, h).is_some_and(|e| e.stun_ticks.is_some() || !e.stun_order.is_empty());
     if stunned {
         let back = state.table.take(tick, "order back after a stun");
         state

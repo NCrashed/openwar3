@@ -208,6 +208,9 @@ pub struct Unit {
     acquire_seq: u64,
     /// Its check was restarted by the death of its target.
     after_death: bool,
+    /// The periodic check of a unit with no attack-move, kept through the
+    /// backswing after a kill, where it only records a target.
+    idle_periodic: Option<u32>,
     /// It has no target check until its next order (SPEC-0045: after
     /// Divine Shield).
     checks_off: bool,

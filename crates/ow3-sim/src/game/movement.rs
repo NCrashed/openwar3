@@ -4047,6 +4047,15 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
                 a.periodic = None;
             }
         }
+        // So does an idle unit's (c-SAK-1: the image 20 at 54.553837),
+        // re-armed 0.5 s while the backswing lasts.
+        if let Some(p) = u.idle_periodic
+            && real_of(p) <= real_of(next_clock)
+        {
+            let next = add(p, HALF);
+            u.idle_periodic = (real_of(next) < real_of(u.backswing_end)).then_some(next);
+            due.push((p, 0, h, Check::Record));
+        }
         // A unit on attack-move whose target died acquires at the check
         // restarted by the death (c-RXR-1: footman 2 took grunt 13 in 2581).
         if u.attack_move.is_some()
@@ -5497,7 +5506,18 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             } else {
                 now
             };
-            u.next_acquire = add(from, AFTER_DEATH);
+            // Without an attack-move, its own periodic check due in the
+            // backswing goes on there and only records (c-SAK-1: the image
+            // 20, ogre 18 dead at 54.398029, its check of 54.553837).
+            let restart = add(from, AFTER_DEATH);
+            if u.attack_move.is_none()
+                && f32::from_bits(u.backswing_end) > f32::from_bits(now)
+                && real_of(u.next_acquire) < real_of(restart)
+                && real_of(u.next_acquire) > real_of(now)
+            {
+                u.idle_periodic = Some(u.next_acquire);
+            }
+            u.next_acquire = restart;
             // The attack-move's check is that timer (c-RXR-1: rifleman 8,
             // grunt 12 dead at 2579, restart at its backswing end 2701).
             if let Some(a) = u.attack_move.as_mut() {

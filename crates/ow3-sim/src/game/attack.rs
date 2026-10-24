@@ -209,7 +209,11 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
             // the new goal after the swing: chased from the new goal on,
             // the attacker standing until then (SPEC-0019).
             if let Some((a, start)) = next_swing
-                && (start == tick || (s.update_now && a.renew_at.is_some_and(|r| tick >= r)))
+                // A swing already started goes on to its hit (c-SAK-1:
+                // footman 3, swinging at 8937, hit ogre 18 at 9037 although
+                // it walked out of reach at 9014).
+                && (start == tick
+                    || (s.update_now && tick < start && a.renew_at.is_some_and(|r| tick >= r)))
                 && a.renew_at.is_none_or(|r| tick >= r)
                 && standing(s, a.target)
                 && !super::movement::reaches(s, h, a.target)
@@ -1043,6 +1047,11 @@ pub(super) fn launch_spell(
     // target, measured again at each step's end (c-SAK-1: the bolt of 2595).
     let step = mul(speed, HOMING_STEP);
     let flight = distance(from, to);
+    // Within a step at the launch it hits at once (c-SAK-1: the bolt of
+    // 7982 at gnoll 17, 89.3 away, damage in the same tick).
+    if f32::from_bits(flight) <= f32::from_bits(step) {
+        return None;
+    }
     let (at, homing) = if f32::from_bits(flight) > f32::from_bits(step) {
         let k = div(step, flight);
         (

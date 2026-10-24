@@ -262,6 +262,9 @@ pub struct Unit {
     /// When the cooldown of its last swing expires, on the queue: a new
     /// swing waits for it (c-RXR-1: grunt 15 at 12.2299929).
     cooldown_end: u32,
+    /// The start number of that cooldown timer: hits due at the same time
+    /// come in the order of the cooldowns that timed their swings.
+    cooldown_seq: u64,
     /// The target of that swing.
     cooldown_target: u32,
     /// When the backswing of its last hit ends, on the queue.
@@ -842,6 +845,8 @@ pub struct State {
     member_now: BTreeMap<u32, [u32; 2]>,
     /// Creep timers started so far (SPEC-0030).
     pub(super) creep_timers: u64,
+    /// Cooldown timers started so far (`Unit::cooldown_seq`).
+    pub(super) cooldown_starts: u64,
     /// The backswing-end checks of attackers that switched targets in
     /// their backswing: (tick, attacker, new target).
     pub(super) attack_checks: Vec<(u64, u32, u32)>,
@@ -993,6 +998,7 @@ impl State {
             member_places: BTreeMap::new(),
             member_now: BTreeMap::new(),
             creep_timers: 0,
+            cooldown_starts: 0,
             attack_checks: Vec::new(),
             timed_life: Vec::new(),
             waves: Vec::new(),

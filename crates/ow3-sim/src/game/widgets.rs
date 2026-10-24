@@ -394,6 +394,7 @@ pub(super) fn create_unit(
         zero_hit: None,
         weapon_ready: 0,
         cooldown_end: 0,
+        cooldown_seq: 0,
         cooldown_target: 0,
         backswing_end: 0,
         orient_interp: data.orient_interp,

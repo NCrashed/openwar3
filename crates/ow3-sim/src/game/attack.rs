@@ -137,20 +137,24 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
     let mut attackers = state.borrow().attacking.clone();
     {
         let s = state.borrow();
-        // Equal expiries go by the start of their timers, the swings.
+        // Equal expiries go by the start of their timers, the swings, and
+        // equal swing starts by the cooldowns that timed them (c-SAK-1:
+        // footmen 4 and 6 at 6323, both swinging at 31.109863).
         let key = |h: &u32| {
             s.unit(Some(*h))
-                .and_then(|u| u.attack)
-                .filter(|a| due(&s, a))
-                .and_then(|a| {
+                .and_then(|u| u.attack.map(|a| (a, u.cooldown_seq)))
+                .filter(|(a, _)| due(&s, a))
+                .and_then(|(a, seq)| {
                     a.hit_at
-                        .map(|e| (f32::from_bits(e), f32::from_bits(a.swing_q)))
+                        .map(|e| (f32::from_bits(e), f32::from_bits(a.swing_q), seq))
                 })
-                .unwrap_or((f32::INFINITY, 0.0))
+                .unwrap_or((f32::INFINITY, 0.0, 0))
         };
         attackers.sort_by(|a, b| {
             let (a, b) = (key(a), key(b));
-            a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1))
+            a.0.total_cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then(a.2.cmp(&b.2))
         });
     }
     for h in attackers {
@@ -264,7 +268,10 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     }
                     let (amount, bash) = proc_effect(s, h, amount);
                     let point = slowed(s, h, hero_cooldown(s, h, weapon.damage_point));
+                    s.cooldown_starts += 1;
+                    let seq = s.cooldown_starts;
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                        u.cooldown_seq = seq;
                         let next = a.next + ticks(cooldown);
                         let end = tick + ticks(backswing);
                         let resume = Some(end + 1);
@@ -1245,7 +1252,10 @@ pub(super) fn swing_cut(state: &mut State, h: u32, now: u32) {
         return;
     };
     let cooldown = slowed(state, h, hero_cooldown(state, h, weapon.cooldown));
+    state.cooldown_starts += 1;
+    let seq = state.cooldown_starts;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.cooldown_seq = seq;
         u.cooldown_end = add(a.swing_q, cooldown);
         u.weapon_ready = a.next + ticks(cooldown);
     }

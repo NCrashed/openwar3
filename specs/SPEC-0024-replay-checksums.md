@@ -277,6 +277,84 @@ list and, once it was empty, from the end of the table (size 1243 ->
 1349); creation numbers 1247 to 1406. The full list is in
 `game-data/1.27b/replays/c-RXR-1.objects-301.tsv`.
 
+### Objects by mechanic
+
+Read in the game on single-unit test maps (c-SBA, c-SBB, c-SBC) and in
+`c-SAK-1` (`game-data/1.27b/replays/c-SAK-1.objects*.tsv`). "Deferred"
+means freed in a 0.0001 s timer of the world clock started at that
+moment (SPEC-0018), so in the same tick after the callback. "Taken"
+objects get the next entry of the free list (the last freed first) and
+the next creation number, in the order given.
+
+**Second pool.** Some objects live in a second pool with entries of its
+own: their own entry is the index with the top bit set, and their
+creation number is that index. They do not take entries or creation
+numbers of the main table. They are made at deaths, at stuns, when
+Mirror Image hides its caster, and once per creep group (with its first
+creep).
+
+**Units.** `CreateUnit` takes, in one go and in this order, the objects
+of the unit and its abilities. Counts measured (c-SBB, `c-SAK-1`):
+
+| Type | Objects |
+|---|---|
+| knight, rifleman (attack, no ability) | 17 |
+| footman (with Defend), grunt | 18 |
+| peasant | 22 |
+| priest, sorceress | 25 |
+| hero (paladin, mountain king, blademaster) | 24 |
+| creep (kobold, gnoll, ogre) joining a group | 28 |
+| creep starting a group | 29, plus 1 of the second pool |
+| barracks | 27 |
+| farm | 0 |
+
+Some of them are freed deferred: a footman's last two, a hero's
+positions 17 to 20, 22 and 23 (of 0 to 23), and eleven of a
+creep's. Two of a footman's and four of a creep's are freed at its
+death. `UnitAddAbility` of a hero ability (`AHhb`, `AHbz`) or of `Aslo`
+takes 2.
+
+**Event objects.** A unit event with at least one registered trigger
+takes one object for the event and one more for each registration that
+fires (two triggers, or one trigger registered twice: 1 + 2). All are
+freed deferred. An event with no registration takes nothing. So a hit
+on a unit with one `EVENT_UNIT_DAMAGED` registration takes 2 objects,
+and a hit on a unit without any takes none (c-SBA).
+
+**Orders given by the script.**
+
+| Order | Taken (in order) | Freed deferred | Freed when the order ends |
+|---|---|---|---|
+| `move` to a point | order, record, 12 of the move ability, then the search's 3 | record and 6 of the 12 (the last made first) | the other 6 and the order |
+| `attack` to a point (attack-move) | order, record, 11 of the attack ability, then the search's 3 | record and 6 of the 11 | the other 5 and the order |
+| `stop` | order, record, 5 | all 7, with the remaining objects of the order it ends | - |
+
+"Ends" is when another order replaces it (or the unit dies). The frees
+then also come deferred from that moment.
+
+**Walks.** Every path search (at an order or at an update) takes a
+helper, a cluster and a path, and frees the helper at once. The walk's
+path and cluster are freed (path first) at the unit's first update
+tick (its 6 m + 1 cycle, SPEC-0018) after the tick in which the walk
+was stopped or replaced. The update in the same tick does not count.
+Read in c-SBC for a footman whose updates fall on ticks 6 m + 1: new
+order at 701 -> freed 703; stop at 901 -> 907; new order at 1501 ->
+1507; acquisition stop at 2003 -> 2005; swing start at 2245 (in reach)
+-> 2251; the same at 3307 -> 3313; after-swing chase at 2449 -> 2455.
+
+**Acquisition.** An acquisition by a check of a unit on attack-move
+took 7 objects. 2 were freed deferred, 1 at the end of its reaction
+delay (when the attack order is taken) and 4 when the target died. On
+a unit with an `EVENT_UNIT_ACQUIRED_TARGET` registration the event's
+objects come in addition (see "Event objects"; in `c-SAK-1` these are
+the "acquisition at a check" and "event object" rows). The 10 instead
+of 7 attack objects seen at some checks of `c-SAK-1` were not
+explained.
+
+**Hits.** The swing and the hit take no objects of their own (c-SBC,
+no damage registration). In `c-SAK-1` the two objects of each hit are
+the damage event and its registration (see "Event objects").
+
 ## Edge cases
 
 - Only the sum `R` over the game generators is used, so two generator

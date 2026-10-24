@@ -5684,6 +5684,12 @@ pub(super) fn face_at_expiry(state: &mut State, h: u32) -> bool {
         m.renew_at = None;
         m.renew_stands = false;
     }
+    // The face movement is a new goal with its walk, at the expiry
+    // (SPEC-0024; c-SAK-1: the Blademaster at 48.293095).
+    let tick = state.ticks;
+    state.table_at(a.swing_q);
+    super::table::walk_made_at_order(state, h);
+    state.table.now = tick;
     true
 }
 

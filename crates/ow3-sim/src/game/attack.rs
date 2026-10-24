@@ -46,7 +46,7 @@ pub struct Attacking {
     /// the tick that holds it.
     hit_at: Option<u32>,
     /// The queue time at which that swing started.
-    swing_q: u32,
+    pub(super) swing_q: u32,
 }
 
 impl Attacking {

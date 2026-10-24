@@ -1099,6 +1099,10 @@ fn mirror_image(s: &mut State, h: u32, ability: i32, n: &crate::data::AbilityLev
     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
         u.hidden = true;
         u.checks_off = true;
+        // Its regeneration from the attributes stops while it is away
+        // (SPEC-0040).
+        u.mana.hide(crate::data::attribute_regen(u.intelligence));
+        u.life.hide(crate::data::attribute_regen(u.strength));
     }
     movement::stop(s, h);
     movement::target_died(s, h);
@@ -1232,6 +1236,8 @@ fn mirror_hero_back(s: &mut State, hero: u32, stand_in: u32) {
         u.y = at[1];
         u.hidden = false;
         u.checks_off = false;
+        u.mana.show(crate::data::attribute_regen(u.intelligence));
+        u.life.show(crate::data::attribute_regen(u.strength));
         if u.acquire_phase != super::NO_PHASE {
             u.next_acquire = add(now, movement::AFTER_DEATH);
         }
@@ -1275,14 +1281,4 @@ pub(super) fn fades(state: &mut State) {
         }
         movement::regive_attack(state, h, clock);
     }
-}
-
-/// Whether hero `h` is away in a Mirror Image (hidden from its effect until
-/// it comes back): its life and mana do not regenerate then (SPEC-0040;
-/// c-SAK-1: the Blademaster's mana stood still from 7162 to 7298).
-///
-/// PROVISIONAL: the first and last ticks of the pause; mine differs by
-/// about one tick of regeneration (0.004 of mana) afterwards.
-pub(super) fn mirrored(state: &State, h: u32) -> bool {
-    state.mirrors.iter().any(|m| m.hero == h) && state.unit(Some(h)).is_some_and(|u| u.hidden)
 }

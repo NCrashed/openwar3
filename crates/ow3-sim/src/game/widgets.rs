@@ -130,16 +130,7 @@ pub(super) fn set_attribute(
     attribute: Attribute,
     value: i32,
 ) -> Option<u32> {
-    let type_id = state
-        .unit(h)
-        .filter(|u| u.alive && is_hero(u.type_id))?
-        .type_id;
-    let data = state.data.units.get(&type_id).cloned().unwrap_or_default();
-    let night = state.night;
-    // Brilliance aura adds to the mana regeneration (SPEC-0046).
-    let mana_bonus = state
-        .unit(h)
-        .map_or(0, |u| super::auras::mana_bonus(state, u));
+    state.unit(h).filter(|u| u.alive && is_hero(u.type_id))?;
     let u = unit_mut(state, h)?;
     let old = match attribute {
         Attribute::Strength => std::mem::replace(&mut u.strength, value),
@@ -149,7 +140,13 @@ pub(super) fn set_attribute(
     if old == value {
         return None;
     }
-    let shift = |state: &mut Regenerating, per_point: i32, least: f32, rate: u32| {
+    // The regeneration of the attribute: its new part added to the running
+    // rate, its old part taken off 0.0001 s later (SPEC-0033).
+    let (added, removed) = (
+        crate::data::attribute_regen(value),
+        crate::data::attribute_regen(old),
+    );
+    let shift = |state: &mut Regenerating, per_point: i32, least: f32| {
         let change = ow3_math::i2r(per_point * (value - old));
         let moved = add(state.value(), change);
         state.max = add(state.max, change);
@@ -159,25 +156,19 @@ pub(super) fn set_attribute(
             moved
         };
         state.set(moved);
-        state.restart(rate);
+        state.change_rate(added, removed);
     };
     match attribute {
         Attribute::Strength => {
-            let rate = life_rate(&data, crate::data::attribute_regen(value), night);
             if f32::from_bits(add(u.life.max, ow3_math::i2r(25 * (value - old)))) <= 0.0 {
                 // The life becomes the new max life, and the hero dies.
                 u.life.max = add(u.life.max, ow3_math::i2r(25 * (value - old)));
                 return Some(u.life.max);
             }
-            shift(&mut u.life, 25, 1.0, rate);
+            shift(&mut u.life, 25, 1.0);
         }
         Attribute::Intelligence => {
-            shift(
-                &mut u.mana,
-                15,
-                0.0,
-                add(crate::data::attribute_regen(value), mana_bonus),
-            );
+            shift(&mut u.mana, 15, 0.0);
         }
         Attribute::Agility => {}
     }

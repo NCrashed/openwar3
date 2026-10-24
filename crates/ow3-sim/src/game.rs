@@ -545,23 +545,30 @@ pub struct AttackView {
 }
 
 /// A regenerating value (life or mana) as SPEC-0013 computes it: the
-/// value set last, the game time elapsed since then and the rate per
-/// second; the current value is `add(base, mul(rate, elapsed))`, at most
-/// `max`. All bit patterns of reals.
+/// value set last, its stamp on the world clock (SPEC-0018) and the rate
+/// per second; the value read at the world clock `t` is
+/// `add(base, mul(rate, sub(t, stamp)))`, at most `max`. All bit patterns
+/// of reals. Every change re-bases it at the clock of its tick, and the
+/// rate is a running sum of the parts added and removed (SPEC-0013,
+/// SPEC-0033; c-SAK-1: the Blademaster's mana rate 0x3F7FFFFE after
+/// 0.9 + 1.0 - 0.9).
 ///
-/// The elapsed time grows by `dt` every tick. A hero's regeneration
-/// starts 0.0001 s after it is created, so its first step adds
-/// `sub(dt, 0.0001)`. This reproduces the footman and paladin life
-/// samples bit for bit; PROVISIONAL: the paladin mana samples differ by
-/// one unit of the last place at 3 of 60 ticks.
+/// A hero's regeneration starts 0.0001 s after it is created or after an
+/// attribute change: the stamp is that much later. This reproduces the
+/// footman and paladin life samples bit for bit; PROVISIONAL: the paladin
+/// mana samples differ by one unit of the last place at 3 of 60 ticks.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Regenerating {
     base: u32,
+    /// The time from the stamp to the clock of this tick.
     elapsed: u32,
     rate: u32,
     max: u32,
-    /// The start is delayed by the shortest timer timeout.
+    /// The stamp is the shortest timer timeout after the change.
     delayed: bool,
+    /// The stamp; `None` until the clock of the change is taken, at the
+    /// next tick.
+    stamp: Option<u32>,
 }
 
 impl Regenerating {
@@ -572,6 +579,7 @@ impl Regenerating {
             rate,
             max,
             delayed: false,
+            stamp: None,
         }
     }
 
@@ -589,19 +597,29 @@ impl Regenerating {
         }
     }
 
-    /// One tick of game time.
-    fn advance(&mut self) {
+    /// One tick of game time: `now` is the clock of the tick before, at
+    /// which the changes of that tick were made, `next` the clock of this
+    /// tick.
+    fn advance(&mut self, now: u32, next: u32) {
+        let delayed = &mut self.delayed;
+        let stamp = *self.stamp.get_or_insert_with(|| {
+            if std::mem::take(delayed) {
+                add(now, crate::timers::MIN_TIMEOUT)
+            } else {
+                now
+            }
+        });
         if self.rate == 0 {
             return;
         }
-        let step = if std::mem::take(&mut self.delayed) {
-            sub(crate::timers::TICK, crate::timers::MIN_TIMEOUT)
-        } else {
-            crate::timers::TICK
-        };
-        if self.value() != self.max {
-            self.elapsed = add(self.elapsed, step);
+        if self.value() == self.max {
+            // Full, it stays full until a change re-bases it.
+            self.base = self.max;
+            self.elapsed = 0;
+            self.stamp = Some(next);
+            return;
         }
+        self.elapsed = sub(next, stamp);
     }
 
     /// Goes on from the current value at `rate` (PROVISIONAL: the
@@ -610,15 +628,42 @@ impl Regenerating {
         self.base = self.value();
         self.elapsed = 0;
         self.rate = rate;
+        self.stamp = None;
     }
 
-    /// Goes on from the current value at `rate`, 0.0001 s later as after
-    /// a hero's creation (SPEC-0013).
-    fn restart(&mut self, rate: u32) {
+    /// An attribute change: re-based now, `added` put on the running
+    /// rate, then `removed` taken off, stamped 0.0001 s later (SPEC-0033;
+    /// c-SAK-1: the Blademaster's mana at his level-up of 6053).
+    fn change_rate(&mut self, added: u32, removed: u32) {
         self.base = self.value();
         self.elapsed = 0;
-        self.rate = rate;
+        self.rate = sub(add(self.rate, added), removed);
         self.delayed = true;
+        self.stamp = None;
+    }
+
+    /// Hidden by a Mirror Image: `part` is taken off the rate, which stops
+    /// at 0, re-based at the clock of the tick and stamped 0.0001 s later
+    /// (SPEC-0040; c-SAK-1: the Blademaster's mana 55.972824 from the
+    /// cost on, his life rate 1.35 -> 0.25).
+    pub(super) fn hide(&mut self, part: u32) {
+        // Re-based at the clock of the tick (the effect's; the hiding
+        // itself comes 0.0001 s later and loses that much).
+        self.base = self.value();
+        self.elapsed = 0;
+        let rate = sub(self.rate, part);
+        self.rate = if f32::from_bits(rate) < 0.0 { 0 } else { rate };
+        self.delayed = true;
+        self.stamp = None;
+    }
+
+    /// Shown again: re-based now, `part` put on the rate (SPEC-0040;
+    /// c-SAK-1: the mana rate 0 + 1.0, exactly 1.0).
+    pub(super) fn show(&mut self, part: u32) {
+        self.base = self.value();
+        self.elapsed = 0;
+        self.rate = add(self.rate, part);
+        self.stamp = None;
     }
 
     /// Sets the value, limited to `0..=max`.
@@ -632,6 +677,7 @@ impl Regenerating {
             value
         };
         self.elapsed = 0;
+        self.stamp = None;
     }
 }
 
@@ -1482,21 +1528,21 @@ impl<'a> Game<'a> {
                 state.night = night;
                 widgets::night_changed(state);
             }
-            // Life and mana regenerate every tick (SPEC-0013), not while a
-            // hero is away in a Mirror Image (SPEC-0040).
-            let away: Vec<u32> = state
-                .units
-                .iter()
-                .copied()
-                .filter(|&h| cast::mirrored(state, h))
-                .collect();
+            // Life and mana regenerate every tick (SPEC-0013), read at the
+            // clock this tick will have (SPEC-0018), changes of the last
+            // tick stamped at its clock.
+            let now = state.move_clock;
+            let next = if tick > 1 {
+                add(now, crate::timers::TICK)
+            } else {
+                now
+            };
             for h in &state.units {
                 if let Some(Object::Unit(unit)) = state.objects.get_mut(h)
                     && unit.alive
-                    && !away.contains(h)
                 {
-                    unit.life.advance();
-                    unit.mana.advance();
+                    unit.life.advance(now, next);
+                    unit.mana.advance(now, next);
                 }
             }
             // Moving units advance every tick, before the timers (SPEC-0018).
@@ -3292,6 +3338,14 @@ mod tests {
             .collect()
     }
 
+    /// The world clock of tick `k` (SPEC-0018), from game start.
+    fn clock(k: u32) -> u32 {
+        (1..k).fold(0, |c, _| add(c, crate::timers::TICK))
+    }
+
+    /// The test maps act from about 1 s on (tick 201).
+    const START: u32 = 201;
+
     #[test]
     fn footman_regeneration_matches_samples() {
         // SetUnitState(u, UNIT_STATE_LIFE, 100), 0.25 per second.
@@ -3301,7 +3355,7 @@ mod tests {
         let samples = samples();
         assert_eq!(samples.len(), 60);
         for [n, footman, _, _] in samples {
-            life.advance();
+            life.advance(clock(START + n - 1), clock(START + n));
             assert_eq!(life.value(), footman, "tick {n}");
         }
     }
@@ -3319,8 +3373,9 @@ mod tests {
         mana.set(0x4120_0000);
         let mut mana_misses = 0;
         for [n, _, paladin_life, paladin_mana] in samples() {
-            life.advance();
-            mana.advance();
+            let (now, next) = (clock(START + n - 1), clock(START + n));
+            life.advance(now, next);
+            mana.advance(now, next);
             assert_eq!(life.value(), paladin_life, "tick {n}");
             // PROVISIONAL: one unit of the last place off at a few ticks.
             let off = mana.value().abs_diff(paladin_mana);
@@ -3338,8 +3393,8 @@ mod tests {
         mana.set(0x4400_0000);
         assert_eq!(mana.value(), 0x4320_0000);
         mana.set(0x431F_0000);
-        for _ in 0..1_000 {
-            mana.advance();
+        for k in 0..1_000 {
+            mana.advance(clock(START + k), clock(START + k + 1));
         }
         assert_eq!(mana.value(), 0x4320_0000);
     }

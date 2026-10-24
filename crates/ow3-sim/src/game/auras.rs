@@ -273,8 +273,3 @@ fn brilliance(state: &mut State) {
         }
     }
 }
-
-/// The mana a second `u` regenerates more from auras (brilliance).
-pub(super) fn mana_bonus(state: &State, u: &super::Unit) -> u32 {
-    bonus(state, u, &BRILLIANCE).to_bits()
-}

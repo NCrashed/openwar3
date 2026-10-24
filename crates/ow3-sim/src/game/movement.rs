@@ -5049,6 +5049,13 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
                     m.target = goal;
                 }
                 m.follow_check = !in_reach;
+                // The chase out of reach replaces the renewal after the
+                // swing: its search is at the next update (c-SAK-1: the
+                // Mountain King, cooldown end 9538, search at 9543).
+                if !in_reach {
+                    m.renew_at = None;
+                    m.renew_stands = false;
+                }
                 // A chase out of range is a new group, the newest (SPEC-0021;
                 // c-RZJ-1: footman 7's of 7232 before the Paladin's of 7218
                 // at 7250).

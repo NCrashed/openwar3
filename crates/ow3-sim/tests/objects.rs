@@ -15,9 +15,11 @@ fn game_data() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b")
 }
 
-/// (tick, new, entry, creation, tag); the creation is `None` for an object
-/// made before the list starts.
-type Row = (u64, bool, u32, Option<u32>, String);
+/// (tick, new, entry, creation, tag, world clock); the creation is `None`
+/// for an object made before the list starts. The list's tick is read from
+/// the world clock, which drifts from the tick count late in a game by up
+/// to one tick: ticks are compared within one.
+type Row = (u64, bool, u32, Option<u32>, String, f32);
 
 fn game_rows(name: &str) -> Option<Vec<Row>> {
     let text =
@@ -37,7 +39,8 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
                 .ok()
                 .and_then(|c| u32::try_from(c).ok());
             let tag = w.get(6).map_or("", |t| t.trim()).to_string();
-            Some((tick, new, entry, creation, tag))
+            let clock = w.get(2)?.parse().ok()?;
+            Some((tick, new, entry, creation, tag, clock))
         })
         .collect();
     Some(rows)
@@ -61,7 +64,8 @@ fn heroes_three_objects_report() {
     let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
     table.day = vec![767, 647, 819];
     playback.game.set_table(table, true);
-    let until = game.last().map_or(0, |r| r.0);
+    // (A tick or two past the list's last, whose ticks may run one short.)
+    let until = game.last().map_or(0, |r| r.0) + 2;
     while playback.game.ticks() <= until && playback.step_tick() {}
     let ours = playback.game.table_log();
     // OW3_OBJECTS="from to": our rows in that range of positions.
@@ -81,7 +85,7 @@ fn heroes_three_objects_report() {
         .iter()
         .zip(&ours)
         .position(|(g, o)| {
-            g.0 != o.tick
+            g.0.abs_diff(o.tick) > 1
                 || g.1 != o.new
                 || g.2 != o.entry
                 || g.3

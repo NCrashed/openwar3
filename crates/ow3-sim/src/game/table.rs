@@ -51,6 +51,8 @@ pub struct ObjectTable {
     pub ends_late: Vec<u32>,
     /// The takings and freeings, when kept.
     pub log: Option<Vec<TableEvent>>,
+    /// The world clock at the start of each tick, kept with the log.
+    pub clocks: Option<Vec<(u64, u32)>>,
 }
 
 impl ObjectTable {
@@ -72,6 +74,7 @@ impl ObjectTable {
             timed_q: Vec::new(),
             ends_late: Vec::new(),
             log: None,
+            clocks: None,
         }
     }
 

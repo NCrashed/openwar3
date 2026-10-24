@@ -1586,6 +1586,11 @@ impl<'a> Game<'a> {
             state.in_tick = true;
             let tick = state.ticks;
             state.table.now = tick;
+            // The world clock of this tick, for the lists of the game.
+            let clock = state.timers.time();
+            if let Some(c) = state.table.clocks.as_mut() {
+                c.push((tick, clock));
+            }
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less
@@ -2352,8 +2357,15 @@ impl<'a> Game<'a> {
     pub fn set_table(&self, mut table: table::ObjectTable, log: bool) {
         if log {
             table.log = Some(Vec::new());
+            table.clocks = Some(Vec::new());
         }
         self.state.borrow_mut().table = table;
+    }
+
+    /// The world clock at the start of each tick since the table was set
+    /// with its log.
+    pub fn table_clocks(&self) -> Vec<(u64, u32)> {
+        self.state.borrow().table.clocks.clone().unwrap_or_default()
     }
 
     /// The next entry and the next creation number of the object table.

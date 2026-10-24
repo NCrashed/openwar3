@@ -1242,6 +1242,8 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
     let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
+    // It enters its regions where it stands (SPEC-0049).
+    super::regions::test_unit(state, building);
     // Its food comes when it is finished.
     let food = state.data.units.get(&type_id).map_or(0, |t| t.food_made);
     *state.setup.player_states.entry((owner, 4)).or_default() -= food;
@@ -2307,6 +2309,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         m.next_update = tick + UPDATE;
         // The position is committed first (SPEC-0018).
         m.commit(state.move_clock);
+        // The regions are tested at the commit (SPEC-0049).
+        super::regions::committed(state, h, m.origin);
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
         // A stunned unit stands and does nothing (SPEC-0037).
         if super::cast::stunned(state, h) {
             m.velocity = [0, 0];

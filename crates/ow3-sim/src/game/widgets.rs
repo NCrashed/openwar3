@@ -92,6 +92,14 @@ pub enum Registration {
     TimerExpire { trigger: u32, timer: u32 },
     /// `TriggerRegisterDeathEvent` of a unit, destructable or item.
     Death { trigger: u32, widget: u32 },
+    /// `TriggerRegisterEnterRegion` (`enter`) and
+    /// `TriggerRegisterLeaveRegion` (SPEC-0049).
+    Region {
+        trigger: u32,
+        region: u32,
+        enter: bool,
+        filter: Option<u32>,
+    },
 }
 
 fn unit_mut(state: &mut State, h: Option<u32>) -> Option<&mut Unit> {
@@ -239,7 +247,10 @@ pub(super) fn create_unit_by_script(
 ) -> Option<u32> {
     let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
     let (x, y) = off_other_units(state, type_id, [snap(at[0]), snap(at[1])]);
-    create_unit(state, owner, type_id, [x, y, at[2]])
+    let h = create_unit(state, owner, type_id, [x, y, at[2]])?;
+    // It enters the regions at the place it stands (SPEC-0049).
+    super::regions::test_unit(state, h);
+    Some(h)
 }
 
 /// Where a new unit of `type_id` at the snapped point `at` stands
@@ -411,6 +422,7 @@ pub(super) fn create_unit(
         queue: None,
         rally: None,
         shown_order: None,
+        region_test: Default::default(),
     };
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
@@ -1036,7 +1048,7 @@ pub(super) fn set_destructable_life(
         died(vm, state, h, None);
     }
 }
-fn register_event(state: &Rc<RefCell<State>>, registration: Registration) -> Value {
+pub(super) fn register_event(state: &Rc<RefCell<State>>, registration: Registration) -> Value {
     let mut state = state.borrow_mut();
     state.events.push(registration);
     Value::Handle(Some(state.create(Object::Event)))
@@ -1050,12 +1062,16 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native CreateUnit takes player id, integer unitid, real x, real y, real face returns unit",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let Some(owner) = state.player_id(handle(&args[0])) else {
+            let mut s = state.borrow_mut();
+            let Some(owner) = s.player_id(handle(&args[0])) else {
                 return Ok(Some(Value::Handle(None)));
             };
             let at = [real(&args[2]), real(&args[3]), real(&args[4])];
-            let h = create_unit_by_script(&mut state, owner, integer(&args[1]), at);
+            let h = create_unit_by_script(&mut s, owner, integer(&args[1]), at);
+            drop(s);
+            // The filters of its regions run before the call returns
+            // (SPEC-0049).
+            super::regions::dispatch(vm, state);
             Ok(Some(Value::Handle(h)))
         }
     );
@@ -1064,16 +1080,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native CreateUnitByName takes player whichPlayer, string unitname, real x, real y, real face returns unit",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let owner = state.player_id(handle(&args[0]));
-            let type_id = string(&args[1]).and_then(|n| state.data.unit_id(n));
+            let mut s = state.borrow_mut();
+            let owner = s.player_id(handle(&args[0]));
+            let type_id = string(&args[1]).and_then(|n| s.data.unit_id(n));
             let (Some(owner), Some(type_id)) = (owner, type_id) else {
                 return Ok(Some(Value::Handle(None)));
             };
             let at = [real(&args[2]), real(&args[3]), real(&args[4])];
-            Ok(Some(Value::Handle(create_unit_by_script(
-                &mut state, owner, type_id, at,
-            ))))
+            let h = create_unit_by_script(&mut s, owner, type_id, at);
+            drop(s);
+            super::regions::dispatch(vm, state);
+            Ok(Some(Value::Handle(h)))
         }
     );
     native!(
@@ -1421,14 +1438,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native CreateUnitAtLoc takes player id, integer unitid, location whichLocation, real face returns unit",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let owner = state.player_id(handle(&args[0]));
-            let at = super::enumerate::location(&state, handle(&args[2]));
+            let mut s = state.borrow_mut();
+            let owner = s.player_id(handle(&args[0]));
+            let at = super::enumerate::location(&s, handle(&args[2]));
             let (Some(owner), Some((x, y))) = (owner, at) else {
                 return Ok(Some(Value::Handle(None)));
             };
-            let h =
-                create_unit_by_script(&mut state, owner, integer(&args[1]), [x, y, real(&args[3])]);
+            let h = create_unit_by_script(&mut s, owner, integer(&args[1]), [x, y, real(&args[3])]);
+            drop(s);
+            super::regions::dispatch(vm, state);
             Ok(Some(Value::Handle(h)))
         }
     );
@@ -1445,14 +1463,17 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         }
     );
     type Move = fn(&mut Unit, &[Value], &State);
-    let moves: [(&str, Move); 6] = [
+    // The moves test the regions at once (SPEC-0049).
+    let moves: [(&str, Move, bool); 6] = [
         (
             "native SetUnitX takes unit whichUnit, real newX returns nothing",
             |u, args, state| u.x = world_relative(real(&args[1]), state.world_bounds[0]),
+            true,
         ),
         (
             "native SetUnitY takes unit whichUnit, real newY returns nothing",
             |u, args, state| u.y = world_relative(real(&args[1]), state.world_bounds[1]),
+            true,
         ),
         (
             "native SetUnitPosition takes unit whichUnit, real newX, real newY returns nothing",
@@ -1461,29 +1482,39 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 u.x = world_relative(inside(real(&args[1]), min_x, max_x), min_x);
                 u.y = world_relative(inside(real(&args[2]), min_y, max_y), min_y);
             },
+            true,
         ),
         (
             "native SetUnitUserData takes unit whichUnit, integer data returns nothing",
             |u, args, _| u.user_data = integer(&args[1]),
+            false,
         ),
         (
             "native ShowUnit takes unit whichUnit, boolean show returns nothing",
             |u, args, _| u.hidden = args[1] != Value::Boolean(true),
+            false,
         ),
         (
             "native PauseUnit takes unit whichUnit, boolean flag returns nothing",
             |u, args, _| u.paused = args[1] == Value::Boolean(true),
+            false,
         ),
     ];
-    for (declaration, apply) in moves {
+    for (declaration, apply, moves) in moves {
         native!(add, state, declaration, |vm, state, args| {
-            let mut state = state.borrow_mut();
-            if let Some(Object::Unit(mut unit)) =
-                handle(&args[0]).and_then(|h| state.objects.get(&h).cloned())
-            {
-                apply(&mut unit, args, &state);
-                if let Some(u) = unit_mut(&mut state, handle(&args[0])) {
+            let mut s = state.borrow_mut();
+            let Some(h) = handle(&args[0]) else {
+                return Ok(None);
+            };
+            if let Some(Object::Unit(mut unit)) = s.objects.get(&h).cloned() {
+                apply(&mut unit, args, &s);
+                if let Some(u) = unit_mut(&mut s, Some(h)) {
                     *u = *unit;
+                }
+                if moves {
+                    super::regions::test_unit(&mut s, h);
+                    drop(s);
+                    super::regions::dispatch(vm, state);
                 }
             }
             Ok(None)
@@ -1525,11 +1556,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native SetUnitPositionLoc takes unit whichUnit, location whichLocation returns nothing",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let at = super::enumerate::location(&state, handle(&args[1]));
-            if let (Some((x, y)), Some(u)) = (at, unit_mut(&mut state, handle(&args[0]))) {
+            let mut s = state.borrow_mut();
+            let at = super::enumerate::location(&s, handle(&args[1]));
+            let h = handle(&args[0]);
+            if let (Some((x, y)), Some(u)) = (at, unit_mut(&mut s, h)) {
                 u.x = x;
                 u.y = y;
+                super::regions::test_unit(&mut s, h.expect("a unit"));
+                drop(s);
+                super::regions::dispatch(vm, state);
             }
             Ok(None)
         }

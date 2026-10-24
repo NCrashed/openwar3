@@ -62,6 +62,7 @@ mod movement;
 mod obstacles;
 pub mod players;
 mod queue;
+mod regions;
 pub mod table;
 mod training;
 mod widgets;
@@ -116,6 +117,17 @@ pub enum Object {
         max_y: u32,
     },
     FogModifier(fog::Modifier),
+    /// A set of cells (SPEC-0049).
+    Region(regions::Region),
+}
+
+/// What an entry of the timer queue stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// A run of the timer with this handle.
+    Timer(u32),
+    /// A queued region event (SPEC-0049).
+    RegionEvent,
 }
 
 /// A `boolexpr`: a function made by `Condition` or `Filter`, or `And`,
@@ -299,6 +311,8 @@ pub struct Unit {
     /// An order `GetUnitCurrentOrder` gives for a while instead of the
     /// unit's own (SPEC-0027): the id and the tick it holds until.
     shown_order: Option<(i32, u64)>,
+    /// Its last region test (SPEC-0049).
+    region_test: regions::Tested,
 }
 
 /// A building under construction (SPEC-0026, "Construction progress"):
@@ -752,6 +766,8 @@ struct Context {
     /// `GetSummonedUnit` and `GetSummoningUnit` (SPEC-0044).
     summoned_unit: Option<u32>,
     summoning_unit: Option<u32>,
+    /// `GetTriggeringRegion` (SPEC-0049).
+    triggering_region: Option<u32>,
 }
 
 /// Work waiting for a sleep check.
@@ -779,7 +795,7 @@ pub type AgentRecord = (u64, u32, [u32; 2], [u32; 2], u32, [u32; 2]);
 /// Game state shared with the natives.
 pub struct State {
     pub clock: FrameClock,
-    pub timers: TimerQueue<u32>,
+    pub timers: TimerQueue<Slot>,
     objects: HashMap<u32, Object>,
     /// Handles of the player slots made so far, by id.
     players: BTreeMap<i32, u32>,
@@ -804,6 +820,15 @@ pub struct State {
     items: Vec<u32>,
     /// Event registrations in the order they were made.
     events: Vec<widgets::Registration>,
+    /// The regions in the order they were made, how many were made, the
+    /// crossings of units whose filters have not run, the events waiting
+    /// for their slots on the timer queue, and the crossings so far
+    /// (SPEC-0049).
+    regions: Vec<u32>,
+    region_seq: u64,
+    crossings: std::collections::VecDeque<regions::Crossing>,
+    region_events: Vec<regions::Queued>,
+    region_entries: u64,
     /// Triggers registered for dialogs and their buttons.
     dialog_events: Vec<boards::DialogEvent>,
     /// The leaderboard shown to each player.
@@ -1011,6 +1036,11 @@ impl State {
             destructables: Vec::new(),
             items: Vec::new(),
             events: Vec::new(),
+            regions: Vec::new(),
+            region_seq: 0,
+            crossings: std::collections::VecDeque::new(),
+            region_events: Vec::new(),
+            region_entries: 0,
             dialog_events: Vec::new(),
             player_leaderboards: BTreeMap::new(),
             data: ObjectData::default(),
@@ -1208,8 +1238,8 @@ impl State {
             (LONG_PART, n - 1, Some(rest))
         };
         let id = match first_start {
-            Some(n) => self.timers.start_as(first, handle, n),
-            None => self.timers.start(first, handle),
+            Some(n) => self.timers.start_as(first, Slot::Timer(handle), n),
+            None => self.timers.start(first, Slot::Timer(handle)),
         };
         if let Some(timer) = self.timer(Some(handle)) {
             timer.first = Some(first_start.unwrap_or(id));
@@ -1240,7 +1270,7 @@ impl State {
         };
         timer.done = add(timer.done, timer.part);
         timer.part = part;
-        let id = self.timers.start(part, handle);
+        let id = self.timers.start(part, Slot::Timer(handle));
         if let Some(timer) = self.timer(Some(handle)) {
             timer.queued = Some(id);
         }
@@ -1481,6 +1511,8 @@ impl<'a> Game<'a> {
 
     /// Moves tasks that went to sleep into the sleep queue.
     fn park(&mut self) {
+        // The filters of the crossings of what just ran (SPEC-0049).
+        regions::dispatch(&mut self.vm, &self.state);
         let (parked, now) = {
             let mut state = self.state.borrow_mut();
             (std::mem::take(&mut state.parked), state.sleep_time)
@@ -1616,6 +1648,10 @@ impl<'a> Game<'a> {
         // Reaction delays that end now: new goals, before the updates.
         movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // The filters of the walkers that crossed region edges at their
+        // commits (SPEC-0049). PROVISIONAL: after all the updates, at the
+        // queue time `U` of the updates.
+        regions::dispatch(&mut self.vm, &self.state);
         // Those that end after the updates, up to the next tick's clock.
         if at.is_some() {
             movement::reaction_ends(&mut self.state.borrow_mut(), None, false);
@@ -1657,6 +1693,8 @@ impl<'a> Game<'a> {
         widgets::acquired(&mut self.vm, &self.state, &called);
         // Casts of abilities (SPEC-0035).
         cast::tick(&mut self.vm, &self.state);
+        // The units the casts made enter their regions (SPEC-0049).
+        regions::dispatch(&mut self.vm, &self.state);
         widgets::summons(&mut self.vm, &self.state);
         // Creeps waking, giving up their chases and home again (SPEC-0030).
         creeps::tick(&mut self.state.borrow_mut());
@@ -1668,8 +1706,14 @@ impl<'a> Game<'a> {
         self.state.borrow_mut().in_tick = false;
     }
 
-    fn fire(&mut self, fired: Fired<u32>) {
-        let handle = fired.payload;
+    fn fire(&mut self, fired: Fired<Slot>) {
+        let handle = match fired.payload {
+            Slot::Timer(handle) => handle,
+            Slot::RegionEvent => {
+                regions::fire(&mut self.vm, &self.state, fired.id, fired.expiry);
+                return;
+            }
+        };
         let (callback, trigger) = {
             let mut state = self.state.borrow_mut();
             let Some(timer) = state.timer(Some(handle)) else {
@@ -3229,6 +3273,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
     enumerate::register(&mut add, state);
     players::register(&mut add, state);
     widgets::register(&mut add, state);
+    regions::register(&mut add, state);
     heroes::register(&mut add, state);
 
     movement::register(&mut add, state);

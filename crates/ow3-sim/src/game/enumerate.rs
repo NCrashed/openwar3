@@ -137,7 +137,7 @@ pub(super) fn location(state: &State, handle: Option<u32>) -> Option<(u32, u32)>
     }
 }
 
-fn rect(state: &State, handle: Option<u32>) -> Option<[u32; 4]> {
+pub(super) fn rect(state: &State, handle: Option<u32>) -> Option<[u32; 4]> {
     match state.objects.get(&handle?)? {
         Object::Rect {
             min_x,

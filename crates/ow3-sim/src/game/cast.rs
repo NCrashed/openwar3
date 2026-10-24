@@ -1193,6 +1193,12 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         else {
             continue;
         };
+        // The units enter their regions where they appear, at the queue
+        // time of the ability's timer (SPEC-0049). The one at the hero's
+        // place too (c-SAK-1: the image 20 and the stand-in 21 at 7262).
+        let now = s.event_time.replace(m.appear_q);
+        super::regions::test_unit(s, e);
+        s.event_time = now;
         s.random.fraction();
         if let Some(Object::Unit(u)) = s.objects.get_mut(&e) {
             u.hidden = true;
@@ -1242,6 +1248,9 @@ fn mirror_hero_back(s: &mut State, hero: u32, stand_in: u32) {
             u.next_acquire = add(now, movement::AFTER_DEATH);
         }
     }
+    // PROVISIONAL: the hero is tested at his new place as a unit
+    // moved by `SetUnitPosition` (SPEC-0049 does not cover it).
+    super::regions::test_unit(s, hero);
     super::obstacles::died(s, stand_in);
     s.objects.remove(&stand_in);
     s.units.retain(|&u| u != stand_in);

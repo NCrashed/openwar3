@@ -363,8 +363,11 @@ fn end_training(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) {
         else {
             return;
         };
+        // It enters its regions where it appears (SPEC-0049).
+        super::regions::test_unit(&mut s, unit);
         (unit, expiry, rally)
     };
+    super::regions::dispatch(vm, state);
     let type_id = state.borrow().unit(Some(unit)).map(|u| u.type_id);
     fire(
         vm,

@@ -2099,6 +2099,15 @@ pub(super) fn step(state: &mut State) {
             continue;
         };
         if m.velocity == [0, 0] {
+            // A stop due after an impact's call is spent all the same, its
+            // commit made (c-SAK-1: ogre 18 at 4514, stopped by its order).
+            if std::mem::take(&mut m.halt_next) {
+                m.walking = false;
+                let record = (state.ticks, *h, m.origin, m.velocity, m.heading, [0, 0]);
+                if let Some(trace) = state.agent_trace.as_mut() {
+                    trace.push(record);
+                }
+            }
             continue;
         }
         let [x, y] = absolute(m.position(clock), min);

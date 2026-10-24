@@ -1055,8 +1055,8 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
 /// death at the end of its handling (`attacker_done`), after its attack's
 /// end (c-SAK-1: kobold 19 at 4764: 3593, "attack ends", 3533 .. 3531).
 pub(super) fn attacker_lost(state: &mut super::State, h: u32, dead: u32) {
-    let current = entries(state, h).and_then(|e| {
-        let (gone, kept) = std::mem::take(&mut e.target_death)
+    let current = entries(state, h).map(|e| {
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut e.target_death)
             .into_iter()
             .partition::<Vec<_>, _>(|&(t, _)| t == dead);
         e.target_death = kept;
@@ -1068,10 +1068,19 @@ pub(super) fn attacker_lost(state: &mut super::State, h: u32, dead: u32) {
             e.current.take().or_else(|| Some(gone.remove(0)))
         };
         e.lost = gone;
-        first
+        // A reaction delay still running goes first (c-SAK-1: footman 2,
+        // 4910 at gnoll 16's death in 6130).
+        let reaction = if first.is_some() {
+            std::mem::take(&mut e.reaction)
+        } else {
+            Vec::new()
+        };
+        (reaction, first)
     });
-    if let Some(c) = current {
-        state.table.defer(c, "acquisition: attack object");
+    if let Some((reaction, first)) = current {
+        for c in reaction.into_iter().chain(first) {
+            state.table.defer(c, "acquisition: attack object");
+        }
     }
 }
 
@@ -1378,9 +1387,13 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         // The last two of a creep's (its pair) before its order, the
         // first two after all (c-SAK-1: kobold 9 at 2753).
         let (core, pair) = death.split_at(death.len().min(2));
-        let own: Vec<u32> = std::mem::take(&mut e.game_objects)
+        // The objects of an order of the game and a stun's buff end go
+        // before its stun's order, the rest of its own after the record
+        // (c-SAK-1: gnoll 16 at 6130, 2625, 2643, 3439, then 4929 ..).
+        let mut game = std::mem::take(&mut e.game_objects);
+        game.extend(e.buff_end.take());
+        let own: Vec<u32> = std::mem::take(&mut e.reaction)
             .into_iter()
-            .chain(std::mem::take(&mut e.reaction))
             .chain(e.current.take())
             .chain(
                 std::mem::take(&mut e.target_death)
@@ -1403,8 +1416,8 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         } else {
             Vec::new()
         };
-        stun_end.extend(e.buff_end.take());
         (
+            game,
             pair.to_vec(),
             own,
             core.to_vec(),
@@ -1414,7 +1427,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             end_tick,
         )
     });
-    let Some((pair, own, core, stun_order, stun_end, missile, end_tick)) = held else {
+    let Some((game, pair, own, core, stun_order, stun_end, missile, end_tick)) = held else {
         return;
     };
     if let Some(end) = end_tick.filter(|&t| t != u64::MAX) {
@@ -1422,7 +1435,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             state.table.free_at(end, e, "missile");
         }
     }
-    for e in pair.into_iter().chain(stun_order) {
+    for e in pair.into_iter().chain(game).chain(stun_order) {
         state.table.defer(e, "unit death");
     }
     state.table.defer(record, "death order record");

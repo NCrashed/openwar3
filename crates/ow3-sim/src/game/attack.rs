@@ -405,13 +405,16 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
             // (SPEC-0036, SPEC-0037), and the target is stunned.
             if let Some((extra, unit_stun, hero_stun)) = bash {
                 // The objects of the stun come before its damage events
-                // (SPEC-0024; c-SAK-1: 2183).
+                // (SPEC-0024; c-SAK-1: 2183), and the answers to the hit
+                // before both damages (c-SAK-1: kobold 10 at the bash on
+                // gnoll 16 in 6130).
                 {
                     let mut s = state.borrow_mut();
                     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
                         super::table::stun_objects(&mut s, h, target, Vec::new());
                     }
                 }
+                answer_hit(&mut state.borrow_mut(), h, target, None);
                 super::widgets::damage_widget(vm, state, Some(h), Some(target), extra, 0, 0);
                 let mut s = state.borrow_mut();
                 if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
@@ -427,7 +430,17 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     );
                 }
             }
-            strike(vm, state, h, target, amount, attack_type, area, None);
+            strike(
+                vm,
+                state,
+                h,
+                target,
+                amount,
+                attack_type,
+                area,
+                None,
+                bash.is_some(),
+            );
             state.borrow_mut().event_time = None;
         }
         // One tick after the swing the attacker takes a goal again, also
@@ -551,9 +564,23 @@ fn splash_at(
     out
 }
 
+/// The answers to a hit of `h` on `target`: the creep's spell, the
+/// victim's call and its friends' (SPEC-0019, SPEC-0047).
+fn answer_hit(s: &mut State, h: u32, target: u32, impact: Option<[u32; 2]>) {
+    super::creeps::consider_spell(s, target, target, h);
+    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+        super::movement::retaliate(
+            s,
+            target,
+            h,
+            impact.map(|p| (p, super::movement::IMPACT_REACH)),
+        );
+    }
+}
+
 /// The damage of a hit of `h` on `target`, by its swing or its missile:
 /// the units round the target first, then the target, and the answers
-/// to it (SPEC-0016, SPEC-0019).
+/// to it (SPEC-0016, SPEC-0019), unless they came already (`answered`).
 #[allow(clippy::too_many_arguments)]
 fn strike(
     vm: &mut Vm,
@@ -564,6 +591,7 @@ fn strike(
     attack_type: i32,
     area: Option<Area>,
     impact: Option<[u32; 2]>,
+    answered: bool,
 ) {
     // The units round the target, before the target takes its hit.
     let splashed = area
@@ -575,17 +603,8 @@ fn strike(
     // (SPEC-0019; c-SAK-1: kobold 10 took the Mountain King at gnoll 16's
     // call in 6131, the hit killing it).
     // A creep hit may cast its spell at the attacker (SPEC-0047).
-    {
-        let mut s = state.borrow_mut();
-        super::creeps::consider_spell(&mut s, target, target, h);
-        if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-            super::movement::retaliate(
-                &mut s,
-                target,
-                h,
-                impact.map(|p| (p, super::movement::IMPACT_REACH)),
-            );
-        }
+    if !answered {
+        answer_hit(&mut state.borrow_mut(), h, target, impact);
     }
     super::widgets::damage_widget(
         vm,
@@ -861,6 +880,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         m.attack_type,
                         None,
                         Some(m.point),
+                        false,
                     );
                 }
             }
@@ -877,6 +897,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     m.attack_type,
                     m.area,
                     impact,
+                    false,
                 )
             }
         }

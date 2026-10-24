@@ -3397,8 +3397,15 @@ pub(super) fn reaction_ends(state: &mut State, until: Option<u32>, first: bool) 
 
 /// The reaction delays of this tick that end after its first acquisition
 /// check (`reaction_ends`).
-pub(super) fn after_checks(state: &mut State) {
-    ends_before(state, None, false, None);
+pub(super) fn after_checks(state: &mut State, bound: Option<u32>) {
+    ends_before(state, bound, false, None);
+}
+
+/// The reaction delays after the updates that end up to `bound` (all of
+/// them without one), after the tick's first check as `reaction_ends`.
+pub(super) fn reaction_ends_before(state: &mut State, bound: Option<u32>) {
+    let check = first_check(state);
+    ends_before(state, bound, false, check);
 }
 
 fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option<u32>) {
@@ -3434,7 +3441,7 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
         // After the updates, the cooldowns that expire before this end come
         // first (c-RZJ-1: footman 7's at 36.149391 before footman 4's
         // reaction end at 36.152317 in 7232).
-        if until.is_none() && !first && at.is_finite() {
+        if !first && at.is_finite() {
             cooldown_expiries(state, Some(at.to_bits()));
         }
         let given = state.orders_given + 1;

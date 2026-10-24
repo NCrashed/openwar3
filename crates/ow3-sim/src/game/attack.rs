@@ -1417,3 +1417,20 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
     }
     state.table.now = tick;
 }
+
+/// The earliest expiry of a hit timed in this tick, due or not yet.
+pub(super) fn first_hit_in_tick(state: &State) -> Option<u32> {
+    let next = add(state.move_clock, crate::timers::TICK);
+    state
+        .attacking
+        .iter()
+        .filter_map(|&h| {
+            state
+                .unit(Some(h))
+                .filter(|u| u.alive)
+                .and_then(|u| u.attack)
+        })
+        .filter_map(|a| a.hit_at)
+        .filter(|e| f32::from_bits(*e) <= f32::from_bits(next))
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
+}

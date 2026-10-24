@@ -1691,7 +1691,10 @@ impl<'a> Game<'a> {
             widgets::acquired(&mut self.vm, &self.state, &acquired);
         }
         // Reaction delays that end now: new goals, before the updates.
-        movement::reaction_ends(&mut self.state.borrow_mut(), at, true);
+        // Without updates in the tick, those before its first hit (c-SAK-1:
+        // the hit at 14.299965 before a reaction end at 14.299970 in 2861).
+        let bound = at.or_else(|| attack::first_hit_in_tick(&self.state.borrow()));
+        movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());
         // The filters of the walkers that crossed region edges at their
@@ -1700,7 +1703,11 @@ impl<'a> Game<'a> {
         regions::dispatch(&mut self.vm, &self.state);
         // Those that end after the updates, up to the next tick's clock.
         if at.is_some() {
-            movement::reaction_ends(&mut self.state.borrow_mut(), None, false);
+            // Up to the first hit of the tick; the rest after the hits
+            // (c-SAK-1: the hit at 14.299965 before a reaction end at
+            // 14.299970 in 2861).
+            let hit = attack::first_hit_in_tick(&self.state.borrow());
+            movement::reaction_ends_before(&mut self.state.borrow_mut(), hit);
         }
         movement::start_buildings(&mut self.state.borrow_mut());
         // Units whose order ended start their next queued one (SPEC-0031).
@@ -1738,7 +1745,7 @@ impl<'a> Game<'a> {
             let acquired = movement::acquisitions(&mut self.state.borrow_mut(), hit, first_batch);
             if first_batch {
                 // Reaction delays that end after the first check.
-                movement::after_checks(&mut self.state.borrow_mut());
+                movement::after_checks(&mut self.state.borrow_mut(), hit);
                 first_batch = false;
             }
             widgets::acquired(&mut self.vm, &self.state, &acquired);
@@ -1759,6 +1766,8 @@ impl<'a> Game<'a> {
         attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);
         attack::after_swing_walks(&mut self.state.borrow_mut(), None);
+        // The reaction delays that end after the hits.
+        movement::after_checks(&mut self.state.borrow_mut(), None);
         // The units that took a target at a call fire their events too
         // (c-SAK-1: creeps 15, 17, 18 and 19 at 1127, switching).
         let called = std::mem::take(&mut self.state.borrow_mut().call_acquired);

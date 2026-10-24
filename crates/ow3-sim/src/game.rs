@@ -884,6 +884,8 @@ pub struct State {
     /// updated (SPEC-0021, "Occupied cells").
     start_origins: std::collections::BTreeMap<u32, [u32; 2]>,
     updated: std::collections::BTreeSet<u32>,
+    /// The tick whose updates have started (`table::walk_dropped`).
+    updates_started: u64,
     /// The iterations of local searches in the current window (SPEC-0021).
     budget: follow::Budget,
     paths: std::collections::BTreeMap<u32, follow::Follow>,
@@ -1076,6 +1078,7 @@ impl State {
             renewed_now: std::collections::BTreeSet::new(),
             start_origins: std::collections::BTreeMap::new(),
             updated: std::collections::BTreeSet::new(),
+            updates_started: 0,
             budget: follow::Budget::default(),
             paths: std::collections::BTreeMap::new(),
             path_holds: std::collections::BTreeMap::new(),

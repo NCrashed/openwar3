@@ -599,10 +599,15 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     {
         return;
     }
-    // Given up at a fade, before the updates of the tick, the unit's update
-    // in this tick frees it (c-SAK-1: the Blademaster's fade at 4620).
-    // PROVISIONAL: read for a fade only.
-    let tick = if !state.table.at_fade {
+    // Given up before the updates of the tick, the unit's update in this
+    // tick frees it (c-SAK-1: the Blademaster's fade at 4620, the Mountain
+    // King's check at 6234).
+    let before_update = state.updates_started != state.ticks
+        && state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .is_some_and(|m| m.next_update <= state.ticks);
+    let tick = if !state.table.at_fade && !before_update {
         state.table.now
     } else {
         state.table.now.saturating_sub(1)

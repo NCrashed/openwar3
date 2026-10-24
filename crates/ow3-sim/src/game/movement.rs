@@ -2237,6 +2237,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         .collect();
     attack_checks(state);
     state.updated.clear();
+    if state.update_now {
+        state.updates_started = state.ticks;
+    }
     let mut moving = std::mem::take(&mut state.moving);
     let key = |h: &u32| {
         let given = match state.objects.get(h) {

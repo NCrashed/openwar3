@@ -46,6 +46,7 @@ pub struct ObjectTable {
     pub resumed: Vec<u32>,
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
+    timed_q: Vec<(u32, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
     pub ends_late: Vec<u32>,
     /// The takings and freeings, when kept.
@@ -68,6 +69,7 @@ impl ObjectTable {
             dying: None,
             resumed: Vec::new(),
             timed: Vec::new(),
+            timed_q: Vec::new(),
             ends_late: Vec::new(),
             log: None,
         }
@@ -134,6 +136,23 @@ impl ObjectTable {
     /// world clock (`flush`).
     pub fn defer(&mut self, entry: u32, tag: &'static str) {
         self.deferred.push((self.now, entry, tag));
+    }
+
+    /// The object holding `entry` is freed by a timer of the queue expiring
+    /// at `q` (`flush_q`).
+    pub fn free_at_q(&mut self, q: u32, entry: u32, tag: &'static str) {
+        self.timed_q.push((q, entry, tag));
+    }
+
+    /// The queue's timers of this tick, up to `limit`, free their objects.
+    pub fn flush_q(&mut self, tick: u64, limit: u32) {
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
+            .into_iter()
+            .partition(|&(q, _, _)| f32::from_bits(q) <= f32::from_bits(limit));
+        self.timed_q = later;
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
     }
 
     /// The object holding `entry` is freed in the 0.0001 s batch of tick
@@ -222,6 +241,8 @@ pub struct UnitEntries {
     pub own_attack: bool,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
+    /// The order and the extra object of its order of the game.
+    pub game_objects: Vec<u32>,
     /// The objects of an order it gave up in this tick, freed at its end.
     pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
@@ -397,8 +418,18 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let order = state.table.take(tick, "game order");
     let record = state.table.take(tick, "order record");
+    // An order of the game before it goes: its extra object first, its
+    // order after the old order's objects (c-SAK-1: 4017).
+    let old = entries(state, h).map(|e| std::mem::take(&mut e.game_objects));
+    let old = old.unwrap_or_default();
+    if let Some(&extra) = old.get(1) {
+        state.table.defer(extra, "game order: extra object");
+    }
     state.table.defer(record, "order record");
     order_ended(state, h);
+    if let Some(&k) = old.first() {
+        state.table.defer(k, "game order");
+    }
     let ability = state.table.take_n(tick, 13, "move ability: order start");
     for &e in ability[6..].iter().rev() {
         state.table.defer(e, "move ability: order start");
@@ -408,7 +439,7 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.order = ability[..6].iter().rev().copied().collect();
         e.game_order = true;
-        e.death.splice(0..0, [order, extra]);
+        e.game_objects = vec![order, extra];
     }
 }
 
@@ -1085,8 +1116,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         // The last two of a creep's (its pair) before its order, the
         // first two after all (c-SAK-1: kobold 9 at 2753).
         let (core, pair) = death.split_at(death.len().min(2));
-        let own: Vec<u32> = std::mem::take(&mut e.reaction)
+        let own: Vec<u32> = std::mem::take(&mut e.game_objects)
             .into_iter()
+            .chain(std::mem::take(&mut e.reaction))
             .chain(e.current.take())
             .chain(
                 std::mem::take(&mut e.target_death)
@@ -1134,15 +1166,14 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     // Of the first 5 queue objects 2 go 3.0 s on, 1 5.0 s on, 2 stay.
     // PROVISIONAL: which of them, and 1000 ticks for "about 5.0 s"
     // (c-SAK-1: 2753 -> 3353, 3353, 3753).
-    state
-        .table
-        .free_at(tick + 600, queue[4], "death order queue");
-    state
-        .table
-        .free_at(tick + 600, queue[3], "death order queue");
-    state
-        .table
-        .free_at(tick + 1000, queue[2], "death order queue");
+    let at = state.event_time.unwrap_or_else(|| state.timers.time());
+    let (three, five) = (
+        ow3_math::add(at, 3.0f32.to_bits()),
+        ow3_math::add(at, 5.0f32.to_bits()),
+    );
+    state.table.free_at_q(three, queue[4], "death order queue");
+    state.table.free_at_q(three, queue[3], "death order queue");
+    state.table.free_at_q(five, queue[2], "death order queue");
 }
 
 /// The number of objects a native of the script takes when called

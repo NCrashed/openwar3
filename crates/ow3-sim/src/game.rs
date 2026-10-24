@@ -1211,6 +1211,10 @@ impl State {
             table::old_order_ended(self, h);
         }
         self.table.flush(tick);
+        // Then the timers of the queue (c-SAK-1: the death queue objects at
+        // 3353, after the 0.0001 s frees).
+        let limit = self.timers.time();
+        self.table.flush_q(tick, limit);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
         let before = self.object_ticks.len() + self.object_timers.len();
         self.object_ticks.retain(|&t| t != tick);

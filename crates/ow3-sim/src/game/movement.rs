@@ -3566,6 +3566,12 @@ pub(super) fn chase(
         // not handled: no search (SPEC-0021; c-RZJ-1: footman 2 at 7210).
         if in_reach {
             follow::quiet(state, h);
+            // Still a new goal with its walk (SPEC-0024; c-SAK-1: kobold
+            // 8 at 1085, gnoll 11 at 1087).
+            super::table::walk_made_at_order(state, h);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.entries.quiet_walk = true;
+            }
         } else {
             follow::search(state, &walker, tick);
         }

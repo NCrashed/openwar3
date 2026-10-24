@@ -158,6 +158,9 @@ pub struct UnitEntries {
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
+    /// Its walk is that of a goal taken in reach after a swing, which ends
+    /// at its next update (c-SAK-1: kobold 8, 1085, freed at 1093).
+    pub quiet_walk: bool,
     /// The objects of its Wind Walk freed at the fade and at the end.
     pub fade: Vec<u32>,
     pub lasting: Vec<u32>,
@@ -413,6 +416,10 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
         .collect();
     for walk in due.chunks(2) {
         state.table.walks_due.push(walk.to_vec());
+    }
+    // A goal taken in reach after a swing ends at the first update.
+    if entries(state, h).is_some_and(|e| std::mem::take(&mut e.quiet_walk)) {
+        walk_dropped(state, h);
     }
 }
 

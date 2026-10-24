@@ -280,6 +280,16 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
             if expires && super::movement::face_at_expiry(s, h) {
                 continue;
             }
+            // The swing starts at the expiry: the walk of the goal taken
+            // after the last swing ends (SPEC-0024).
+            if expires {
+                let q = s.unit(Some(h)).and_then(|u| u.attack).map(|a| a.swing_q);
+                if let Some(q) = q {
+                    s.table_at(q);
+                }
+                super::table::walk_dropped(s, h);
+                s.table.now = s.ticks;
+            }
             if starts {
                 roll_proc(s, h);
             }
@@ -414,7 +424,12 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
         {
             // A target in reach keeps the swing timed by the cooldown.
             let in_reach = super::movement::reaches(&s, h, a.target);
+            // Its objects count at the backswing's end (SPEC-0024).
+            if let Some(end) = s.unit(Some(h)).map(|u| u.backswing_end) {
+                s.table_at(end);
+            }
             super::movement::chase(&mut s, h, a.target, a.order_id, a.renew_at, in_reach);
+            s.table.now = tick;
             if in_reach && let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.attack = Some(a);
             }

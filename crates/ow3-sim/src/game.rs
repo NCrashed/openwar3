@@ -1155,24 +1155,36 @@ impl State {
         handle
     }
 
-    /// The internal objects of the checksum change now, in tick `tick`
-    /// (later in this game), or by a timer expiring at queue time
-    /// `expiry` (SPEC-0024).
-    /// Unit `h` drops its path: a new one is searched at its next update,
-    /// and its walk's objects go (SPEC-0024, "Walks").
     /// The tick the game counts an event at queue time `q` in: this one,
-    /// or the next when `q` reaches the next tick's clock (the game's
-    /// tick of a queue time is that of the world clock, SPEC-0018).
+    /// the next when `q` reaches the next tick's clock, the one before when
+    /// it lies before this tick's (the game's tick of a queue time is that
+    /// of the world clock, SPEC-0018).
     fn table_at(&mut self, q: u32) {
         let next = add(self.move_clock, crate::timers::TICK);
-        self.table.now = self.ticks + u64::from(f32::from_bits(q) >= f32::from_bits(next));
+        let (q, now, next) = (
+            f32::from_bits(q),
+            f32::from_bits(self.move_clock),
+            f32::from_bits(next),
+        );
+        self.table.now = if q >= next {
+            self.ticks + 1
+        } else if q < now {
+            self.ticks - 1
+        } else {
+            self.ticks
+        };
     }
 
+    /// Unit `h` drops its path: a new one is searched at its next update,
+    /// and its walk's objects go (SPEC-0024, "Walks").
     fn drop_path(&mut self, h: u32) {
         self.paths.remove(&h);
         table::walk_dropped(self, h);
     }
 
+    /// The internal objects of the checksum change now, in tick `tick`
+    /// (later in this game), or by a timer expiring at queue time
+    /// `expiry` (SPEC-0024).
     fn objects_change(&mut self) {
         self.objects_changed += 1;
     }

@@ -5253,6 +5253,11 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
         .collect();
     let tick = state.ticks;
     for (h, target, order_id) in due {
+        // The goals of backswings ending before this expiry come first, as
+        // one queue (c-SAK-1: ogre 18's before footman 2's chase at 6174).
+        if let Some(end) = state.unit(Some(h)).map(|u| u.cooldown_end) {
+            super::attack::after_swing_walks(state, Some(end));
+        }
         let Some(at) = position_of(state, target).map(|p| relative(p, min)) else {
             continue;
         };

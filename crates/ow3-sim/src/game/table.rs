@@ -51,6 +51,9 @@ pub struct ObjectTable {
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
     rest: Vec<(u32, &'static str)>,
+    /// Units whose order of the game ended at its point in the updates
+    /// (`game_order_arrived`).
+    pub homes: Vec<u32>,
     /// Mirror Image (`mirror_copy`, `mirror_missile`): the objects kept by
     /// each copy of the hero, in the order they go, and those of the
     /// missile to each copy's place.
@@ -92,6 +95,7 @@ impl ObjectTable {
             resumed: Vec::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
+            homes: Vec::new(),
             copies: Default::default(),
             dead_missiles: Default::default(),
             copy_parts: Vec::new(),
@@ -513,6 +517,31 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     }
 }
 
+/// Unit `h`'s order of the game (a creep's walk home) ends at its point:
+/// one more object, then 0.0001 s later the order's objects, those of the
+/// order of the game, that object and a stun's buff end it still held
+/// (c-SAK-1: 9786).
+///
+/// PROVISIONAL: what the one more object is, is not read.
+pub(super) fn game_order_arrived(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let other = state.table.take(tick, "game order: end");
+    order_ended(state, h);
+    let (game, buff) = entries(state, h)
+        .map(|e| {
+            e.game_order = false;
+            (std::mem::take(&mut e.game_objects), e.buff_end.take())
+        })
+        .unwrap_or_default();
+    for e in game {
+        state.table.defer(e, "game order");
+    }
+    state.table.defer(other, "game order: end");
+    if let Some(b) = buff {
+        state.table.defer(b, "buff end");
+    }
+}
+
 /// Unit `h` takes up its attack-move again after its target's death: a
 /// new goal with its walk, and its last acquisition's objects are freed
 /// 0.0001 s later.
@@ -721,6 +750,14 @@ pub(super) fn walks_freed(state: &mut super::State) {
         for e in walk {
             state.table.free(tick, e, "walk");
         }
+    }
+}
+
+/// The orders of the game that ended at their points in the updates,
+/// after the walks freed there (`game_order_arrived`).
+pub(super) fn homes_arrived(state: &mut super::State) {
+    for h in std::mem::take(&mut state.table.homes) {
+        game_order_arrived(state, h);
     }
 }
 

@@ -1749,6 +1749,7 @@ impl<'a> Game<'a> {
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());
+        table::homes_arrived(&mut self.state.borrow_mut());
         // The filters of the walkers that crossed region edges at their
         // commits (SPEC-0049). PROVISIONAL: after all the updates, at the
         // queue time `U` of the updates.

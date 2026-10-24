@@ -3867,6 +3867,12 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             }
             continue;
         }
+        // An idle unit that a call of this chain already took has no check
+        // of its own (SPEC-0030; c-SAK-1: kobold 10, taken by gnoll 12's
+        // relay at 4767, made no relay).
+        if acquired.contains(&h) {
+            continue;
+        }
         // With no enemy in range, the attacker of the last call for help
         // that reached the unit, within 2000 (c-RXR-1: troll 16 took
         // rifleman 9 at 718 in 6420). PROVISIONAL: a further test (likely
@@ -4002,7 +4008,7 @@ pub(super) fn attacking(state: &State, h: u32) -> bool {
     state
         .unit(Some(h))
         .and_then(|u| u.movement)
-        .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+        .is_some_and(|m| m.ordered() && matches!(m.order, Order::Attack { .. }))
 }
 
 /// Unit `h` attacks `better` instead of its target at once: no reaction
@@ -5108,7 +5114,22 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 && let Some(u) = state.unit(Some(h))
             {
                 let guard = u.creep.guard.unwrap_or(u.home);
-                order(state, h, Order::Point, 0, guard);
+                // Already there (within 50 and its collision) it stays idle
+                // (c-SAK-1: kobold 10 at footman 7's death in 4765, taken
+                // by gnoll 12's relay at 4767).
+                let accept = GUARD_ACCEPT
+                    + state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .map_or(0.0, |t| real_of(t.collision));
+                let (dx, dy) = (
+                    real_of(u.x) - real_of(guard[0]),
+                    real_of(u.y) - real_of(guard[1]),
+                );
+                if dx * dx + dy * dy > accept * accept + 1e-3 {
+                    order(state, h, Order::Point, 0, guard);
+                }
             }
         }
     }

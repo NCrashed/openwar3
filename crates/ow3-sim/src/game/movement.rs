@@ -4445,6 +4445,16 @@ pub(super) fn retaliate(
             .collect();
         responders.extend(call_order(state, near));
     }
+    // The group relays a hit only when its victim is engaged: it has a
+    // target or takes the attacker (c-SAK-1: gnoll 16, walking home, made
+    // no relay at its zero hit of 3620; kobold 10 did at 1745).
+    let engaged = answers(victim)
+        || switches(victim)
+        || state.unit(Some(victim)).is_some_and(|v| {
+            v.attack.is_some()
+                || v.movement
+                    .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+        });
     if !answers(victim) && !switches(victim) {
         responders.remove(0);
     }
@@ -4455,7 +4465,7 @@ pub(super) fn retaliate(
     // The calls of the victim's group answer as its own does, member by
     // member (SPEC-0030; c-SAK-1: creeps 14, 16 and 18 took footman 2 at
     // his hit on kobold 8 in 1025).
-    {
+    if engaged {
         for m in relay_callers(state, victim, now) {
             let Some(mu) = state.unit(Some(m)) else {
                 continue;
@@ -4503,7 +4513,7 @@ pub(super) fn retaliate(
     }
     // The other members of the victim's group try their own calls, whether
     // the victim's call was made or not (SPEC-0030, "Groups").
-    let relayed = relay(state, victim, attacker, now, &mut reached);
+    let relayed = engaged && relay(state, victim, attacker, now, &mut reached);
     let calls = calls || relayed;
     if calls {
         for &h in &reached {

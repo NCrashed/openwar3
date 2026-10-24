@@ -4814,8 +4814,14 @@ pub(super) fn retaliate(
             // A walker stands from the next tick, and its delay counts from
             // there (c-RZJ-1: footman 6, delay 0.0226 at 788, walked at
             // 799).
-            let from = if walker { tick + 1 } else { tick };
-            react(state, h, from, delay, from);
+            // Others wait on the timer queue from the call (c-SAK-1: ogre 18,
+            // taking the Mountain King at 34.917, stood at its update of 7028
+            // and its delay ended after it, at 35.129936).
+            if walker {
+                react(state, h, tick + 1, delay, tick + 1);
+            } else {
+                react_until(state, h, add(now.to_bits(), delay));
+            }
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h, state.move_clock);
         }

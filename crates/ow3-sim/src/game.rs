@@ -253,6 +253,10 @@ pub struct Unit {
     wind_walk: Option<cast::WindWalk>,
     /// Set for an illusion (SPEC-0040, Mirror Image).
     illusion: Option<cast::Illusion>,
+    /// Who stunned it last, and the tick of the zero hit that follows the
+    /// stun's end (SPEC-0037).
+    stunner: Option<u32>,
+    zero_hit: Option<u64>,
     /// The earliest tick of its next hit, a cooldown after the last one.
     weapon_ready: u64,
     /// When the cooldown of its last swing expires, on the queue: a new
@@ -1566,6 +1570,8 @@ impl<'a> Game<'a> {
         // Reaction delays that end after the first check.
         movement::after_checks(&mut self.state.borrow_mut());
         widgets::acquired(&mut self.vm, &self.state, &acquired);
+        // The zero hits after stuns, after the checks (SPEC-0037).
+        attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);
         // Casts of abilities (SPEC-0035).
         cast::tick(&mut self.vm, &self.state);

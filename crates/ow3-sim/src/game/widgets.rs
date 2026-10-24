@@ -383,6 +383,8 @@ pub(super) fn create_unit(
         invulnerable_until: None,
         wind_walk: None,
         illusion: None,
+        stunner: None,
+        zero_hit: None,
         weapon_ready: 0,
         cooldown_end: 0,
         cooldown_target: 0,

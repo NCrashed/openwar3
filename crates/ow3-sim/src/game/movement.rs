@@ -3536,6 +3536,23 @@ fn stun_ends(state: &mut State) {
         };
         // The order comes back at the stun's own time (SPEC-0037).
         let now = u.stun_back.unwrap_or(now);
+        // A zero hit from the stunner follows 0.01 s after the order came
+        // back, after the unit's check of that time (c-SAK-1: kobold 10 at
+        // 1745).
+        if u.stunner.is_some() {
+            let hit = add(now, AFTER_DEATH);
+            let (mut t, mut clock) = (tick, state.move_clock);
+            while real_of(hit) > real_of(add(clock, crate::timers::TICK)) {
+                clock = add(clock, crate::timers::TICK);
+                t += 1;
+            }
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.zero_hit = Some(t);
+            }
+        }
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
         if let Some(a) = u.attack_move {
             point_order_taken(state, h, "attack", a.point, true);
             // Its first check 0.01 s after the order came back.

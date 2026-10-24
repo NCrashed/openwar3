@@ -504,7 +504,7 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
 /// longer if it already is (SPEC-0037): it stops at once. The stun ends
 /// on a timer of the queue, and its order comes back on a timer of 0.01 s
 /// from that expiry, in the tick whose end that time does not pass.
-pub(super) fn stun(state: &mut State, h: u32, duration: u32, at: u32) {
+pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u32) {
     let back = add(add(at, duration), STUN_BACK);
     let (mut tick, mut clock) = (state.ticks, state.move_clock);
     while f32::from_bits(back) > f32::from_bits(add(clock, crate::timers::TICK)) {
@@ -516,6 +516,7 @@ pub(super) fn stun(state: &mut State, h: u32, duration: u32, at: u32) {
     {
         u.stunned_until = Some(tick);
         u.stun_back = Some(back);
+        u.stunner = Some(source);
     }
     movement::stand_still(state, h);
     // Its order goes on after the stun with a new path (c-RXD-1: worker 5
@@ -1199,11 +1200,11 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
             f32::from_bits(sub(place[0], launch[0])),
             f32::from_bits(sub(place[1], launch[1])),
         );
-        // Its missile moves speed x 0.005 a tick, its first step in this
-        // tick, and arrives at the start of the tick it reaches the place.
+        // Its missile moves speed x 0.005 a tick and arrives in the tick
+        // it reaches the place, counted from this one.
         let step = f32::from_bits(m.missile_speed).max(1.0) * f32::from_bits(crate::timers::TICK);
         let steps = ((dx * dx + dy * dy).sqrt() / step).ceil().max(1.0) as u64;
-        m.made.push((e, tick + steps - 1));
+        m.made.push((e, tick + steps));
     }
 }
 

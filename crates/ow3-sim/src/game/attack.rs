@@ -340,7 +340,13 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
                     let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
                     let at = s.event_time.unwrap_or_else(|| s.timers.time());
-                    super::cast::stun(&mut s, target, if hero { hero_stun } else { unit_stun }, at);
+                    super::cast::stun(
+                        &mut s,
+                        target,
+                        h,
+                        if hero { hero_stun } else { unit_stun },
+                        at,
+                    );
                 }
             }
             strike(vm, state, h, target, amount, attack_type, area, None);
@@ -978,7 +984,10 @@ pub(super) fn launch_spell(
     }
     let n = (f32::from_bits(div(d, per_tick))).ceil().max(1.0) as u64;
     // The impact tick's own clock: due at the end of the tick before.
-    let expiry = (0..n).fold(state.move_clock, |c, _| add(c, crate::timers::TICK));
+    // Launched at the effect's queue time, the end of this tick (c-SAK-1:
+    // the bolt of 608 left at 3.039998 and hit at 3.699956, 132 ticks on).
+    let start = add(state.move_clock, crate::timers::TICK);
+    let expiry = (0..n).fold(start, |c, _| add(c, crate::timers::TICK));
     Some(Missile {
         attacker: h,
         target,
@@ -1015,7 +1024,7 @@ pub(super) fn spell_hit(
         // The impact comes at the end of the tick, and the stun counts from
         // there (c-RZH-1: bolt 943, order back at 1946).
         let at = s.event_time.unwrap_or_else(|| s.timers.time());
-        super::cast::stun(&mut s, target, if hero { stun.1 } else { stun.0 }, at);
+        super::cast::stun(&mut s, target, h, if hero { stun.1 } else { stun.0 }, at);
     }
 }
 
@@ -1065,4 +1074,32 @@ fn evades(state: &mut State, target: u32) -> bool {
     };
     let x = state.game_random[ATTACK_DICE].fraction();
     f32::from_bits(x) < f32::from_bits(chance)
+}
+
+/// The zero hits of this tick after stuns (SPEC-0037): the stunner deals 0
+/// damage to the unit, a hit as any other, after the unit's check of that
+/// time (c-SAK-1: the Mountain King on kobold 10 at 1745).
+pub(super) fn zero_hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let due: Vec<(u32, u32)> = {
+        let mut s = state.borrow_mut();
+        let tick = s.ticks;
+        let units = s.units.clone();
+        units
+            .into_iter()
+            .filter_map(|h| match s.objects.get_mut(&h) {
+                Some(Object::Unit(u)) if u.alive && u.zero_hit == Some(tick) => {
+                    u.zero_hit = None;
+                    u.stunner.map(|source| (source, h))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    for (source, target) in due {
+        super::widgets::damage_widget(vm, state, Some(source), Some(target), 0, 0, 0);
+        let mut s = state.borrow_mut();
+        if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+            super::movement::retaliate(&mut s, target, source, None);
+        }
+    }
 }

@@ -63,6 +63,23 @@ Example (custom map, `SetRandomSeed(777)`, target with medium armor 10,
   swing at that time with its hit timer at 4.9399971 (the damage in the
   tick whose queue interval holds it). The cooldown is kept when the
   target changes (SPEC-0019, "A new target and the old cooldown").
+- A swing arms its cooldown only if `cool1` is longer than what is left
+  of the running cooldown.
+- When the attack ends (the target dies, a new order, or any other
+  end), the swing's hit timer decides what happens to the cooldown:
+  - hit timer still running (its expiry later than the queue time of
+    the end): the cooldown is cancelled with the hit timer, the swing
+    deals nothing and the unit may swing again at once;
+  - hit timer expired, or expiring at exactly that queue time, or no
+    swing running: the cooldown runs on to its expiry, and a hit timer
+    that has not fired yet is dropped (no damage).
+  `c-SAK-1`: footman 4 swung at kobold 8 at 15.479987 (hit timer
+  15.979987); the kobold died at 15.919988, so his cooldown was
+  cancelled and his next swing came well before 16.829987 (damage tick
+  3353). Footmen 4 and 6 had their hit timers on ogre 13 at the same
+  time 30.259863; footman 4's hit killed it first, footman 6 dealt
+  nothing and his cooldown ran on to 31.109863, where his next swing
+  started (damage tick 6323).
 - When the first hit comes is SPEC-0019: after the random reaction
   delay (one output of game generator 9) the attack begins at an update
   once the attacker is in range and turned towards the target, and the

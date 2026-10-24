@@ -1223,3 +1223,30 @@ pub(super) fn agility_changed(state: &mut State, h: u32, old: i32, now: u32) {
         u.weapon_ready = moved(u.weapon_ready, shift(end, new_end));
     }
 }
+
+/// The attack of `h` ends at the queue time `now` with the damage point of
+/// its swing reached but not dealt (its target died at that time): the
+/// damage point is dropped and the cooldown counts on from the swing's
+/// start. A damage point still ahead is cancelled with the cooldown, as
+/// before (SPEC-0016, "Timing"; c-SAK-1: footman 6, whose damage point on
+/// ogre 13 came at footman 4's fatal hit in 6053, swung next at 6223).
+pub(super) fn swing_cut(state: &mut State, h: u32, now: u32) {
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let Some(a) = u.attack else {
+        return;
+    };
+    let reached = |t: u32| f32::from_bits(t) <= f32::from_bits(now);
+    if !reached(a.swing_q) || !a.hit_at.is_some_and(reached) {
+        return;
+    }
+    let Some(weapon) = weapon_for(state, u.type_id, Some(a.target)) else {
+        return;
+    };
+    let cooldown = slowed(state, h, hero_cooldown(state, h, weapon.cooldown));
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.cooldown_end = add(a.swing_q, cooldown);
+        u.weapon_ready = a.next + ticks(cooldown);
+    }
+}

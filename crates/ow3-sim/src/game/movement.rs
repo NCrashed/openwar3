@@ -5061,6 +5061,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
     attackers.sort_unstable();
     let mut to_guard = Vec::new();
     for (_, h, own) in attackers {
+        super::attack::swing_cut(state, h, now);
         // A creep that took a target on its way home goes on to the next
         // entry of its queue: a move to where the target stood, without
         // checks, its return timer started again; already there (within

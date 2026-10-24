@@ -109,6 +109,8 @@ pub struct Follow {
     /// The unit arrived at W: at its next update W moves on and it
     /// searches its own list to the new W.
     advance: bool,
+    /// A chase whose path ended: it arrives at its next update.
+    end_blocked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -633,6 +635,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             stop_at: plan.2,
             advance: false,
             new_group: held.is_some(),
+            end_blocked: false,
         };
         follow.take_segment(order_cells);
         follow
@@ -826,6 +829,7 @@ fn decide(
             return Steer::Stand(segment_goal);
         }
         follow.new_group = false;
+        follow.end_blocked = false;
         let found = match walker.chase {
             // A chase searches to its goal and ends where it touches its
             // target (SPEC-0019).
@@ -1049,6 +1053,20 @@ fn decide(
                     at: walker.here,
                 });
                 return Steer::Stand(walker.order);
+            }
+            // A chase at the end of its path: the member step reports it
+            // blocked and it stands; the group arrives at its next update
+            // (c-SAK-1: footman 2 blocked at 919, swinging at 925).
+            if walker.chase.is_some() && !follow.end_blocked {
+                follow.end_blocked = true;
+                shared.events.push(PathEvent {
+                    tick,
+                    kind: PathEventKind::Blocked,
+                    a: walker.handle,
+                    b: None,
+                    at: walker.here,
+                });
+                return Steer::Stand(segment_goal);
             }
             // A walk to a building stands at the end of its path, where it
             // touched the building, before it goes in (SPEC-0029).

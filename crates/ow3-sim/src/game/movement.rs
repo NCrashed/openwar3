@@ -3633,6 +3633,11 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
             starts += 1;
             u.acquire_seq = starts;
         }
+        // Nor one stunned (c-SAK-1: kobold 10, stunned from 740, made no
+        // switch at its check of 978).
+        if u.stunned_until.is_some_and(|t| tick < t) {
+            continue;
+        }
         // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster
         // took no target in his first Wind Walk, 400 to 4400).
         if u.wind_walk.is_some_and(|w| w.invisible(tick)) {
@@ -4530,6 +4535,7 @@ pub(super) fn retaliate(
     for h in responders {
         if switching.contains(&h) {
             switch_target(state, h, attacker);
+            state.call_acquired.push(h);
             continue;
         }
         // A unit walking an attack-move stops and takes the attacker as at
@@ -4552,6 +4558,7 @@ pub(super) fn retaliate(
         }
         let id = if walker { ORDER_ATTACK } else { 0 };
         if order(state, h, Order::Attack { target: attacker }, id, at) {
+            state.call_acquired.push(h);
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,

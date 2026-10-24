@@ -178,6 +178,9 @@ fn camp(state: &State, caller: u32) -> Vec<u32> {
                     && u.owner == CREEPS
                     && !u.creep.sleeping
                     && u.attack.is_none()
+                    // Nor one stunned (c-SAK-1: kobold 10, stunned by the
+                    // bolt of 740, took no target at 978).
+                    && u.stunned_until.is_none_or(|t| state.ticks >= t)
                     // Creeps on their way home come too, also while their
                     // move order home lasts in a chase (c-RXD-1: creeps 6
                     // and 7 answered creep 8 at 6667).

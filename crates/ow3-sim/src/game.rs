@@ -819,6 +819,9 @@ pub struct State {
     quiet_paths: std::collections::BTreeSet<u32>,
     /// Mirror Images under way (SPEC-0040).
     mirrors: Vec<cast::Mirror>,
+    /// Units that took a target at a call in this tick, for their
+    /// `EVENT_UNIT_ACQUIRED_TARGET` (SPEC-0019).
+    call_acquired: Vec<u32>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -982,6 +985,7 @@ impl State {
             path_holds: std::collections::BTreeMap::new(),
             quiet_paths: std::collections::BTreeSet::new(),
             mirrors: Vec::new(),
+            call_acquired: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1573,6 +1577,10 @@ impl<'a> Game<'a> {
         // The zero hits after stuns, after the checks (SPEC-0037).
         attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);
+        // The units that took a target at a call fire their events too
+        // (c-SAK-1: creeps 15, 17, 18 and 19 at 1127, switching).
+        let called = std::mem::take(&mut self.state.borrow_mut().call_acquired);
+        widgets::acquired(&mut self.vm, &self.state, &called);
         // Casts of abilities (SPEC-0035).
         cast::tick(&mut self.vm, &self.state);
         widgets::summons(&mut self.vm, &self.state);

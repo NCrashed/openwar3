@@ -249,6 +249,9 @@ pub struct UnitEntries {
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
     pub game_objects: Vec<u32>,
+    /// Watches on its mana, one per ability with a cost: the cost, the
+    /// entry, and whether the mana is at or above it.
+    pub mana_watches: Vec<(i32, u32, bool)>,
     /// The objects of an order it gave up in this tick, freed at its end.
     pub old_order: Vec<u32>,
     /// The object of its own attack's current target.
@@ -877,6 +880,37 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
     acquired(state, h);
 }
 
+/// Unit `h`'s mana crossed the cost of an ability it learned: the watch
+/// on it is made anew (for the other direction) and the old one freed
+/// 0.0001 s later (c-SAK-1: the Mountain King's third Storm Bolt at 4480
+/// took him below 75).
+///
+/// PROVISIONAL: the watch's limit taken to be the cost; the crossing back
+/// up is checked at the end of each tick.
+pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
+    let tick = state.table.now;
+    let Some(mana) = state
+        .unit(Some(h))
+        .map(|u| f32::from_bits(u.mana.value()) - spent as f32)
+    else {
+        return;
+    };
+    let watches = entries(state, h)
+        .map(|e| e.mana_watches.clone())
+        .unwrap_or_default();
+    for (k, (cost, entry, above)) in watches.into_iter().enumerate() {
+        let now = mana >= cost as f32;
+        if now == above {
+            continue;
+        }
+        let new = state.table.take(tick, "unit state: limit watch");
+        state.table.defer(entry, "unit state: limit watch");
+        if let Some(e) = entries(state, h) {
+            e.mana_watches[k] = (cost, new, now);
+        }
+    }
+}
+
 /// `EVENT_UNIT_SPELL_EFFECT` of common.j.
 const EVENT_UNIT_SPELL_EFFECT: i32 = 291;
 
@@ -916,8 +950,10 @@ fn spell_effect_event(state: &mut super::State, h: u32) {
 /// of its hit; gives them in the order they are freed then.
 ///
 /// PROVISIONAL: read for Storm Bolt in c-SAK-1 only.
-pub(super) fn bolt_effect(state: &mut super::State, h: u32) -> Vec<u32> {
+pub(super) fn bolt_effect(state: &mut super::State, h: u32, cost: i32) -> Vec<u32> {
     spell_effect_event(state, h);
+    // Its cost, spent now, may cross a watch (c-SAK-1: 4480).
+    mana_watches(state, h, cost);
     let tick = state.table.now;
     let m = state.table.take_n(tick, 5, "missile");
     vec![m[4], m[2], m[3], m[1], m[0]]

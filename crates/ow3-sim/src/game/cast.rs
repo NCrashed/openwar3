@@ -1029,7 +1029,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     .map_or(0, |a| a.missile_speed);
                 let stun = (seconds(false), seconds(true));
                 // Its effect event and missile objects (SPEC-0024).
-                let objects = super::table::bolt_effect(s, h);
+                let objects = super::table::bolt_effect(s, h, n.cost);
                 match super::attack::launch_spell(s, h, target, n.data[0], stun, speed) {
                     Some(mut missile) => {
                         missile.objects = objects;

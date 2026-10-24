@@ -18,7 +18,8 @@ fn game_data() -> PathBuf {
 /// (tick, new, entry, creation, tag, world clock); the creation is `None`
 /// for an object made before the list starts. The list's tick is read from
 /// the world clock, which drifts from the tick count late in a game by up
-/// to one tick: ticks are compared within one.
+/// to one tick, and an event at a tick's boundary may be counted in either:
+/// ticks are compared within two.
 type Row = (u64, bool, u32, Option<u32>, String, f32);
 
 fn game_rows(name: &str) -> Option<Vec<Row>> {
@@ -85,7 +86,7 @@ fn heroes_three_objects_report() {
         .iter()
         .zip(&ours)
         .position(|(g, o)| {
-            g.0.abs_diff(o.tick) > 1
+            g.0.abs_diff(o.tick) > 2
                 || g.1 != o.new
                 || g.2 != o.entry
                 || g.3

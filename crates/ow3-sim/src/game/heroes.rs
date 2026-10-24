@@ -271,9 +271,21 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     // with a cooldown, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
     // and AOcr 1). PROVISIONAL: read for learning the first level only.
     let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
-    state
+    let objects = state
         .table
         .take_n(state.table.now, if cooled { 2 } else { 1 }, "hero skill");
+    // The second is a watch on the mana at the ability's cost (c-SAK-1).
+    if cooled {
+        let cost = data.per_level.first().map_or(0, |l| l.cost);
+        let mana = state
+            .unit(Some(h))
+            .map_or(0.0, |u| f32::from_bits(u.mana.value()));
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries
+                .mana_watches
+                .push((cost, objects[1], mana >= cost as f32));
+        }
+    }
 }
 pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<State>>) {
     native!(

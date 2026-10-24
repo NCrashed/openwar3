@@ -1207,6 +1207,20 @@ impl State {
     /// its queue interval holds.
     fn objects_due(&mut self) {
         let tick = self.ticks;
+        // Mana crossing the costs of learned abilities (PROVISIONAL: checked
+        // at the end of the tick).
+        let heroes: Vec<u32> = self
+            .units
+            .iter()
+            .copied()
+            .filter(|&h| {
+                self.unit(Some(h))
+                    .is_some_and(|u| u.alive && !u.entries.mana_watches.is_empty())
+            })
+            .collect();
+        for h in heroes {
+            table::mana_watches(self, h, 0);
+        }
         for h in std::mem::take(&mut self.table.ends_late) {
             table::old_order_ended(self, h);
         }

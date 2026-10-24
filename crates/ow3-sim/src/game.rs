@@ -1719,10 +1719,32 @@ impl<'a> Game<'a> {
         if first.is_some() {
             attack::hits_before(&mut self.vm, &self.state, first);
         }
-        let acquired = movement::acquisitions(&mut self.state.borrow_mut());
-        // Reaction delays that end after the first check.
-        movement::after_checks(&mut self.state.borrow_mut());
-        widgets::acquired(&mut self.vm, &self.state, &acquired);
+        // The checks and the hits are timers of the queue: in the order of
+        // their expiries (c-SAK-1: the hit at 7.009974 before the Mountain
+        // King's check at 7.010000 in 1403).
+        let mut first_batch = true;
+        loop {
+            let hit = attack::next_hit(&self.state.borrow());
+            let acquired = movement::acquisitions(&mut self.state.borrow_mut(), hit, first_batch);
+            if first_batch {
+                // Reaction delays that end after the first check.
+                movement::after_checks(&mut self.state.borrow_mut());
+                first_batch = false;
+            }
+            widgets::acquired(&mut self.vm, &self.state, &acquired);
+            if hit.is_none() {
+                break;
+            }
+            // The hits due with the earliest one.
+            attack::hits_before(&mut self.vm, &self.state, hit.map(|e| e + 1));
+            // No hit came before the next check (a hit due with it, or a
+            // stunned attacker's): the rest come after the checks.
+            if attack::next_hit(&self.state.borrow()) == hit {
+                let rest = movement::acquisitions(&mut self.state.borrow_mut(), None, false);
+                widgets::acquired(&mut self.vm, &self.state, &rest);
+                break;
+            }
+        }
         // The zero hits after stuns, after the checks (SPEC-0037).
         attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);

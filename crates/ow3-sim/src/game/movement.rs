@@ -2299,6 +2299,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let Some(mut m) = u.movement else {
             continue;
         };
+        // The stored heading at the start of the update (SPEC-0024 below).
+        let start_heading = m.heading;
         let class = crate::path::size_class(data.map_or(0, |t| t.collision));
         if !alive {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -2614,7 +2616,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.renew_at = None;
                                 after_swing = true;
                                 follow::new_group(state, h);
-                                super::table::walk_made_at_order(state, h);
+                                // A new walk, unless the goal's movement already ended
+                                // (c-SAK-1: kobold 8, faced at 1087, none at 1159).
+                                if state
+                                    .unit(Some(h))
+                                    .is_some_and(|u| !u.entries.walk.is_empty())
+                                {
+                                    super::table::walk_made_at_order(state, h);
+                                }
                                 m.target = at;
                                 // A goal of a timer: the countdown starts at
                                 // the search, the next update, which does not
@@ -3161,10 +3170,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.facing_step = step;
         }
         let facing_done = u.facing == heading;
-        // A goal taken in reach after a swing ends when the unit faces its
-        // target, and its walk is given up (SPEC-0024; c-SAK-1: kobold 8
-        // at 1087, gnoll 11 at 1093, kobold 9 at 1123, gnoll 12 at 1129).
-        if facing_done && u.entries.quiet_walk {
+        // A goal taken in reach after a swing ends at the first update that
+        // starts with the stored heading on the goal direction, and its walk
+        // is given up (SPEC-0024; c-SAK-1: kobold 8 at 1087, gnoll 11 at
+        // 1093, kobold 9 at 1123, gnoll 12 at 1129).
+        if m.heading == start_heading && u.entries.quiet_walk {
             u.entries.quiet_walk = false;
             super::table::walk_dropped(state, h);
         }
@@ -3834,9 +3844,14 @@ fn stun_ends(state: &mut State) {
     }
 }
 
-pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
-    stun_ends(state);
-    acquisitions_before(state, None)
+/// The checks of this tick after the updates whose expiries lie below
+/// `bound` (all of them without one), the ends of stuns first in the first
+/// batch.
+pub(super) fn acquisitions(state: &mut State, bound: Option<u32>, first: bool) -> Vec<u32> {
+    if first {
+        stun_ends(state);
+    }
+    checks(state, bound, false)
 }
 
 /// The checks of this tick whose expiries lie below `bound` (all of them
@@ -3844,6 +3859,10 @@ pub(super) fn acquisitions(state: &mut State) -> Vec<u32> {
 /// c-SAK-1: the Mountain King's check at 31.168348 took kobold 15 before
 /// the update at 31.169281 in 6235, standing for his reaction delay).
 pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<u32> {
+    checks(state, bound, true)
+}
+
+fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     let tick = state.ticks;
     // Below `bound`, as the bits of a positive float grow with it.
     let next_clock = bound.map_or(add(state.move_clock, crate::timers::TICK), |b| b - 1);
@@ -3869,7 +3888,7 @@ pub(super) fn acquisitions_before(state: &mut State, bound: Option<u32>) -> Vec<
             continue;
         }
         // One whose stun ends now checks after the stun's end.
-        if bound.is_some() && u.stunned_until == Some(tick) {
+        if early && bound.is_some() && u.stunned_until == Some(tick) {
             continue;
         }
         // The unit's own timer runs whatever it does: the check runs in the

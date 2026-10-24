@@ -1342,3 +1342,19 @@ pub(super) fn swing_cut(state: &mut State, h: u32, now: u32) {
         u.weapon_ready = a.next + ticks(cooldown);
     }
 }
+
+/// The earliest expiry of the hits due in this tick, if any.
+pub(super) fn next_hit(state: &State) -> Option<u32> {
+    state
+        .attacking
+        .iter()
+        .filter_map(|&h| {
+            state
+                .unit(Some(h))
+                .filter(|u| u.alive)
+                .and_then(|u| u.attack)
+        })
+        .filter(|a| due(state, a))
+        .filter_map(|a| a.hit_at)
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
+}

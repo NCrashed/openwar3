@@ -245,6 +245,13 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     if aim != Aim::Nothing || !ready(state, h, ability, level) {
         return Some(false);
     }
+    // The objects of a cast ordered without a target come before the end
+    // of a Wind Walk (c-SAK-1: the Blademaster's Mirror Image at 7101).
+    // PROVISIONAL: read for Mirror Image only.
+    let code = base_code(state, ability);
+    if code != i32::from_be_bytes(*b"AHds") && code != i32::from_be_bytes(*b"AOwk") {
+        super::table::immediate_ordered(state, h);
+    }
     end_wind_walk(state, h, ability);
     // Divine Shield takes effect in the tick of the order, with no cast
     // time, and the caster is left with no order (SPEC-0045; c-RZJ-1:

@@ -734,6 +734,30 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
     }
 }
 
+/// Unit `h` takes a script's order of a spell without a target (c-SAK-1:
+/// the Mirror Image at 7101): the order and its record, the old order
+/// ends, then 9 objects of the ability. The record and the ability's last
+/// 5 are freed 0.0001 s later (from the last), its first 4 and the order
+/// when the order ends.
+///
+/// PROVISIONAL: when the kept ones go is not read.
+pub(super) fn immediate_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script immediate order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 9, "spell ability: order start");
+    for &e in ability[4..].iter().rev() {
+        state.table.defer(e, "spell ability: order start");
+    }
+    let mut kept: Vec<u32> = ability[..4].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+}
+
 /// Unit `h` is ordered the spell it is casting again before its effect:
 /// the order is taken and kept.
 ///

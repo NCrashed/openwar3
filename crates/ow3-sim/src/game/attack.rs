@@ -669,6 +669,45 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if !m.artillery && !standing(s, m.target) {
                 continue;
             }
+            // A spell's bolt: it lands at its straight flight's end; at a
+            // step's end it measures again to where the target is now, and a
+            // target that moved less than a step away is hit at once.
+            if m.spell.is_some()
+                && let Some((step, next)) = m.homing
+            {
+                if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                    arrived.push(m);
+                    continue;
+                }
+                if next == tick {
+                    let Some(to) = super::movement::position_of(s, m.target) else {
+                        continue;
+                    };
+                    if to != m.point {
+                        let left = distance(m.at, to);
+                        if f32::from_bits(left) < f32::from_bits(step) {
+                            arrived.push(m);
+                            continue;
+                        }
+                        let speed = div(step, HOMING_STEP);
+                        m.expiry = add(next_clock, div(left, speed));
+                        m.point = to;
+                    }
+                    let aimed = distance(m.at, m.point);
+                    let k = if f32::from_bits(aimed) > f32::from_bits(step) {
+                        div(step, aimed)
+                    } else {
+                        0x3F80_0000
+                    };
+                    m.at = [
+                        add(m.at[0], mul(sub(m.point[0], m.at[0]), k)),
+                        add(m.at[1], mul(sub(m.point[1], m.at[1]), k)),
+                    ];
+                    m.homing = Some((step, next + HOMING_TICKS));
+                }
+                flying.push(m);
+                continue;
+            }
             match m.homing {
                 None => {
                     if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
@@ -988,14 +1027,30 @@ pub(super) fn launch_spell(
     // the bolt of 608 left at 3.039998 and hit at 3.699956, 132 ticks on).
     let start = add(state.move_clock, crate::timers::TICK);
     let expiry = (0..n).fold(start, |c, _| add(c, crate::timers::TICK));
+    // It homes (SPEC-0016): its logical point a 0.1 s step on towards the
+    // target, measured again at each step's end (c-SAK-1: the bolt of 2595).
+    let step = mul(speed, HOMING_STEP);
+    let flight = distance(from, to);
+    let (at, homing) = if f32::from_bits(flight) > f32::from_bits(step) {
+        let k = div(step, flight);
+        (
+            [
+                add(from[0], mul(sub(to[0], from[0]), k)),
+                add(from[1], mul(sub(to[1], from[1]), k)),
+            ],
+            Some((step, state.ticks + HOMING_TICKS)),
+        )
+    } else {
+        (from, None)
+    };
     Some(Missile {
         attacker: h,
         target,
-        at: from,
+        at,
         point: to,
         launched: state.move_clock,
         expiry,
-        homing: None,
+        homing,
         artillery: false,
         amount,
         attack_type: 0,

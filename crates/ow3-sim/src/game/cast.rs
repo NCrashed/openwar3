@@ -155,6 +155,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         .and_then(|u| u.casting)
         .is_some_and(|c| c.ability == ability && c.effect_at.is_none_or(|e| e > state.ticks))
     {
+        super::table::spell_ordered_again(state);
         return Some(true);
     }
     let owner = state.unit(Some(h))?.owner;
@@ -204,6 +205,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
     if in_range && movement::turned_to(state, h, there) {
         movement::stop(state, h);
         set(state);
+        super::table::spell_ordered(state, h, false);
         start(state, h, tick);
     } else if in_range {
         // A walker stops where it is (c-RZJ-1: the Paladin's Holy Light
@@ -215,6 +217,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
             return Some(false);
         }
         set(state);
+        super::table::spell_ordered(state, h, false);
     } else {
         // Out of range a walker also stops at the order and walks on from
         // its next update (c-SAK-1: the Mountain King's Storm Bolt at 500,
@@ -222,6 +225,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         movement::freeze_now(state, h);
         if movement::cast_order(state, h, target, order_id) {
             set(state);
+            super::table::spell_ordered(state, h, true);
         } else {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.casting = None;
@@ -467,6 +471,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
 
 /// The cast of `h` starts in tick `tick`: the effect `castpt` later.
 pub(super) fn start(state: &mut State, h: u32, tick: u64) {
+    super::table::cast_started(state, h);
     let Some(u) = state.unit(Some(h)) else {
         return;
     };
@@ -526,7 +531,7 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
     movement::stand_still(state, h, impact.then_some(at));
     // Its order goes on after the stun with a new path (c-RXD-1: worker 5
     // stunned in 4337, new path at its update of 4741).
-    state.paths.remove(&h);
+    state.drop_path(h);
 }
 
 /// A shockwave under way (SPEC-0047): from `origin` along `direction`,
@@ -723,7 +728,10 @@ fn end_wind_walk(state: &mut State, h: u32, ability: i32) {
         && w.on(tick)
     {
         w.until = tick;
+    } else {
+        return;
     }
+    super::table::wind_walk_ended(state, h);
 }
 
 pub(super) fn invulnerable(state: &State, h: u32) -> bool {
@@ -790,6 +798,21 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let mut s = state.borrow_mut();
         let s = &mut *s;
         let tick = s.ticks;
+        // The Wind Walks whose last tick this is end after its script
+        // timers (SPEC-0040), freeing their objects (SPEC-0024).
+        let ending: Vec<u32> = s
+            .units
+            .iter()
+            .copied()
+            .filter(|&h| {
+                s.unit(Some(h))
+                    .and_then(|u| u.wind_walk)
+                    .is_some_and(|w| w.until == tick + 1)
+            })
+            .collect();
+        for h in ending {
+            super::table::wind_walk_ended(s, h);
+        }
         let casting: Vec<(u32, Casting)> = s
             .units
             .iter()
@@ -939,6 +962,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     bonus: n.data[1],
                 });
             }
+            super::table::wind_walk_cast(s, h);
             movement::target_died(s, h);
         }
         b"AHds" => {
@@ -1285,6 +1309,7 @@ pub(super) fn fades(state: &mut State) {
         })
         .collect();
     for (h, clock) in faded {
+        super::table::wind_walk_faded(state, h);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.checks_off = true;
         }

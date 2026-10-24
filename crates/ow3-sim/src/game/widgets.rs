@@ -474,6 +474,7 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let owner_handle = state.player_handle(owner);
             (state.events.clone(), (owner, owner_handle))
         };
+        super::begin_event(state);
         for registration in &registrations {
             if let Registration::PlayerUnit {
                 trigger,
@@ -504,6 +505,8 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 }
             }
         }
+        super::end_event(state);
+        super::begin_event(state);
         for registration in &registrations {
             if let Registration::Unit {
                 trigger,
@@ -523,6 +526,7 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 fire_trigger(vm, state, trigger, context);
             }
         }
+        super::end_event(state);
     }
 }
 
@@ -718,6 +722,7 @@ pub(super) fn hero_levels(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             triggering_widget: Some(h),
             ..Context::default()
         };
+        super::begin_event(state);
         for registration in &registrations {
             if let Registration::Unit {
                 trigger,
@@ -733,6 +738,8 @@ pub(super) fn hero_levels(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 fire_trigger(vm, state, trigger, context);
             }
         }
+        super::end_event(state);
+        super::begin_event(state);
         for registration in &registrations {
             if let Registration::PlayerUnit {
                 trigger,
@@ -759,6 +766,7 @@ pub(super) fn hero_levels(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 }
             }
         }
+        super::end_event(state);
     }
 }
 
@@ -888,6 +896,7 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
     }
     let registrations = state.borrow().events.clone();
     for &h in units {
+        super::begin_event(state);
         for registration in &registrations {
             if let Registration::Unit {
                 trigger,
@@ -905,6 +914,7 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
                 fire_trigger(vm, state, trigger, context);
             }
         }
+        super::end_event(state);
     }
 }
 
@@ -966,6 +976,7 @@ fn damage_unit(
     let Some(target) = target else {
         return false;
     };
+    super::begin_event(state);
     for registration in &registrations {
         if let Registration::Unit {
             trigger,
@@ -985,6 +996,7 @@ fn damage_unit(
             fire_trigger(vm, state, trigger, context);
         }
     }
+    super::end_event(state);
     let life = state
         .borrow()
         .unit(Some(target))

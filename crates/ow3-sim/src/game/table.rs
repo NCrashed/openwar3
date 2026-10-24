@@ -135,8 +135,17 @@ pub struct UnitEntries {
     pub order: Vec<u32>,
     /// Its walk: the path and the cluster.
     pub walk: Vec<u32>,
-    /// Walks it gave up, freed at its next update.
-    pub stale: Vec<u32>,
+    /// The objects of walks it gave up and the tick it gave them up,
+    /// freed at its first update after that tick.
+    pub stale: Vec<(u64, u32)>,
+    /// Its walk was made at its order; the first search of the order
+    /// takes no new one.
+    pub walk_ready: bool,
+    /// The objects of its Wind Walk freed at the fade and at the end.
+    pub fade: Vec<u32>,
+    pub lasting: Vec<u32>,
+    /// The object of its order freed when its cast starts.
+    pub cast_start: Vec<u32>,
 }
 
 /// The objects a unit made by `CreateUnit` takes (SPEC-0024, the analyst's
@@ -293,30 +302,183 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.order = kept;
     }
-    walk_made(state, h);
+    walk_made_at_order(state, h);
 }
 
 /// Unit `h` gets a new walk (an event `cluster` of the path lists): a
 /// search helper freed at once, the cluster and the path. The walk it
-/// had is freed at its next update (`unit_updated`), the path first.
+/// had is given up (`walk_dropped`).
 pub(super) fn walk_made(state: &mut super::State, h: u32) {
+    walk_dropped(state, h);
     let tick = state.ticks;
     let helper = state.table.take(tick, "search: helper");
     let cluster = state.table.take(tick, "walk: cluster");
     let path = state.table.take(tick, "walk: path");
     state.table.free(tick, helper, "search: helper");
     if let Some(e) = entries(state, h) {
-        let old = std::mem::replace(&mut e.walk, vec![path, cluster]);
-        e.stale.extend(old);
+        e.walk = vec![path, cluster];
     }
 }
 
-/// Unit `h` updates: the walks it gave up are freed.
+/// Unit `h` made a walk at its order: its first search takes none.
+pub(super) fn walk_made_at_order(state: &mut super::State, h: u32) {
+    walk_made(state, h);
+    if let Some(e) = entries(state, h) {
+        e.walk_ready = true;
+    }
+}
+
+/// Unit `h` searches a new path: a new walk, unless its order made one.
+pub(super) fn path_searched(state: &mut super::State, h: u32) {
+    match entries(state, h) {
+        Some(e) if e.walk_ready => e.walk_ready = false,
+        Some(_) => walk_made(state, h),
+        None => {}
+    }
+}
+
+/// Unit `h`'s walk stops or is replaced: its path and cluster are freed
+/// at its first update after this tick (SPEC-0024, "Walks").
+pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    if let Some(e) = entries(state, h) {
+        let old = std::mem::take(&mut e.walk);
+        e.stale.extend(old.into_iter().map(|w| (tick, w)));
+        e.walk_ready = false;
+    }
+}
+
+/// Unit `h` updates: the walks it gave up in earlier ticks are freed.
 pub(super) fn unit_updated(state: &mut super::State, h: u32) {
     let tick = state.ticks;
-    let stale = entries(state, h).map(|e| std::mem::take(&mut e.stale));
-    for e in stale.unwrap_or_default() {
+    let due = entries(state, h).map(|e| {
+        let (due, kept) = std::mem::take(&mut e.stale)
+            .into_iter()
+            .partition::<Vec<_>, _>(|&(t, _)| t < tick);
+        e.stale = kept;
+        due
+    });
+    for (_, e) in due.unwrap_or_default() {
         state.table.free(tick, e, "walk");
+    }
+}
+
+/// Unit `h` takes a script's order of a spell on a target (c-SAK-1: the
+/// Storm Bolt at 2.5 s): the order and its record, the old order ends,
+/// then 12 objects of the ability, and a walk when it has to walk into
+/// range. The record and the ability's last 6 are freed 0.0001 s later
+/// (from the last), the ability's fifth when the cast starts, its first
+/// four and the order when the order ends.
+///
+/// PROVISIONAL: read for Storm Bolt only; when the ability's sixth goes
+/// is not read.
+pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
+    let tick = state.ticks;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 12, "spell ability: order start");
+    for &e in ability[6..].iter().rev() {
+        state.table.defer(e, "spell ability: order start");
+    }
+    let mut kept: Vec<u32> = ability[..4].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+        e.cast_start = vec![ability[4]];
+    }
+    if walks {
+        walk_made_at_order(state, h);
+    }
+}
+
+/// Unit `h` is ordered the spell it is casting again before its effect:
+/// the order is taken and kept.
+///
+/// PROVISIONAL: when it is freed is not read (not by 60 s in c-SAK-1).
+pub(super) fn spell_ordered_again(state: &mut super::State) {
+    let tick = state.ticks;
+    state.table.take(tick, "script target order");
+}
+
+/// Unit `h` starts a cast: the object of its order kept to then is freed.
+pub(super) fn cast_started(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let start = entries(state, h).map(|e| std::mem::take(&mut e.cast_start));
+    for e in start.unwrap_or_default() {
+        state.table.free(tick, e, "spell ability: order start");
+    }
+    // The walk into range ends.
+    walk_dropped(state, h);
+}
+
+/// `EVENT_UNIT_SPELL_EFFECT` of common.j.
+const EVENT_UNIT_SPELL_EFFECT: i32 = 291;
+
+/// The objects of a unit event with `registrations` registrations that
+/// fire (SPEC-0024, "Event objects"), for events whose triggers are not
+/// run yet: none without one, else the event's and one per registration,
+/// all freed 0.0001 s later (the registrations' first).
+fn event_without_triggers(state: &mut super::State, registrations: usize) {
+    if registrations == 0 {
+        return;
+    }
+    let tick = state.ticks;
+    let event = state.table.take(tick, "event");
+    for _ in 0..registrations {
+        let e = state.table.take(tick, "event object");
+        state.table.defer(e, "event object");
+    }
+    state.table.defer(event, "event");
+}
+
+/// Unit `h` casts Wind Walk at a script's immediate order (c-SAK-1, 2.0
+/// s): the order and its record, the old order ends, the spell effect
+/// event, then two objects kept to the end of the Wind Walk and a rate
+/// part and a limit watch of the unit's state kept to its fade; the order
+/// is freed 0.0001 s later, after the event.
+///
+/// PROVISIONAL: read in c-SAK-1 only; the triggers of the spell effect
+/// event are not run yet, only their objects are taken.
+pub(super) fn wind_walk_cast(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let order = state.table.take(tick, "script immediate order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let registrations = state
+        .events
+        .iter()
+        .filter(|r| {
+            matches!(**r, super::widgets::Registration::Unit { unit, event, .. }
+                if unit == h && event == EVENT_UNIT_SPELL_EFFECT)
+        })
+        .count();
+    event_without_triggers(state, registrations);
+    let lasting = state.table.take_n(tick, 2, "wind walk");
+    let fading = state.table.take_n(tick, 2, "wind walk: state parts");
+    state.table.defer(order, "script immediate order");
+    if let Some(e) = entries(state, h) {
+        e.fade = fading;
+        e.lasting = lasting.into_iter().rev().collect();
+    }
+}
+
+/// Unit `h`'s Wind Walk fades: its state parts are freed.
+pub(super) fn wind_walk_faded(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let fade = entries(state, h).map(|e| std::mem::take(&mut e.fade));
+    for e in fade.unwrap_or_default() {
+        state.table.free(tick, e, "wind walk: state parts");
+    }
+}
+
+/// Unit `h`'s Wind Walk ends: its objects are freed 0.0001 s later.
+pub(super) fn wind_walk_ended(state: &mut super::State, h: u32) {
+    let lasting = entries(state, h).map(|e| std::mem::take(&mut e.lasting));
+    for e in lasting.unwrap_or_default() {
+        state.table.defer(e, "wind walk");
     }
 }
 

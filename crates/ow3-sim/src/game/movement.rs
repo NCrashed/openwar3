@@ -601,7 +601,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     // layout of a queued group the members keep theirs until their places
     // are laid out (SPEC-0025, "When a member searches again").
     if !state.regrouping {
-        state.paths.remove(&h);
+        state.drop_path(h);
         state.member_places.remove(&h);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -1030,7 +1030,7 @@ fn send_to_places(state: &mut State, cluster: &Cluster, min: [u32; 2]) {
         {
             m.target = to;
         }
-        state.paths.remove(&h);
+        state.drop_path(h);
     }
 }
 
@@ -1178,7 +1178,7 @@ pub(super) fn start_buildings(state: &mut State) {
             m.order = Order::Repair { building };
             m.order_id = ORDER_REPAIR;
         }
-        state.paths.remove(&h);
+        state.drop_path(h);
     }
 }
 
@@ -1959,7 +1959,7 @@ pub(super) fn stand_still(state: &mut State, h: u32, at: Option<u32>) {
 
 /// `stop` and `holdposition`: the unit stands where it is now.
 fn halt(state: &mut State, h: u32) -> bool {
-    state.paths.remove(&h);
+    state.drop_path(h);
     let clock = state.move_clock;
     let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
         return false;
@@ -2765,7 +2765,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // A standing follower that walks again searches a new
                         // path at this update (c-RTW-3: 828 at 5413).
                         if standing && renewed && !stands {
-                            state.paths.remove(&h);
+                            state.drop_path(h);
                         }
                     }
                     None => {
@@ -2939,7 +2939,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             } else if cooldown {
                                 // The approach starts again: a new search at the
                                 // next update (c-RXR-1: footman 1 at 2695).
-                                state.paths.remove(&h);
+                                state.drop_path(h);
                             }
                             follow::Steer::Stand(stand)
                         } else {
@@ -3075,7 +3075,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.target = home;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            state.paths.remove(&h);
+                            state.drop_path(h);
                             let goal = relative(home, min);
                             steer = if state.grid.is_some() {
                                 follow::steer(state, &walker(goal), tick)
@@ -3089,7 +3089,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.arrived = true;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            state.paths.remove(&h);
+                            state.drop_path(h);
                         }
                     }
                     match steer {

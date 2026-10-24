@@ -926,6 +926,9 @@ pub struct State {
     pub(super) attack_checks: Vec<(u64, u32, u32)>,
     /// The engine's table of internal objects (SPEC-0024).
     pub(super) table: table::ObjectTable,
+    /// The unit events being dispatched, with the object each took once
+    /// one of its registrations fired (SPEC-0024, "Event objects").
+    event_objects: Vec<Option<u32>>,
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
@@ -1082,6 +1085,7 @@ impl State {
             cooldown_starts: 0,
             attack_checks: Vec::new(),
             table: table::ObjectTable::default(),
+            event_objects: Vec::new(),
             timed_life: Vec::new(),
             waves: Vec::new(),
             impact_now: false,
@@ -1151,6 +1155,13 @@ impl State {
     /// The internal objects of the checksum change now, in tick `tick`
     /// (later in this game), or by a timer expiring at queue time
     /// `expiry` (SPEC-0024).
+    /// Unit `h` drops its path: a new one is searched at its next update,
+    /// and its walk's objects go (SPEC-0024, "Walks").
+    fn drop_path(&mut self, h: u32) {
+        self.paths.remove(&h);
+        table::walk_dropped(self, h);
+    }
+
     fn objects_change(&mut self) {
         self.objects_changed += 1;
     }
@@ -2476,12 +2487,32 @@ fn execute_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: 
 
 /// A trigger's event happened: if it is enabled and its conditions hold,
 /// its actions run.
+/// A unit event starts being dispatched (SPEC-0024, "Event objects").
+fn begin_event(state: &Rc<RefCell<State>>) {
+    state.borrow_mut().event_objects.push(None);
+}
+
+/// The unit event dispatched last ends: its object is freed 0.0001 s
+/// later.
+fn end_event(state: &Rc<RefCell<State>>) {
+    let mut s = state.borrow_mut();
+    if let Some(Some(e)) = s.event_objects.pop() {
+        s.table.defer(e, "event");
+    }
+}
+
 fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Context) {
-    // The event takes an object of the engine's table for 0.0001 s
-    // (SPEC-0024). PROVISIONAL: one a trigger fired.
+    // A unit event takes an object of the engine's table at its first
+    // registration that fires, and every registration that fires one
+    // more, all freed 0.0001 s later (SPEC-0024, "Event objects").
+    // PROVISIONAL: other events take only the registration's.
     {
         let mut s = state.borrow_mut();
         let tick = s.ticks;
+        if let Some(None) = s.event_objects.last() {
+            let e = s.table.take(tick, "event");
+            *s.event_objects.last_mut().unwrap() = Some(e);
+        }
         let e = s.table.take(tick, "event object");
         s.table.defer(e, "event object");
     }

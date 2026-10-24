@@ -605,6 +605,10 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
         grid.stamp(red, green, true);
     }
+    // A new path is a new walk (SPEC-0024, "Walks").
+    if !state.paths.contains_key(&walker.handle) {
+        super::table::path_searched(state, walker.handle);
+    }
     let others = others(state, walker.handle);
     let grid = state.grid.as_ref().unwrap();
     let held = state.path_holds.remove(&walker.handle);
@@ -699,6 +703,8 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     // An arrived unit searches a new path at its next update.
     if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);
+    } else {
+        super::table::walk_dropped(state, walker.handle);
     }
     if let Some(trace) = &mut state.path_trace {
         trace.extend(events);
@@ -1310,6 +1316,7 @@ pub(super) fn regroup(state: &mut State, h: u32) {
     {
         state.path_holds.insert(h, f.hold_until);
     }
+    super::table::walk_dropped(state, h);
 }
 
 /// Unit `h`'s new group comes from the chase right after a swing with its

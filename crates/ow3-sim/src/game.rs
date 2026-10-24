@@ -62,6 +62,7 @@ mod movement;
 mod obstacles;
 pub mod players;
 mod queue;
+pub mod table;
 mod training;
 mod widgets;
 
@@ -896,6 +897,8 @@ pub struct State {
     /// The backswing-end checks of attackers that switched targets in
     /// their backswing: (tick, attacker, new target).
     pub(super) attack_checks: Vec<(u64, u32, u32)>,
+    /// The engine's table of internal objects (SPEC-0024).
+    pub(super) table: table::ObjectTable,
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
@@ -1046,6 +1049,7 @@ impl State {
             creep_timers: 0,
             cooldown_starts: 0,
             attack_checks: Vec::new(),
+            table: table::ObjectTable::default(),
             timed_life: Vec::new(),
             waves: Vec::new(),
             impact_now: false,
@@ -2187,6 +2191,20 @@ impl<'a> Game<'a> {
     /// changed so far (SPEC-0024).
     pub fn objects_changed(&self) -> u32 {
         self.state.borrow().objects_changed
+    }
+
+    /// Sets the object table, for example as the game has it at 1.0 s,
+    /// and keeps its takings and freeings when `log` is set.
+    pub fn set_table(&self, mut table: table::ObjectTable, log: bool) {
+        if log {
+            table.log = Some(Vec::new());
+        }
+        self.state.borrow_mut().table = table;
+    }
+
+    /// The takings and freeings of the object table kept so far.
+    pub fn table_log(&self) -> Vec<table::TableEvent> {
+        self.state.borrow().table.log.clone().unwrap_or_default()
     }
 
     pub fn handles_made(&self) -> u32 {

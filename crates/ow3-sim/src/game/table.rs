@@ -323,16 +323,18 @@ fn entries(state: &mut super::State, h: u32) -> Option<&mut UnitEntries> {
 /// The order of unit `h` ends: its objects are freed 0.0001 s later.
 pub(super) fn order_ended(state: &mut super::State, h: u32) {
     let old = entries(state, h).map(|e| {
-        // An attack of its own frees its target's objects first.
+        // The objects of its attack on a target go first, then those of
+        // its acquisition and of the order (c-SAK-1: the Mountain King's
+        // new order at 2501).
+        e.own_attack = false;
         let mut old: Vec<u32> = Vec::new();
-        if std::mem::take(&mut e.own_attack) {
-            old.extend(e.current.take());
-            old.extend(
-                std::mem::take(&mut e.target_death)
-                    .into_iter()
-                    .map(|(_, o)| o),
-            );
-        }
+        old.extend(e.current.take());
+        old.extend(
+            std::mem::take(&mut e.target_death)
+                .into_iter()
+                .map(|(_, o)| o),
+        );
+        old.extend(std::mem::take(&mut e.acquisition));
         old.extend(std::mem::take(&mut e.order));
         old
     });
@@ -347,6 +349,31 @@ pub(super) fn old_order_ended(state: &mut super::State, h: u32) {
     let old = entries(state, h).map(|e| std::mem::take(&mut e.old_order));
     for e in old.unwrap_or_default() {
         state.table.defer(e, "order end");
+    }
+}
+
+/// Unit `h` takes an order of the game (c-SAK-1: a creep's return home at
+/// 2565): the order and its record, the old order ends, 13 objects of the
+/// move ability (the last 7 freed 0.0001 s later, from the last; the first
+/// 6 when the order ends), a walk, and one more object; the order and that
+/// object stay to the unit's death.
+///
+/// PROVISIONAL: read for a creep's return only.
+pub(super) fn game_order(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "game order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 13, "move ability: order start");
+    for &e in ability[6..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    walk_made_at_order(state, h);
+    let extra = state.table.take(tick, "game order: extra object");
+    if let Some(e) = entries(state, h) {
+        e.order = ability[..6].iter().rev().copied().collect();
+        e.death.splice(0..0, [order, extra]);
     }
 }
 

@@ -217,7 +217,8 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
             return Some(false);
         }
         set(state);
-        super::table::spell_ordered(state, h, false);
+        // Turning to the target is a new goal with a walk (c-SAK-1: 2501).
+        super::table::spell_ordered(state, h, true);
     } else {
         // Out of range a walker also stops at the order and walks on from
         // its next update (c-SAK-1: the Mountain King's Storm Bolt at 500,

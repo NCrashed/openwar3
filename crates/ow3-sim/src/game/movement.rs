@@ -1467,6 +1467,7 @@ pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
     let done = order(state, h, Order::Point, ORDER_MOVE, home);
     if done {
         set_attack_move(state, h, None);
+        super::table::game_order(state, h);
     }
     done
 }
@@ -3189,7 +3190,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if m.order == Order::Point {
                 // The order ends with its walk (SPEC-0024; c-SAK-1: the
                 // Blademaster at his point in 1573).
-                if u.attack_move.take().is_some() {
+                // A move of its own, as a creep's return home, too (2616).
+                if u.attack_move.take().is_some() || !u.entries.order.is_empty() {
                     super::table::order_ended(state, h);
                     super::table::walk_dropped(state, h);
                 }

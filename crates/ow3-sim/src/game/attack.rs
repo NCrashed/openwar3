@@ -404,6 +404,14 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
             // Bash: its damage comes before the hit, armor not counted
             // (SPEC-0036, SPEC-0037), and the target is stunned.
             if let Some((extra, unit_stun, hero_stun)) = bash {
+                // The objects of the stun come before its damage events
+                // (SPEC-0024; c-SAK-1: 2183).
+                {
+                    let mut s = state.borrow_mut();
+                    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                        super::table::stun_objects(&mut s, h, target, Vec::new());
+                    }
+                }
                 super::widgets::damage_widget(vm, state, Some(h), Some(target), extra, 0, 0);
                 let mut s = state.borrow_mut();
                 if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {

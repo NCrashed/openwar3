@@ -40,7 +40,7 @@ pub struct Creep {
     pub(super) return_time: Option<u32>,
     /// The order in which the creeps' timers were started: timers with
     /// equal expiries fire in that order (c-RXD-1: 7, 8, 6, 9).
-    started: u64,
+    pub(super) started: u64,
     /// It walks home and does not fight.
     pub(super) returning: bool,
     /// Its move order home has not ended (it may be answering a call):

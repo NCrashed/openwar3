@@ -5085,10 +5085,15 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         // (c-SAK-1: kobold 19 and ogre 18 at footman 7's death in 4765 and
         // footman 5's in 5444).
         let back = state.combat.guard_return_time;
+        let start = state.creep_timers + 1;
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             let queued = std::mem::take(&mut u.creep.queued_home);
             if queued || u.creep.return_time.is_some() {
                 u.creep.return_time = Some(add(now, back));
+                // Started anew: equal expiries fire in the order of the
+                // starts.
+                u.creep.started = start;
+                state.creep_timers = start;
             }
         }
         if queued && let Some(point) = position_of(state, dead) {

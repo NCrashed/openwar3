@@ -973,6 +973,9 @@ pub struct State {
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
+    /// Each player's type records (SPEC-0024, "Game sum G"): per unit
+    /// type, in the order made, the values `q0` .. `q6`.
+    pub(super) type_records: std::collections::BTreeMap<i32, Vec<(i32, [u32; 7])>>,
     /// Heroes whose parts of the level are made anew before their level
     /// events (`table::level_changed`).
     pub(super) level_parts: Vec<u32>,
@@ -1130,6 +1133,7 @@ impl State {
             waves: Vec::new(),
             impact_now: false,
             leveled: Vec::new(),
+            type_records: Default::default(),
             level_parts: Vec::new(),
             call_entries: 0,
             clusters: Vec::new(),
@@ -2407,6 +2411,35 @@ impl<'a> Game<'a> {
         )
     }
 
+    /// The game sum `G` of the turn checksum (SPEC-0024): the players 0 to
+    /// 11, each with its type records, its two fields of 1.0 and, without
+    /// a selection, its empty selection sum.
+    ///
+    /// PROVISIONAL: the selections, the 7-entry list and the second list
+    /// of the type records are taken empty.
+    pub fn game_sum(&self) -> u32 {
+        use ow3_formats::replay::fold;
+        let state = self.state.borrow();
+        let one = 1.0f32.to_bits();
+        let mut g = 12;
+        for player in 0..12 {
+            let mut t = 0;
+            let start = start_records();
+            let list = state.type_records.get(&player).unwrap_or(&start);
+            for (_, q) in list {
+                let x = (q[2] ^ q[1]).rotate_left(3);
+                let y = (q[4] ^ q[0]).rotate_left(3);
+                let z = (q[5] ^ q[3]).rotate_left(3);
+                let r = (((x ^ y).rotate_left(3) ^ z).rotate_left(3) ^ q[6]).rotate_left(3);
+                t = fold(t, r);
+            }
+            let h = fold(fold(t, one), one);
+            let y = fold(0, u32::MAX);
+            g = fold(g, fold(y, h));
+        }
+        g
+    }
+
     /// The checksum part of each game generator (SPEC-0007), in order.
     pub fn generator_parts(&self) -> Vec<u32> {
         self.state
@@ -3637,6 +3670,17 @@ impl std::error::Error for StartError {}
 /// The name of an order id, as `OrderId2String` gives it (SPEC-0019).
 pub fn order_name(id: i32) -> Option<&'static str> {
     movement::order_name(id)
+}
+
+/// The type records every player has from the start (SPEC-0024, "Game sum
+/// G"): `hrtt`, `otbk` and `uske`.
+pub(super) fn start_records() -> Vec<(i32, [u32; 7])> {
+    let id = |c: &[u8; 4]| i32::from_be_bytes(*c);
+    vec![
+        (id(b"hrtt"), [0, 0, 0, 0, 0, 0, 8]),
+        (id(b"otbk"), [0, 0, 0, 0, 0, 0, 8]),
+        (id(b"uske"), [25, 0, 0, 0, 0, 0, 8]),
+    ]
 }
 
 #[cfg(test)]

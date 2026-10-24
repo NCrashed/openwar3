@@ -218,6 +218,19 @@ The player sum:
   `q2`, `q3`, `q5` = 0, `q6` = 8. Every player had three more records
   made at game start, before any unit: `hrtt` (all 0, `q6` = 8), `otbk`
   (the same) and `uske` (`q0` = 25, the rest 0, `q6` = 8).
+  Deaths change two of the values (read in `c-SAK-1`). A kill of a unit
+  of type X by player p adds 1 to `q5` of p's record of X, the number of
+  units of that type p has killed. If p has no record of X yet, one is
+  added at the end of the list with `q0` = 2147483647, `q5` = 1, `q6` =
+  8 and the rest 0. Kills by the neutral players change nothing in G.
+  A death of one of p's own units takes 1 from `q4` of its type (the
+  number alive); `q1` (the number made) stays. Mirror Image copies did
+  not change any record. After 23.8 s of `c-SAK-1`, player 0's records
+  were, in list order: `hrtt`, `otbk`, `uske` as above; `Hmkg` and
+  `Obla` 2147483647 1 0 0 1 0 8; `hfoo` 2147483647 6 0 0 5 0 8 (footman
+  7 dead); `nkob` 2147483647 0 0 0 0 3 8 (three kobolds killed); `ngno`
+  2147483647 0 0 0 0 1 8. In that game G changed at every kill and every
+  loss of player 0, and at nothing else.
 - `Y`: the selection sum of the player, from the selection state that
   is kept in sync between players (SPEC-0006 for `SyncSelections`):
 

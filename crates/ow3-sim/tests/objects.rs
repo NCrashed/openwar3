@@ -158,8 +158,8 @@ fn heroes_three_objects() {
 /// The turn checksums of `c-SAK-1` against the parts read in the game
 /// (`c-SAK-1.parts.tsv`: turn, `t`, checksum, `B`, `N`, `C`, `D`, `E`,
 /// `R`, `G`): `B`, `N`, `C`, `D`, `E` and `R` of the playback are the
-/// game's at every turn, and with the game's `G` every recorded checksum
-/// follows, up to the one constant of `K1`, `K2`, `K3` (SPEC-0024).
+/// game's at every turn, and so is `G`; every recorded checksum follows,
+/// up to the one constant of `K1`, `K2`, `K3` (SPEC-0024).
 #[test]
 fn heroes_three_checksums() {
     let name = "c-SAK-1";
@@ -208,8 +208,9 @@ fn heroes_three_checksums() {
             d: ours.4,
             e: ours.5,
             r: ours.6,
-            g: hex(w[9]),
+            g: marks.g,
         };
+        assert_eq!(marks.g, hex(w[9]), "G of turn {k}");
         let rest = turn.recorded ^ turn_checksum(&Statics::default(), &parts);
         assert_eq!(*constant.get_or_insert(rest), rest, "turn {k}");
     }

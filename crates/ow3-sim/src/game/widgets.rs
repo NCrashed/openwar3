@@ -436,6 +436,12 @@ pub(super) fn create_unit(
     let h = state.create(Object::Unit(Box::new(unit)));
     state.units.push(h);
     super::creeps::join_group(state, h);
+    // Its player's record of its type: one more made, one more alive
+    // (SPEC-0024, "Game sum G").
+    type_record(state, owner, type_id, |q| {
+        q[1] += 1;
+        q[4] += 1;
+    });
     // A unit uses its food, a building gives its food (SPEC-0027).
     //
     // PROVISIONAL: measured only with trained units and finished
@@ -544,6 +550,28 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         // A Mirror Image's missile to its place (SPEC-0024).
         super::table::mirror_arrived(&mut state.borrow_mut(), summoned);
     }
+}
+
+/// Changes player `owner`'s record of `type_id` (SPEC-0024, "Game sum
+/// G"), made at the end of the list if it has none: `q0` 2147483647 (no
+/// limit), `q6` 8, the rest 0. A player's list starts with `hrtt`, `otbk`
+/// and `uske` (25 for `uske`'s `q0`). Players 12 to 15 have none.
+fn type_record(state: &mut State, owner: i32, type_id: i32, change: impl FnOnce(&mut [u32; 7])) {
+    if !(0..12).contains(&owner) {
+        return;
+    }
+    let list = state
+        .type_records
+        .entry(owner)
+        .or_insert_with(super::start_records);
+    let k = match list.iter().position(|(t, _)| *t == type_id) {
+        Some(k) => k,
+        None => {
+            list.push((type_id, [2_147_483_647, 0, 0, 0, 0, 0, 8]));
+            list.len() - 1
+        }
+    };
+    change(&mut list[k].1);
 }
 
 /// The game generator of the kills' gold bounties.
@@ -831,6 +859,23 @@ pub(super) fn kill_unit(
             s.unit(killer)
                 .is_some_and(|k| k.owner != super::creeps::CREEPS)
         };
+        // The records of the game sum: one alive less for the owner, one
+        // killed more for the killer's player (SPEC-0024, "Game sum G";
+        // c-SAK-1). Mirror Image copies change none.
+        {
+            let mut s = state.borrow_mut();
+            let dead = s
+                .unit(Some(h))
+                .filter(|u| u.illusion.is_none())
+                .map(|u| (u.owner, u.type_id));
+            let by = s.unit(killer).map(|k| k.owner);
+            if let Some((owner, type_id)) = dead {
+                type_record(&mut s, owner, type_id, |q| q[4] -= 1);
+                if let Some(p) = by.filter(|&p| p < 12 && p != owner) {
+                    type_record(&mut s, p, type_id, |q| q[5] += 1);
+                }
+            }
+        }
         if paid {
             let mut s = state.borrow_mut();
             let dice = s

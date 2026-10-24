@@ -1274,6 +1274,13 @@ fn mirror_appear(s: &mut State, m: &mut Mirror) {
         let now = s.event_time.replace(m.appear_q);
         super::regions::test_unit(s, e);
         s.event_time = now;
+        // A copy is in no record of the game sum (SPEC-0024).
+        if let Some(list) = s.type_records.get_mut(&hero.owner)
+            && let Some((_, q)) = list.iter_mut().find(|(t, _)| *t == hero.type_id)
+        {
+            q[1] -= 1;
+            q[4] -= 1;
+        }
         if let Some(Object::Unit(u)) = s.objects.get_mut(&e) {
             u.hidden = true;
             u.next_acquire = add(m.appear_q, mul(u.acquire_phase, 0x3F00_0000));

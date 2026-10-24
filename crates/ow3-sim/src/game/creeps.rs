@@ -286,6 +286,9 @@ pub(super) fn call_for_help(
                 movement::join_fight(state, h, target, from)
             };
             if joined {
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.called = true;
+                }
                 // A switch while attacking keeps the guard checks running
                 // (SPEC-0030, "What restarts the guard checks").
                 if !switching {

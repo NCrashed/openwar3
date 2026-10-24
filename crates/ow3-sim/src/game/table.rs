@@ -253,6 +253,9 @@ pub struct UnitEntries {
     pub taken_at: u32,
     /// Its last target was taken by answering a call.
     pub by_call: bool,
+    /// Its last target was taken by a call of its camp or by answering a
+    /// call, not by its own check.
+    pub called: bool,
     /// At a death being handled: the objects it kept to it, and whether
     /// its order ends too.
     pub lost: Vec<u32>,

@@ -3714,6 +3714,31 @@ fn keep_periodic(a: &mut AttackMove, restart: u32) {
 /// point at 2625).
 const GUARD_ACCEPT: f32 = 50.0;
 
+/// Unit `h` walks back to its guard point `home` at the end of the
+/// backswing in which its target died, unless it is there already
+/// (SPEC-0030, "Losing the target in a backswing").
+pub(super) fn guard_back(state: &mut State, h: u32, home: [u32; 2]) {
+    let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+        return;
+    };
+    u.guard_return = None;
+    let idle = u.attack.is_none() && u.movement.is_none_or(|m| !m.ordered());
+    let (dx, dy) = (
+        real_of(u.x) - real_of(home[0]),
+        real_of(u.y) - real_of(home[1]),
+    );
+    let accept = GUARD_ACCEPT
+        + state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(0.0, |t| real_of(t.collision));
+    if idle && dx * dx + dy * dy > accept * accept + 1e-3 && order(state, h, Order::Point, 0, home)
+    {
+        super::table::guard_walk_made(state, h);
+    }
+}
+
 /// Attack-moves going on after a kill, and ending at their point; units
 /// walking back to their guard points.
 pub(super) fn attack_moves(state: &mut State) {
@@ -3734,27 +3759,7 @@ pub(super) fn attack_moves(state: &mut State) {
         })
         .collect();
     for (h, home) in back {
-        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
-            continue;
-        };
-        u.guard_return = None;
-        let idle = u.attack.is_none() && u.movement.is_none_or(|m| !m.ordered());
-        let (dx, dy) = (
-            real_of(u.x) - real_of(home[0]),
-            real_of(u.y) - real_of(home[1]),
-        );
-        let accept = GUARD_ACCEPT
-            + state
-                .data
-                .units
-                .get(&u.type_id)
-                .map_or(0.0, |t| real_of(t.collision));
-        if idle
-            && dx * dx + dy * dy > accept * accept + 1e-3
-            && order(state, h, Order::Point, 0, home)
-        {
-            super::table::guard_walk_made(state, h);
-        }
+        guard_back(state, h, home);
     }
     let units: Vec<(u32, AttackMove)> = state
         .units
@@ -4105,6 +4110,9 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
                 // its updates while the backswing ends (c-RXD-1: creep 7
                 // took its target in 4457 and turned in 4459 and 4465).
                 if switch_target(state, h, better) {
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                        u.entries.called = false;
+                    }
                     acquired.push(h);
                 }
             }
@@ -4163,8 +4171,11 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         // An idle unit with no walk back pending stores where it stands as
         // its guard point when its check acquires (SPEC-0019; c-RZJ-1:
         // elemental 16 at 2625 and 3825; c-RXR-1: grunt 14, walking back at
-        // 4813, keeps its point). A creep keeps its own (SPEC-0030).
+        // 4813, keeps its point).
         let standing = state.unit(Some(h)).is_some_and(|u| u.movement.is_none());
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.called = false;
+        }
         freeze(state, h);
         if order(state, h, Order::Attack { target }, order_id, at) {
             // A target in reach takes an order with no reach limit
@@ -4178,9 +4189,14 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             if idle
                 && standing
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-                && u.owner != super::creeps::CREEPS
             {
-                u.home = [u.x, u.y];
+                // A creep's is the point its walk back goes to (c-SAK-1:
+                // kobold 10, which stayed at footman 5's death in 5442).
+                if u.owner == super::creeps::CREEPS {
+                    u.creep.guard = Some([u.x, u.y]);
+                } else {
+                    u.home = [u.x, u.y];
+                }
             }
             let delay = mul(
                 state.game_random[REACTION].fraction(),
@@ -5506,8 +5522,15 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             }
             // A creep walks back to its guard point at once, where its
             // last walk home ended (c-RXD-1: creep 8 at 6665, turning to it
-            // at 6667).
+            // at 6667). Not one that took the target at a call: it stays
+            // (c-SAK-1: kobold 10, taken by gnoll 12's call at 4767, at
+            // footman 5's death in 5442).
+            // PROVISIONAL: read for a camp's call only.
+            let called = state
+                .unit(Some(h))
+                .is_some_and(|u| (u.entries.called || u.entries.by_call) && !u.entries.game_order);
             if to_guard.contains(&h)
+                && !called
                 && let Some(u) = state.unit(Some(h))
             {
                 let guard = u.creep.guard.unwrap_or(u.home);

@@ -1126,6 +1126,17 @@ An idle unit with a weapon attacks an enemy unit on its own:
   backswings (ticks 2031 and 2007), were still turning at their
   expiries (10.5299501, 10.7699480): no swing there; creep 6 swung at
   its update of 10.6199379, the first that found it ready.
+  In range but not facing at the expiry, the unit gets a face movement
+  (the unlimited-reach approach of "Target in reach at acquisition")
+  instead of a new search: a commit with velocity 0, no aim, heading
+  kept. It turns towards the target's per-tick position at the expiry
+  (fixed then, not re-aimed while the target walks on) and swings when
+  that movement ends (arrived when facing, its end runs the attack
+  start). `c-SAK-1` (read in the game), the Blademaster on ogre 18
+  (walking away): expiry at 48.293095 (tick 9662), the turn point the
+  ogre's per-tick position of 9662 (direction 5.319594 from him), heading
+  4.363876 -> 4.963876 (9663) -> 5.319591 (9669), the movement's end
+  and swing at 48.358574 (9675), hit 9718.
 - **A new target and the old cooldown.** The cooldown of the last
   swing goes on when the target changes. In `c-RXR-1` grunt 15 (target
   in range, it did not move) ended its reaction delay at 11.9424612,

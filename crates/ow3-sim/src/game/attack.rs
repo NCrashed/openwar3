@@ -266,6 +266,18 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     });
                 a.next.saturating_sub(point) == tick
             });
+            // Not facing the target at the expiry: no swing, a face movement
+            // to where the target stands now, and the swing at its end
+            // (SPEC-0019, "Cooldown expiry"; c-SAK-1: the Blademaster at
+            // 9662, swing at 9675).
+            let clock = s.move_clock;
+            let expires = s.unit(Some(h)).and_then(|u| u.attack).is_some_and(|a| {
+                let q = f32::from_bits(a.swing_q);
+                q > f32::from_bits(clock) && q <= f32::from_bits(add(clock, crate::timers::TICK))
+            });
+            if expires && super::movement::face_at_expiry(s, h) {
+                continue;
+            }
             if starts {
                 roll_proc(s, h);
             }

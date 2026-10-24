@@ -5302,6 +5302,39 @@ pub(super) fn no_renewal(state: &mut State, h: u32) {
     }
 }
 
+/// The swing of unit `h` would start now: when it does not face its
+/// target within AttackHalfAngle, its swing is dropped and a face movement
+/// starts towards the target's position now, fixed, the swing coming at
+/// its end (SPEC-0019, "Cooldown expiry"). Whether it did.
+pub(super) fn face_at_expiry(state: &mut State, h: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let (Some(a), Some(m)) = (u.attack, u.movement) else {
+        return false;
+    };
+    let Some(at) = position_of(state, a.target) else {
+        return false;
+    };
+    if real_of(heading_and_turn(&m, relative(at, min)).1).abs() <= ATTACK_HALF_ANGLE {
+        return false;
+    }
+    stop_commit(state, h);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        u.attack = None;
+        m.target = at;
+        m.faced = true;
+        m.unlimited = true;
+        m.chase = Some(u32::MAX);
+        m.renew_at = None;
+        m.renew_stands = false;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

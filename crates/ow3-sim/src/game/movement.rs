@@ -4197,7 +4197,17 @@ fn rating(
     let range =
         super::attack::weapon_for(state, u.type_id, Some(other)).map_or(0.0, |w| real_of(w.range));
     let reach = range + collision(ud) + collision(od);
-    let in_range = distance <= reach * reach;
+    // In range by the path agents, their last commits (SPEC-0048; c-SAK-1:
+    // gnoll 16, walking, took footman 2 at 4925, footman 3 162.06 from its
+    // commit).
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let agent = |w: &super::Unit| w.movement.map_or([w.x, w.y], |m| absolute(m.origin, min));
+    let (o_at, u_at) = (agent(o), agent(u));
+    let (ax, ay) = (
+        real_of(o_at[0]) - real_of(u_at[0]),
+        real_of(o_at[1]) - real_of(u_at[1]),
+    );
+    let in_range = ax * ax + ay * ay <= reach * reach;
     let creep = rates_as_creep(state, h);
     let big = creep && ud.is_some_and(|d| d.level >= 7);
     // An illusion is no hero here (c-SAK-1, SPEC-0040).

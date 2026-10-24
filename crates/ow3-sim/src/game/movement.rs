@@ -2802,6 +2802,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // it waits for the next goal.
                             follow::Steer::Arrived => {
                                 motion(&mut m, goal, false, speed, limit, turn_rate, window);
+                                // An attack's chase that arrived swings at once:
+                                // the move-done event starts it (c-SAK-1:
+                                // footman 2 at 925, hitting at 1025).
+                                if let Order::Attack { target } = m.order
+                                    && begin_attack.is_none()
+                                {
+                                    begin_attack = Some(target);
+                                    m.arrived = true;
+                                }
                             }
                         }
                     } else {
@@ -4407,6 +4416,34 @@ pub(super) fn retaliate(
     if !answers(victim) && !switches(victim) {
         responders.remove(0);
     }
+    // The calls of the victim's group answer as its own does, member by
+    // member (SPEC-0030; c-SAK-1: creeps 14, 16 and 18 took footman 2 at
+    // his hit on kobold 8 in 1025).
+    {
+        for m in relay_callers(state, victim, now) {
+            let Some(mu) = state.unit(Some(m)) else {
+                continue;
+            };
+            let (cx, cy) = (real_of(mu.x), real_of(mu.y));
+            let near: Vec<u32> = state
+                .units
+                .iter()
+                .copied()
+                .filter(|&h| {
+                    let Some(Object::Unit(u)) = state.objects.get(&h) else {
+                        return false;
+                    };
+                    let (dx, dy) = (real_of(u.x) - cx, real_of(u.y) - cy);
+                    h != attacker
+                        && !responders.contains(&h)
+                        && dx * dx + dy * dy <= reach_of(u, false) * reach_of(u, false)
+                        && state.setup.helps(u.owner, owner)
+                        && (answers(h) || switches(h))
+                })
+                .collect();
+            responders.extend(call_order(state, near));
+        }
+    }
     let switching: Vec<u32> = responders
         .iter()
         .copied()
@@ -4490,6 +4527,21 @@ pub(super) fn retaliate(
 /// further relay. The units the calls reach are added to `reached`;
 /// whether any member called (c-RZJ-1: ogre 15 called at 3722, at the
 /// fatal hit on ogre 14, and so could call again at 3827).
+/// The members of victim's group that make a call at its hit at queue
+/// time `now`: the living ones other than it whose call timer has run, in
+/// the group's order (`relay`).
+fn relay_callers(state: &State, victim: u32, now: f32) -> Vec<u32> {
+    super::creeps::group_of(state, victim)
+        .into_iter()
+        .filter(|&c| {
+            c != victim
+                && state
+                    .unit(Some(c))
+                    .is_some_and(|u| u.alive && now >= real_of(u.call_until))
+        })
+        .collect()
+}
+
 fn relay(state: &mut State, victim: u32, attacker: u32, now: f32, reached: &mut Vec<u32>) -> bool {
     let creep_reach = real_of(state.combat.creep_call_for_help);
     let mut any = false;

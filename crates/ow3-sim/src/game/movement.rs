@@ -5263,7 +5263,15 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // A walker stops where it is at the death (c-RZJ-1: footmen 4
             // and 7 at the Ogre Lord's death in 7430, standing for the
             // searches of that tick).
-            stop_at(state, h, now);
+            // A melee kill, inside the main timer queue, reads the position
+            // by the clock of the tick (c-SAK-1: the Mountain King at ogre
+            // 18's death in 10883); a missile's impact at its own time.
+            let clock = if state.impact_now {
+                now
+            } else {
+                state.move_clock
+            };
+            stop_at(state, h, clock);
             order(state, h, Order::Point, ORDER_ATTACK, point);
         }
         if own {

@@ -16,10 +16,11 @@ fn game_data() -> PathBuf {
 }
 
 /// (tick, new, entry, creation, tag, world clock); the creation is `None`
-/// for an object made before the list starts. The list's tick is read from
-/// the world clock, which drifts from the tick count late in a game by up
-/// to one tick, and an event at a tick's boundary may be counted in either:
-/// ticks are compared within two.
+/// for an object made before the list starts. The list's tick column runs
+/// up to two ahead of our tick count late in the game, so rows are
+/// compared by the world clock of the tick they are counted in, within a
+/// tick (an event at a tick's boundary may be counted in either;
+/// `OW3_SLACK` sets another bound in seconds).
 type Row = (u64, bool, u32, Option<u32>, String, f32);
 
 fn game_rows(name: &str) -> Option<Vec<Row>> {
@@ -82,11 +83,22 @@ fn heroes_three_objects_report() {
             );
         }
     }
+    // The world clock of the tick each of our rows is counted in.
+    let clocks: std::collections::BTreeMap<u64, f32> = playback
+        .game
+        .table_clocks()
+        .into_iter()
+        .map(|(t, c)| (t, f32::from_bits(c)))
+        .collect();
+    let slack = std::env::var("OW3_SLACK")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.0055);
     let first = game
         .iter()
         .zip(&ours)
         .position(|(g, o)| {
-            g.0.abs_diff(o.tick) > 2
+            clocks.get(&o.tick).is_none_or(|&c| (g.5 - c).abs() > slack)
                 || g.1 != o.new
                 || g.2 != o.entry
                 || g.3
@@ -102,8 +114,9 @@ fn heroes_three_objects_report() {
     for k in at.saturating_sub(4)..(at + 8) {
         let g = game.get(k).map(|g| {
             format!(
-                "{} {} {} {:?} {}",
+                "{} {} {} {} {:?} {}",
                 g.0,
+                g.5,
                 if g.1 { "new " } else { "free" },
                 g.2,
                 g.3,
@@ -112,8 +125,9 @@ fn heroes_three_objects_report() {
         });
         let o = ours.get(k).map(|o| {
             format!(
-                "{} {} {} {} {}",
+                "{} {} {} {} {} {}",
                 o.tick,
+                clocks.get(&o.tick).copied().unwrap_or(0.0),
                 if o.new { "new " } else { "free" },
                 o.entry,
                 o.creation,

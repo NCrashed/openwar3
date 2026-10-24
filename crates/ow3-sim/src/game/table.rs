@@ -328,6 +328,8 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
         // new order at 2501).
         e.own_attack = false;
         let mut old: Vec<u32> = Vec::new();
+        // A reaction delay still running ends with it (c-SAK-1: 2701).
+        old.extend(std::mem::take(&mut e.reaction));
         old.extend(e.current.take());
         old.extend(
             std::mem::take(&mut e.target_death)
@@ -802,7 +804,17 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     for &e in parts[6..].iter().rev() {
         state.table.defer(e, "stun: order objects");
     }
-    let impact = entries(state, caster).map(|e| std::mem::take(&mut e.impact));
+    // The caster's object kept to the impact: freed now if its order ended,
+    // else with the order (c-SAK-1: the bolts of 741 and 2616).
+    let impact = entries(state, caster).map(|e| {
+        let impact = std::mem::take(&mut e.impact);
+        if e.order.is_empty() {
+            impact
+        } else {
+            e.order.splice(0..0, impact);
+            Vec::new()
+        }
+    });
     for e in impact.unwrap_or_default() {
         state.table.defer(e, "spell ability: order start");
     }

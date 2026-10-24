@@ -4029,7 +4029,10 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     due.sort_by(|a, b| real_of(a.0).total_cmp(&real_of(b.0)).then(a.1.cmp(&b.1)));
     let targets = Targets::new(state);
     let mut acquired = Vec::new();
-    for (_, _, h, check) in due {
+    for (expiry, _, h, check) in due {
+        // The goals of backswings ending before this check come first
+        // (c-SAK-1: gnoll 17 at 12.929933 before the check at 12.932871).
+        super::attack::after_swing_walks(state, Some(expiry));
         // A better target than the one attacked: taken at once, without a
         // reaction delay or a call for help (SPEC-0019).
         if let Check::Attacking { current, .. } = check {

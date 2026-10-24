@@ -1167,6 +1167,9 @@ impl State {
             f32::from_bits(next),
         );
         self.table.now = if q >= next {
+            // The 0.0001 s timers of this tick expire before it (c-SAK-1:
+            // the frees of 2615 before the bolt's impact at 13.073807).
+            self.table.flush(self.ticks);
             self.ticks + 1
         } else if q < now {
             self.ticks - 1

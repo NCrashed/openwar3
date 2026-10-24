@@ -670,6 +670,36 @@ at the exit. Still needed:
 A worker whose walk to its building cannot get closer keeps searching
 here; it goes in or delivers only touching the building.
 
+## Regions (`game::regions`, SPEC-0049)
+
+The spec's own open questions are listed there. Choices the
+implementation made where the spec is silent:
+
+- **The events of a call.** The events whose slots expire at the same
+  queue time are taken as one call and run in the order of SPEC-0049;
+  enter events come before leave events (read in c-SAQ for one call).
+- **Commits other than the update's.** A walker is tested at the commit
+  of its update. Other commits (stops, new orders, stuns) are tested at
+  the next dispatch, at the committed position. The filters of walkers
+  run after all the updates of the tick, at the queue time of the
+  updates.
+- **Cells added or cleared later.** No test: a unit already inside cells
+  added later enters at its next test only if that test moves it from a
+  cell outside. Before the first region is made nothing is tracked; at
+  its creation every unit counts as tested where it stands.
+- **Units made or moved by the game.** Trained units, buildings started
+  by workers, summoned units and the units of Mirror Image are tested
+  where they appear, the last ones at the queue time of the ability's
+  timer (c-SAK-1: units 20 and 21 at 7262, the stand-in at the hero's
+  place included). The hero coming back from Mirror Image is tested at
+  his new place as by `SetUnitPosition`.
+- **The filter's responses.** `GetTriggeringRegion` is the region and
+  `GetTriggerEventId` the event, as in the actions.
+- **`RemoveRegion`.** Queued events of the region do not run.
+- **A removed unit.** `GetTriggerUnit` of an event whose unit was
+  removed gives its handle, but the unit reads as missing (`GetUnitX` 0)
+  instead of hidden at its last position.
+
 ## Order confirmation (the viewer)
 
 The viewer shows the model of `TargetUnitConfirm` (skins) on a unit or a

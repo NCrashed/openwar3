@@ -638,9 +638,11 @@ pub(super) fn group_of(state: &State, h: u32) -> Vec<u32> {
 /// answers only within MaxGuardDistance plus its collision of its home,
 /// and not when walking back at 0.6 of its life or less (SPEC-0030;
 /// c-SAK-1: gnoll 16, 1089 from home, refused at 2587; ogre 18 answered
-/// at 2915).
+/// at 2915). Its return timer running counts as a return in progress
+/// (c-SAK-1: ogre 18, 1130 from home on its move to footman 7's point,
+/// refused kobold 19's call at 4817).
 pub(super) fn may_answer(state: &State, u: &super::Unit) -> bool {
-    if !(u.creep.returning || u.creep.homebound) {
+    if !(u.creep.returning || u.creep.homebound || u.creep.return_time.is_some()) {
         return true;
     }
     let home = u.home;

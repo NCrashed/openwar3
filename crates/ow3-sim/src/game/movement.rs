@@ -5013,14 +5013,17 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 let (dx, dy) = (sub(u.x, p[0]), sub(u.y, p[1]));
                 real_of(add(mul(dx, dx), mul(dy, dy))) > reach * reach
             });
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-            u.creep.queued_home = false;
+        // Its return timer starts again in both cases (c-SAK-1: kobold 19,
+        // there, gave up only at the new expiry).
+        let back = state.combat.guard_return_time;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && std::mem::take(&mut u.creep.queued_home)
+        {
+            u.creep.return_time = Some(add(now, back));
         }
         if queued && let Some(point) = position_of(state, dead) {
-            let back = state.combat.guard_return_time;
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.attack = None;
-                u.creep.return_time = Some(add(now, back));
             }
             // Stopped where it stands by the world clock (c-SAK-1: ogre 18
             // at 4765, at its position of the tick).

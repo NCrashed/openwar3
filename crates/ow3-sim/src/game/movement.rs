@@ -3187,7 +3187,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // member stays at its place in the formation (playtest item 9:
             // the group bunched on the point when its members walked on).
             if m.order == Order::Point {
-                u.attack_move = None;
+                // The order ends with its walk (SPEC-0024; c-SAK-1: the
+                // Blademaster at his point in 1573).
+                if u.attack_move.take().is_some() {
+                    super::table::order_ended(state, h);
+                    super::table::walk_dropped(state, h);
+                }
             }
         } else {
             u.movement = Some(m);

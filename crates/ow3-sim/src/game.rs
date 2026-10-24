@@ -1723,7 +1723,9 @@ impl<'a> Game<'a> {
         // their expiries (c-SAK-1: the hit at 7.009974 before the Mountain
         // King's check at 7.010000 in 1403).
         let mut first_batch = true;
-        loop {
+        // Bounded: each round takes at least one hit (a guard against a
+        // hit that never comes off the queue).
+        for _ in 0..1024 {
             let hit = attack::next_hit(&self.state.borrow());
             let acquired = movement::acquisitions(&mut self.state.borrow_mut(), hit, first_batch);
             if first_batch {

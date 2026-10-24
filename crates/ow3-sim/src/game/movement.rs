@@ -2802,11 +2802,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // it waits for the next goal.
                             follow::Steer::Arrived => {
                                 motion(&mut m, goal, false, speed, limit, turn_rate, window);
-                                // An attack's chase that arrived swings at once:
-                                // the move-done event starts it (c-SAK-1:
-                                // footman 2 at 925, hitting at 1025).
+                                // An attack's chase that arrived swings when in
+                                // range: the move-done event runs the range test
+                                // (c-SAK-1: footman 2 at 925, hitting at 1025).
                                 if let Order::Attack { target } = m.order
                                     && begin_attack.is_none()
+                                    && reaches(state, h, target)
                                 {
                                     begin_attack = Some(target);
                                     m.arrived = true;
@@ -4416,6 +4417,10 @@ pub(super) fn retaliate(
     if !answers(victim) && !switches(victim) {
         responders.remove(0);
     }
+    // The victim's own call comes after its group's (c-SAK-1: at 1025
+    // kobold 8 called after members 9 to 14).
+    let keep = usize::from(responders.first() == Some(&victim));
+    let own_call = responders.split_off(keep);
     // The calls of the victim's group answer as its own does, member by
     // member (SPEC-0030; c-SAK-1: creeps 14, 16 and 18 took footman 2 at
     // his hit on kobold 8 in 1025).
@@ -4444,6 +4449,11 @@ pub(super) fn retaliate(
             responders.extend(call_order(state, near));
         }
     }
+    let own_call: Vec<u32> = own_call
+        .into_iter()
+        .filter(|h| !responders.contains(h))
+        .collect();
+    responders.extend(own_call);
     let switching: Vec<u32> = responders
         .iter()
         .copied()

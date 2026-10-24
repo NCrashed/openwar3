@@ -5372,6 +5372,10 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 u.checks_off = true;
                 u.creep.queued_home = true;
             }
+            // Its attack ends with an object kept with the move, and the move
+            // is a new goal with its walk (SPEC-0024; c-SAK-1: 4764).
+            super::table::attack_ended(state, h, true);
+            super::table::walk_made_at_order(state, h);
             continue;
         }
         let mut walk_on = None;
@@ -5449,6 +5453,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         }
         if own {
             halt(state, h);
+            // An attack taken by answering a call ends with an object, freed
+            // 0.0001 s later; one taken by its own check makes none
+            // (SPEC-0024, "Unit death"; c-SAK-1: 4764).
+            if state.unit(Some(h)).is_some_and(|u| u.entries.by_call) {
+                super::table::attack_ended(state, h, false);
+            }
             // A creep walks back to its guard point at once, where its
             // last walk home ended (c-RXD-1: creep 8 at 6665, turning to it
             // at 6667).
@@ -5471,6 +5481,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 );
                 if dx * dx + dy * dy > accept * accept + 1e-3 {
                     order(state, h, Order::Point, 0, guard);
+                    super::table::walk_made_at_order(state, h);
                 }
             }
         }

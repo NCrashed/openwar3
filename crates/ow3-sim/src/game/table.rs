@@ -251,6 +251,8 @@ pub struct UnitEntries {
     /// The creation number at its last acquisition, for the order of the
     /// attackers at a target's death.
     pub taken_at: u32,
+    /// Its last target was taken by answering a call.
+    pub by_call: bool,
     /// Its order is one of the game (a creep's return home).
     pub game_order: bool,
     /// The order and the extra object of its order of the game.
@@ -712,6 +714,7 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     let at = state.table.next_creation();
     if let Some(e) = entries(state, h) {
         e.taken_at = at;
+        e.by_call = false;
     }
     let target = state.unit(Some(h)).and_then(|u| {
         u.movement.and_then(|m| match m.order {
@@ -893,6 +896,9 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
         .count();
     event_without_triggers(state, registrations);
     acquired(state, h);
+    if let Some(e) = entries(state, h) {
+        e.by_call = true;
+    }
 }
 
 /// Unit `h`'s mana crossed the cost of an ability it learned: the watch
@@ -951,6 +957,22 @@ pub(super) fn attack_ended_at_fade(state: &mut super::State, h: u32) {
     let gone = gone.unwrap_or_default();
     if let Some(e) = entries(state, h) {
         e.fade.extend(gone);
+    }
+}
+
+/// Unit `h`'s attack on a unit that died ends: one object, freed 0.0001 s
+/// later, or kept with the move it takes up instead (`kept`; a creep
+/// whose return waited behind the attack) (SPEC-0024, "Unit death";
+/// c-SAK-1: 4764).
+pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "attack ends at the target death");
+    if kept {
+        if let Some(e) = entries(state, h) {
+            e.order.insert(0, o);
+        }
+    } else {
+        state.table.defer(o, "attack ends at the target death");
     }
 }
 

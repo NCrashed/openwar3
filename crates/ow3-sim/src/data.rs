@@ -112,6 +112,10 @@ pub struct UnitType {
     pub prop_window: u32,
     /// The collision size (`collision`), as a real (SPEC-0019).
     pub collision: u32,
+    /// The dice of the gold bounty paid for its kill (`bountydice`,
+    /// `bountysides` of `UnitBalance.slk`, `ubdi`, `ubsi` of a map).
+    pub bounty_dice: i32,
+    pub bounty_sides: i32,
     /// How long its death lasts (`death` of `UnitData.slk`, `udtm` of a
     /// map), as a real (SPEC-0024, "Unit death").
     pub death_time: u32,
@@ -723,6 +727,8 @@ impl ObjectData {
                 "STRplus",
                 "AGIplus",
                 "INTplus",
+                "bountydice",
+                "bountysides",
             ],
         )? {
             let b = Balance {
@@ -755,6 +761,8 @@ impl ObjectData {
                 unit.night_sight = real(values[22].as_ref());
                 unit.level = cost(values[23].as_ref());
                 unit.attribute_plus = [24, 25, 26].map(|i| real(values[i].as_ref()));
+                unit.bounty_dice = cost(values[27].as_ref());
+                unit.bounty_sides = cost(values[28].as_ref());
                 unit.primary_attribute = match values[12].as_deref() {
                     Some("STR") => 1,
                     Some("AGI") => 2,
@@ -955,6 +963,12 @@ impl ObjectData {
             unit.speed = def.number(b"umvs").unwrap_or(unit.speed);
             unit.collision = def.number(b"ucol").unwrap_or(unit.collision);
             unit.death_time = def.number(b"udtm").unwrap_or(unit.death_time);
+            if let Some(v) = def.number(b"ubdi") {
+                unit.bounty_dice = f32::from_bits(v) as i32;
+            }
+            if let Some(v) = def.number(b"ubsi") {
+                unit.bounty_sides = f32::from_bits(v) as i32;
+            }
             unit.sight = def.number(b"usid").unwrap_or(unit.sight);
             unit.night_sight = def.number(b"usin").unwrap_or(unit.night_sight);
             if let Some(level) = def.number(b"ulev") {

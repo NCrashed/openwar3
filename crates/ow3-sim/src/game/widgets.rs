@@ -546,6 +546,9 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     }
 }
 
+/// The game generator of the kills' gold bounties.
+const BOUNTY: usize = 0;
+
 const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
 const EVENT_PLAYER_UNIT_CONSTRUCT_FINISH: i32 = 28;
 
@@ -818,6 +821,28 @@ pub(super) fn kill_unit(
         }
     };
     if let (true, Some(h)) = (killed, h) {
+        // The gold bounty of the kill is rolled first, `bountydice` dice of
+        // `bountysides` on game generator 0 (c-SAK-1: kobold 9 at 13.759973,
+        // 1d3).
+        // PROVISIONAL: the gold itself is not paid.
+        // A kill by the creeps rolls none (c-SAK-1: footman 7 at 23.82).
+        let paid = {
+            let s = state.borrow();
+            s.unit(killer)
+                .is_some_and(|k| k.owner != super::creeps::CREEPS)
+        };
+        if paid {
+            let mut s = state.borrow_mut();
+            let dice = s
+                .unit(Some(h))
+                .and_then(|u| s.data.units.get(&u.type_id))
+                .map_or((0, 0), |t| (t.bounty_dice, t.bounty_sides));
+            if dice.1 > 0 {
+                for _ in 0..dice.0.max(0) {
+                    s.game_random[BOUNTY].integer(1, dice.1);
+                }
+            }
+        }
         // The attackers' objects and new goals come before the death's own
         // (SPEC-0024; c-SAK-1: kobold 8 at 3185).
         state.borrow_mut().table.dying = Some(h);

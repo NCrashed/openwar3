@@ -342,14 +342,18 @@ order at 701 -> freed 703; stop at 901 -> 907; new order at 1501 ->
 1507; acquisition stop at 2003 -> 2005; swing start at 2245 (in reach)
 -> 2251; the same at 3307 -> 3313; after-swing chase at 2449 -> 2455.
 
-**Acquisition.** An acquisition by a check of a unit on attack-move
-took 7 objects. 2 were freed deferred, 1 at the end of its reaction
-delay (when the attack order is taken) and 4 when the target died. On
-a unit with an `EVENT_UNIT_ACQUIRED_TARGET` registration the event's
-objects come in addition (see "Event objects"; in `c-SAK-1` these are
-the "acquisition at a check" and "event object" rows). The 10 instead
-of 7 attack objects seen at some checks of `c-SAK-1` were not
-explained.
+**Acquisition.** An acquisition by a check takes 7 objects for a unit
+on attack-move and 10 for a unit without an order of its own (c-SBD,
+two footmen, one standing, one on attack-move, each seeing an enemy
+appear 400 away):
+- attack-move: the last 2 are freed deferred and the 5th at the end of
+  the reaction delay (when the attack is taken up). In c-SBC the 4th
+  went at the target's death.
+- no order: the last 2 are freed deferred and the 8th at the end of
+  the reaction delay. The first 7 stay with its attack order.
+On a unit with an `EVENT_UNIT_ACQUIRED_TARGET` registration the
+event's objects come in addition (see "Event objects"; in `c-SAK-1`
+these are the "acquisition at a check" and "event object" rows).
 
 **Hits.** The swing and the hit take no objects of their own (c-SBC,
 no damage registration). In `c-SAK-1` the two objects of each hit are

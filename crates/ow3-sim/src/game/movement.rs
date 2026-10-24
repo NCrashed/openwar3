@@ -5326,6 +5326,13 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
                 m.renew_at = None;
                 m.renew_stands = false;
             }
+            // A new goal with its walk, at the expiry (c-SAK-1: the image 20
+            // at 49.25).
+            if let Some(end) = state.unit(Some(h)).map(|u| u.cooldown_end) {
+                state.table_at(end);
+                super::table::walk_made_at_order(state, h);
+                state.table.now = tick;
+            }
             continue;
         }
         freeze(state, h);

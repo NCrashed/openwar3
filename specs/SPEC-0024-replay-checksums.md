@@ -355,6 +355,21 @@ On a unit with an `EVENT_UNIT_ACQUIRED_TARGET` registration the
 event's objects come in addition (see "Event objects"; in `c-SAK-1`
 these are the "acquisition at a check" and "event object" rows).
 
+**Unit death.** At every death (a kill, `KillUnit`, with or without
+attackers) the dying unit takes a record and 9 queue objects of its
+death order, and a footman 1 more (a kobold did not). Freed deferred:
+the record, the last 4 queue objects (from the last) and the extra
+one. Of the first 5 queue objects 2 are freed 3.0 s after the death
+(600 ticks), 1 about 5.0 s after, and 2 stay (with the corpse; not read
+further). Four objects of the second pool also come with a death.
+An attacker whose own order was an attack on the dead unit takes 1
+object, freed deferred, and its order ends. An attacker on attack-move
+takes none: it takes a new goal at once (walk objects) to go on with
+its attack-move. Read on c-SBE (four kills at separate times: no
+attacker, an attack-move attacker, a direct-order attacker, an idle
+kobold) and in `c-SAK-1` (kobold 9: death 2753, frees 3353, 3353,
+3753).
+
 **Hits.** The swing and the hit take no objects of their own (c-SBC,
 no damage registration). In `c-SAK-1` the two objects of each hit are
 the damage event and its registration (see "Event objects").

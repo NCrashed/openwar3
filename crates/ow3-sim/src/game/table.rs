@@ -1221,7 +1221,9 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
             continue;
         };
         // The value at the check's own time.
-        let value = mana + rate * (f32::from_bits(at) - f32::from_bits(state.move_clock));
+        let value = state
+            .unit(Some(h))
+            .map_or(mana, |u| f32::from_bits(u.mana.value_at(at)));
         if value >= cost as f32 {
             let new = state.table.take(tick, "unit state: limit watch");
             state.table.defer(entry, "unit state: limit watch");
@@ -1579,12 +1581,14 @@ pub(super) fn mirror_hero_back(state: &mut super::State, h: u32, stand_in: u32) 
         .map_or(0.0, |u| f32::from_bits(u.mana.value()));
     let effect = entries(state, h).and_then(|e| {
         e.level = level;
-        for (&cost, &w) in costs.iter().zip(&watches) {
+        // Made anew the last first (c-SAK-1: the Blademaster's Wind Walk
+        // watch is 5608, made after his Mirror Image's 5607).
+        for (&cost, &w) in costs.iter().rev().zip(&watches) {
             e.mana_watches.push((cost, w, mana >= cost as f32));
         }
         e.mirror_effect.take()
     });
-    for (&cost, &w) in costs.iter().zip(&watches) {
+    for (&cost, &w) in costs.iter().rev().zip(&watches) {
         if mana < cost as f32 {
             watch_scheduled(state, h, w);
         }

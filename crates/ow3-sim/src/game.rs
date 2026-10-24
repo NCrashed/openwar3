@@ -622,6 +622,26 @@ impl Regenerating {
         self.rate
     }
 
+    /// The value at world clock `t`, read from the stored value, rate and
+    /// stamp (SPEC-0013, "The stored record").
+    pub fn value_at(&self, t: u32) -> u32 {
+        let Some(stamp) = self.stamp else {
+            return self.base;
+        };
+        let value = if self.rate == 0 {
+            self.base
+        } else {
+            (f32::from_bits(self.base)
+                + f32::from_bits(self.rate) * (f32::from_bits(t) - f32::from_bits(stamp)))
+            .to_bits()
+        };
+        if f32::from_bits(value) > f32::from_bits(self.max) {
+            self.max
+        } else {
+            value
+        }
+    }
+
     /// One tick of game time: `now` is the clock of the tick before, at
     /// which the changes of that tick were made, `next` the clock of this
     /// tick.
@@ -1245,6 +1265,9 @@ impl State {
         for &h in &heroes {
             table::watches_checked(self, h);
         }
+        // A watch made anew frees the old one 0.0001 s later, before the
+        // next tick (c-SAK-1: 55.605343 and 55.605442).
+        self.table.flush(tick);
         // Then the timers of the queue (c-SAK-1: the death queue objects at
         // 3353, after the 0.0001 s frees).
         let limit = self.timers.time();

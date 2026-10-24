@@ -68,7 +68,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-SAK-1.w3g",
         "the third hero test (Mountain King, Blademaster with mirror images and wind walk): \
-         not looked at yet",
+         every turn checksum to 62 s matches with the object table (tests/objects.rs, \
+         heroes_three_checksums, G from the game); here without the table, and the turns \
+         after 62 s (the script's EndGame) are not looked at yet",
     ),
     (
         "c-RTW-3.w3g",

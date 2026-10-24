@@ -2407,6 +2407,16 @@ impl<'a> Game<'a> {
         )
     }
 
+    /// The checksum part of each game generator (SPEC-0007), in order.
+    pub fn generator_parts(&self) -> Vec<u32> {
+        self.state
+            .borrow()
+            .game_random
+            .iter()
+            .map(|r| r.checksum())
+            .collect()
+    }
+
     /// The number of handles given out so far: grows with every object
     /// the game makes (units, timers, triggers and the like).
     /// How many times the internal objects the turn checksums count

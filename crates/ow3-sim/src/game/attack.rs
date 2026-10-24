@@ -302,7 +302,14 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 super::table::walk_dropped(s, h);
                 s.table.now = s.ticks;
             }
-            if starts {
+            // At the swing's queue time when it has one (c-SAK-1: the
+            // rolls before the turn checksums of 23.225, 34.65, 40.75 and
+            // 48.375 s).
+            let timed = s
+                .unit(Some(h))
+                .and_then(|u| u.attack)
+                .is_some_and(|a| a.swing_q != 0);
+            if (timed && expires) || (!timed && starts) {
                 roll_proc(s, h);
             }
         }

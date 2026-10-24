@@ -48,6 +48,20 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
     Some(rows)
 }
 
+/// The object table as the game has it at the start: 821 entries, the
+/// free list empty (`C` = 821 at the first turn), then 818, 805 and 806
+/// freed before 0.1 s (the first takings of the list at 1.0 s come from
+/// the free list 806, 805, 818, then it grows from 821). The time of day
+/// holds 767, 647 and 819 (two watches, the rate).
+fn start_table() -> ObjectTable {
+    let mut table = ObjectTable::new(821, Vec::new(), 821);
+    for e in [818, 805, 806] {
+        table.free_at(1, e, "map start");
+    }
+    table.day = vec![767, 647, 819];
+    table
+}
+
 #[test]
 fn heroes_three_objects() {
     let name = "c-SAK-1";
@@ -60,16 +74,18 @@ fn heroes_three_objects() {
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
-    // The table as the game has it at 1.0 s (the first takings of the
-    // list come from the free list 806, 805, 818, then it grows from 821).
-    // The time of day holds 767, 647 and 819 (two watches, the rate).
-    let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
-    table.day = vec![767, 647, 819];
-    playback.game.set_table(table, true);
+    playback.game.set_table(start_table(), true);
     // (Some ticks past the list's last, whose tick column runs ahead.)
     let until = game.last().map_or(0, |r| r.0) + 10;
     while playback.game.ticks() <= until && playback.step_tick() {}
-    let ours = playback.game.table_log();
+    // (The frees of the map start, before the list's first row.)
+    let first_tick = game.first().map_or(0, |r| r.0);
+    let ours: Vec<_> = playback
+        .game
+        .table_log()
+        .into_iter()
+        .filter(|o| o.tick + 10 >= first_tick)
+        .collect();
     // OW3_OBJECTS="from to": our rows in that range of positions.
     if let Ok(range) = std::env::var("OW3_OBJECTS") {
         let w: Vec<usize> = range
@@ -139,49 +155,62 @@ fn heroes_three_objects() {
     assert_eq!(first, None, "the object tables part at row {first:?}");
 }
 
-/// The turn checksums of `c-SAK-1` with the object table from 1.0 s on:
-/// without `B`, `N`, `C`, `D`, `E` and `R` what is left of each recorded
-/// checksum depends on the game sum `G` and the constants only, so it
-/// changes only where a player's units or selections change. Report the
-/// turns where it changes.
+/// The turn checksums of `c-SAK-1` against the parts read in the game
+/// (`c-SAK-1.parts.tsv`: turn, `t`, checksum, `B`, `N`, `C`, `D`, `E`,
+/// `R`, `G`): `B`, `N`, `C`, `D`, `E` and `R` of the playback are the
+/// game's at every turn, and with the game's `G` every recorded checksum
+/// follows, up to the one constant of `K1`, `K2`, `K3` (SPEC-0024).
 #[test]
-fn heroes_three_checksum_report() {
+fn heroes_three_checksums() {
     let name = "c-SAK-1";
-    if game_rows(name).is_none() {
+    let Ok(text) = std::fs::read_to_string(game_data().join(format!("replays/{name}.parts.tsv")))
+    else {
         return;
-    }
+    };
     let dir = game_data().join("replays");
     let replay = Replay::parse(&std::fs::read(dir.join(format!("{name}.w3g"))).unwrap()).unwrap();
     let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
-    let mut table = ObjectTable::new(821, vec![818, 805, 806], 821);
-    table.day = vec![767, 647, 819];
-    playback.game.set_table(table, false);
+    playback.game.set_table(start_table(), false);
     playback.run();
     let turns = turns(&replay);
-    let mut last = None;
-    for (k, (turn, marks)) in turns.iter().zip(&playback.marks).enumerate() {
+    let hex = |s: &str| u32::from_str_radix(s, 16).unwrap();
+    let mut constant = None;
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = line.split('\t').collect();
+        let k: usize = w[0].parse().unwrap();
+        let (turn, marks) = (&turns[k - 1], &playback.marks[k - 1]);
+        let ours = (
+            turn.recorded,
+            time_part(turn.before),
+            turn.n,
+            marks.c,
+            marks.d,
+            marks.e,
+            marks.r,
+        );
+        let game = (
+            hex(w[2]),
+            w[3].parse().unwrap(),
+            hex(w[4]),
+            w[5].parse().unwrap(),
+            w[6].parse().unwrap(),
+            hex(w[7]),
+            hex(w[8]),
+        );
+        assert_eq!(ours, game, "turn {k}");
         let parts = Parts {
-            b: time_part(turn.before),
-            n: turn.n,
-            c: marks.c,
-            d: marks.d,
-            e: marks.e,
-            r: marks.r,
-            g: 0,
+            b: ours.1,
+            n: ours.2,
+            c: ours.3,
+            d: ours.4,
+            e: ours.5,
+            r: ours.6,
+            g: hex(w[9]),
         };
         let rest = turn.recorded ^ turn_checksum(&Statics::default(), &parts);
-        if last != Some(rest) {
-            eprintln!(
-                "turn {} ({} ms): rest {rest:08X}, C {} D {}",
-                k + 1,
-                turn.after,
-                marks.c,
-                marks.d
-            );
-            last = Some(rest);
-        }
+        assert_eq!(*constant.get_or_insert(rest), rest, "turn {k}");
     }
 }

@@ -932,7 +932,9 @@ fn acquired_with(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32], objects
         }
         super::end_event(state);
         // The objects of the attack it takes (SPEC-0024, "Acquisition").
-        if objects {
+        // A check that only recorded a target takes no attack's objects.
+        let recorded = state.borrow_mut().record_only.remove(&h);
+        if objects && !recorded {
             super::table::acquired(&mut state.borrow_mut(), h);
         }
     }

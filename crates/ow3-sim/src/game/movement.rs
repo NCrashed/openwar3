@@ -1628,6 +1628,7 @@ fn point_order_taken(
             next_check: add(state.timers.time(), AFTER_DEATH),
             resume_at: None,
             resume_q: None,
+            periodic: None,
         });
         set_attack_move(state, h, attack_move);
     }
@@ -3650,6 +3651,8 @@ pub struct AttackMove {
     /// After a target's death in a backswing, the queue time of that
     /// backswing's end, when the move is taken up again.
     resume_q: Option<u32>,
+    /// Its periodic check, kept through that backswing.
+    periodic: Option<u32>,
 }
 
 fn set_attack_move(state: &mut State, h: u32, attack_move: Option<AttackMove>) {
@@ -3668,9 +3671,20 @@ pub(super) fn killed(state: &mut State, h: u32, tick: u64, backswing: u64) {
         let end = u.backswing_end;
         if let Some(a) = u.attack_move.as_mut() {
             a.resume_at = Some(tick + backswing);
-            a.next_check = add(end, AFTER_DEATH);
+            keep_periodic(a, add(end, AFTER_DEATH));
         }
     }
+}
+
+/// An attack-move's check restarts at `restart` (0.01 s after a backswing
+/// that follows its target's death); a periodic check due before goes on
+/// through the backswing (SPEC-0019, "During such a backswing").
+fn keep_periodic(a: &mut AttackMove, restart: u32) {
+    // (Kept when both the kill and the death restart it.)
+    if real_of(a.next_check) < real_of(restart) {
+        a.periodic = Some(a.next_check);
+    }
+    a.next_check = restart;
 }
 
 /// The value of a walk back to the guard point: within it plus its own
@@ -3767,6 +3781,9 @@ enum Check {
     Attacking { current: u32 },
     /// A unit walking an attack-move.
     AttackMove { expiry: u32 },
+    /// The periodic check of an attack-move in the backswing after a kill:
+    /// it only records a target (SPEC-0019, "During such a backswing").
+    Record,
 }
 
 /// Units with a weapon look for enemies (SPEC-0019): idle ones on their
@@ -3960,6 +3977,19 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         if u.creep.returning {
             continue;
         }
+        // Its periodic check in the backswing after a kill only records a
+        // target (SPEC-0019; c-SAK-1: footmen 2 and 3 at 16.009998).
+        if let Some(a) = u.attack_move.as_mut()
+            && let Some(p) = a.periodic
+            && real_of(p) <= real_of(next_clock)
+        {
+            if a.resume_at.is_some() {
+                a.periodic = Some(add(p, HALF));
+                due.push((p, 0, h, Check::Record));
+            } else {
+                a.periodic = None;
+            }
+        }
         // A unit on attack-move whose target died acquires at the check
         // restarted by the death (c-RXR-1: footman 2 took grunt 13 in 2581).
         if u.attack_move.is_some()
@@ -4085,6 +4115,12 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         else {
             continue;
         };
+        // A check that only records: the event, no draw and no attack.
+        if matches!(check, Check::Record) {
+            state.record_only.insert(h);
+            acquired.push(h);
+            continue;
+        }
         let Some(Object::Unit(o)) = state.objects.get(&target) else {
             continue;
         };
@@ -4093,6 +4129,7 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             Check::Idle { expiry } => (0, Some(expiry)),
             Check::AttackMove { expiry } => (ORDER_ATTACK, Some(expiry)),
             Check::Attacking { .. } => continue,
+            Check::Record => continue,
         };
         // A walking unit stops for its reaction delay (c-RXR-1: footman 2
         // in 2581).
@@ -5070,6 +5107,7 @@ fn take_up(state: &mut State, h: u32, a: AttackMove) {
         Some(AttackMove {
             resume_at: None,
             resume_q: None,
+            periodic: None,
             ..a
         }),
     );
@@ -5315,7 +5353,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // The attack-move's check is that timer (c-RXR-1: rifleman 8,
             // grunt 12 dead at 2579, restart at its backswing end 2701).
             if let Some(a) = u.attack_move.as_mut() {
-                a.next_check = add(from, AFTER_DEATH);
+                keep_periodic(a, add(from, AFTER_DEATH));
             }
             // An attack-move goes on at once, or at the end of the
             // backswing (c-RXR-1: footman 2 searched towards its point at

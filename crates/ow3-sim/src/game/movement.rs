@@ -267,6 +267,9 @@ pub struct Moving {
     /// limit, it only turns to the target and arrives (SPEC-0019; c-SAK-1:
     /// the Mountain King on gnoll 16 at 3616).
     unlimited: bool,
+    /// A move to a point that takes up an attack on this target when it
+    /// is done (SPEC-0040, the end of a Wind Walk's fade).
+    then_attack: Option<u32>,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
     given: u64,
@@ -530,6 +533,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             swing_gate: None,
             swing_waits: false,
             unlimited: false,
+            then_attack: None,
             ..m
         },
         None => Moving {
@@ -567,6 +571,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             swing_waits: false,
             aim: [0, 0],
             unlimited: false,
+            then_attack: None,
         },
     };
     state.orders_given = given;
@@ -1846,7 +1851,17 @@ pub(super) fn regive_attack(state: &mut State, h: u32, clock: u32) {
             trace.push(record);
         }
     }
-    order(state, h, Order::Attack { target }, order_id, at);
+    // Taken up as a move to that point, the attack following when it is
+    // done (SPEC-0040; c-SAK-1: a plain search at 4621, no chase).
+    let taken = state.unit(Some(h)).and_then(|u| u.target_taken);
+    if order(state, h, Order::Point, order_id, at)
+        && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+    {
+        u.target_taken = taken;
+        if let Some(m) = u.movement.as_mut() {
+            m.then_attack = Some(target);
+        }
+    }
 }
 
 /// A new point order stops a walking unit at once; it starts again as
@@ -2222,6 +2237,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     };
     moving.sort_by_key(key);
     let mut still = Vec::with_capacity(moving.len());
+    let mut attacks_after = Vec::new();
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
@@ -3048,6 +3064,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if m.order == Order::Point {
                 u.attack_move = None;
             }
+            // PROVISIONAL: the attack after a move of a Wind Walk's fade
+            // is taken as a new attack order (SPEC-0040; not reached in
+            // c-SAK-1).
+            if let Some(target) = m.then_attack {
+                attacks_after.push((h, target, m.order_id));
+            }
         } else {
             u.movement = Some(m);
             still.push(h);
@@ -3065,6 +3087,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    for (h, target, order_id) in attacks_after {
+        if let Some(at) = position_of(state, target) {
+            order(state, h, Order::Attack { target }, order_id, at);
+        }
+    }
 }
 
 /// The range test of SPEC-0019 between the points `a` and `b`, with

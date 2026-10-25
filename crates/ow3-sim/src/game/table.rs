@@ -340,6 +340,8 @@ pub struct UnitEntries {
     pub clap_area: Option<(u32, u32)>,
     /// A buff end order waiting behind its move.
     pub buff_end_waiting: Option<u32>,
+    /// The object of a channel under way (Blizzard).
+    pub channel: Option<u32>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
     /// for one whose object is the bearer's own (made with it).
     pub aura_buffs: Vec<(i32, u32)>,
@@ -2116,6 +2118,25 @@ pub(super) fn buff_end_carried_out(state: &mut super::State, h: u32) {
     let second = state.table.take(tick, "buff end: second object");
     state.table.defer(second, "buff end: second object");
     state.table.defer(buff_end, "buff end");
+}
+
+/// Unit `h`'s Blizzard takes effect (c-RZJ-1 at 3.24): the spell effect
+/// event, then the channel's object, kept to the channel's end.
+pub(super) fn blizzard_effect(state: &mut super::State, h: u32) {
+    spell_effect_event(state, h);
+    let tick = state.table.now;
+    let channel = state.table.take(tick, "Blizzard: channel");
+    if let Some(e) = entries(state, h) {
+        e.channel = Some(channel);
+    }
+}
+
+/// Unit `h`'s cast ends: a channel's object goes 0.0001 s later (c-RZJ-1:
+/// 1621 at 9.144466).
+pub(super) fn channel_ended(state: &mut super::State, h: u32) {
+    if let Some(c) = entries(state, h).and_then(|e| e.channel.take()) {
+        state.table.defer(c, "Blizzard: channel");
+    }
 }
 
 /// Unit `h`'s Storm Bolt takes effect (c-SAK-1, 3.04 s): the spell effect

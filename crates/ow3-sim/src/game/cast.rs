@@ -896,6 +896,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 waves(s, h, &c, tick - e, &mut deferred);
             }
             if c.effect_at.is_some() && tick >= c.end_at {
+                super::table::channel_ended(s, h);
                 movement::end_cast(s, h);
                 // Its order ends (SPEC-0024), counted by the game in the
                 // tick of the end's queue time, the effect's plus the
@@ -1109,6 +1110,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 }
             }
         }
+        // The channel's objects; its waves come by `waves` (SPEC-0043).
+        b"AHbz" => super::table::blizzard_effect(s, h),
         b"AHtc" => {
             let Some(u) = s.unit(Some(h)) else {
                 return true;

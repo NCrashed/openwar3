@@ -989,7 +989,15 @@ pub(super) fn held_impacts(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 trace.push((tick, at, now, m.target));
             }
         }
-        let impact = super::movement::position_of(&state.borrow(), m.target);
+        // Only a missile with an area calls round its impact (SPEC-0019,
+        // test RZG); a plain one makes the victim's own call, held by its
+        // timer (c-RXR-1: the headhunters' spears, 63 calls of 600 in
+        // 0 .. 30 s, none of 750).
+        let impact = m
+            .area
+            .is_some()
+            .then(|| super::movement::position_of(&state.borrow(), m.target))
+            .flatten();
         strike(
             vm,
             state,

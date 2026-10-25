@@ -5129,13 +5129,8 @@ pub(super) fn retaliate(
     let creep_victim = state
         .unit(Some(victim))
         .is_some_and(|v| v.owner == super::creeps::CREEPS);
-    // A running timer holds an attack missile's impact call too (c-RXR-1:
-    // footman 1048689 hit by a headhunter's missile at 13.533730, his
-    // call less than 3 s before); a spell's area calls regardless
-    // (c-RZJ-1: the Shockwave of 12.708868).
-    let missile = impact.is_some() && state.impact_now;
     let calls = !state.victim_only
-        && ((impact.is_some() && !missile && !creep_victim)
+        && ((impact.is_some() && !creep_victim)
             || state
                 .unit(Some(victim))
                 .is_some_and(|v| now >= real_of(v.call_until)));

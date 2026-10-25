@@ -1181,6 +1181,12 @@ fn decide(
     if touching_target {
         follow.touching = true;
     } else if !examined.is_empty() {
+        // A member of a group standing at its block counts afresh, drawing
+        // again (c-RTW-3: footman 900 at 5467 and 5473, standing short
+        // of its place).
+        if walker.cluster > 1 && walker.squared_speed == 0 {
+            follow.patience = 0;
+        }
         let fresh = follow.patience == 0;
         count_block(follow, shared, walker, order, at);
         if fresh && follow.patience == 2 {

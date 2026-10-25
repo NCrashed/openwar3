@@ -1150,7 +1150,19 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             }
         }
         // The channel's objects; its waves come by `waves` (SPEC-0043).
-        b"AHbz" => super::table::blizzard_effect(s, h),
+        b"AHbz" => {
+            super::table::blizzard_effect(s, h);
+            // The waves' shard sets: a shuffle of the 6 wave indices by 5
+            // draws of the script generator, then 13 of game generator 4
+            // for the shards' offsets (c-RZJ-1 at 3.24).
+            // PROVISIONAL: the values are not used here, only drawn.
+            for _ in 0..5 {
+                s.random.step();
+            }
+            for _ in 0..13 {
+                s.game_random[4].step();
+            }
+        }
         b"AHtc" => {
             let Some(u) = s.unit(Some(h)) else {
                 return true;

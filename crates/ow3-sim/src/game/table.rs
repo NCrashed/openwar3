@@ -1053,6 +1053,17 @@ pub(super) fn aura_buff_gained(state: &mut super::State, h: u32, ability: i32) {
     if let Some(e) = entries(state, h) {
         e.aura_buffs.push((ability, o));
     }
+    // Brilliance's buff makes a rate part for its mana regeneration
+    // (c-RZJ-1: 1444 after the Paladin's buff 1443 at 1.505).
+    // PROVISIONAL: kept; what frees it is not read.
+    let brilliance = state
+        .data
+        .abilities
+        .get(&ability)
+        .is_some_and(|d| d.code == i32::from_be_bytes(*b"AHab"));
+    if brilliance {
+        state.table.take(tick, "aura buff: rate part");
+    }
 }
 
 /// Unit `h` loses the buff of aura `ability`: its object goes 0.0001 s

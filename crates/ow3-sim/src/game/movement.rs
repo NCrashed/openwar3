@@ -5479,6 +5479,29 @@ pub(super) fn resumes_before(state: &mut State, at: u32) {
 /// 10.7699).
 /// With `until`, only those expiring up to it, the rest left for later
 /// in the tick.
+/// The earliest cooldown expiry of this tick that `cooldown_expiries`
+/// would take a chase from.
+pub(super) fn next_cooldown_expiry(state: &State) -> Option<u32> {
+    let start = real_of(state.cooldowns_done.unwrap_or(state.move_clock));
+    let end = real_of(add(state.move_clock, crate::timers::TICK));
+    state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state
+                .unit(Some(h))
+                .filter(|u| u.alive && u.attack.is_none())?;
+            let m = u.movement?;
+            let Order::Attack { target } = m.order else {
+                return None;
+            };
+            let e = real_of(u.cooldown_end);
+            ((target != u.cooldown_target || m.faced) && e > start && e <= end)
+                .then_some(u.cooldown_end)
+        })
+        .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)))
+}
+
 fn cooldown_expiries(state: &mut State, until: Option<u32>) {
     let done = state.cooldowns_done.unwrap_or(state.move_clock);
     if let Some(u) = until

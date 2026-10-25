@@ -1887,6 +1887,12 @@ impl<'a> Game<'a> {
         // The attack-moves going on at backswing ends of this tick, in the
         // order of those ends (c-SAK-1: footmen 2 and 3 at 3285).
         attack::attack_move_resumes(&mut self.state.borrow_mut(), None);
+        // The hits due before the tick's first cooldown expiry come first
+        // (c-RZJ-1: a hit at 13.319974 before a chase at 13.319983).
+        let expiry = movement::next_cooldown_expiry(&self.state.borrow());
+        if let Some(e) = expiry {
+            attack::hits_before(&mut self.vm, &self.state, Some(e));
+        }
         movement::attack_moves(&mut self.state.borrow_mut());
         // The checks of the auras (SPEC-0038).
         auras::tick(&mut self.state.borrow_mut());

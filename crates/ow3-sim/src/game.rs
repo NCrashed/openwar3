@@ -262,6 +262,8 @@ pub struct Unit {
     /// Its attack ability was removed (`UnitRemoveAbility` 'Aatk'): it
     /// takes no targets.
     attack_removed: bool,
+    /// A thunder clap's movement slow on it: `DataC` (SPEC-0037).
+    move_slow: Option<u32>,
     slowed_until: Option<(u64, u32)>,
     /// The aura buffs it has: the aura ability, its level and the tick of
     /// the last check that found it in reach (SPEC-0038).

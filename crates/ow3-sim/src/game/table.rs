@@ -1859,6 +1859,7 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
     });
     if walking {
         walk_made(state, h);
+        super::movement::slowed_now(state, h);
     }
 }
 
@@ -1874,16 +1875,23 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
 /// stun's end.
 pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
     let tick = state.table.now;
-    let mut ending: Vec<(u32, u32)> = state
+    // Equal ends in the order of the hits: by their slows' objects.
+    let mut ending: Vec<(u32, u32, u32)> = state
         .units
         .iter()
         .filter_map(|&h| {
-            let end = state.unit(Some(h))?.entries.slow_end_q?;
-            (f32::from_bits(end) <= f32::from_bits(limit)).then_some((h, end))
+            let e = &state.unit(Some(h))?.entries;
+            let end = e.slow_end_q?;
+            let made = e.slow_buff.map_or(0, |b| state.table.creation_of(b));
+            (f32::from_bits(end) <= f32::from_bits(limit)).then_some((h, end, made))
         })
         .collect();
-    ending.sort_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
-    for (h, _) in ending {
+    ending.sort_by(|a, b| {
+        f32::from_bits(a.1)
+            .total_cmp(&f32::from_bits(b.1))
+            .then(a.2.cmp(&b.2))
+    });
+    for (h, _, _) in ending {
         let Some(u) = state.unit(Some(h)) else {
             continue;
         };
@@ -1900,6 +1908,10 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
                 state.table.defer(second, "buff end: second object");
                 state.table.defer(buff_end, "buff end");
             }
+        }
+        // Its speed comes back at its next update (SPEC-0037).
+        if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.move_slow = None;
         }
         let (buff, area) = entries(state, h)
             .map(|e| {

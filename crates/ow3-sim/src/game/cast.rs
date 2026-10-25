@@ -1145,6 +1145,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 let fresh = attack_slow(s, o).is_none();
                 if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
                     t.slowed_until = Some((until, speed));
+                    t.move_slow = Some(n.data[2]);
                     if fresh {
                         super::attack::slow_cooldown(t, now, speed);
                     }

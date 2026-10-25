@@ -59,6 +59,9 @@ pub struct Combat {
     /// Within this of its home a creep's return timer restarts at a call
     /// (`MaxGuardDistance`, SPEC-0030).
     pub max_guard_distance: u32,
+    /// The least a slow leaves of a unit's speed (`MinUnitSpeed`,
+    /// SPEC-0037).
+    pub min_unit_speed: u32,
     /// Hero experience and attributes (SPEC-0033, SPEC-0034).
     pub heroes: Heroes,
 }
@@ -76,6 +79,7 @@ impl Default for Combat {
             guard_distance: s2r("600"),
             guard_return_time: s2r("5"),
             max_guard_distance: s2r("1000"),
+            min_unit_speed: s2r("150"),
             heroes: Heroes::default(),
         }
     }
@@ -107,6 +111,7 @@ impl Combat {
                 "GuardDistance" => combat.guard_distance = s2r(value),
                 "GuardReturnTime" => combat.guard_return_time = s2r(value),
                 "MaxGuardDistance" => combat.max_guard_distance = s2r(value),
+                "MinUnitSpeed" => combat.min_unit_speed = s2r(value),
                 _ if combat.heroes.set(key, value) => {}
                 _ => {
                     if let Some(attack) = ATTACK_LISTS.iter().position(|l| *l == key) {

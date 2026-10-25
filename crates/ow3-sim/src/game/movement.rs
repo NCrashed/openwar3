@@ -1985,6 +1985,50 @@ pub(super) fn stand_still(state: &mut State, h: u32, at: Option<u32>) {
     }
 }
 
+/// Speed `limit` of unit `h` under a thunder clap's slow:
+/// `max(limit x (1 - DataC), MinUnitSpeed)` (SPEC-0037).
+fn slowed_speed(state: &State, h: u32, limit: u32) -> u32 {
+    match state.unit(Some(h)).and_then(|u| u.move_slow) {
+        Some(c) => {
+            let cut = mul(limit, sub(0x3F80_0000, c));
+            let least = state.combat.min_unit_speed;
+            if real_of(cut) < real_of(least) {
+                least
+            } else {
+                cut
+            }
+        }
+        None => limit,
+    }
+}
+
+/// Walking unit `h` was just slowed: its agent is committed at its
+/// per-tick position and goes on at the slowed speed at once (SPEC-0037;
+/// c-SBG-1: ogre 3 at 2.899976, 270 -> 150).
+pub(super) fn slowed_now(state: &mut State, h: u32) {
+    let clock = state.move_clock;
+    let tick = state.ticks;
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let base = state.data.units.get(&u.type_id).map_or(0, |t| t.speed);
+    if real_of(base) <= 0.0 {
+        return;
+    }
+    let k = div(slowed_speed(state, h, base), base);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+        && m.walking
+    {
+        m.commit(clock);
+        m.velocity = [mul(m.velocity[0], k), mul(m.velocity[1], k)];
+        let record = (tick, h, m.origin, m.velocity, m.heading, m.aim);
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push(record);
+        }
+    }
+}
+
 /// Whether unit `h` walks a move order now.
 pub(super) fn on_move(state: &State, h: u32) -> bool {
     state
@@ -2325,6 +2369,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         // The pace of the gold cycle (SPEC-0029).
         let limit = super::harvest::pace_factor(state, h).map_or(limit, |k| mul(limit, k));
+        // A thunder clap's slow (SPEC-0037).
+        let limit = slowed_speed(state, h, limit);
         let cluster = control.get(&h).map_or(1, |c| c.size);
         // A member at its place short of the last waypoint waits there.
         let place_on_way = control.get(&h).is_some_and(|c| !c.last);

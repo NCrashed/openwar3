@@ -397,6 +397,7 @@ pub(super) fn create_unit(
         stun_dropped_acquired: false,
         holding: false,
         attack_removed: false,
+        move_slow: None,
         slowed_until: None,
         buffs: Vec::new(),
         aura_learned: None,

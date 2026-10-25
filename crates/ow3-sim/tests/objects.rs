@@ -78,10 +78,12 @@ fn heroes_one_objects() {
 }
 
 /// `c-SBG-1`: the Thunder Clap probe (two ogres and a paladin slowed, the
-/// slows ending by time): the object table compared with the game's.
+/// slows ending by time, units on hold position).
 #[test]
-fn thunder_clap_objects_report() {
-    compare_objects("c-SBG-1");
+fn thunder_clap_objects() {
+    if let Some(first) = compare_objects("c-SBG-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

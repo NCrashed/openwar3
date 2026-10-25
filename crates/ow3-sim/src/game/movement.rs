@@ -4982,6 +4982,9 @@ pub(super) fn retaliate(
     let now = real_of(state.event_time.unwrap_or_else(|| state.timers.time()));
     let swinging_back = |u: &super::Unit| real_of(u.backswing_end) > now;
     let answers = |h: u32| match state.objects.get(&h) {
+        // One that took the attacker in its own response to the same pass
+        // answers its call again (c-RZJ-1: footman 7 at 12.909923).
+        Some(Object::Unit(u)) if state.reacquire.contains(&h) => u.alive,
         Some(Object::Unit(u)) => {
             u.alive
                 // Not one walking invisible (SPEC-0040; c-SAK-1: the
@@ -5104,10 +5107,11 @@ pub(super) fn retaliate(
     let creep_victim = state
         .unit(Some(victim))
         .is_some_and(|v| v.owner == super::creeps::CREEPS);
-    let calls = (impact.is_some() && !creep_victim)
-        || state
-            .unit(Some(victim))
-            .is_some_and(|v| now >= real_of(v.call_until));
+    let calls = !state.victim_only
+        && ((impact.is_some() && !creep_victim)
+            || state
+                .unit(Some(victim))
+                .is_some_and(|v| now >= real_of(v.call_until)));
     let (x, y) = impact.map_or((x, y), |(p, _)| (real_of(p[0]), real_of(p[1])));
     let radius = real_of(state.combat.call_for_help) + impact.map_or(0.0, |(_, area)| area);
     let call_radius = real_of(state.combat.call_for_help);
@@ -5175,7 +5179,7 @@ pub(super) fn retaliate(
                 || v.movement
                     .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
         });
-    if !answers(victim) && !switches(victim) && !records(victim) {
+    if state.call_only || (!answers(victim) && !switches(victim) && !records(victim)) {
         responders.remove(0);
     }
     // The victim's own call comes after its group's (c-SAK-1: at 1025

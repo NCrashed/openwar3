@@ -1106,19 +1106,34 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 area,
                 at,
             } => {
+                // Each unit hit responds, in the hit order, then one call
+                // for the pass, in which a unit that took the caster in its
+                // response answers again (c-RZJ-1: the second Shockwave's
+                // third step, footman 7 at 12.909923).
                 let mut s = state.borrow_mut();
                 let previous = s.event_time.replace(at);
-                // PROVISIONAL: one call, the first hit's (c-RZJ-1: two
-                // answers at 12.708868 after four hits).
-                for target in targets.into_iter().take(1) {
-                    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-                        movement::retaliate(
-                            &mut s,
-                            target,
-                            caster,
-                            Some((centre, f32::from_bits(area))),
-                        );
+                let impact = Some((centre, f32::from_bits(area)));
+                let alive = |s: &State, t: u32| matches!(s.objects.get(&t), Some(Object::Unit(u)) if u.alive);
+                let mut took = Vec::new();
+                s.victim_only = true;
+                for &target in &targets {
+                    if alive(&s, target) {
+                        let before = movement::attack_target(&s, target);
+                        movement::retaliate(&mut s, target, caster, impact);
+                        if before != Some(caster)
+                            && movement::attack_target(&s, target) == Some(caster)
+                        {
+                            took.push(target);
+                        }
                     }
+                }
+                s.victim_only = false;
+                if let Some(&first) = targets.iter().find(|&&t| alive(&s, t)) {
+                    s.call_only = true;
+                    s.reacquire = took;
+                    movement::retaliate(&mut s, first, caster, impact);
+                    s.call_only = false;
+                    s.reacquire.clear();
                 }
                 s.event_time = previous;
             }

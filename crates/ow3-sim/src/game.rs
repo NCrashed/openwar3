@@ -951,6 +951,9 @@ pub struct State {
     creep_casts: Vec<(u32, i32, u32, u32)>,
     /// Units whose cast's effect ran before this tick's updates.
     early_effects: Vec<u32>,
+    pub(super) call_only: bool,
+    pub(super) victim_only: bool,
+    pub(super) reacquire: Vec<u32>,
     /// Missiles of attacks that arrived at the end of the last tick, with
     /// the queue time of their impact.
     pub(super) held_impacts: Vec<(attack::Missile, u32)>,
@@ -1150,6 +1153,9 @@ impl State {
             call_acquired: Vec::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
+            call_only: false,
+            victim_only: false,
+            reacquire: Vec::new(),
             held_impacts: Vec::new(),
             cooldowns_done: None,
             path_trace: None,

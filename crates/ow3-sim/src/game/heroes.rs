@@ -300,6 +300,29 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     native!(
         add,
         state,
+        "native UnitRemoveAbility takes unit whichUnit, integer abilityId returns boolean",
+        |vm, state, args| {
+            // Only the attack ability so far (c-SBG-1).
+            let removed = handle(&args[0]).is_some_and(|h| {
+                let mut s = state.borrow_mut();
+                let attack = i32::from_be_bytes(*b"Aatk");
+                let has = integer(&args[1]) == attack
+                    && s.unit(Some(h))
+                        .is_some_and(|u| u.alive && !u.attack_removed);
+                if has {
+                    if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                        u.attack_removed = true;
+                    }
+                    super::table::attack_removed(&mut s, h);
+                }
+                has
+            });
+            Ok(Some(Value::Boolean(removed)))
+        }
+    );
+    native!(
+        add,
+        state,
         "native SelectHeroSkill takes unit whichHero, integer abilcode returns nothing",
         |vm, state, args| {
             if let Some(h) = handle(&args[0]) {

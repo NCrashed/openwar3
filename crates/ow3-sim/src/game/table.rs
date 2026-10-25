@@ -334,6 +334,8 @@ pub struct UnitEntries {
     pub lost_later: Vec<u32>,
     /// The object of a thunder clap's slow on the unit.
     pub slow_buff: Option<u32>,
+    /// The object of its attack ability, made with the unit.
+    pub attack_ability: Option<u32>,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
     /// Its attack-move was taken up again after an attack
@@ -387,6 +389,16 @@ const HERO: Making = Making {
     level: &[19, 20],
     corpse: &[],
 };
+// A hero of the creeps: a hero's 24, a creep's guard parts (24, 25) and
+// guard order (26 .. 34, freed 0.0001 s later), then one more, kept
+// (c-SBG-1: paladin 2). PROVISIONAL: what goes at its death is not read.
+const CREEP_HERO: Making = Making {
+    count: 36,
+    deferred: &[17, 18, 23, 22, 27, 32, 31, 30, 29, 28, 26, 34, 33],
+    death: &[10, 11, 24, 25],
+    level: &[19, 20],
+    corpse: &[],
+};
 // PROVISIONAL: the corpse orders but a creep's are taken by the creep's
 // pattern (c-SAK-1: kobold 9's corpse at 106.758).
 const UNIT: Making = Making {
@@ -422,7 +434,11 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     };
     let (owner, type_id) = (u.owner, u.type_id);
     let making = if crate::data::is_hero(type_id) {
-        &HERO
+        if owner == super::creeps::CREEPS {
+            &CREEP_HERO
+        } else {
+            &HERO
+        }
     } else if owner == super::creeps::CREEPS {
         if super::creeps::group_of(state, h) == [h] {
             &CAMP_CREEP
@@ -436,6 +452,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // at 15, kept (c-RZH-1: unit 10, nkot, with the creep Bash: 29).
     let ability = owner == super::creeps::CREEPS
         && !std::ptr::eq(making, &CAMP_CREEP)
+        && !std::ptr::eq(making, &CREEP_HERO)
         && state
             .data
             .units
@@ -454,6 +471,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
+            attack_ability: Some(entries[13]),
             ..UnitEntries::default()
         };
     }
@@ -729,6 +747,30 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
+/// Unit `h` takes a script's move order to a point (c-SBG-1, ogre 3 at
+/// 1.5 s): as an attack order to a point, with 13 objects of the move
+/// ability, the last 7 freed 0.0001 s later and the first 6 kept to the
+/// order's end.
+///
+/// PROVISIONAL: read for a creep that had acquired a target.
+pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script point order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 13, "move ability: order start");
+    for &e in ability[6..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    let mut kept: Vec<u32> = ability[..6].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+    walk_made_at_order(state, h);
+}
+
 /// Unit `h` gets a new walk (an event `cluster` of the path lists): a
 /// search helper freed at once, the cluster and the path. The walk it
 /// had is given up (`walk_dropped`).
@@ -937,6 +979,34 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
     if walks {
         walk_made_at_order(state, h);
     }
+}
+
+/// Unit `h`'s attack ability is removed (`UnitRemoveAbility` 'Aatk'): its
+/// object, made with the unit, is freed 0.0001 s later (c-SBG-1: the
+/// Mountain King's 13).
+pub(super) fn attack_removed(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h).and_then(|e| e.attack_ability.take()) {
+        state.table.defer(e, "attack ability");
+    }
+}
+
+/// Unit `h` takes a script's `holdposition` (c-SBG-1, the map start): the
+/// order and its record, the old order ends, then 5 objects of the hold's
+/// start; all freed 0.0001 s later, the record first, then the 5 (the
+/// last first), then the order.
+///
+/// PROVISIONAL: read for units whose order before was their start order.
+pub(super) fn hold_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script immediate order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let start = state.table.take_n(tick, 5, "hold: order start");
+    for &e in start.iter().rev() {
+        state.table.defer(e, "hold: order start");
+    }
+    state.table.defer(order, "script immediate order");
 }
 
 /// Unit `h` takes a script's order of a spell without a target (c-SAK-1:

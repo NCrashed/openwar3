@@ -1791,6 +1791,9 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
             if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.holding = name == "holdposition";
             }
+            if done && name == "holdposition" {
+                super::table::hold_ordered(state, h);
+            }
             done
         }
         // PROVISIONAL: the game takes it and the current order reads 0
@@ -2031,6 +2034,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             // Its objects of the engine's table (SPEC-0024).
             if done && name == "attack" {
                 super::table::attack_point_ordered(&mut s, h);
+            }
+            if done && name == "move" {
+                super::table::move_point_ordered(&mut s, h);
             }
             drop(s);
             Ok(Some(Value::Boolean(done)))
@@ -4762,7 +4768,7 @@ impl Targets {
         };
         let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
         let data = state.data.units.get(&u.type_id)?;
-        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 {
+        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 || u.attack_removed {
             return None;
         }
         let reach = add(data.acquire, data.collision);

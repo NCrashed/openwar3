@@ -1200,7 +1200,6 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             // (SPEC-0019; c-SBG-1: paladin 2, ogre 3, ogre 1).
             let hit = movement::call_order(s, hit);
             let centre = [u_x, u_y];
-            let first = hit.first().copied();
             for o in hit {
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
                 let until = tick + duration(hero);
@@ -1221,7 +1220,10 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     at: Some(now),
                 });
             }
-            deferred.push(Deferred::ClapArea { at: now, first });
+            deferred.push(Deferred::ClapArea {
+                at: now,
+                first: Some(h),
+            });
         }
         _ => {}
     }

@@ -393,6 +393,11 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                             None
                         } else {
                             s.event_time = a.hit_at;
+                            // The hit restarts the attacker's fog modifier
+                            // (c-RZH-1: the Mountain King at 27.341698).
+                            if let Some(at) = a.hit_at {
+                                super::table::fog_pass(s, h, at, false);
+                            }
                             Some((a.target, amount, weapon.attack_type, weapon.area, bash))
                         }
                     }

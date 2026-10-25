@@ -336,8 +336,9 @@ pub struct UnitEntries {
     /// time the slow ends.
     pub slow_buff: Option<u32>,
     pub slow_end_q: Option<u32>,
-    /// A thunder clap's area object it holds, with the clap's time.
-    pub clap_area: Option<(u32, u32)>,
+    /// Its timed fog modifier as an area spell's source, and the queue
+    /// time it runs to.
+    pub fog: Option<(u32, u32)>,
     /// A buff end order waiting behind its move.
     pub buff_end_waiting: Option<u32>,
     /// The object of a channel under way (Blizzard).
@@ -1996,31 +1997,43 @@ pub(super) fn clap_effect(state: &mut super::State, h: u32, cost: i32) {
     mana_watches(state, h, cost);
 }
 
-/// A thunder clap's area pass at queue time `at`, after its hits, makes
-/// an object held by the first unit hit: freed with that unit's slow
-/// end (c-SBG-1: 1064 with the paladin's at 5.9); with no slow to end
-/// (the unit died or lives unslowed), about 3.944 s after the effect
-/// (c-RZH-1: 3059, made at 26.400000, freed at the end of the tick of q
-/// 30.345907, tunneler 10 dead at 28.49).
-///
-/// PROVISIONAL: what lets it go is not read; the 3.944 s is one reading.
-pub(super) fn clap_area(state: &mut super::State, at: u32, first: Option<u32>) {
-    let tick = state.table.now;
-    let o = state.table.take(tick, "Thunder Clap: area");
-    let held = first
-        .and_then(|f| entries(state, f))
-        .filter(|e| e.slow_buff.is_some());
-    match held {
-        Some(e) => e.clap_area = Some((o, at)),
-        None => {
-            let end = ow3_math::add(at, CLAP_AREA.to_bits());
-            state.table.free_at_q(end, o, "Thunder Clap: area");
-        }
+/// An area spell of `source` passed over units at queue time `at` (a
+/// thunder clap's hits): the source's timed fog modifier, made at its
+/// first pass, lasts `FOG_TIME` from its last restart; any later pass of
+/// the source, or a target the source acquires, restarts it (c-SBG-1:
+/// 1064, the clap at 2.9, freed at 5.9; c-RZH-1: 3059, the clap at 26.40,
+/// restarted by the Mountain King's acquisition at 27.341698, freed at
+/// 30.34).
+pub(super) fn clap_area(state: &mut super::State, at: u32, source: Option<u32>) {
+    if let Some(h) = source {
+        fog_pass(state, h, at, true);
     }
 }
 
-/// The time to the free of a thunder clap's area object (`clap_area`).
-const CLAP_AREA: f32 = 3.944;
+/// The source `h`'s fog modifier at queue time `at`: restarted if it runs,
+/// else made when `make` (an area pass).
+pub(super) fn fog_pass(state: &mut super::State, h: u32, at: u32, make: bool) {
+    let tick = state.table.now;
+    let end = ow3_math::add(at, FOG_TIME.to_bits());
+    let running = entries(state, h)
+        .and_then(|e| e.fog)
+        .filter(|&(_, until)| f32::from_bits(until) >= f32::from_bits(at));
+    let o = match running {
+        Some((o, _)) => {
+            state.table.timed_q.retain(|t| t.1 != o);
+            o
+        }
+        None if make => state.table.take(tick, "fog modifier"),
+        None => return,
+    };
+    state.table.free_at_q(end, o, "fog modifier");
+    if let Some(e) = entries(state, h) {
+        e.fog = Some((o, end));
+    }
+}
+
+/// How long a timed fog modifier lasts from its last restart (3.0 s).
+const FOG_TIME: f32 = 3.0;
 
 /// Unit `h` is slowed by a thunder clap and lives, to queue time `end`:
 /// the slow's object, kept, and its walk made again for the new speed
@@ -2092,17 +2105,14 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
         if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
             u.move_slow = None;
         }
-        let (buff, area) = entries(state, h)
+        let buff = entries(state, h)
             .map(|e| {
                 e.slow_end_q = None;
-                (e.slow_buff.take(), e.clap_area.take())
+                e.slow_buff.take()
             })
             .unwrap_or_default();
         if let Some(b) = buff {
             state.table.defer(b, "Thunder Clap effect");
-        }
-        if let Some((a, _)) = area {
-            state.table.defer(a, "Thunder Clap: area");
         }
     }
 }
@@ -2550,10 +2560,6 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     }
     if let Some(e) = entries(state, h) {
         e.slow_end_q = None;
-    }
-    if let Some((a, at)) = entries(state, h).and_then(|e| e.clap_area.take()) {
-        let end = ow3_math::add(at, CLAP_AREA.to_bits());
-        state.table.free_at_q(end, a, "Thunder Clap: area");
     }
     for e in core {
         state.table.rest.push((e, "unit death"));

@@ -69,7 +69,7 @@ the game's order.
   `crates/ow3-sim/tests/checksums.rs` (`UNSPECIFIED`).
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
-  does every turn checksum to 62 s.
+  does every one of its 1614 turn checksums (to 161 s).
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

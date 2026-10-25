@@ -2313,6 +2313,14 @@ impl<'a> Game<'a> {
         let mut state = self.state.borrow_mut();
         state.player_orders = true;
         let done = movement::point_order(&mut state, unit, order, target);
+        // Its objects, as a script's order's (c-RTW-3: an attack-move at
+        // 8.3496).
+        if done && order == "attack" {
+            table::attack_point_ordered(&mut state, unit);
+        }
+        if done && order == "move" {
+            table::move_point_ordered(&mut state, unit);
+        }
         state.player_orders = false;
         done
     }
@@ -2604,6 +2612,11 @@ impl<'a> Game<'a> {
     /// PROVISIONAL: the selections, the 7-entry list and the second list
     /// of the type records are taken empty.
     pub fn game_sum(&self) -> u32 {
+        self.game_sum_with(&[ow3_formats::replay::fold(0, u32::MAX); 12])
+    }
+
+    /// `game_sum` with the players' selection sums `Y` (SPEC-0024).
+    pub fn game_sum_with(&self, ys: &[u32; 12]) -> u32 {
         use ow3_formats::replay::fold;
         let state = self.state.borrow();
         let one = 1.0f32.to_bits();
@@ -2620,7 +2633,7 @@ impl<'a> Game<'a> {
                 t = fold(t, r);
             }
             let h = fold(fold(t, one), one);
-            let y = fold(0, u32::MAX);
+            let y = ys[player as usize];
             g = fold(g, fold(y, h));
         }
         g

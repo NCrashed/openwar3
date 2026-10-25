@@ -157,6 +157,7 @@ fn compare_objects(name: &str) -> Option<Option<usize>> {
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.load_object_ids(&dir.join(format!("{name}.w3g")));
     playback.game.set_table(start_table(), true);
     // (Some ticks past the list's last, whose tick column runs ahead.)
     // OW3_UNTIL: play to that tick instead.
@@ -283,6 +284,7 @@ fn turn_parts(name: &str) -> Option<Option<usize>> {
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    playback.load_object_ids(&dir.join(format!("{name}.w3g")));
     playback.game.set_table(start_table(), false);
     playback.run();
     let turns = turns(&replay);

@@ -1790,7 +1790,9 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
             if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.holding = name == "holdposition";
             }
-            if done && name == "holdposition" {
+            // `stop` takes the same objects (c-RTW-3: a player's stop at
+            // 5.024874).
+            if done {
                 super::table::hold_ordered(state, h);
             }
             done

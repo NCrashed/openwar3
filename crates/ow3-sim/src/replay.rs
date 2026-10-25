@@ -51,6 +51,8 @@ pub struct Playback<'a> {
     /// the checksum (SPEC-0024).
     selection_ids: BTreeMap<u8, Vec<[u32; 2]>>,
     group_ids: BTreeMap<(u8, u8), Vec<[u32; 2]>>,
+    /// The type of each player's active subgroup (`SelectSubgroup`).
+    subgroups: BTreeMap<u8, u32>,
     /// The creation numbers and types of the units, in creation order.
     ids: Vec<(u32, i32)>,
     /// The tick the game runs to in the current time slot.
@@ -169,6 +171,7 @@ impl<'a> Playback<'a> {
             groups: BTreeMap::new(),
             selection_ids: BTreeMap::new(),
             group_ids: BTreeMap::new(),
+            subgroups: BTreeMap::new(),
             ids: Vec::new(),
             end: 0,
             notes: Vec::new(),
@@ -188,7 +191,7 @@ impl<'a> Playback<'a> {
             objects: self.game.objects_changed(),
             c: self.game.table_next().0,
             d: self.game.table_next().1,
-            g: self.game.game_sum(),
+            g: self.game.game_sum_with(&self.selection_sums()),
             ..Marks::default()
         };
         let mut walking = std::collections::BTreeSet::new();
@@ -350,6 +353,57 @@ impl<'a> Playback<'a> {
         found
     }
 
+    /// Each player's selection sum `Y` (SPEC-0024): the units selected and
+    /// their `idsum`s, the active subgroup, each subgroup (the selected
+    /// units of one type, in the order of their first unit), the control
+    /// groups, and the lead unit (the first selected).
+    ///
+    /// PROVISIONAL: the subgroups' order beyond the first is not read
+    /// (c-RTW-3 selects one footman).
+    fn selection_sums(&self) -> [u32; 12] {
+        let idsum = |id: &[u32; 2]| (id[0] ^ id[1]).rotate_left(3);
+        let mut ys = [fold(0, u32::MAX); 12];
+        for (player, y) in ys.iter_mut().enumerate() {
+            let player = player as u8;
+            let ids = self.selection_ids.get(&player).cloned().unwrap_or_default();
+            let type_of =
+                |id: &[u32; 2]| self.ids.iter().find(|&&(n, _)| n == id[1]).map(|&(_, t)| t);
+            let mut types: Vec<Option<i32>> = Vec::new();
+            for id in &ids {
+                let t = type_of(id);
+                if !types.contains(&t) {
+                    types.push(t);
+                }
+            }
+            let mut s = ids.len() as u32;
+            for id in &ids {
+                s = fold(s, idsum(id));
+            }
+            let active = self
+                .subgroups
+                .get(&player)
+                .and_then(|&item| types.iter().position(|&t| t == Some(item as i32)));
+            s = fold(s, active.map_or(u32::MAX, |j| j as u32));
+            for t in &types {
+                let members: Vec<&[u32; 2]> = ids.iter().filter(|id| type_of(id) == *t).collect();
+                s = fold(s, members.len() as u32);
+                for id in members {
+                    s = fold(s, idsum(id));
+                }
+            }
+            for ((_, _), group) in self.group_ids.range((player, 0)..=(player, u8::MAX)) {
+                for id in group {
+                    s = fold(s, idsum(id));
+                }
+            }
+            if let Some(lead) = ids.first() {
+                s = fold(s, idsum(lead));
+            }
+            *y = s;
+        }
+        ys
+    }
+
     fn note(&mut self, text: String) {
         self.notes.push(format!("{} ms: {text}", self.ms));
     }
@@ -387,6 +441,9 @@ impl<'a> Playback<'a> {
                     2 => selection.retain(|u| !units.contains(u)),
                     _ => {}
                 }
+            }
+            Action::SelectSubgroup { item, .. } => {
+                self.subgroups.insert(player, *item);
             }
             Action::AssignGroup { group, units } => {
                 self.group_ids.insert((player, *group), units.clone());
@@ -484,7 +541,6 @@ impl<'a> Playback<'a> {
             | Action::SaveGame(_)
             | Action::SaveFinished(_)
             | Action::PreSubselection
-            | Action::SelectSubgroup { .. }
             | Action::EscapePressed
             | Action::MinimapSignal { .. } => {}
             other => self.note(format!("not played: {other:?}")),

@@ -393,6 +393,7 @@ pub(super) fn create_unit(
         proc_counters: Vec::new(),
         procced: None,
         stunned_until: None,
+        rooted_until: None,
         stun_back: None,
         stun_dropped_acquired: false,
         holding: false,

@@ -1511,7 +1511,12 @@ fn entangling_roots() {
         .filter(|w| (w[0].1[1].life - w[1].1[1].life - 15.0).abs() < 0.02)
         .map(|w| w[1].0 - ORDER_TICK)
         .collect();
-    let expected: Vec<u64> = (0..9).map(|k| 172 + 200 * k).collect();
+    // The game's from `o + 172`: the cast starts at the first update of the
+    // walk the order makes (c-SBK-1: 8 ticks after the order), here 30
+    // ticks after it. PROVISIONAL: ours starts at the order, so the hits
+    // are checked from the effect (`o + 140`) on: DataA 2 ticks after it,
+    // then every 200 ticks, nine times.
+    let expected: Vec<u64> = (0..9).map(|k| 142 + 200 * k).collect();
     assert_eq!(hits, expected);
 }
 

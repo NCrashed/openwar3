@@ -1060,6 +1060,11 @@ pub(super) fn stunned(state: &State, h: u32) -> bool {
         .unit(Some(h))
         .and_then(|u| u.stunned_until)
         .is_some_and(|t| tick < t)
+        // A rooted unit neither moves nor attacks either (c-SBK-1: the ogre).
+        || (state
+                .unit(Some(h))
+                .and_then(|u| u.rooted_until)
+                .is_some_and(|t| tick < t))
 }
 
 /// The attack-speed factor of `h` now: `1 - DataD` of a thunder clap that
@@ -1117,8 +1122,11 @@ enum Deferred {
     BlizzardHit { target: u32, end: u32 },
     /// The object of a thunder clap's area pass, after its hits.
     ClapArea { at: u32, first: Option<u32> },
-    /// An object taken now and freed by a queue timer at `end`.
+    /// An object taken now and freed by a queue timer at `end` (`u32::MAX`:
+    /// kept).
     Kept { end: u32 },
+    /// A unit rooted by Entangling Roots (`table::rooted`).
+    Rooted { target: u32, until: u64 },
     /// Damage of a thunder clap.
     Damage {
         caster: u32,
@@ -1315,11 +1323,20 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
             Deferred::BlizzardHit { target, end } => {
                 super::table::blizzard_hit(&mut state.borrow_mut(), target, end);
             }
+            Deferred::Rooted { target, until } => {
+                if let Some(Object::Unit(u)) = state.borrow_mut().objects.get_mut(&target) {
+                    u.rooted_until = Some(until);
+                }
+                super::table::rooted(&mut state.borrow_mut(), target);
+            }
             Deferred::Kept { end } => {
                 let mut s = state.borrow_mut();
                 let tick = s.table.now;
                 let o = s.table.take(tick, "spell: effect");
-                s.table.free_at_q(end, o, "spell: effect");
+                // (`u32::MAX`: kept.)
+                if end != u32::MAX {
+                    s.table.free_at_q(end, o, "spell: effect");
+                }
             }
             Deferred::ClapArea { at, first } => {
                 super::table::clap_area(&mut state.borrow_mut(), at, first);
@@ -1744,7 +1761,31 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             }
         }
         // PROVISIONAL: the hold of the roots is not built.
-        b"AEer" => bounce(s, h, c, &n, BounceKind::Roots),
+        // The effect event and the 0 hit at once, then an object kept with
+        // the roots; DataA from 2 ticks on (c-SBK-1: 7.239974, kept 1413,
+        // 15.00 from 1451). PROVISIONAL: the walk and the object (1414 ..
+        // 1417) made after it are not built.
+        b"AEer" => {
+            if let Some(t) = c.target {
+                super::table::clap_effect(s, h, n.cost);
+                deferred.push(Deferred::Damage {
+                    caster: h,
+                    target: t,
+                    amount: 0,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+                let hero = s.unit(Some(t)).is_some_and(|u| is_hero(u.type_id));
+                deferred.push(Deferred::Rooted {
+                    target: t,
+                    until: s.ticks + duration(hero),
+                });
+            }
+            bounce(s, h, c, &n, BounceKind::Roots);
+        }
         b"AHfs" => flame_strike(s, h, c, &n),
         // A wave from the caster towards the point, DataA long and Area
         // wide: the enemy ground units in it are thrown up, stunned for
@@ -2549,7 +2590,7 @@ fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kin
     let (left, at) = if kind == BounceKind::ManaBurn {
         (1, s.ticks + super::attack::ticks(n.data[1]))
     } else if kind == BounceKind::Roots {
-        (11, s.ticks + 30)
+        (10, s.ticks + 2)
     } else {
         (
             f32::from_bits(n.data[1]).max(1.0) as u32,

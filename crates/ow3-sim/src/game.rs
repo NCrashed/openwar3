@@ -253,6 +253,9 @@ pub struct Unit {
     /// Stunned until this tick, and its attack slowed until a tick by a
     /// factor of its attack speed (SPEC-0037).
     stunned_until: Option<u64>,
+    /// The tick a root of Entangling Roots ends: till then it neither moves
+    /// nor attacks.
+    rooted_until: Option<u64>,
     /// The queue time at which its order comes back after the stun.
     stun_back: Option<u32>,
     /// The stun dropped a swing of an attack it acquired (SPEC-0037).

@@ -2913,6 +2913,26 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
     }
 }
 
+/// Unit `h` is rooted by Entangling Roots: the roots' object, a walk made
+/// for it (it stands now), one more object, both kept; then its order ends
+/// and the walk is given up (c-SBK-1: the ogre at 7.239974: 1413, walk
+/// 1415/1416 freed at its next update, 1417, its acquired attack's
+/// objects 1145 .. 1139).
+///
+/// PROVISIONAL: read for one unit with an acquired attack; when the two
+/// objects go and what the unit does after are not read.
+pub(super) fn rooted(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    state.table.take(tick, "roots");
+    walk_made(state, h);
+    state.table.take(tick, "roots: other");
+    order_ended(state, h);
+    walk_dropped(state, h);
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.attack = None;
+    }
+}
+
 /// The thunder clap slows that end by time in this tick (c-SBG-1: the
 /// paladin at q 5.900000, the ogres at 7.900000), in the order the clap
 /// hit them. A creep is given the order that ends the buff (its buff end

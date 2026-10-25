@@ -1977,7 +1977,13 @@ impl<'a> Game<'a> {
         // hit that never comes off the queue).
         for _ in 0..1024 {
             let hit = attack::next_hit(&self.state.borrow());
-            let acquired = movement::acquisitions(&mut self.state.borrow_mut(), hit, first_batch);
+            // A backswing's goal before the hit bounds the checks: those
+            // before it take their targets first (c-RXR-1: the checks of
+            // 23.769983 before a goal at 23.769987 in 4754).
+            let walk = attack::first_swing_walk(&self.state.borrow(), None)
+                .filter(|&w| hit.is_none_or(|h| f32::from_bits(w) < f32::from_bits(h)));
+            let acquired =
+                movement::acquisitions(&mut self.state.borrow_mut(), walk.or(hit), first_batch);
             if first_batch {
                 // Reaction delays that end after the first check, after the
                 // acquisitions of the checks before them (c-RZH-1: a reaction
@@ -1992,6 +1998,10 @@ impl<'a> Game<'a> {
                 widgets::acquired(&mut self.vm, &self.state, &after);
             } else {
                 widgets::acquired(&mut self.vm, &self.state, &acquired);
+            }
+            if let Some(w) = walk {
+                attack::after_swing_walks(&mut self.state.borrow_mut(), Some(w + 1));
+                continue;
             }
             if hit.is_none() {
                 break;

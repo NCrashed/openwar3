@@ -3124,7 +3124,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 // (c-SAK-1: footman 2 at 925, hitting at 1025).
                                 if let Order::Attack { target } = m.order
                                     && begin_attack.is_none()
-                                    && reaches(state, h, target)
+                                    && reaches_with(state, h, target, AFTER_MOVEMENT)
                                 {
                                     begin_attack = Some(target);
                                     m.arrived = true;
@@ -3542,6 +3542,16 @@ fn reaches_at_commit(state: &State, h: u32, target: u32) -> bool {
 }
 
 pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
+    reaches_with(state, h, target, 0)
+}
+
+/// The attack start that follows a movement's end tests the range plus 100
+/// (SPEC-0019, "Range test"; c-SBI-1: the ogre 198.5 from grunt 4 at
+/// 1.499999, range 100 tested as 200).
+const AFTER_MOVEMENT: u32 = 0x42C8_0000;
+
+/// [`reaches`] with `extra` added to the weapon's range.
+pub(super) fn reaches_with(state: &State, h: u32, target: u32, extra: u32) -> bool {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let collision = |u: &super::Unit| state.data.units.get(&u.type_id).map(|t| (t, t.collision));
     let (Some(u), Some(at)) = (state.unit(Some(h)), position_of(state, target)) else {
@@ -3555,6 +3565,7 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
         .and_then(collision)
         .map_or(0, |c| c.1);
     let range = super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
+    let range = add(range, extra);
     let reach = add(add(mul(range, CELL), mul(own, CELL)), mul(other, CELL));
     in_range(relative([u.x, u.y], min), relative(at, min), reach)
 }
@@ -4240,6 +4251,10 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         // Nor one stunned (c-SAK-1: kobold 10, stunned from 740, made no
         // switch at its check of 978).
         if u.stunned_until.is_some_and(|t| tick < t) {
+            continue;
+        }
+        // Nor one whose attack ability was removed (c-SBI-1: the heroes).
+        if u.attack_removed {
             continue;
         }
         // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster
@@ -5070,6 +5085,9 @@ pub(super) fn retaliate(
                     || (u.attack_move.is_none()
                         && (u.movement.is_none_or(|m| !m.ordered() || m.going_back())
                             || u.creep.homebound)))
+                // Nor one whose attack ability was removed (c-SBI-1: the heroes
+                // at grunt 4's call of 1.799998).
+                && !u.attack_removed
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state
@@ -5103,6 +5121,9 @@ pub(super) fn retaliate(
                     }
                     _ => true,
                 })
+                // Nor one whose attack ability was removed (c-SBI-1: the heroes
+                // at grunt 4's call of 1.799998).
+                && !u.attack_removed
                 && u.casting.is_none()
                 && u.stunned_until.is_none_or(|t| state.ticks >= t)
                 && state

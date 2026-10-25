@@ -1793,6 +1793,7 @@ impl<'a> Game<'a> {
         let bound = at.or_else(|| attack::first_hit_in_tick(&self.state.borrow()));
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        movement::attack_moves_arrived(&mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());
         table::homes_arrived(&mut self.state.borrow_mut());
         // The filters of the walkers that crossed region edges at their

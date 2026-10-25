@@ -3779,6 +3779,37 @@ pub(super) fn guard_back(state: &mut State, h: u32, home: [u32; 2]) {
     }
 }
 
+/// Attack-moves whose walk ended at their point in this tick's updates
+/// end there, before the walks given up in the updates are freed
+/// (c-RZH-1: the Mountain King at 35.188877, his walk freed after the
+/// ending's objects).
+pub(super) fn attack_moves_arrived(state: &mut State) {
+    let units: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            state.unit(Some(h)).is_some_and(|u| {
+                u.alive
+                    && u.attack.is_none()
+                    && u.attack_move.is_some_and(|a| a.resume_at.is_none())
+                    && u.movement
+                        .is_some_and(|m| !m.ordered() && m.order == Order::Point)
+            })
+        })
+        .collect();
+    for h in units {
+        let Some(a) = state.unit(Some(h)).and_then(|u| u.attack_move) else {
+            continue;
+        };
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.next_acquire = a.next_check;
+        }
+        set_attack_move(state, h, None);
+        super::table::attack_move_arrived(state, h);
+    }
+}
+
 /// Attack-moves going on after a kill, and ending at their point; units
 /// walking back to their guard points.
 pub(super) fn attack_moves(state: &mut State) {

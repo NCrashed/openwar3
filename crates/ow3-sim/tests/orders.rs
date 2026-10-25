@@ -1426,6 +1426,46 @@ fn healing_wave() {
     assert!((last[0].life - 420.0).abs() < 1.0, "{}", last[0].life);
 }
 
+/// SPEC-0041, verification 1: frost nova on a footman with another 120
+/// away: the target 50 and 100, the other 50, 80 ticks after the order.
+#[test]
+fn frost_nova() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Ulic', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2700, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -2580, -2000, 180)\n    call SelectHeroSkill(a, 'AUfn')\n    call PauseUnit(t, true)",
+        "call IssueTargetOrder(a, \"frostnova\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 120);
+    let at = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1.clone();
+    let (before, after) = (at(ORDER_TICK + 79), at(ORDER_TICK + 80));
+    for (i, amount) in [(1, 150.0), (2, 50.0)] {
+        let damage = before[i].life - after[i].life;
+        assert!((damage - amount).abs() < 0.02, "{i}: {damage}");
+    }
+}
+
+/// SPEC-0041, mana burn on an archmage: 50 mana and 37.5 life (the hero
+/// factor 0.75) 0.25 s after the cast point, 110 ticks after the order.
+#[test]
+fn mana_burn() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Edem', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'Hamg', -2700, -2000, 180)\n    call SelectHeroSkill(a, 'AEmb')\n    call PauseUnit(t, true)",
+        "call IssueTargetOrder(a, \"manaburn\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 150);
+    let at = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1.clone();
+    let (before, after) = (at(ORDER_TICK + 109), at(ORDER_TICK + 110));
+    let lost = before[1].life - after[1].life;
+    assert!((lost - 37.5).abs() < 0.02, "{lost}");
+    let burnt = before[1].mana - after[1].mana;
+    assert!((burnt - 50.0).abs() < 0.02, "{burnt}");
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

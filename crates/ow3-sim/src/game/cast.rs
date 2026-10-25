@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 12] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 14] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -56,6 +56,8 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 12] = [
     ("stomp", *b"AOws", 852_127, Aim::Nothing),
     ("chainlightning", *b"AOcl", 852_119, Aim::Enemy),
     ("healingwave", *b"AOhw", 852_501, Aim::Friend),
+    ("frostnova", *b"AUfn", 852_226, Aim::Enemy),
+    ("manaburn", *b"AEmb", 852_179, Aim::Enemy),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1534,8 +1536,73 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // PROVISIONAL: the order of the hits taken as Thunder Clap's, and
         // their objects as Storm Bolt's stun; neither is read.
         // The first unit is reached 0.25 s after the cast point (SPEC-0040).
-        b"AOcl" => bounce(s, h, c, &n, false),
-        b"AOhw" => bounce(s, h, c, &n, true),
+        b"AOcl" => bounce(s, h, c, &n, BounceKind::Lightning),
+        b"AOhw" => bounce(s, h, c, &n, BounceKind::Heal),
+        // At the cast point the target takes 0, DataA and DataB, the other
+        // enemies within Area of it DataA (SPEC-0041).
+        // PROVISIONAL: the others' order taken as Thunder Clap's; the slow
+        // is not built.
+        b"AUfn" => {
+            let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
+                return true;
+            };
+            let Some([x, y]) = s
+                .unit(Some(t))
+                .map(|u| [f32::from_bits(u.x), f32::from_bits(u.y)])
+            else {
+                return true;
+            };
+            let area = f32::from_bits(n.area);
+            let others: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    o != t
+                        && s.unit(Some(o)).is_some_and(|u| {
+                            let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
+                            u.alive
+                                && !u.hidden
+                                && movement::enemies(s, owner, u.owner)
+                                && dx * dx + dy * dy <= area * area
+                        })
+                })
+                .collect();
+            let hits = [(t, 0), (t, n.data[0]), (t, n.data[1])].into_iter().chain(
+                movement::call_order(s, others)
+                    .into_iter()
+                    .map(|o| (o, n.data[0])),
+            );
+            for (target, amount) in hits {
+                deferred.push(Deferred::Damage {
+                    caster: h,
+                    target,
+                    amount,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+        }
+        // A damage event of 0 at the cast point, the burn DataB later
+        // (SPEC-0041).
+        b"AEmb" => {
+            if let Some(t) = c.target {
+                deferred.push(Deferred::Damage {
+                    caster: h,
+                    target: t,
+                    amount: 0,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+            bounce(s, h, c, &n, BounceKind::ManaBurn);
+        }
         b"AOws" => {
             let Some(u) = s.unit(Some(h)) else {
                 return true;
@@ -1869,7 +1936,7 @@ pub(super) fn fades(state: &mut State) {
 pub struct Bounce {
     caster: u32,
     owner: i32,
-    heal: bool,
+    kind: BounceKind,
     target: u32,
     at: u64,
     amount: u32,
@@ -1879,21 +1946,40 @@ pub struct Bounce {
     hit: Vec<u32>,
 }
 
+/// What a [`Bounce`] does where it arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BounceKind {
+    /// Chain Lightning's damage.
+    Lightning,
+    /// Healing Wave's heal.
+    Heal,
+    /// Mana Burn's loss of mana and as much damage, once.
+    ManaBurn,
+}
+
 /// The time between two jumps, 0.25 s.
 const BOUNCE_TICKS: u64 = 50;
 
 /// A new bounce from the effect of `c` (Chain Lightning or Healing Wave).
-fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, heal: bool) {
+fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kind: BounceKind) {
     let (Some(target), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
         return;
     };
-    let left = f32::from_bits(n.data[1]).max(1.0) as u32;
+    // Mana Burn reaches its unit DataB after the cast point, once.
+    let (left, at) = if kind == BounceKind::ManaBurn {
+        (1, s.ticks + super::attack::ticks(n.data[1]))
+    } else {
+        (
+            f32::from_bits(n.data[1]).max(1.0) as u32,
+            s.ticks + BOUNCE_TICKS,
+        )
+    };
     s.bounces.push(Bounce {
         caster: h,
         owner,
-        heal,
+        kind,
         target,
-        at: s.ticks + BOUNCE_TICKS,
+        at,
         amount: n.data[0],
         factor: ow3_math::sub(1.0f32.to_bits(), n.data[2]),
         left,
@@ -1919,7 +2005,28 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
         }
         let alive = s.unit(Some(b.target)).is_some_and(|u| u.alive);
         if alive {
-            if b.heal {
+            if b.kind == BounceKind::ManaBurn {
+                let mut burnt = 0;
+                if let Some(Object::Unit(t)) = s.objects.get_mut(&b.target) {
+                    let mana = t.mana.value();
+                    burnt = if f32::from_bits(mana) < f32::from_bits(b.amount) {
+                        mana
+                    } else {
+                        b.amount
+                    };
+                    t.mana.set(ow3_math::sub(mana, burnt));
+                }
+                deferred.push(Deferred::Damage {
+                    caster: b.caster,
+                    target: b.target,
+                    amount: burnt,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            } else if b.kind == BounceKind::Heal {
                 if let Some(Object::Unit(t)) = s.objects.get_mut(&b.target) {
                     let life = add(t.life.value(), b.amount);
                     let life = if f32::from_bits(life) > f32::from_bits(t.life.max) {
@@ -1965,7 +2072,7 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
                 continue;
             }
             let enemy = movement::enemies(s, b.owner, t.owner);
-            let key = if b.heal {
+            let key = if b.kind == BounceKind::Heal {
                 let missing = f32::from_bits(t.life.max) - f32::from_bits(t.life.value());
                 if enemy || missing <= 0.0 {
                     continue;

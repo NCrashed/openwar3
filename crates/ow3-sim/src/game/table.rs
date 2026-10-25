@@ -433,6 +433,9 @@ pub struct UnitEntries {
     pub harvest_arrive: Vec<u32>,
     /// The objects of its queued orders, in their order.
     pub queued: std::collections::VecDeque<u32>,
+    /// An object of its arrival at a tree, freed at its next update, and
+    /// that update's tick.
+    pub tree_arrival: Option<(u32, u64)>,
     /// Its object while inside a gold mine.
     pub harvest_inside: Option<u32>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
@@ -1038,13 +1041,10 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         state.table.defer(e, "harvest: order start");
     }
     if let Some(e) = entries(state, h) {
-        e.harvest_arrive = vec![parts[n - 5], parts[n - 6]];
-        e.order = parts[..n - 6]
-            .iter()
-            .rev()
-            .copied()
-            .chain([order])
-            .collect();
+        // At the tree only its k 7 goes at the arrival (c-RYP-1: 1265).
+        let kept = if tree { n - 5 } else { n - 6 };
+        e.harvest_arrive = parts[kept..n - 4].iter().rev().copied().collect();
+        e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
     }
     walk_made_at_order(state, h);
 }
@@ -1179,6 +1179,37 @@ pub(super) fn destructable_made(state: &mut super::State, h: u32) {
         .table
         .destructable_paths
         .insert(h, parts[4..].to_vec());
+}
+
+/// Worker `h` reaches its tree (c-RYP-1: peasant 0 at 997): a part of its
+/// harvest order goes 0.0001 s later; three objects of the harvest code
+/// (the last two freed 0.0001 s later, the last first; the first at its
+/// next update); then its new walk to the tree.
+pub(super) fn tree_arrived(state: &mut super::State, h: u32) {
+    harvest_arrived(state, h);
+    let tick = state.table.now;
+    let parts = state.table.take_n(tick, 3, "harvest: at the tree");
+    state.table.defer(parts[2], "harvest: at the tree");
+    state.table.defer(parts[1], "harvest: at the tree");
+    let next = state.ticks + 6;
+    if let Some(e) = entries(state, h) {
+        e.tree_arrival = Some((parts[0], next));
+    }
+    walk_made_at_order(state, h);
+}
+
+/// Worker `h`'s update after reaching its tree: its arrival's kept object
+/// goes (c-RYP-1: 1358 at 1003, after the old walk).
+pub(super) fn tree_arrival_ended(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let due =
+        entries(state, h).and_then(|e| e.tree_arrival.filter(|&(_, t)| t <= tick).map(|(o, _)| o));
+    if let Some(o) = due {
+        if let Some(e) = entries(state, h) {
+            e.tree_arrival = None;
+        }
+        state.table.defer(o, "harvest: at the tree");
+    }
 }
 
 /// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an

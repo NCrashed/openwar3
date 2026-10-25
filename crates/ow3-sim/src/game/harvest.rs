@@ -586,6 +586,9 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     g.at_tree = true;
                     set(&mut s, h, Some(g));
                     walk_to_work(&mut s, h);
+                    if passes {
+                        super::table::tree_arrived(&mut s, h);
+                    }
                     if let Some(mut g) = get(&s, h) {
                         g.ready = true;
                         set(&mut s, h, Some(g));
@@ -599,6 +602,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         } else {
             drop(s);
+        }
+    }
+    {
+        let mut s = state.borrow_mut();
+        let workers: Vec<u32> = s.units.clone();
+        for w in workers {
+            super::table::tree_arrival_ended(&mut s, w);
         }
     }
     forget_others(&mut state.borrow_mut());

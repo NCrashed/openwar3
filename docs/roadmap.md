@@ -91,6 +91,9 @@ the game's order.
 - The lumber harvest test c-RYP-1 (peasants, trees falling, another tree
   looked for): its object table (2356 changes) and all 697 turn checksums
   match the game.
+- The gold harvest test with kobolds attacking c-RXD-1: all 385 turn
+  checksums match the game; its object table matches to 35.2 s (1762 of
+  2289 changes), the rest differing only inside turns.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

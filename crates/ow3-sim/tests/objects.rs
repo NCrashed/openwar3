@@ -178,10 +178,12 @@ fn lumber_objects() {
     }
 }
 
-/// `c-RXD-1`: gold harvest with creeps attacking (report only).
+/// `c-RXD-1`: gold harvest with kobolds attacking: every turn checksum.
 #[test]
-fn others_checksums_report() {
-    turn_parts("c-RXD-1");
+fn creeps_harvest_checksums() {
+    if let Some(first) = turn_parts("c-RXD-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
 }
 
 /// Its object table (report only).

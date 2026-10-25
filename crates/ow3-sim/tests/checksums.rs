@@ -97,9 +97,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXD-1.w3g",
-        "all path agents and events are the game's (tests/agents.rs, tests/crowd.rs); \
-         harvesting changes the game's state at turns where the simulation has nothing (the \
-         objects of SPEC-0024, \"Gathering\", whose ticks are known to 5 ticks)",
+        "gold harvest with kobolds attacking: every turn checksum to its end matches with \
+         the object table started as the game has it (tests/objects.rs, \
+         creeps_harvest_checksums); this test runs without it",
     ),
     (
         "c-RZH-1.w3g",

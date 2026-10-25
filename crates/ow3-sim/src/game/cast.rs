@@ -637,6 +637,29 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         u.stun_dropped_acquired = u.attack.is_some_and(|a| a.order_id == 0);
         u.attack = None;
     }
+    // The stun clears an acquired target: the attack record and the chase
+    // go, the walk is given up, and the unit is idle at its order's return
+    // (c-SBI-1: War Stomp's four creeps at 4.970000; c-SAK-1: kobold 10 at
+    // 3.695). Not a target that is the stunner itself (c-SAK-1: creep 1048701
+    // on the Mountain King, bashed at 8552, kept him; PROVISIONAL: inferred
+    // from the rows).
+    let acquired = state.unit(Some(h)).is_some_and(|u| {
+        u.attack
+            .is_some_and(|a| a.order_id == 0 && a.target != source)
+            || u.movement.is_some_and(|m| {
+                matches!(m.order, movement::Order::Attack { target } if target != source)
+                    && m.order_id() == 0
+                    && m.ordered()
+            })
+    });
+    if acquired {
+        super::table::walk_dropped(state, h);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.stun_dropped_acquired = true;
+            u.attack = None;
+            u.movement = None;
+        }
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.stunned_until.is_none_or(|t| t <= tick)
     {

@@ -914,6 +914,8 @@ enum Deferred {
         stun: (u32, u32),
         objects: Vec<u32>,
     },
+    /// The end of a channel's object, after its last wave's hits.
+    ChannelEnd { caster: u32 },
     /// The object a shockwave's hit takes before its damage: the wave's
     /// caster, the unit and the step's queue time.
     ShockwaveHit { caster: u32, target: u32, at: u32 },
@@ -998,6 +1000,11 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     blizzard_shards(s);
                 }
                 waves(s, h, &c, since, &mut deferred);
+                // The channel's object goes at its last wave, after the
+                // wave's hits (c-RZJ-1: 1621 at 9.139997).
+                if blizzard && since == FIRST_WAVE + WAVE_EVERY * count.saturating_sub(1) {
+                    deferred.push(Deferred::ChannelEnd { caster: h });
+                }
             }
             if c.effect_at.is_some() && tick >= c.end_at {
                 super::table::channel_ended(s, h);
@@ -1048,6 +1055,9 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
+            Deferred::ChannelEnd { caster } => {
+                super::table::channel_ended(&mut state.borrow_mut(), caster);
+            }
             Deferred::ShockwaveHit { caster, target, at } => {
                 super::table::shockwave_hit(&mut state.borrow_mut(), caster, target, at);
             }

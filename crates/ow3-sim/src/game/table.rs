@@ -1206,6 +1206,21 @@ pub(super) fn cast_started(state: &mut super::State, h: u32) {
     for e in start.unwrap_or_default() {
         state.table.free(tick, e, "spell ability: order start");
     }
+    // A spell on a point frees the first of its order's kept objects
+    // (c-RZJ-1: the Blizzard's 1492 at the cast's start, 2.94).
+    // PROVISIONAL: read for that one cast.
+    let point = state
+        .unit(Some(h))
+        .and_then(|u| u.casting)
+        .is_some_and(|c| c.point.is_some());
+    let first = entries(state, h)
+        .filter(|_| point)
+        .and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(e) = first {
+        state
+            .table
+            .free(tick, e, "spell ability: point order start");
+    }
     // The walk into range ends.
     walk_dropped(state, h);
 }

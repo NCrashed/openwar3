@@ -78,12 +78,7 @@ pub struct Casting {
     /// The queue time of the effect: the start's time plus the cast point.
     effect_q: u32,
     /// The point of a point spell.
-    point: Option<[u32; 2]>,
-}
-
-/// Whether order `name` of unit `h` is a spell on a point it has.
-pub(super) fn is_point_spell(state: &State, h: u32, name: &str) -> bool {
-    ability_for(state, h, name).is_some_and(|(_, level, _, aim)| level > 0 && aim == Aim::Point)
+    pub(super) point: Option<[u32; 2]>,
 }
 
 /// The ability of unit `h` that order `name` casts: the ability, its
@@ -357,6 +352,9 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
         && let Some(e) = c.effect_at
     {
         if e > state.ticks {
+            // It takes one object, kept (c-RZJ-1: the Blizzard ordered
+            // again at 3.0).
+            super::table::spell_ordered_again(state);
             return Some(true);
         }
         if state.ticks < c.end_at {
@@ -399,6 +397,8 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
         }
         set(state);
     }
+    // Its objects (SPEC-0024; c-RZJ-1: the Blizzard order of 2.5).
+    super::table::spell_point_ordered(state, h);
     Some(true)
 }
 

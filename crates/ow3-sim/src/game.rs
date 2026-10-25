@@ -951,6 +951,8 @@ pub struct State {
     creep_casts: Vec<(u32, i32, u32, u32)>,
     /// Units whose cast's effect ran before this tick's updates.
     early_effects: Vec<u32>,
+    /// Units whose cast's end ran before this tick's updates.
+    early_ends: Vec<u32>,
     pub(super) call_only: bool,
     pub(super) victim_only: bool,
     pub(super) reacquire: Vec<u32>,
@@ -1153,6 +1155,7 @@ impl State {
             call_acquired: Vec::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
+            early_ends: Vec::new(),
             call_only: false,
             victim_only: false,
             reacquire: Vec::new(),

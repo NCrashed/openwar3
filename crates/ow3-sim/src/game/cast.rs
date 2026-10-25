@@ -1011,6 +1011,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
         let early = std::mem::take(&mut s.early_effects);
+        let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
             if c.effect_at == Some(tick) && !early.contains(&h) {
                 // Its objects count in the tick of its queue time.
@@ -1045,30 +1046,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     deferred.push(Deferred::ChannelEnd { caster: h });
                 }
             }
-            if c.effect_at.is_some() && tick >= c.end_at {
-                super::table::channel_ended(s, h);
-                // Its order ends (SPEC-0024), counted by the game in the
-                // tick of the end's queue time, the effect's plus the
-                // ticks after it; the unit's check comes 0.01 s after that
-                // time (c-RZJ-1: the Ogre Lord, end 4.247710, check
-                // 4.257710).
-                let after = (tick - c.effect_at.unwrap_or(tick)) as f32 * 0.005;
-                let end_q = add(c.effect_q, after.to_bits());
-                movement::end_cast_at(s, h, end_q);
-                s.table_at(end_q);
-                // A spell without a missile kept its order's sixth for an
-                // impact: it goes first (c-RZJ-1: the Holy Light's 2221 at
-                // 11.829115).
-                let missile = s
-                    .data
-                    .abilities
-                    .get(&c.ability)
-                    .is_some_and(|a| a.code == i32::from_be_bytes(*b"AHtb"));
-                if !missile {
-                    super::table::impact_unused(s, h);
-                }
-                super::table::order_ended(s, h);
-                s.table.now = tick;
+            if c.effect_at.is_some() && tick >= c.end_at && !early_ends.contains(&h) {
+                cast_ended(s, h, &c, tick);
             }
         }
         // A wave made at an effect has its first update in that tick
@@ -1199,6 +1178,33 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
     }
 }
 
+/// The order of cast `c` of `h` ends in tick `tick` (SPEC-0024).
+fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
+    super::table::channel_ended(s, h);
+    // Its order ends (SPEC-0024), counted by the game in the
+    // tick of the end's queue time, the effect's plus the
+    // ticks after it; the unit's check comes 0.01 s after that
+    // time (c-RZJ-1: the Ogre Lord, end 4.247710, check
+    // 4.257710).
+    let after = (tick - c.effect_at.unwrap_or(tick)) as f32 * 0.005;
+    let end_q = add(c.effect_q, after.to_bits());
+    movement::end_cast_at(s, h, end_q);
+    s.table_at(end_q);
+    // A spell without a missile kept its order's sixth for an
+    // impact: it goes first (c-RZJ-1: the Holy Light's 2221 at
+    // 11.829115).
+    let missile = s
+        .data
+        .abilities
+        .get(&c.ability)
+        .is_some_and(|a| a.code == i32::from_be_bytes(*b"AHtb"));
+    if !missile {
+        super::table::impact_unused(s, h);
+    }
+    super::table::order_ended(s, h);
+    s.table.now = tick;
+}
+
 /// The effects due in this tick whose queue times come before `limit`,
 /// the time of the tick's updates: they run first, as timers of the queue
 /// ahead of the updates (c-RZJ-1: the Ogre Lord's Shockwave at 3.737711,
@@ -1224,6 +1230,25 @@ pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32
                 movement::end_cast(s, h);
             }
             s.table.now = tick;
+        }
+        // So do the ends of casts (c-RZJ-1: the Ogre Lord's second
+        // Shockwave, its order's end before a reaction end in 2645).
+        let ending: Vec<(u32, Casting)> = s
+            .units
+            .iter()
+            .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
+            .filter(|(h, c)| {
+                c.effect_at.is_some_and(|e| {
+                    let after = (tick.saturating_sub(e)) as f32 * 0.005;
+                    tick >= c.end_at
+                        && !s.early_ends.contains(h)
+                        && f32::from_bits(add(c.effect_q, after.to_bits())) < f32::from_bits(limit)
+                })
+            })
+            .collect();
+        for (h, c) in ending {
+            s.early_ends.push(h);
+            cast_ended(s, h, &c, tick);
         }
     }
     run_deferred(vm, state, deferred);

@@ -1875,6 +1875,12 @@ impl<'a> Game<'a> {
         if let Some(end) = first_end {
             cast::effects_before(&mut self.vm, &self.state, end);
         }
+        // The queue's timers before the first of them post their frees
+        // first (c-RXR-1: a missile's objects at q 18.778688 before a
+        // reaction end at 18.779358 in 3757).
+        if let Some(end) = first_end {
+            self.state.borrow_mut().table.queue_before(end);
+        }
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         if let Some(at) = at {
             cast::effects_before(&mut self.vm, &self.state, at);

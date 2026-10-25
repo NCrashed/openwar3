@@ -367,6 +367,9 @@ pub struct UnitEntries {
     /// It walks on its group's walk (`group_move_ordered`): its searches
     /// take none of their own.
     pub group_walk: bool,
+    /// The object of its order that came back after a stun, and the tick
+    /// the stun's timer frees it in.
+    pub order_back: Option<(u32, u64)>,
     /// Its walk was made at its follow leg's end (`follow_leg_ended`).
     pub follow_walk: bool,
     /// It was harvesting when stunned (`stun_objects`).
@@ -857,6 +860,27 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
             if let (Some(e), Some(own)) = (entries(state, h), own) {
                 e.walk = own;
             }
+        }
+    }
+}
+
+/// The objects of orders that came back after stuns whose timers end in
+/// this tick go 0.0001 s later; `h`'s alone when given.
+pub(super) fn order_back_freed(state: &mut super::State, h: Option<u32>) {
+    let tick = state.ticks;
+    let units: Vec<u32> = match h {
+        Some(h) => vec![h],
+        None => state.units.clone(),
+    };
+    for u in units {
+        let due = entries(state, u).and_then(|e| {
+            e.order_back.filter(|&(_, t)| t <= tick).map(|(o, _)| {
+                e.order_back = None;
+                o
+            })
+        });
+        if let Some(o) = due {
+            state.table.defer(o, "order back after a stun");
         }
     }
 }
@@ -3275,7 +3299,10 @@ fn stuns_with(state: &mut super::State, backs: bool) {
             let other = state.table.take(tick, "order back: other");
             let (parts, buff) = entries(state, h)
                 .map(|e| {
-                    e.order = vec![order];
+                    // Freed 0.01 s later by the stun's own timer, after its 0.00
+                    // hit (`order_back_freed`; c-SBI-1: 1434 at 1599; c-SAK-1:
+                    // kobold 10's at 8.719954).
+                    e.order_back = Some((order, tick + 2));
                     e.stun_ticks = None;
                     (std::mem::take(&mut e.stun_order), e.buff_end.take())
                 })

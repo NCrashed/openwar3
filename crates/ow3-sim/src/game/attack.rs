@@ -1525,13 +1525,26 @@ pub(super) fn zero_hits(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             })
             .collect()
     };
+    // In the order the stuns were made (c-SBI-1: War Stomp's four at 1599).
+    let mut due: Vec<(u32, u32)> = due;
+    {
+        let s = state.borrow();
+        due.sort_by_key(|&(_, h)| {
+            s.unit(Some(h))
+                .and_then(|u| u.entries.order_back)
+                .map_or(u32::MAX, |(o, _)| s.table.creation_of(o))
+        });
+    }
     for (source, target) in due {
         super::widgets::damage_widget(vm, state, Some(source), Some(target), 0, 0, 0);
+        super::table::order_back_freed(&mut state.borrow_mut(), Some(target));
         let mut s = state.borrow_mut();
         if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
             super::movement::retaliate(&mut s, target, source, None);
         }
     }
+    // The others' (no zero hit: not a creep, or dead).
+    super::table::order_back_freed(&mut state.borrow_mut(), None);
 }
 
 /// Hero `h`'s agility changed from `old` at the queue time `now`: the time

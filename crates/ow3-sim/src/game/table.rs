@@ -1024,19 +1024,27 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
 /// 0.0001 s later, parts 9 and 8 when the walk to the mine ends, parts
 /// 7 .. 0 and the order when the order ends (the worker leaves the mine
 /// with its gold).
-pub(super) fn harvest_ordered(state: &mut super::State, h: u32) {
+pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
-    let parts = state.table.take_n(tick, 14, "harvest: order start");
-    for &e in parts[10..].iter().rev() {
+    // On a tree 12 parts, the last 4 freed at once (c-RYP-1 at 1.5 s).
+    // PROVISIONAL: the tree's kept parts' ends are taken as the mine's.
+    let n = if tree { 12 } else { 14 };
+    let parts = state.table.take_n(tick, n, "harvest: order start");
+    for &e in parts[n - 4..].iter().rev() {
         state.table.defer(e, "harvest: order start");
     }
     if let Some(e) = entries(state, h) {
-        e.harvest_arrive = vec![parts[9], parts[8]];
-        e.order = parts[..8].iter().rev().copied().chain([order]).collect();
+        e.harvest_arrive = vec![parts[n - 5], parts[n - 6]];
+        e.order = parts[..n - 6]
+            .iter()
+            .rev()
+            .copied()
+            .chain([order])
+            .collect();
     }
     walk_made_at_order(state, h);
 }

@@ -230,7 +230,10 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
     // The order makes the objects of the walk (SPEC-0024).
     if taken && is_mine(state, target) {
         state.objects_change();
-        super::table::harvest_ordered(state, h);
+        super::table::harvest_ordered(state, h, false);
+    }
+    if taken && is_tree(state, target) {
+        super::table::harvest_ordered(state, h, true);
     }
     taken
 }

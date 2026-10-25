@@ -44,7 +44,7 @@ pub struct Attacking {
     /// The expiry of the damage-point timer of a swing started at an
     /// update: its queue time plus `dmgpt1` (SPEC-0016). The hit comes in
     /// the tick that holds it.
-    hit_at: Option<u32>,
+    pub(super) hit_at: Option<u32>,
     /// The queue time at which that swing started.
     pub(super) swing_q: u32,
 }

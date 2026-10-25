@@ -539,6 +539,18 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
         super::table::stunned_dead(state, h, end_tick);
         return;
     }
+    // A swing under way is lost: its hit never comes (c-RZH-1: creep 8,
+    // swinging at footman 5 when the bolt of 4.715 stunned it; c-SAK-1:
+    // gnoll 11 at the bash of 15.748).
+    let clock = f32::from_bits(state.move_clock);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && u.attack.is_some_and(|a| {
+            f32::from_bits(a.swing_q) <= clock
+                && a.hit_at.is_some_and(|t| f32::from_bits(t) > clock)
+        })
+    {
+        u.attack = None;
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.stunned_until.is_none_or(|t| t <= tick)
     {

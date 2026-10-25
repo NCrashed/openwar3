@@ -3476,6 +3476,11 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
         if !first && at.is_finite() {
             cooldown_expiries(state, Some(at.to_bits()));
         }
+        // So do the goals of backswings ending before it (c-SAK-1: gnoll
+        // 17's at 16.019894 before footman 6's reaction end in 3205).
+        if at.is_finite() {
+            super::attack::after_swing_walks(state, Some(at.to_bits()));
+        }
         let given = state.orders_given + 1;
         state.orders_given = given;
         super::table::reaction_ended(state, h);

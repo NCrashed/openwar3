@@ -3309,6 +3309,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     super::table::attack_move_arrived(state, h);
                     super::table::walk_dropped(state, h);
                 } else if !u.entries.order.is_empty() {
+                    // Its check comes 0.01 s after the move's end (c-SBG-1:
+                    // ogre 3, move ended at 8.819954, checked at 8.829953).
+                    if u.acquire_phase != super::NO_PHASE {
+                        u.next_acquire = add(state.update_time, AFTER_DEATH);
+                    }
                     super::table::order_ended(state, h);
                     super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);
@@ -5214,7 +5219,15 @@ pub(super) fn retaliate(
             // kobold 19 from footman 2's calls, not kobold 10, who hit
             // footman 4 himself).
             // PROVISIONAL: the positions of that test.
+            // Nor a unit under a direct order of its own, a move as an
+            // attack (c-SBG-1: ogre 3, walking its script move at the
+            // clap's call of 2.9, took no remembered target at 8.83).
+            let direct = state.unit(Some(h)).is_some_and(|u| {
+                u.attack_move.is_none()
+                    && u.movement.is_some_and(|m| m.ordered() && m.order_id != 0)
+            });
             if h == victim
+                || direct
                 || !state
                     .unit(Some(h))
                     .zip(state.unit(Some(attacker)))

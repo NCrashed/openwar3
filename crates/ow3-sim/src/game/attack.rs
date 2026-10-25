@@ -785,6 +785,52 @@ fn launch(
     })
 }
 
+/// A homing missile of a spell from `h` at `target` with `amount` and no
+/// stun, at `speed`, launched from the caster's position (SPEC-0041:
+/// Death Coil); `None` when the target is within one step.
+///
+/// PROVISIONAL: launched from the caster's centre.
+pub(super) fn launch_homing_spell(
+    state: &State,
+    h: u32,
+    target: u32,
+    amount: u32,
+    speed: u32,
+) -> Option<Missile> {
+    let u = state.unit(Some(h))?;
+    let at = [u.x, u.y];
+    let to = super::movement::position_of(state, target)?;
+    let flight = distance(at, to);
+    let step = mul(speed, HOMING_STEP);
+    if f32::from_bits(step) <= 0.0 || f32::from_bits(flight) < f32::from_bits(step) {
+        return None;
+    }
+    let launched = state.move_clock;
+    Some(Missile {
+        attacker: h,
+        target,
+        // Its first step is the move of the launch (SPEC-0041: 400 at 1100,
+        // hit at the third step after).
+        at: {
+            let k = div(step, flight);
+            [
+                add(at[0], mul(sub(to[0], at[0]), k)),
+                add(at[1], mul(sub(to[1], at[1]), k)),
+            ]
+        },
+        point: to,
+        launched,
+        expiry: add(add(launched, div(flight, speed)), MIN_DELAY),
+        homing: Some((step, state.ticks + HOMING_TICKS)),
+        artillery: false,
+        amount,
+        attack_type: 0,
+        area: None,
+        spell: Some((0, 0)),
+        objects: Vec::new(),
+    })
+}
+
 /// The missiles of this tick: those that arrive strike, in the order of
 /// their launch. A missile whose target died or is gone is lost; a shell
 /// of artillery goes on to its point.
@@ -814,6 +860,30 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if m.spell.is_some()
                 && let Some((step, next)) = m.homing
             {
+                // A homing spell (Death Coil, no stun) steps to the target every
+                // 0.1 s and hits at the step that finds it within one step
+                // (SPEC-0041: 400 at 1100, hit 60 ticks after the launch).
+                if m.spell == Some((0, 0)) {
+                    if next == tick {
+                        let Some(to) = super::movement::position_of(s, m.target) else {
+                            continue;
+                        };
+                        let left = distance(m.at, to);
+                        if f32::from_bits(left) < f32::from_bits(step) {
+                            arrived.push(m);
+                            continue;
+                        }
+                        let k = div(step, left);
+                        m.at = [
+                            add(m.at[0], mul(sub(to[0], m.at[0]), k)),
+                            add(m.at[1], mul(sub(to[1], m.at[1]), k)),
+                        ];
+                        m.point = to;
+                        m.homing = Some((step, next + HOMING_TICKS));
+                    }
+                    flying.push(m);
+                    continue;
+                }
                 if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
                     arrived.push(m);
                     continue;
@@ -1321,7 +1391,7 @@ pub(super) fn spell_hit(
     // (c-SAK-1: the bolt on kobold 14 at 4513 called ogre 18).
     for (k, damage) in [0, amount].into_iter().enumerate() {
         // The objects of the stun come between the two (SPEC-0024).
-        if k == 1 {
+        if k == 1 && stun != (0, 0) {
             let mut s = state.borrow_mut();
             if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
                 super::table::stun_objects(&mut s, h, target, objects.clone());
@@ -1337,7 +1407,7 @@ pub(super) fn spell_hit(
     }
     let mut s = state.borrow_mut();
     // Also a target the hit killed, for the objects kept to the stun's end.
-    if matches!(s.objects.get(&target), Some(Object::Unit(_))) {
+    if matches!(s.objects.get(&target), Some(Object::Unit(_))) && stun != (0, 0) {
         let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
         // The impact comes at the end of the tick, and the stun counts from
         // there (c-RZH-1: bolt 943, order back at 1946).

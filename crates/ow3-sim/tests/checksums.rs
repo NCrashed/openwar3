@@ -114,6 +114,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, heroes_two_checksums); this test runs without it",
     ),
     (
+        "c-SBI-1.w3g",
+        "the Orc spells test (Chain Lightning, War Stomp, Healing Wave): just recorded, \
+         not looked at yet",
+    ),
+    (
         "c-RXI-1.w3g",
         "six peasants harvesting gold: every turn checksum to its end matches with the \
          object table started as the game has it (tests/objects.rs, harvest_checksums); \

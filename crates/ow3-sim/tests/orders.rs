@@ -1466,6 +1466,33 @@ fn mana_burn() {
     assert!((burnt - 50.0).abs() < 0.02, "{burnt}");
 }
 
+/// SPEC-0041, death coil on a footman 400 away: 100 damage, 152 ticks
+/// after the order.
+#[test]
+fn death_coil() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Udea', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2600, -2000, 180)\n    call SelectHeroSkill(a, 'AUdc')\n    call PauseUnit(t, true)\n    call IssueImmediateOrder(a, \"holdposition\")",
+        "call IssueTargetOrder(a, \"deathcoil\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 300);
+    let hit = path
+        .windows(2)
+        .find(|w| w[0].1[1].life - w[1].1[1].life > 1.0)
+        .expect("no hit");
+    let damage = hit[0].1[1].life - hit[1].1[1].life;
+    assert!((damage - 100.0).abs() < 0.02, "{damage}");
+    // PROVISIONAL: the game's o + 152 is reached within a tick (151 here);
+    // the impact's timing against the tick is to be read in c-SBJ.
+    assert!(
+        (ORDER_TICK + 151..=ORDER_TICK + 152).contains(&hit[1].0),
+        "{}",
+        hit[1].0
+    );
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

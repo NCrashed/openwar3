@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 14] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 15] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -58,6 +58,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 14] = [
     ("healingwave", *b"AOhw", 852_501, Aim::Friend),
     ("frostnova", *b"AUfn", 852_226, Aim::Enemy),
     ("manaburn", *b"AEmb", 852_179, Aim::Enemy),
+    ("deathcoil", *b"AUdc", 852_100, Aim::Enemy),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -558,7 +559,14 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
         .units
         .get(&u.type_id)
         .map_or((0, 0), |t| (t.cast_point, t.cast_backswing));
-    let effect = tick + super::attack::ticks(point);
+    // A cast point between ticks lands in the tick that holds it (SPEC-0041:
+    // the death knight's 0.452, 90.4 ticks, at `o + 91`).
+    let exact = f64::from(f32::from_bits(point)) * 200.0;
+    let effect = if exact - exact.floor() > 0.01 {
+        tick + exact.ceil() as u64
+    } else {
+        tick + super::attack::ticks(point)
+    };
     // A channel ends after its last wave (SPEC-0043).
     let channel = u.casting.and_then(|c| {
         let base = state
@@ -1542,6 +1550,29 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // enemies within Area of it DataA (SPEC-0041).
         // PROVISIONAL: the others' order taken as Thunder Clap's; the slow
         // is not built.
+        // A homing missile launched at the cast point; an enemy takes DataA / 2
+        // (SPEC-0041). PROVISIONAL: the heal of an undead friend is not
+        // built.
+        b"AUdc" => {
+            if let Some(target) = c.target {
+                let speed = s
+                    .data
+                    .abilities
+                    .get(&c.ability)
+                    .map_or(0, |a| a.missile_speed);
+                let amount = ow3_math::mul(n.data[0], 0.5f32.to_bits());
+                match super::attack::launch_homing_spell(s, h, target, amount, speed) {
+                    Some(missile) => s.missiles.push(missile),
+                    None => deferred.push(Deferred::SpellHit {
+                        caster: h,
+                        target,
+                        amount,
+                        stun: (0, 0),
+                        objects: Vec::new(),
+                    }),
+                }
+            }
+        }
         b"AUfn" => {
             let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
                 return true;

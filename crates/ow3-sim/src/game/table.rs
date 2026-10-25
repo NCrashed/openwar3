@@ -40,6 +40,10 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// The 0.0001 s frees given up by the tick's held impacts and hits
+    /// ahead of its cooldowns, freed ahead of a later timer of the tick
+    /// (`flush_early`).
+    early: Vec<u32>,
     /// The spell order being taken starts its cast at once.
     pub cast_at_once: bool,
     /// A Wind Walk's fade is being handled (`walk_dropped`).
@@ -94,6 +98,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            early: Vec::new(),
             cast_at_once: false,
             at_fade: false,
             dying: None,
@@ -175,6 +180,11 @@ impl ObjectTable {
 
     /// The object holding `entry` is freed by a 0.0001 s timer of the
     /// world clock (`flush`).
+    /// The creation number of the object holding `entry`.
+    pub fn creation(&self, entry: u32) -> Option<u32> {
+        self.live.get(&entry).copied()
+    }
+
     pub fn defer(&mut self, entry: u32, tag: &'static str) {
         self.deferred.push((self.now, entry, tag));
     }
@@ -247,9 +257,34 @@ impl ObjectTable {
         self.timed.push((tick, entry, tag));
     }
 
+    /// How many 0.0001 s frees are waiting.
+    pub fn deferred_count(&self) -> usize {
+        self.deferred.len()
+    }
+
+    /// The 0.0001 s frees given up since `from` count as early (`flush_early`).
+    pub fn mark_early(&mut self, from: usize) {
+        let new: Vec<u32> = self.deferred.iter().skip(from).map(|d| d.1).collect();
+        self.early.extend(new);
+    }
+
+    /// The early 0.0001 s frees of the tick, ahead of a timer later in it
+    /// (`auras::tick`).
+    pub fn flush_early(&mut self, tick: u64) {
+        let early = std::mem::take(&mut self.early);
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)
+            .into_iter()
+            .partition(|&(t, e, _)| t <= tick && early.contains(&e));
+        self.deferred = later;
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
+    }
+
     /// The 0.0001 s timers of the tick expire: their objects are freed in
     /// the order they were given up.
     pub fn flush(&mut self, tick: u64) {
+        self.early.clear();
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)
             .into_iter()
             .partition(|&(t, _, _)| t <= tick);
@@ -471,8 +506,11 @@ const SUMMON: Making = Making {
 /// 1483) follow with the event (c-RZJ-1 at 2.3).
 ///
 /// PROVISIONAL: read for the Water Elemental only.
-pub(super) fn summon_made(state: &mut super::State, caster: u32, h: u32) {
+pub(super) fn summon_made(state: &mut super::State, caster: u32, h: u32, cost: i32) {
     spell_effect_event(state, caster);
+    // The watches its cost crosses, before the unit (c-RZJ-1: 3580 and
+    // 3581 at the second Water Elemental, 22.797174).
+    mana_watches(state, caster, cost);
     let tick = state.table.now;
     let entries = state.table.take_n(tick, SUMMON.count, "summon: unit");
     for &k in SUMMON.deferred {
@@ -1555,8 +1593,9 @@ fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
     let watches = entries(state, h)
         .map(|e| e.mana_watches.clone())
         .unwrap_or_default();
-    // The old watches go 0.0001 s later, the last first (c-RZH-1: the
-    // Mountain King's Thunder Clap at 26.40, 2947 then 1167).
+    // The old watches go 0.0001 s later, the newest first (c-RZH-1: the
+    // Mountain King's Thunder Clap at 26.40, 2947 then 1167; c-RZJ-1: the
+    // Archmage's 2814 then 1230 at 22.797274).
     let mut old = Vec::new();
     for (k, (cost, entry, above)) in watches.into_iter().enumerate() {
         let now = mana >= cost as f32;
@@ -1576,7 +1615,8 @@ fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
         }
         watch_scheduled(state, h, new);
     }
-    for entry in old.into_iter().rev() {
+    old.sort_by_key(|&e| std::cmp::Reverse(state.table.creation(e)));
+    for entry in old {
         state.table.defer(entry, "unit state: limit watch");
     }
 }

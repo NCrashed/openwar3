@@ -108,6 +108,10 @@ pub(super) fn tick(state: &mut State) {
         buff_objects(state, gains);
         return;
     }
+    // The 0.0001 s frees of the hits ahead of the tick's script timers
+    // (`ObjectTable::mark_early`), before the step, go first (c-RZJ-1:
+    // the hit of 22.99714 freed at 22.99724, the buff at 22.999998).
+    state.table.flush_early(tick);
     let mut given: Vec<(u32, i32, i32, u64)> = Vec::new();
     for &h in &state.units {
         let Some((ability, level)) = aura_of(state, h) else {

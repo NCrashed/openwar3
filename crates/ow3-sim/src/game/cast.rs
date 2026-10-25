@@ -1336,7 +1336,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     {
                         w.next_acquire = add(c.effect_q, mul(w.acquire_phase, 0x3F00_0000));
                     }
-                    super::table::summon_made(s, h, e);
+                    super::table::summon_made(s, h, e, n.cost);
                     s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
                     s.summons.push((h, e));
                 }

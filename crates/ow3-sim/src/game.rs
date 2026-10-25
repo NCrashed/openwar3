@@ -1798,7 +1798,9 @@ impl<'a> Game<'a> {
                 // The hits due before this timer come first, as one queue
                 // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script
                 // order at 17.0 in 3401).
+                let from = self.state.borrow().table.deferred_count();
                 attack::hits_ahead_of(&mut self.vm, &self.state, fired.expiry);
+                self.state.borrow_mut().table.mark_early(from);
                 self.state.borrow_mut().table.queue_before(fired.expiry);
                 self.fire(fired);
                 self.park();
@@ -1878,7 +1880,9 @@ impl<'a> Game<'a> {
             // The hits due before this timer come first, as one queue
             // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script
             // order at 17.0 in 3401).
+            let from = self.state.borrow().table.deferred_count();
             attack::hits_ahead_of(&mut self.vm, &self.state, fired.expiry);
+            self.state.borrow_mut().table.mark_early(from);
             self.state.borrow_mut().table.queue_before(fired.expiry);
             self.fire(fired);
             self.park();

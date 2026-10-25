@@ -93,7 +93,22 @@ the damage event (`GetEventDamage`).
   attack interval doubled (`DataD` 0.5 attack speed reduction: the
   footmen's swings came 530 and 541 ticks apart instead of 270 while
   slowed, and 270 again after it ended), and their movement speed is
-  cut by `DataC` (0.5, not measured).
+  `max(speed x (1 - DataC), MinUnitSpeed)` (`DataC` 0.5, `MinUnitSpeed`
+  150 from the game constants): 270 -> 150 for two ogres and a paladin
+  (`c-SBG-1`; the clamp is read from the data, a base speed above 300
+  would show the cut itself).
+  - Slow start on a walking unit (`c-SBG-1`, ogre 3): inside the buff's
+    application its walk is made again (search, cluster, path), its
+    agent is committed at its per-tick position, and it goes on at the
+    new speed from there at once.
+  - Slow end (the buff's timer): no new search and no commit; the unit
+    takes the old speed back at its next update, so the time from the
+    end to that update is still walked at the slowed speed.
+  - For a creep the buff's end gives the same immediate order as the
+    end of a creep's stun (one object; a second one when it is carried
+    out). A standing creep carries it out at once; a walking one only
+    when its move order ends (`c-SBG-1`: ogre 3 at its move's end,
+    0.92 s later).
 - The order stays `thunderclap` (852096) until `e + 100`.
 
 ### Bash stun (`AHbh`)
@@ -134,7 +149,7 @@ path of 5 points; it walked from 4747.
 ## Open questions
 
 1. The launch point of storm bolt (the caster's centre in both tests).
-2. Movement slow of thunder clap and the exact attack interval while a
+2. The exact attack interval of thunder clap's slow while a
    slow starts or ends during a cooldown.
 3. The tick in which a stun ends (the 2 or 3 ticks above).
 4. Avatar (`AHav`) and the abilities of the other heroes.

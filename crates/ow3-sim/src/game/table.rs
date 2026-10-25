@@ -2685,6 +2685,12 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     if let Some(b) = entries(state, h).and_then(|e| e.slow_buff.take()) {
         state.table.rest.push((b, "Thunder Clap effect"));
     }
+    // Its aura buffs too (c-RZJ-1: footman 5's Devotion buff 1438 at
+    // 12.469).
+    let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
+    for (_, b) in auras.unwrap_or_default() {
+        state.table.rest.push((b, "aura buff"));
+    }
     if let Some(e) = entries(state, h) {
         e.slow_end_q = None;
     }

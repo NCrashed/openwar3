@@ -494,6 +494,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             slow: None,
             at: Some(wave_q),
             fog: None,
+            later_calls: false,
         });
     }
     // A wave that hits makes or restarts the caster's fog modifier (1757).
@@ -755,6 +756,7 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         let step_q = add(w.start_q, (since as f32 * 0.005).to_bits());
         let mut any = false;
         let mut restarts = Vec::new();
+        let mut calls = Vec::new();
         for &o in &s.units {
             let Some(Object::Unit(u)) = s.objects.get(&o) else {
                 continue;
@@ -782,6 +784,8 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                     target: o,
                     at: step_q,
                 });
+                // The calls of the step's hits come after all of them
+                // (c-RZJ-1: the second Shockwave's first step, 12.708868).
                 deferred.push(Deferred::Damage {
                     caster: w.caster,
                     target: o,
@@ -790,7 +794,9 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                     slow: None,
                     at: Some(step_q),
                     fog: None,
+                    later_calls: true,
                 });
+                calls.push(o);
             }
         }
         // A step that hits makes or restarts the caster's fog modifier,
@@ -798,6 +804,15 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         // 1693 at 3.937711).
         if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
             *fog = Some((w.caster, step_q));
+        }
+        if !calls.is_empty() {
+            deferred.push(Deferred::Calls {
+                caster: w.caster,
+                targets: calls,
+                centre,
+                area: w.area,
+                at: step_q,
+            });
         }
         // Its end of travel (its length at its speed from the effect, not
         // the step's tick) is its impact as a missile's (c-RZJ-1: the Ogre
@@ -924,6 +939,14 @@ enum Deferred {
     },
     /// The end of a channel's object, after its last wave's hits.
     ChannelEnd { caster: u32 },
+    /// The calls for help of an area pass's hits, after all of them.
+    Calls {
+        caster: u32,
+        targets: Vec<u32>,
+        centre: [u32; 2],
+        area: u32,
+        at: u32,
+    },
     /// The object a shockwave's hit takes before its damage: the wave's
     /// caster, the unit and the step's queue time.
     ShockwaveHit { caster: u32, target: u32, at: u32 },
@@ -949,6 +972,8 @@ enum Deferred {
         /// The fog modifier of an area pass whose last hit this is: its
         /// caster and the pass's queue time.
         fog: Option<(u32, u32)>,
+        /// Its call comes later, with the pass's others.
+        later_calls: bool,
     },
 }
 
@@ -1074,6 +1099,29 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
+            Deferred::Calls {
+                caster,
+                targets,
+                centre,
+                area,
+                at,
+            } => {
+                let mut s = state.borrow_mut();
+                let previous = s.event_time.replace(at);
+                // PROVISIONAL: one call, the first hit's (c-RZJ-1: two
+                // answers at 12.708868 after four hits).
+                for target in targets.into_iter().take(1) {
+                    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                        movement::retaliate(
+                            &mut s,
+                            target,
+                            caster,
+                            Some((centre, f32::from_bits(area))),
+                        );
+                    }
+                }
+                s.event_time = previous;
+            }
             Deferred::ChannelEnd { caster } => {
                 super::table::channel_ended(&mut state.borrow_mut(), caster);
             }
@@ -1094,6 +1142,7 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 slow,
                 at,
                 fog,
+                later_calls,
             } => {
                 let previous = state.borrow().event_time;
                 if at.is_some() {
@@ -1111,8 +1160,12 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 if let Some((caster, q)) = fog {
                     super::table::fog_pass(&mut s, caster, q, true);
                 }
-                // The victim and its friends answer the hit (SPEC-0019).
-                if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+                // The victim and its friends answer the hit (SPEC-0019);
+                // a Shockwave step's calls come after all its hits
+                // (`Deferred::Calls`).
+                if !later_calls
+                    && matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive)
+                {
                     movement::retaliate(
                         &mut s,
                         target,
@@ -1357,6 +1410,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     slow: Some(ow3_math::add(now, seconds(hero))),
                     at: Some(now),
                     fog: None,
+                    later_calls: false,
                 });
             }
             deferred.push(Deferred::ClapArea {

@@ -3045,6 +3045,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             cluster: 1,
                             chase: Some(chase_of(state, target, full_reach)),
                             building: None,
+                            mine: false,
                             tree: None,
                             arrive: None,
                             place: None,
@@ -3201,6 +3202,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     let place = (cluster > 1)
                         .then(|| state.member_now.get(&h).copied())
                         .flatten();
+                    let mine = building.is_some_and(|b| super::harvest::is_mine(state, b));
                     let walker = |order| follow::Walker {
                         handle: h,
                         here,
@@ -3210,6 +3212,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         cluster,
                         chase,
                         building,
+                        mine,
                         tree,
                         arrive,
                         place,
@@ -3796,6 +3799,7 @@ pub(super) fn chase(
             cluster: 1,
             chase: Some(chase_of(state, target, reach)),
             building: None,
+            mine: false,
             tree: None,
             arrive: None,
             place: None,

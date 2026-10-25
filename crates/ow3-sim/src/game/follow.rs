@@ -111,6 +111,9 @@ pub struct Follow {
     advance: bool,
     /// A chase whose path ended: it arrives at its next update.
     end_blocked: bool,
+    /// A worker at the end of its path to a mine, turning to it: its stop
+    /// was logged.
+    turning_in: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -462,6 +465,8 @@ pub struct Walker {
     /// takes its footprint as free, and the last local search ends
     /// touching its red cells, which are not obstacles it met (SPEC-0029).
     pub building: Option<u32>,
+    /// That building is a gold mine.
+    pub mine: bool,
     /// For a walk to a tree, the tree: the high-level search takes its
     /// footprint as free (SPEC-0020, "Two searches, and a target's
     /// footprint").
@@ -640,6 +645,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             advance: false,
             new_group: held.is_some(),
             end_blocked: false,
+            turning_in: false,
         };
         follow.take_segment(order_cells);
         follow
@@ -1081,7 +1087,7 @@ fn decide(
             }
             // A walk to a building stands at the end of its path, where it
             // touched the building, before it goes in (SPEC-0029).
-            if !shared.building.is_empty() {
+            if !shared.building.is_empty() && !follow.turning_in {
                 shared.events.push(PathEvent {
                     tick,
                     kind: PathEventKind::Blocked,
@@ -1089,6 +1095,28 @@ fn decide(
                     b: None,
                     at: walker.here,
                 });
+            }
+            // At the end of its path to a mine a worker turns its walk heading
+            // to the mine's point, 0.6 rad an update, and arrives at the next
+            // update with 0.2 or less left: one more update for a turn over
+            // 0.8 (c-RXD-1: peasant 1048687 stopped 0.971 off at 21.747351,
+            // arrived at 21.807341; c-RXI-1: worker 0, 0.6596 off at 5.339851,
+            // arrived at the next update). PROVISIONAL: the tolerance 0.2 lies
+            // in the range read, 0.0596 .. 0.371.
+            if walker.mine
+                && follow.stop_at.is_none()
+                && let Some((_, direction, _)) = walker.arrive
+            {
+                let (dx, dy) = (
+                    sub(walker.order[0], walker.here[0]),
+                    sub(walker.order[1], walker.here[1]),
+                );
+                let off =
+                    super::facing::angle_difference(super::movement::angle(dx, dy), direction);
+                if real(off).abs() > 0.8 {
+                    follow.turning_in = true;
+                    return Steer::Stand(walker.order);
+                }
             }
             return Steer::Arrived;
         }

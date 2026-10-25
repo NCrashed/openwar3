@@ -369,6 +369,8 @@ pub struct UnitEntries {
     pub group_walk: bool,
     /// Its walk was made at its follow leg's end (`follow_leg_ended`).
     pub follow_walk: bool,
+    /// It was harvesting when stunned (`stun_objects`).
+    pub stun_harvest: bool,
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
@@ -3063,6 +3065,9 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     if harvesting {
         harvest_arrived(state, target);
     }
+    if let Some(e) = entries(state, target) {
+        e.stun_harvest = harvesting;
+    }
     let kept = state
         .unit(Some(target))
         .is_some_and(|u| u.attack_move.is_some() || harvesting)
@@ -3154,6 +3159,44 @@ fn stuns_with(state: &mut super::State, backs: bool) {
             for e in ended.unwrap_or_default() {
                 state.table.defer(e, "stun end");
             }
+        }
+        if backs && back == tick && entries(state, h).is_some_and(|e| e.stun_harvest) {
+            // A harvest order comes back: the object of its coming back, 13
+            // parts (the last 4 freed 0.0001 s later, after the stun order's)
+            // and a walk (c-RXD-1: the peasant bashed at 21.677362, back at
+            // 23.687025).
+            //
+            // PROVISIONAL: when the kept parts go is not read; taken as for a
+            // harvest order's start, 7 and 8 at the arrival.
+            let order = state.table.take(tick, "order back after a stun");
+            let parts = state.table.take_n(tick, 13, "harvest: order start");
+            walk_made_at_order(state, h);
+            let (stun, buff) = entries(state, h)
+                .map(|e| {
+                    e.stun_ticks = None;
+                    e.stun_harvest = false;
+                    let kept = std::mem::take(&mut e.order);
+                    e.harvest_arrive = vec![parts[8], parts[7]];
+                    e.order = parts[..7]
+                        .iter()
+                        .rev()
+                        .copied()
+                        .chain([order])
+                        .chain(kept)
+                        .collect();
+                    (std::mem::take(&mut e.stun_order), e.buff_end.take())
+                })
+                .unwrap_or_default();
+            for e in stun {
+                state.table.defer(e, "stun: order objects");
+            }
+            for &e in parts[9..].iter().rev() {
+                state.table.defer(e, "harvest: order start");
+            }
+            if let Some(b) = buff {
+                state.table.defer(b, "buff end");
+            }
+            continue;
         }
         if backs && back == tick && entries(state, h).is_some_and(|e| e.stun_game_order) {
             // Its order of the game comes back: 13 objects of the move

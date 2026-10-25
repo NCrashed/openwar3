@@ -1744,7 +1744,18 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     if let Some(e) = entries(state, target) {
         e.stun_game_order = had;
     }
+    // An attack-move keeps its order's own object through the stun; its
+    // order comes back after it (c-RZH-1: the footman stunned by the
+    // bash of 8.03, his script order 1252 kept to 25.58).
+    let kept = state
+        .unit(Some(target))
+        .is_some_and(|u| u.attack_move.is_some())
+        .then(|| entries(state, target).and_then(|e| e.order.pop()))
+        .flatten();
     order_ended(state, target);
+    if let (Some(o), Some(e)) = (kept, entries(state, target)) {
+        e.order = vec![o];
+    }
     let parts = state.table.take_n(tick, 10, "stun: order objects");
     for &e in parts[6..].iter().rev() {
         state.table.defer(e, "stun: order objects");

@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 10] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 12] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -54,6 +54,8 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 10] = [
     ("windwalk", *b"AOwk", 852_129, Aim::Nothing),
     ("mirrorimage", *b"AOmi", 852_123, Aim::Nothing),
     ("stomp", *b"AOws", 852_127, Aim::Nothing),
+    ("chainlightning", *b"AOcl", 852_119, Aim::Enemy),
+    ("healingwave", *b"AOhw", 852_501, Aim::Friend),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1046,6 +1048,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .iter()
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
+        bounces(s, &mut deferred);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1530,6 +1533,9 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // Dur (heroes HeroDur) at the cast point (SPEC-0040).
         // PROVISIONAL: the order of the hits taken as Thunder Clap's, and
         // their objects as Storm Bolt's stun; neither is read.
+        // The first unit is reached 0.25 s after the cast point (SPEC-0040).
+        b"AOcl" => bounce(s, h, c, &n, false),
+        b"AOhw" => bounce(s, h, c, &n, true),
         b"AOws" => {
             let Some(u) = s.unit(Some(h)) else {
                 return true;
@@ -1853,4 +1859,137 @@ pub(super) fn fades(state: &mut State) {
         }
         super::table::wind_walk_faded(state, h);
     }
+}
+
+/// A Chain Lightning or Healing Wave on its way (SPEC-0040): it reaches
+/// `target` at tick `at` with `amount`, then jumps every 0.25 s to
+/// another unit within `area` of it, each time with `factor` of the
+/// amount, until `left` units are reached.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bounce {
+    caster: u32,
+    owner: i32,
+    heal: bool,
+    target: u32,
+    at: u64,
+    amount: u32,
+    factor: u32,
+    left: u32,
+    area: f32,
+    hit: Vec<u32>,
+}
+
+/// The time between two jumps, 0.25 s.
+const BOUNCE_TICKS: u64 = 50;
+
+/// A new bounce from the effect of `c` (Chain Lightning or Healing Wave).
+fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, heal: bool) {
+    let (Some(target), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
+        return;
+    };
+    let left = f32::from_bits(n.data[1]).max(1.0) as u32;
+    s.bounces.push(Bounce {
+        caster: h,
+        owner,
+        heal,
+        target,
+        at: s.ticks + BOUNCE_TICKS,
+        amount: n.data[0],
+        factor: ow3_math::sub(1.0f32.to_bits(), n.data[2]),
+        left,
+        area: f32::from_bits(n.area),
+        hit: Vec::new(),
+    });
+}
+
+/// The bounces that reach their units in this tick: a Chain Lightning's
+/// damage, a Healing Wave's heal (never above the maximum), then the
+/// next unit: for the lightning the nearest enemy not hit yet, for the
+/// wave the most wounded friend not healed yet, within the area of the
+/// unit just reached (SPEC-0040).
+///
+/// PROVISIONAL: ties keep the first unit made; "most wounded" taken as
+/// the most life missing; the objects of both spells are not read.
+fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
+    let tick = s.ticks;
+    let mut all = std::mem::take(&mut s.bounces);
+    for b in &mut all {
+        if b.at != tick {
+            continue;
+        }
+        let alive = s.unit(Some(b.target)).is_some_and(|u| u.alive);
+        if alive {
+            if b.heal {
+                if let Some(Object::Unit(t)) = s.objects.get_mut(&b.target) {
+                    let life = add(t.life.value(), b.amount);
+                    let life = if f32::from_bits(life) > f32::from_bits(t.life.max) {
+                        t.life.max
+                    } else {
+                        life
+                    };
+                    t.life.set(life);
+                }
+            } else {
+                deferred.push(Deferred::Damage {
+                    caster: b.caster,
+                    target: b.target,
+                    amount: b.amount,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+        }
+        b.hit.push(b.target);
+        b.left = b.left.saturating_sub(1);
+        let Some([x, y]) = s
+            .unit(Some(b.target))
+            .map(|u| [f32::from_bits(u.x), f32::from_bits(u.y)])
+        else {
+            b.left = 0;
+            continue;
+        };
+        let mut best: Option<(u32, f32)> = None;
+        for &o in &s.units {
+            let Some(t) = s.unit(Some(o)) else {
+                continue;
+            };
+            if b.hit.contains(&o) || !t.alive || t.hidden {
+                continue;
+            }
+            let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+            let d2 = dx * dx + dy * dy;
+            if d2 > b.area * b.area {
+                continue;
+            }
+            let enemy = movement::enemies(s, b.owner, t.owner);
+            let key = if b.heal {
+                let missing = f32::from_bits(t.life.max) - f32::from_bits(t.life.value());
+                if enemy || missing <= 0.0 {
+                    continue;
+                }
+                -missing
+            } else {
+                if !enemy {
+                    continue;
+                }
+                d2
+            };
+            if best.is_none_or(|(_, k)| key < k) {
+                best = Some((o, key));
+            }
+        }
+        match best {
+            Some((o, _)) if b.left > 0 => {
+                b.target = o;
+                b.at = tick + BOUNCE_TICKS;
+                b.amount = ow3_math::mul(b.amount, b.factor);
+            }
+            _ => b.left = 0,
+        }
+    }
+    all.retain(|b| b.left > 0);
+    s.bounces.extend(all);
 }

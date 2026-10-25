@@ -1383,6 +1383,49 @@ fn war_stomp() {
     }
 }
 
+/// SPEC-0040, verification 2: chain lightning on three footmen: 85,
+/// 72.25, 61.41 damage, 0.25 s apart, the first 110 ticks after the order.
+#[test]
+fn chain_lightning() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Ofar', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2700, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -2556, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -2384, -2000, 180)\n    call SelectHeroSkill(a, 'AOcl')\n    call PauseUnit(t, true)",
+        "call IssueTargetOrder(a, \"chainlightning\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 300);
+    let at = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1.clone();
+    for (i, (tick, amount)) in [(110, 85.0), (160, 72.25), (210, 61.41)]
+        .into_iter()
+        .enumerate()
+    {
+        let (before, after) = (at(ORDER_TICK + tick - 1), at(ORDER_TICK + tick));
+        let damage = before[i + 1].life - after[i + 1].life;
+        assert!((damage - amount).abs() < 0.02, "{i}: {damage}");
+    }
+}
+
+/// SPEC-0040, healing wave: from a footman with 100 life the wave goes
+/// to the most wounded one (50 life, not the nearer one with 400): 130,
+/// then 97.5, never above the maximum.
+#[test]
+fn healing_wave() {
+    let Some(mut game) = game(
+        "local unit u = CreateUnit(Player(0), 'hfoo', -2600, -2000, 180)\n    local unit v = CreateUnit(Player(0), 'hfoo', -2700, -1700, 180)\n    set a = CreateUnit(Player(0), 'Oshd', -3000, -2000, 0)\n    set t = CreateUnit(Player(0), 'hfoo', -2700, -2000, 180)\n    call SetUnitState(t, ConvertUnitState(0), 100)\n    call SetUnitState(u, ConvertUnitState(0), 400)\n    call SetUnitState(v, ConvertUnitState(0), 50)\n    call SelectHeroSkill(a, 'AOhw')\n    call PauseUnit(t, true)\n    call PauseUnit(u, true)\n    call PauseUnit(v, true)",
+        "call IssueTargetOrder(a, \"healingwave\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 300);
+    let last = &path.last().unwrap().1;
+    // Units in the order made: u (400), v (50), the hero, t (100).
+    assert!((last[3].life - 230.0).abs() < 1.0, "{}", last[3].life);
+    assert!((last[1].life - 147.5).abs() < 1.0, "{}", last[1].life);
+    assert!((last[0].life - 420.0).abs() < 1.0, "{}", last[0].life);
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

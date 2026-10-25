@@ -2012,6 +2012,15 @@ const BOUNCE_TICKS: u64 = 50;
 
 /// A new bounce from the effect of `c` (Chain Lightning or Healing Wave).
 fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kind: BounceKind) {
+    // Chain Lightning's effect: its event's objects and one kept 1 s (c-SBI-1:
+    // 2.879976, freed at 3.880051). PROVISIONAL: the other spells' objects.
+    if kind == BounceKind::Lightning {
+        super::table::spell_effect_event(s, h);
+        let tick = s.table.now;
+        let o = s.table.take(tick, "chain lightning: effect");
+        let end = ow3_math::add(c.effect_q, 1.0f32.to_bits());
+        s.table.free_at_q(end, o, "chain lightning: effect");
+    }
     let (Some(target), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
         return;
     };
@@ -2201,6 +2210,16 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
                     t.life.set(life);
                 }
             } else {
+                // The object of the jump on from this unit, kept 1 s, made before
+                // the hit; none at the last (c-SBI-1: 627, 677 and 727, not 777).
+                // PROVISIONAL: a jump taken as due while units are left to reach.
+                if b.left > 1 {
+                    let now = s.table.now;
+                    let o = s.table.take(now, "chain lightning: bolt");
+                    let q = s.event_time.unwrap_or_else(|| s.timers.time());
+                    let end = ow3_math::add(q, 1.0f32.to_bits());
+                    s.table.free_at_q(end, o, "chain lightning: bolt");
+                }
                 deferred.push(Deferred::Damage {
                     caster: b.caster,
                     target: b.target,

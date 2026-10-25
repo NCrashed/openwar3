@@ -4940,7 +4940,10 @@ impl Targets {
         };
         let (owner, x, y) = (u.owner, real_of(u.x), real_of(u.y));
         let data = state.data.units.get(&u.type_id)?;
-        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 || u.attack_removed {
+        // A worker takes no target of its own (c-SBI-1: the peon on hold
+        // position, never acquiring).
+        if data.weapon.is_none() || real_of(data.acquire) <= 0.0 || u.attack_removed || data.worker
+        {
             return None;
         }
         let reach = add(data.acquire, data.collision);

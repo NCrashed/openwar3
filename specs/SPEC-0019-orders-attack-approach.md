@@ -1160,9 +1160,11 @@ An idle unit with a weapon attacks an enemy unit on its own:
   of "Turning before an attack"); grunt 10 in `c-RXR-1` switched to
   footman 1 at 24.6099854, was ready at its update of 24.7195358 and
   swung at the expiry 24.7299862. Otherwise (out of range, or still
-  turning) the approach is restarted: the unit stops at once (no motion until its
-  next update) and at its next update it searches again towards the
-  target and walks on at once. Footman 1 in `c-RXR-1` chased grunt 11
+  turning) the approach is restarted: the unit stops at once (no motion
+  until its next update); the new walk is taken in the expiry's callback
+  (its helper, cluster and path, "The chase at the expiry" below), and
+  at its next update it searches along it again towards the target and
+  walks on at once. Footman 1 in `c-RXR-1` chased grunt 11
   from its search in tick 2647; its update of 2689 moved it, its old
   cooldown expired at 13.4399939 in tick 2689 after the update batch,
   it did not move in ticks 2690 to 2695, searched again (same goal) at

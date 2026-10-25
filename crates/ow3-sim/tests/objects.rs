@@ -186,11 +186,12 @@ fn creeps_harvest_checksums() {
     }
 }
 
-/// Its object table (report only).
+/// `c-RXD-1`'s object table.
 #[test]
-fn others_objects_report() {
-    eprintln!("c-RXD-1");
-    compare_objects("c-RXD-1");
+fn creeps_harvest_objects() {
+    if let Some(first) = compare_objects("c-RXD-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

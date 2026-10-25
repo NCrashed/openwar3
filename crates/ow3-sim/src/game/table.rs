@@ -61,10 +61,6 @@ pub struct ObjectTable {
     /// The walks of group orders (`group_move_ordered`) and the members
     /// still on them.
     pub group_walks: Vec<(Vec<u32>, Vec<u32>)>,
-    /// The units whose goal was renewed after a swing at the updates: their
-    /// walks are made after the walks given up there are freed (c-RXD-1:
-    /// kobold 1048691 at 32.365429, after kobold 1048692's walk).
-    pub renewal_walks: Vec<u32>,
     /// Each gold mine's rate part while its timer runs (`mine_queue_timer`).
     pub mine_queues: std::collections::BTreeMap<u32, u32>,
     /// The last frees of a death, after the experience it gives
@@ -122,7 +118,6 @@ impl ObjectTable {
             expiring: None,
             resumed: Vec::new(),
             group_walks: Vec::new(),
-            renewal_walks: Vec::new(),
             mine_queues: std::collections::BTreeMap::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
@@ -1794,9 +1789,6 @@ pub(super) fn walks_freed(state: &mut super::State) {
         for e in walk {
             state.table.free(tick, e, "walk");
         }
-    }
-    for h in std::mem::take(&mut state.table.renewal_walks) {
-        walk_made_at_order(state, h);
     }
 }
 

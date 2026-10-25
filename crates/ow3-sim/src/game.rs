@@ -257,6 +257,8 @@ pub struct Unit {
     stun_back: Option<u32>,
     /// The stun dropped a swing of an attack it acquired (SPEC-0037).
     stun_dropped_acquired: bool,
+    /// On hold position: it takes no target out of its reach (SPEC-0019).
+    holding: bool,
     slowed_until: Option<(u64, u32)>,
     /// The aura buffs it has: the aura ability, its level and the tick of
     /// the last check that found it in reach (SPEC-0038).

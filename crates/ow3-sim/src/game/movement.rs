@@ -514,6 +514,13 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     if !u.alive || (real_of(speed) <= 0.0 && !attack && !state.data.units.is_empty()) {
         return false;
     }
+    // Any other order ends a hold position.
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.holding = false;
+    }
+    let Some(Object::Unit(u)) = state.objects.get(&h) else {
+        return false;
+    };
     let busy = u.movement.filter(|m| m.ordered());
     state.quiet_paths.remove(&h);
     let given = state.orders_given + 1;
@@ -1351,6 +1358,9 @@ pub(super) fn harvest_order(
 /// for help (SPEC-0019): an attack with order id 0 after its reaction
 /// delay from this tick, or from the time `from` on the timer queue.
 pub(super) fn join_fight(state: &mut State, h: u32, target: u32, from: Option<u32>) -> bool {
+    if holds_off(state, h, target) {
+        return false;
+    }
     let tick = state.ticks;
     let Some(at) = position_of(state, target) else {
         return false;
@@ -1776,7 +1786,13 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
         return taken;
     }
     match name {
-        "stop" | "holdposition" => halt(state, h),
+        "stop" | "holdposition" => {
+            let done = halt(state, h);
+            if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.holding = name == "holdposition";
+            }
+            done
+        }
         // PROVISIONAL: the game takes it and the current order reads 0
         // after it (SPEC-0019); here it stops the unit like `stop`.
         "move" => halt(state, h),
@@ -1964,6 +1980,12 @@ pub(super) fn stand_still(state: &mut State, h: u32, at: Option<u32>) {
         m.velocity = [0, 0];
         m.walking = false;
     }
+}
+
+/// Whether unit `h` holds its position with `target` out of its reach
+/// (SPEC-0019): it takes no such target, at a check or at a call (c-SBG-1).
+fn holds_off(state: &State, h: u32, target: u32) -> bool {
+    state.unit(Some(h)).is_some_and(|u| u.holding) && !reaches(state, h, target)
 }
 
 /// `stop` and `holdposition`: the unit stands where it is now.
@@ -4247,6 +4269,11 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             acquired.push(h);
             continue;
         }
+        // A unit on hold position takes none out of its reach (c-SBG-1:
+        // ogre 1 and the paladin, the Mountain King 233 away).
+        if holds_off(state, h, target) {
+            continue;
+        }
         let Some(Object::Unit(o)) = state.objects.get(&target) else {
             continue;
         };
@@ -5164,6 +5191,11 @@ pub(super) fn retaliate(
         super::creeps::restart_return(state, victim, when);
     }
     for h in responders {
+        // A unit on hold position answers but takes nothing out of its
+        // reach (c-SBG-1: the clap's call at 2.9).
+        if holds_off(state, h, attacker) {
+            continue;
+        }
         if recording.contains(&h) {
             state.call_acquired.push(h);
             super::table::call_answered(state, h);

@@ -64,12 +64,18 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- 22 of 30 test replays match every turn checksum.
-- The other 8 are listed with the reason in
+- 24 of 31 test replays match every turn checksum.
+- The other 7 are listed with the reason in
   `crates/ow3-sim/tests/checksums.rs` (`UNSPECIFIED`).
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
   does every one of its 1614 turn checksums (to 161 s).
+- The hero test c-RZH-1 (Mountain King, footmen, creeps, with Storm Bolt,
+  Thunder Clap and creep Bash): its object table (4881 changes) and all
+  629 turn checksums match the game.
+- The Thunder Clap probe c-SBG-1 (slows ending by time, hold position)
+  waits for the objects a creep hero and a creep group take at the map
+  start.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

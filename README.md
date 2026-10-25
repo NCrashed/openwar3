@@ -20,11 +20,12 @@ What is checked against the game:
 
 - file formats, the JASS language and VM, the number arithmetic and the
   random numbers match the game bit for bit;
-- 22 of 30 replays of our test maps (one mechanic each) match the game turn
+- 24 of 31 replays of our test maps (one mechanic each) match the game turn
   by turn, including the turn checksum the game uses to detect desyncs;
-- in the hero test (Mountain King, Blademaster, creeps) every one of the
-  engine's 11848 internal object changes and all 1614 turn checksums
-  (to 161 s) match the game.
+- in both hero tests (Mountain King, Blademaster, footmen, creeps) every
+  one of the engine's internal object changes and every turn checksum
+  match the game: 11848 changes and 1614 turns (to 161 s) in one, 4881
+  changes and 629 turns in the other.
 
 ## Roadmap
 

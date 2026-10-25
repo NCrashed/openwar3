@@ -1405,7 +1405,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         }
         // The channel's objects; its waves come by `waves` (SPEC-0043).
         b"AHbz" => {
-            super::table::blizzard_effect(s, h);
+            super::table::blizzard_effect(s, h, n.cost);
             blizzard_shards(s);
         }
         b"AHtc" => {

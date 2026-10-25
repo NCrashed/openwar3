@@ -2280,8 +2280,11 @@ const MISSILE_AFTER: f32 = 5.0;
 
 /// Unit `h`'s Blizzard takes effect (c-RZJ-1 at 3.24): the spell effect
 /// event, then the channel's object, kept to the channel's end.
-pub(super) fn blizzard_effect(state: &mut super::State, h: u32) {
+pub(super) fn blizzard_effect(state: &mut super::State, h: u32, cost: i32) {
     spell_effect_event(state, h);
+    // The watches its cost crosses, before the channel's object (c-RZJ-1:
+    // 2249, then 2250, at the second Blizzard's 9.80).
+    mana_watches(state, h, cost);
     let tick = state.table.now;
     let channel = state.table.take(tick, "Blizzard: channel");
     if let Some(e) = entries(state, h) {

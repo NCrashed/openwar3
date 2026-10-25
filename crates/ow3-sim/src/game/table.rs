@@ -61,6 +61,10 @@ pub struct ObjectTable {
     /// The walks of group orders (`group_move_ordered`) and the members
     /// still on them.
     pub group_walks: Vec<(Vec<u32>, Vec<u32>)>,
+    /// The units whose goal was renewed after a swing at the updates: their
+    /// walks are made after the walks given up there are freed (c-RXD-1:
+    /// kobold 1048691 at 32.365429, after kobold 1048692's walk).
+    pub renewal_walks: Vec<u32>,
     /// Each gold mine's rate part while its timer runs (`mine_queue_timer`).
     pub mine_queues: std::collections::BTreeMap<u32, u32>,
     /// The last frees of a death, after the experience it gives
@@ -118,6 +122,7 @@ impl ObjectTable {
             expiring: None,
             resumed: Vec::new(),
             group_walks: Vec::new(),
+            renewal_walks: Vec::new(),
             mine_queues: std::collections::BTreeMap::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
@@ -548,14 +553,15 @@ const UNIT_PLAIN: Making = Making {
 // and second part (12, 13), Move (14), Attack (15), Harvest (16), Call to
 // Arms (17), Repair (18), a part of Harvest's (19), the start order's two
 // (20, 21, freed 0.0001 s later).
-// PROVISIONAL: what goes at its death and at its corpse's end is not
-// read; taken as the footman's, the extra parts with the corpse.
+// At its death Harvest's part goes first, then the footman's two (c-RXD-1:
+// 33.315006). PROVISIONAL: the corpse's end is not read; taken as the
+// footman's, the other extra parts with it.
 const PEASANT: Making = Making {
     count: 22,
     deferred: &[21, 20],
-    death: &[10, 11],
+    death: &[19, 10, 11],
     level: &[],
-    corpse: &[19, 18, 17, 16, 15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
+    corpse: &[18, 17, 16, 15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
 // A gold mine (c-RXI-1, 23): the footman's 0 .. 9 and 11, three building
 // parts (11 .. 13), the gold ability and its second part (14, 15), one
@@ -1788,6 +1794,9 @@ pub(super) fn walks_freed(state: &mut super::State) {
         for e in walk {
             state.table.free(tick, e, "walk");
         }
+    }
+    for h in std::mem::take(&mut state.table.renewal_walks) {
+        walk_made_at_order(state, h);
     }
 }
 
@@ -3438,7 +3447,13 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         let death = std::mem::take(&mut e.death);
         // The last two of a creep's (its pair) before its order, the
         // first two after all (c-SAK-1: kobold 9 at 2753).
-        let (core, pair) = death.split_at(death.len().min(2));
+        // A peasant's three all after (c-RXD-1: 972, 963, 964 at 33.315006).
+        let n = if death.len() == 3 {
+            3
+        } else {
+            death.len().min(2)
+        };
+        let (core, pair) = death.split_at(n);
         let mut core = core.to_vec();
         if let Some(m) = e.death_mana.take() {
             core.insert(core.len().min(1), m);
@@ -3448,6 +3463,12 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         // (c-SAK-1: gnoll 16 at 6130, 2625, 2643, 3439, then 4929 ..).
         let mut game = std::mem::take(&mut e.game_objects);
         game.extend(e.buff_end.take());
+        // So does the order object a stunned unit keeps (c-RXD-1: the peasant
+        // bashed and killed at 33.314907, his return order's 1649).
+        let mut order = std::mem::take(&mut e.order);
+        if !e.stun_order.is_empty() {
+            game.append(&mut order);
+        }
         let own: Vec<u32> = std::mem::take(&mut e.reaction)
             .into_iter()
             .chain(e.current.take())
@@ -3457,7 +3478,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
                     .map(|(_, o)| o),
             )
             .chain(std::mem::take(&mut e.acquisition))
-            .chain(std::mem::take(&mut e.order))
+            .chain(order)
             .collect();
         e.own_attack = false;
         // A stun's objects: its order's after the pair, its own after the

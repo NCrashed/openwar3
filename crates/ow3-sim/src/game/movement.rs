@@ -2742,7 +2742,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     .unit(Some(h))
                                     .is_some_and(|u| !u.entries.walk.is_empty())
                                 {
-                                    super::table::walk_made_at_order(state, h);
+                                    state.table.renewal_walks.push(h);
                                     m.renewed = Some(tick);
                                 }
                                 m.target = at;

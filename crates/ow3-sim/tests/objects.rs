@@ -125,6 +125,24 @@ fn battle_objects_report() {
     compare_objects("c-RXR-1");
 }
 
+/// `c-RXI-1`, `c-RTW-3`, `c-RXD-1`, `c-RYP-1`: walks, crowds and harvest
+/// (report only).
+#[test]
+fn others_checksums_report() {
+    for name in ["c-RXI-1", "c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+        turn_parts(name);
+    }
+}
+
+/// Their object tables (report only).
+#[test]
+fn others_objects_report() {
+    for name in ["c-RXI-1", "c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+        eprintln!("{name}");
+        compare_objects(name);
+    }
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

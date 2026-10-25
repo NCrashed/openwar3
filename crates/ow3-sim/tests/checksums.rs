@@ -66,6 +66,11 @@ fn remainders_of_the_reference_replay() {
 /// yet, with the reason.
 const UNSPECIFIED: &[(&str, &str)] = &[
     (
+        "c-SBG-1.w3g",
+        "the Thunder Clap probe (slows ending by time, a slowed hero): the objects of a \
+         slow's end are not read yet",
+    ),
+    (
         "c-SAK-1.w3g",
         "the third hero test (Mountain King, Blademaster with mirror images and wind walk): \
          every turn checksum to its end matches with the object table started as the game \

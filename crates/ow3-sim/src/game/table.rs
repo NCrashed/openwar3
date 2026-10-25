@@ -2216,7 +2216,6 @@ pub(super) fn missile_hit(state: &mut super::State, objects: &[u32], at: u32) {
 /// The time from a missile's impact to the free of its objects (5.0 s).
 const MISSILE_AFTER: f32 = 5.0;
 
-
 /// Unit `h`'s Blizzard takes effect (c-RZJ-1 at 3.24): the spell effect
 /// event, then the channel's object, kept to the channel's end.
 pub(super) fn blizzard_effect(state: &mut super::State, h: u32) {

@@ -499,6 +499,20 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
     }
 }
 
+/// A Blizzard's shard sets, made at its effect and again every 1.0 s of
+/// its timer: a shuffle of the 6 wave indices by 5 draws of the script
+/// generator, then 13 of game generator 4 for the shards' offsets
+/// (c-RZJ-1 at 3.24, 4.24, ... 8.24: one set per wave, 0.9 s before its
+/// hits). PROVISIONAL: the values are not used here, only drawn.
+fn blizzard_shards(s: &mut State) {
+    for _ in 0..5 {
+        s.random.step();
+    }
+    for _ in 0..13 {
+        s.game_random[4].step();
+    }
+}
+
 /// How long a Blizzard wave's buff stays on a unit it hits (0.99 s).
 const BLIZZARD_BUFF: u32 = 0x3F7D_70A4;
 
@@ -971,7 +985,19 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if let Some(e) = c.effect_at
                 && tick > e
             {
-                waves(s, h, &c, tick - e, &mut deferred);
+                // The shard sets again at each 1.0 s of the Blizzard's timer
+                // (c-RZJ-1: 4.239931).
+                let since = tick - e;
+                let blizzard = s
+                    .data
+                    .abilities
+                    .get(&c.ability)
+                    .is_some_and(|a| a.code == i32::from_be_bytes(*b"AHbz"));
+                let count = f32::from_bits(numbers(s, c.ability, c.level).data[0]) as u64;
+                if blizzard && since % WAVE_EVERY == 0 && since / WAVE_EVERY < count {
+                    blizzard_shards(s);
+                }
+                waves(s, h, &c, since, &mut deferred);
             }
             if c.effect_at.is_some() && tick >= c.end_at {
                 super::table::channel_ended(s, h);
@@ -1242,16 +1268,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // The channel's objects; its waves come by `waves` (SPEC-0043).
         b"AHbz" => {
             super::table::blizzard_effect(s, h);
-            // The waves' shard sets: a shuffle of the 6 wave indices by 5
-            // draws of the script generator, then 13 of game generator 4
-            // for the shards' offsets (c-RZJ-1 at 3.24).
-            // PROVISIONAL: the values are not used here, only drawn.
-            for _ in 0..5 {
-                s.random.step();
-            }
-            for _ in 0..13 {
-                s.game_random[4].step();
-            }
+            blizzard_shards(s);
         }
         b"AHtc" => {
             let Some(u) = s.unit(Some(h)) else {

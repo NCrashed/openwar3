@@ -656,6 +656,12 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
         // A dead destructable blocks by its texture of death, a dead
         // building no more (SPEC-0022).
         super::obstacles::died(&mut state, widget);
+        // A destructable's pathing parts go (c-RYP-1: tree 2 at 50.03).
+        if let Some(parts) = state.table.destructable_paths.remove(&widget) {
+            for e in parts {
+                state.table.defer(e, "destructable: pathing");
+            }
+        }
         // The heroes near a dying unit take its experience (SPEC-0033).
         if state.unit(Some(widget)).is_some() {
             super::heroes::death(&mut state, widget);

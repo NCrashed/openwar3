@@ -951,6 +951,9 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 g.cycling = true;
                 set(&mut s, h, Some(g));
                 take_another_tree(&mut s, h, false);
+                // Its order on the new tree, as at a delivery (c-RYP-1: peasant
+                // 0 at 10106, 13 parts).
+                super::table::lumber_delivered(&mut s, h);
                 continue;
             }
             set(&mut s, h, Some(g));

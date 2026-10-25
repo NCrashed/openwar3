@@ -590,7 +590,7 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
         .count();
     let threshold = if victim == h && life < 400.0 { 2 } else { 3 };
     if count >= threshold {
-        super::cast::creep_cast(state, h, ability, 1, attacker);
+        state.creep_casts.push((h, ability, attacker));
     }
 }
 

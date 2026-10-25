@@ -861,8 +861,20 @@ pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
 ///
 /// PROVISIONAL: when the kept ones go is not read.
 pub(super) fn spell_point_ordered(state: &mut super::State, h: u32) {
+    spell_order_objects(state, h, "script point order");
+    walk_made_at_order(state, h);
+}
+
+/// A creep's spell ordered by its spell timer (SPEC-0047; c-RZJ-1: the
+/// Ogre Lord's Shockwave at 3.177711): as a script's spell order, without
+/// a walk; the kept objects go with the cast's end (4.249930).
+pub(super) fn creep_spell_ordered(state: &mut super::State, h: u32) {
+    spell_order_objects(state, h, "creep spell order");
+}
+
+fn spell_order_objects(state: &mut super::State, h: u32, tag: &'static str) {
     let tick = state.table.now;
-    let order = state.table.take(tick, "script point order");
+    let order = state.table.take(tick, tag);
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
@@ -877,7 +889,6 @@ pub(super) fn spell_point_ordered(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.order = kept;
     }
-    walk_made_at_order(state, h);
 }
 
 /// Unit `h` gets a new walk (an event `cluster` of the path lists): a

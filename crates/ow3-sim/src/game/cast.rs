@@ -636,6 +636,8 @@ pub(super) fn creep_cast(state: &mut State, h: u32, ability: i32, level: i32, ta
     };
     let turned =
         movement::position_of(state, target).is_some_and(|at| movement::turned_to(state, h, at));
+    // Its order's objects (SPEC-0024).
+    super::table::creep_spell_ordered(state, h);
     movement::stop(state, h);
     set(state);
     if turned {

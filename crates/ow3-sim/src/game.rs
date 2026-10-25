@@ -946,6 +946,9 @@ pub struct State {
     /// Units that took a target at a call in this tick, for their
     /// `EVENT_UNIT_ACQUIRED_TARGET` (SPEC-0019).
     call_acquired: Vec<u32>,
+    /// Creep spells decided in this tick, ordered after its checks
+    /// (SPEC-0047): caster, ability, target.
+    creep_casts: Vec<(u32, i32, u32)>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1140,6 +1143,7 @@ impl State {
             quiet_paths: std::collections::BTreeSet::new(),
             mirrors: Vec::new(),
             call_acquired: Vec::new(),
+            creep_casts: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1901,6 +1905,15 @@ impl<'a> Game<'a> {
                 break;
             }
         }
+        // The creep spells decided at the checks' calls are ordered by
+        // their timer after them (SPEC-0047; c-RZJ-1: the Ogre Lord's
+        // Shockwave at 3.177711, after the camp's acquisitions).
+        {
+            let mut s = self.state.borrow_mut();
+            for (h, ability, target) in std::mem::take(&mut s.creep_casts) {
+                cast::creep_cast(&mut s, h, ability, 1, target);
+            }
+        }
         // The zero hits after stuns, after the checks (SPEC-0037).
         attack::zero_hits(&mut self.vm, &self.state);
         attack::hits(&mut self.vm, &self.state);
@@ -1920,6 +1933,14 @@ impl<'a> Game<'a> {
         creeps::tick(&mut self.state.borrow_mut());
         // What the units see (SPEC-0032).
         fog::tick(&mut self.state.borrow_mut());
+        // Creep spells decided later in the tick (PROVISIONAL: their
+        // timer's place there is not read).
+        {
+            let mut s = self.state.borrow_mut();
+            for (h, ability, target) in std::mem::take(&mut s.creep_casts) {
+                cast::creep_cast(&mut s, h, ability, 1, target);
+            }
+        }
         // Internal objects of the checksum freed or made now (SPEC-0024).
         {
             let mut s = self.state.borrow_mut();

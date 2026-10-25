@@ -40,6 +40,8 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// A gold mine had a worker inside (its object taken).
+    pub mine_used: bool,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
     /// ahead of its cooldowns, freed ahead of a later timer of the tick
     /// (`flush_early`).
@@ -100,6 +102,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             walks_due: Vec::new(),
+            mine_used: false,
             early: Vec::new(),
             cast_at_once: false,
             at_fade: false,
@@ -423,6 +426,10 @@ pub struct UnitEntries {
     pub channel: Option<u32>,
     /// The object of a Blizzard wave's buff on it.
     pub blizzard_buff: Option<(u32, u32)>,
+    /// The parts of a harvest order freed when the walk to the mine ends.
+    pub harvest_arrive: Vec<u32>,
+    /// Its object while inside a gold mine.
+    pub harvest_inside: Option<u32>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
     /// for one whose object is the bearer's own (made with it).
     pub aura_buffs: Vec<(i32, u32)>,
@@ -1006,6 +1013,54 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
+/// Worker `h` takes a harvest order on a gold mine (c-RXI-1 at 1.5 s): the
+/// order and its record, the old order ends, then 14 parts of the order's
+/// start and the walk; the record and parts 13 .. 10 (from the last) go
+/// 0.0001 s later, parts 9 and 8 when the walk to the mine ends, parts
+/// 7 .. 0 and the order when the order ends (the worker leaves the mine
+/// with its gold).
+pub(super) fn harvest_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 14, "harvest: order start");
+    for &e in parts[10..].iter().rev() {
+        state.table.defer(e, "harvest: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = vec![parts[9], parts[8]];
+        e.order = parts[..8].iter().rev().copied().chain([order]).collect();
+    }
+    walk_made_at_order(state, h);
+}
+
+/// Worker `h` goes into a gold mine: an object kept while it is inside,
+/// before it the mine's own at its first worker (c-RXI-1: 1144, kept to
+/// the end, and worker 5's 1145 at 871).
+/// PROVISIONAL: the mine's object is taken as the first worker's.
+pub(super) fn harvest_entered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    if !state.table.mine_used {
+        state.table.mine_used = true;
+        state.table.take(tick, "gold mine: in use");
+    }
+    let inside = state.table.take(tick, "gold mine: worker inside");
+    if let Some(e) = entries(state, h) {
+        e.harvest_inside = Some(inside);
+    }
+}
+
+/// Worker `h`'s walk to the gold mine ends: two parts of its order go
+/// (c-RXI-1: 1136, 1135 at 4.350023).
+pub(super) fn harvest_arrived(state: &mut super::State, h: u32) {
+    let parts = entries(state, h).map(|e| std::mem::take(&mut e.harvest_arrive));
+    for e in parts.unwrap_or_default() {
+        state.table.defer(e, "harvest: order start");
+    }
+}
+
 /// Unit `h` takes a script's move order to a point (c-SBG-1, ogre 3 at
 /// 1.5 s): as an attack order to a point, with 13 objects of the move
 /// ability, the last 7 freed 0.0001 s later and the first 6 kept to the
@@ -1017,8 +1072,14 @@ pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
     let order = state.table.take(tick, "script point order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
+    // 13 for a unit that had taken a target, 12 for one that had not
+    // (c-SBG-1: ogre 3; c-RTW-3: footman (825, 828) at 10.924168, the
+    // first 6 kept either way).
+    let targeted =
+        entries(state, h).is_some_and(|e| !e.acquisition.is_empty() || e.current.is_some());
     order_ended(state, h);
-    let ability = state.table.take_n(tick, 13, "move ability: order start");
+    let n = if targeted { 13 } else { 12 };
+    let ability = state.table.take_n(tick, n, "move ability: order start");
     for &e in ability[6..].iter().rev() {
         state.table.defer(e, "move ability: order start");
     }
@@ -1163,6 +1224,15 @@ pub(super) fn chase_walk_ended(state: &mut super::State, h: u32) {
     if entries(state, h).is_some_and(|e| !e.walk.is_empty()) {
         walk_dropped(state, h);
     }
+}
+
+/// `walk_dropped` at the unit's update of this tick, whenever it is
+/// handled: freed at its next update (c-RXI-1: workers going in or
+/// starting to wait at 871, their walks freed at 877).
+pub(super) fn walk_dropped_at_update(state: &mut super::State, h: u32) {
+    let started = std::mem::replace(&mut state.updates_started, state.ticks);
+    walk_dropped(state, h);
+    state.updates_started = started;
 }
 
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed

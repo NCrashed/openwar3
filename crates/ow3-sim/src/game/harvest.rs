@@ -165,7 +165,7 @@ fn gathering(state: &State, h: u32) -> Option<Gathering> {
 }
 
 /// Whether `h` is a gold mine.
-fn is_mine(state: &State, h: u32) -> bool {
+pub(super) fn is_mine(state: &State, h: u32) -> bool {
     matches!(state.objects.get(&h), Some(Object::Unit(u))
         if u.alive && ability_of(state, u.type_id, code(b"Agld")).is_some())
 }
@@ -230,6 +230,7 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
     // The order makes the objects of the walk (SPEC-0024).
     if taken && is_mine(state, target) {
         state.objects_change();
+        super::table::harvest_ordered(state, h);
     }
     taken
 }
@@ -787,6 +788,11 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             // Its cells stay where it entered: the units on them are
             // pushed aside as by a worker that starts to wait (c-RXI-1
             // tick 3505).
+            // Its objects of going in, then its walk ends (SPEC-0024;
+            // c-RXI-1: worker 5 at 871).
+            super::table::harvest_entered(&mut s, w);
+            super::table::harvest_arrived(&mut s, w);
+            super::table::walk_dropped_at_update(&mut s, w);
             push_aside(&mut s, w);
             hide(&mut s, w, true);
             pace(&mut s, w);
@@ -1217,6 +1223,10 @@ fn start_waiting(state: &mut State) {
         };
         // One that goes in is hidden by the entries of this tick.
         if !goes_in {
+            // Its walk to the mine ends here (SPEC-0024; c-RXI-1: worker 4
+            // at 871).
+            super::table::harvest_arrived(state, w);
+            super::table::walk_dropped_at_update(state, w);
             push_aside(state, w);
             pace(state, w);
         }

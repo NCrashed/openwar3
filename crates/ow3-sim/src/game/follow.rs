@@ -701,9 +701,14 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
     let events = shared.events;
     // An arrived unit searches a new path at its next update.
+    // A worker at its gold mine gives its walk up as it goes in or starts
+    // to wait (`harvest::start_waiting`; c-RXI-1: walks freed at 877).
+    let at_mine = state.unit(Some(walker.handle)).and_then(|u| u.movement).is_some_and(|m| {
+        matches!(m.order, super::movement::Order::Work { target } | super::movement::Order::Gather { target } if super::harvest::is_mine(state, target))
+    });
     if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);
-    } else {
+    } else if !at_mine {
         super::table::walk_dropped(state, walker.handle);
     }
     if let Some(trace) = &mut state.path_trace {

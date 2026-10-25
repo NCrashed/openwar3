@@ -1713,6 +1713,13 @@ impl<'a> Game<'a> {
         s.table.now = s.ticks;
     }
 
+    /// The actions of a turn are counted in the tick that follows them
+    /// (c-RTW-3: a player's move at 10.924168, the start of tick 2186).
+    pub fn actions_begin(&mut self) {
+        let mut s = self.state.borrow_mut();
+        s.table.now = s.ticks + 1;
+    }
+
     fn tick(&mut self) {
         {
             let mut state = self.state.borrow_mut();

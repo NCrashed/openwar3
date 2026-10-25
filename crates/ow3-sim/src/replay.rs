@@ -289,6 +289,7 @@ impl<'a> Playback<'a> {
                     Some(&last) if ms == 0 => self.marks.push(last),
                     _ => self.mark(),
                 }
+                self.game.actions_begin();
                 for (player, list) in actions {
                     for action in list {
                         self.apply(player, &action);
@@ -353,7 +354,8 @@ impl<'a> Playback<'a> {
         found
     }
 
-    /// Each player's selection sum `Y` (SPEC-0024): the units selected and
+    /// Each slot's selection sum `Y` (SPEC-0024), by the slots of the
+    /// players (c-RTW-3: player 1 is slot 0): the units selected and
     /// their `idsum`s, the active subgroup, each subgroup (the selected
     /// units of one type, in the order of their first unit), the control
     /// groups, and the lead unit (the first selected).
@@ -363,8 +365,10 @@ impl<'a> Playback<'a> {
     fn selection_sums(&self) -> [u32; 12] {
         let idsum = |id: &[u32; 2]| (id[0] ^ id[1]).rotate_left(3);
         let mut ys = [fold(0, u32::MAX); 12];
-        for (player, y) in ys.iter_mut().enumerate() {
-            let player = player as u8;
+        for (&player, &slot) in &self.players {
+            let Some(y) = usize::try_from(slot).ok().and_then(|s| ys.get_mut(s)) else {
+                continue;
+            };
             let ids = self.selection_ids.get(&player).cloned().unwrap_or_default();
             let type_of =
                 |id: &[u32; 2]| self.ids.iter().find(|&&(n, _)| n == id[1]).map(|&(_, t)| t);

@@ -3338,7 +3338,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 } else if attack_move {
                     super::table::attack_move_arrived(state, h, None);
                     super::table::walk_dropped(state, h);
-                } else if !u.entries.order.is_empty() {
+                } else if !u.entries.order.is_empty() && u.harvest.is_none() {
+                    // (A worker at its mine: its order and walk go on to its
+                    // going in, `harvest::start_waiting`.)
                     // Its check comes 0.01 s after the move's end (c-SBG-1:
                     // ogre 3, move ended at 8.819954, checked at 8.829953).
                     if u.acquire_phase != super::NO_PHASE {

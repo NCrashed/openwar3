@@ -860,15 +860,37 @@ pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
 }
 
 /// Unit `h` takes a script's order of a spell on a point (c-RZJ-1: the
-/// Archmage's Blizzard at 2.5): as an attack order to a point, the order
-/// and its record, the old order ends, 11 objects of the ability (the
-/// last 6 freed 0.0001 s later, the first 5 kept with the order) and the
-/// walk.
+/// Archmage's Blizzards of 2.5 and 9.5): the order and its record, the
+/// old order ends, then the ability's objects: walking into range 11 (the
+/// last 6 freed 0.0001 s later, the fifth when the cast starts, the first
+/// 4 kept with the order) and the walk; cast at once 10, without the one
+/// of the cast's start and without a walk.
 ///
 /// PROVISIONAL: when the kept ones go is not read.
-pub(super) fn spell_point_ordered(state: &mut super::State, h: u32) {
-    spell_order_objects(state, h, "script point order");
-    walk_made_at_order(state, h);
+pub(super) fn spell_point_ordered(state: &mut super::State, h: u32, at_once: bool) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script point order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let n = if at_once { 10 } else { 11 };
+    let ability = state
+        .table
+        .take_n(tick, n, "spell ability: point order start");
+    for &e in ability[n - 6..].iter().rev() {
+        state.table.defer(e, "spell ability: point order start");
+    }
+    let mut kept: Vec<u32> = ability[..4].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+        if !at_once {
+            e.cast_start = vec![ability[4]];
+        }
+    }
+    if !at_once {
+        walk_made_at_order(state, h);
+    }
 }
 
 /// A creep's spell ordered by its spell timer (SPEC-0047; c-RZJ-1: the
@@ -1222,21 +1244,6 @@ pub(super) fn cast_started(state: &mut super::State, h: u32) {
     let start = entries(state, h).map(|e| std::mem::take(&mut e.cast_start));
     for e in start.unwrap_or_default() {
         state.table.free(tick, e, "spell ability: order start");
-    }
-    // A spell on a point frees the first of its order's kept objects
-    // (c-RZJ-1: the Blizzard's 1492 at the cast's start, 2.94).
-    // PROVISIONAL: read for that one cast.
-    let point = state
-        .unit(Some(h))
-        .and_then(|u| u.casting)
-        .is_some_and(|c| c.point.is_some());
-    let first = entries(state, h)
-        .filter(|_| point)
-        .and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
-    if let Some(e) = first {
-        state
-            .table
-            .free(tick, e, "spell ability: point order start");
     }
     // The walk into range ends.
     walk_dropped(state, h);

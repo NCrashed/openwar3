@@ -387,7 +387,10 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
     if in_range && movement::turned_to(state, h, at) {
         movement::stop(state, h);
         set(state);
+        // Its objects before the cast's start (SPEC-0024).
+        super::table::spell_point_ordered(state, h, true);
         start(state, h, tick);
+        return Some(true);
     } else {
         if in_range {
             movement::stop(state, h);
@@ -398,7 +401,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
         set(state);
     }
     // Its objects (SPEC-0024; c-RZJ-1: the Blizzard order of 2.5).
-    super::table::spell_point_ordered(state, h);
+    super::table::spell_point_ordered(state, h, false);
     Some(true)
 }
 
@@ -794,10 +797,13 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
             *fog = Some((w.caster, step_q));
         }
-        // Its last step is its impact as a missile's (c-RZJ-1: the
-        // Ogre Lord's first, its objects freed at 9.504406).
+        // Its end of travel (its length at its speed from the effect, not
+        // the step's tick) is its impact as a missile's (c-RZJ-1: the Ogre
+        // Lord's first, 3.737711 + 0.761905, its objects freed at
+        // 9.504406).
         if since == last {
-            super::table::missile_hit(s, &w.objects, step_q);
+            let travel = (f32::from_bits(w.length) / WAVE_SPEED).to_bits();
+            super::table::missile_hit(s, &w.objects, add(w.start_q, travel));
         }
         // In the order of the grid the area pass visits (SPEC-0019).
         let order = movement::call_order(s, restarts.iter().map(|r| r.1).collect());

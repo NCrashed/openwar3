@@ -4844,7 +4844,10 @@ fn rating(
         rank != 0,                                           // 36
         rank > 1,                                            // 37
     ];
-    Some((key, distance))
+    // Ties go to the nearer by the path agents too (c-SBJ-1: ogre 4 took
+    // the fleeing Death Knight at 12.918833, 260.3 from it by his agent).
+    let tie = ax * ax + ay * ay;
+    Some((key, tie))
 }
 
 /// The index of the armor type `fort` (`combat`).

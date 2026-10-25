@@ -1797,6 +1797,10 @@ impl<'a> Game<'a> {
                 let Some(fired) = fired else {
                     break;
                 };
+                let first = attack::first_swing_walk(&self.state.borrow(), Some(fired.expiry));
+                if let Some(e) = first {
+                    attack::hits_ahead_of(&mut self.vm, &self.state, e);
+                }
                 attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
                 // The hits due before this timer come first, as one queue
                 // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script
@@ -1879,6 +1883,10 @@ impl<'a> Game<'a> {
             let Some(fired) = self.state.borrow_mut().timers.next_due(&mut tick) else {
                 break;
             };
+            let first = attack::first_swing_walk(&self.state.borrow(), Some(fired.expiry));
+            if let Some(e) = first {
+                attack::hits_ahead_of(&mut self.vm, &self.state, e);
+            }
             attack::after_swing_walks(&mut self.state.borrow_mut(), Some(fired.expiry));
             // The hits due before this timer come first, as one queue
             // (SPEC-0018; c-SAK-1: the hit at 16.999964 before the script

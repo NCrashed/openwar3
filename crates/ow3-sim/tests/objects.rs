@@ -112,6 +112,19 @@ fn heroes_two_objects() {
     }
 }
 
+/// `c-RXR-1`: the battle reference (melee, riflemen, missiles), report
+/// only while its table is being built up.
+#[test]
+fn battle_checksums_report() {
+    turn_parts("c-RXR-1");
+}
+
+/// `c-RXR-1`'s object table (report only).
+#[test]
+fn battle_objects_report() {
+    compare_objects("c-RXR-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

@@ -1512,15 +1512,21 @@ pub(super) fn next_hit(state: &State) -> Option<u32> {
         .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
 }
 
-/// The walks of the goals after the swings whose backswings end in this
-/// tick: the game takes the goal at the backswing's end, a tick before the
-/// chase here (SPEC-0024; c-SAK-1: kobold 8 at 1895, before the frees of
-/// that tick); with `before`, those ending before that queue time, as
-/// timers of the queue ahead of the script timer due then (c-SAK-1: kobold
-/// 15 at 9.499967 before the script order at 9.5 in 1901).
-pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
+/// The earliest end of a backswing whose goal `after_swing_walks` takes
+/// before `before`: the hits due ahead of it come first (c-RXR-1: a hit
+/// of 4.25993 before footman 3's goal at 4.259997).
+pub(super) fn first_swing_walk(state: &State, before: Option<u32>) -> Option<u32> {
+    swing_walks_due(state, before)
+        .into_iter()
+        .map(|(_, e)| e)
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)))
+}
+
+/// The units whose goal after the swing is due before `before`, with
+/// their backswing ends.
+fn swing_walks_due(state: &State, before: Option<u32>) -> Vec<(u32, u32)> {
     let tick = state.ticks;
-    let ending: Vec<(u32, u32)> = state
+    state
         .attacking
         .iter()
         .filter_map(|&h| {
@@ -1542,7 +1548,18 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
                 && !super::cast::stunned(state, h))
             .then_some((h, u.backswing_end))
         })
-        .collect();
+        .collect()
+}
+
+/// The walks of the goals after the swings whose backswings end in this
+/// tick: the game takes the goal at the backswing's end, a tick before the
+/// chase here (SPEC-0024; c-SAK-1: kobold 8 at 1895, before the frees of
+/// that tick); with `before`, those ending before that queue time, as
+/// timers of the queue ahead of the script timer due then (c-SAK-1: kobold
+/// 15 at 9.499967 before the script order at 9.5 in 1901).
+pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
+    let tick = state.ticks;
+    let ending = swing_walks_due(state, before);
     // In the order of the ends, as the queue runs them.
     // Equal ends by the order their swings started (c-SAK-1: footmen 4
     // and 6 at 41.559853).

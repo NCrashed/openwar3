@@ -498,6 +498,17 @@ const UNIT: Making = Making {
     level: &[],
     corpse: &[15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
+// A unit without an ability of its own (only the hidden inventory one,
+// `Aihn`, `Aion`): the same without the ability's object 14 (c-RXR-1: the
+// riflemen, 17 each; footmen, grunts and headhunters 18 with Defend,
+// Pillage and Berserk).
+const UNIT_PLAIN: Making = Making {
+    count: 17,
+    deferred: &[16, 15],
+    death: &[10, 11],
+    level: &[],
+    corpse: &[14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
+};
 const CREEP: Making = Making {
     count: 28,
     deferred: &[16, 15, 20, 25, 24, 23, 22, 21, 19, 27, 26],
@@ -549,6 +560,18 @@ pub(super) fn summon_made(state: &mut super::State, caster: u32, h: u32, cost: i
     }
 }
 
+/// The abilities of type `type_id` other than the hidden inventory ones.
+///
+/// PROVISIONAL: a unit with two of its own is taken as one with one.
+fn own_abilities(state: &super::State, type_id: i32) -> usize {
+    state.data.units.get(&type_id).map_or(1, |t| {
+        t.abilities
+            .iter()
+            .filter(|&&a| ![*b"Aihn", *b"Aion", *b"Aien", *b"Aiun"].contains(&a.to_be_bytes()))
+            .count()
+    })
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -571,6 +594,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         } else {
             &CREEP
         }
+    } else if own_abilities(state, type_id) == 0 {
+        &UNIT_PLAIN
     } else {
         &UNIT
     };

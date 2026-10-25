@@ -114,6 +114,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, heroes_two_checksums); this test runs without it",
     ),
     (
+        "c-SBJ-1.w3g",
+        "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): just \
+         recorded, not looked at yet",
+    ),
+    (
         "c-SBI-1.w3g",
         "the Orc spells test (Chain Lightning, War Stomp, Healing Wave): just recorded, \
          not looked at yet",

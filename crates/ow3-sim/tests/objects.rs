@@ -194,6 +194,15 @@ fn creeps_harvest_objects() {
     }
 }
 
+/// `c-SBI-1`: Orc spells (Chain Lightning, War Stomp, Healing Wave)
+/// (report only).
+#[test]
+fn orc_spells_report() {
+    eprintln!("c-SBI-1");
+    compare_objects("c-SBI-1");
+    turn_parts("c-SBI-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

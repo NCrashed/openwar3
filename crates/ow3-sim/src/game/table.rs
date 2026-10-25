@@ -672,7 +672,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         } else {
             &CREEP
         }
-    } else if type_id == i32::from_be_bytes(*b"hpea") {
+    // The peon too (c-SBI-1: 22, the start order's two deferred).
+    } else if type_id == i32::from_be_bytes(*b"hpea") || type_id == i32::from_be_bytes(*b"opeo") {
         &PEASANT
     } else if type_id == i32::from_be_bytes(*b"ngol") {
         &GOLD_MINE

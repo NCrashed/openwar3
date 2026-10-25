@@ -5642,13 +5642,11 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
         // tick (c-RXD-1: creep 9 at 6859).
         let in_reach = in_range(here, at, reach);
         let turned = real_of(heading_and_turn(&m, at).1).abs() <= ATTACK_HALF_ANGLE;
-        // Too close to its target: it walks away to get space, a chase
-        // (c-RXD-1: kobold 1048692 8.0 from peasant 1048689 at 35.039223).
-        let crowded = real_of(distance(here, at))
-            < 0.5 * real_of(add(data.map_or(0, |t| t.collision), other));
-        // PROVISIONAL: the test is not read; 0.5 times the two collision
-        // sizes is the analyst's guess, met only here.
-        let in_reach = in_reach && !crowded;
+        // In reach but its stored heading more than AttackHalfAngle off the
+        // target: a face movement that takes a walk, as a chase (SPEC-0019,
+        // "The face movement takes a walk"; c-RXD-1: kobold 1048692 2.33 rad
+        // off at 35.039223).
+        let in_reach = in_reach && (turned || m.faced);
         // In reach but not facing it: a face movement to where the target
         // stands now, a fixed point (SPEC-0019, "Cooldown expiry").
         if in_reach && !turned && m.faced {

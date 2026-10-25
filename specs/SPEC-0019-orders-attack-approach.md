@@ -1206,15 +1206,17 @@ An idle unit with a weapon attacks an enemy unit on its own:
   old walk freed at 8388) and kobold 8 at 5.789993 (target in reach:
   swing); the Blademaster image at 56.305359 held no target (cleared
   at the death above): nothing.
-- **Too close.** In the attack start, after the range test passes, a
-  second test runs. If it fails, the unit does not swing or turn but
-  walks first: a chase whose move is given an unlimited range. Read in
-  `c-RXD-1`: kobold 1048692 at its cooldown end 35.039223, target
-  peasant 8.0 world units away (in reach 100, 1.95 rad off its facing):
-  the second test failed and the walk 1871 .. 1873 was made. The test
-  involves a factor 0.5 and both units. Taken as "nearer than 0.5
-  times the sum of the two collision sizes" by the implementation, which
-  then matches all replays; the test itself was not read.
+- **The face movement takes a walk.** The angle test of "Before a
+  swing" (step 4) compares the direction from the unit to the target's
+  position with the unit's stored heading (SPEC-0018), not its facing,
+  against `AttackHalfAngle` 0.5 rad. When it fails, the face movement
+  (a move with an unlimited range) takes a walk like a chase: helper,
+  cluster and path. Read in `c-RXD-1`, all 31 tests up to 35.05 s: passed
+  at angles up to 0.4104, failed from 0.6887; kobold 1048692 at its
+  cooldown end 35.039223, target peasant 8.7 world units away (in reach
+  100), 2.33 rad off its heading: failed, walk 1871 .. 1873. The same
+  test is used with 0.2 rad elsewhere (the member's arrival turned to
+  its place).
 
 ## Edge cases
 

@@ -511,6 +511,48 @@ const UNIT_PLAIN: Making = Making {
     level: &[],
     corpse: &[14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
+// A peasant (c-RXI-1, 22 objects): the footman's 0 .. 11, Build's ability
+// and second part (12, 13), Move (14), Attack (15), Harvest (16), Call to
+// Arms (17), Repair (18), a part of Harvest's (19), the start order's two
+// (20, 21, freed 0.0001 s later).
+// PROVISIONAL: what goes at its death and at its corpse's end is not
+// read; taken as the footman's, the extra parts with the corpse.
+const PEASANT: Making = Making {
+    count: 22,
+    deferred: &[21, 20],
+    death: &[10, 11],
+    level: &[],
+    corpse: &[19, 18, 17, 16, 15, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
+};
+// A gold mine (c-RXI-1, 23): the footman's 0 .. 9 and 11, three building
+// parts (11 .. 13), the gold ability and its second part (14, 15), one
+// more ability object (16), Invulnerable (17), on fire and alarm (18,
+// 19), the start order's two (20, 21, freed 0.0001 s later) and one more
+// kept (22).
+const GOLD_MINE: Making = Making {
+    count: 23,
+    deferred: &[21, 20],
+    death: &[],
+    level: &[],
+    corpse: &[],
+};
+// A town hall (c-RXI-1, 30 in the table): the mine's 0 .. 13, Train and Upgrade with
+// their second parts (14 .. 17), an ability object and its four data
+// parts (18 .. 22, freed at 2.2 s, `HALL_PARTS`), Call to Arms (23),
+// Return resources (24), Rally (25; its point is an object of the second
+// pool, not here), on fire and alarm (26, 27), the start order's two (28,
+// 29, freed 0.0001 s later).
+const TOWN_HALL: Making = Making {
+    count: 30,
+    deferred: &[29, 28],
+    death: &[],
+    level: &[],
+    corpse: &[],
+};
+/// The town hall's parts freed 1.2 s after its making, in this order
+/// (c-RXI-1: 855, 856, 854, 853, 852 at 2.200093).
+/// PROVISIONAL: what ends them is not read.
+const HALL_PARTS: [usize; 5] = [21, 22, 20, 19, 18];
 const CREEP: Making = Making {
     count: 28,
     deferred: &[16, 15, 20, 25, 24, 23, 22, 21, 19, 27, 26],
@@ -596,6 +638,12 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         } else {
             &CREEP
         }
+    } else if type_id == i32::from_be_bytes(*b"hpea") {
+        &PEASANT
+    } else if type_id == i32::from_be_bytes(*b"ngol") {
+        &GOLD_MINE
+    } else if type_id == i32::from_be_bytes(*b"htow") {
+        &TOWN_HALL
     } else if own_abilities(state, type_id) == 0 {
         &UNIT_PLAIN
     } else {
@@ -643,6 +691,12 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
+    if std::ptr::eq(making, &TOWN_HALL) {
+        let end = ow3_math::add(state.timers.time(), 1.2f32.to_bits());
+        for k in HALL_PARTS {
+            state.table.free_at_q(end, entries[k], "town hall: parts");
+        }
+    }
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
     let death_mana = mana.then(|| entries[12]);
     let (mut death_first, mut death_late) = (Vec::new(), Vec::new());
@@ -668,7 +722,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
-            attack_ability: Some(entries[13]),
+            attack_ability: if std::ptr::eq(making, &PEASANT) {
+                Some(entries[15])
+            } else if std::ptr::eq(making, &GOLD_MINE) || std::ptr::eq(making, &TOWN_HALL) {
+                None
+            } else {
+                Some(entries[13])
+            },
             ..UnitEntries::default()
         };
     }

@@ -569,6 +569,8 @@ fn type_record(state: &mut State, owner: i32, type_id: i32, change: impl FnOnce(
     if !(0..12).contains(&owner) {
         return;
     }
+    // q6 is 4 for a building, 8 for a unit (c-RXI-1: the town hall).
+    let building = state.data.units.get(&type_id).is_some_and(|t| t.building);
     let list = state
         .type_records
         .entry(owner)
@@ -576,7 +578,10 @@ fn type_record(state: &mut State, owner: i32, type_id: i32, change: impl FnOnce(
     let k = match list.iter().position(|(t, _)| *t == type_id) {
         Some(k) => k,
         None => {
-            list.push((type_id, [2_147_483_647, 0, 0, 0, 0, 0, 8]));
+            list.push((
+                type_id,
+                [2_147_483_647, 0, 0, 0, 0, 0, if building { 4 } else { 8 }],
+            ));
             list.len() - 1
         }
     };

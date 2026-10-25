@@ -45,6 +45,23 @@ units in the same tick"). In `c-RSM-2` the members' look-ahead checks
 came in the order 0, 1, 2, 3 in every tick, member 0 being the first
 created footman.
 
+**Queued and immediate orders to a group.** Read in `c-RTW-3` (seven
+footmen; one case each):
+- a queued (Shift) point order to the group makes one queue entry per
+  member at once, the member nearest the order point first: at
+  26.196604 the seven entries were made in the order of the members'
+  distances to (309.5, -581.0) world (the group's goal when the move
+  started; the action's point itself was not read): 218, 295, 422,
+  429, 493, 584, 619. The fourth entry was footman (933, 936)'s
+  (distance 429), freed with the end of his move at 27.811333.
+- an immediate order (`stop` at 27.921314) to the selection goes first
+  to the units without an order (footman (933, 936), whose move had
+  ended at 27.809410), then to the others in selection order (843,
+  861, 879, 897, 915, 951 by creation).
+- the stop also drops the walk a member kept from its queued group
+  start: walk 1526/1527 (made at 27.656359) was freed at that
+  member's update after the stop (27.929405).
+
 ### Formation angle and leader
 
 - When the order is given, the formation angle is
@@ -381,6 +398,17 @@ nothing. Measured (RSO): a footman of the group blocked by another
 member at (-8.51, -148.20), 403 from its place (101.99, -542.80), got
 `P` = 8, stood one update, and the counter was cleared at the next
 update when its way was free.
+
+A member that stays blocked by units while it stands draws again at
+each such update: the counter is set afresh from the generator rather
+than lowered. Replay `c-RTW-3` (read in the game, every change of the
+script generator from 27.25 to 27.75 s): one member, its place
+(393.7123, 365.8444) cells, drew at 27.299431 while walking (entry
+speed value 8.4375), then stood at (392.5837, 363.5888) (speed value 0)
+and drew again at 27.329430 and 27.359428. The fourth draw of that
+window (27.719414) was the same unit with a new place. The draws came
+from inside the per-member test of its walk (the arrival test of
+SPEC-0019), at the start of its updates.
 
 ### Following the cluster's path
 

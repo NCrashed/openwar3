@@ -2992,10 +2992,11 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
         }
         // Its speed comes back at its next update (SPEC-0037), its attack
         // times at once (c-SBJ-1: kobold 6 at 8.96).
+        let cooldown = super::attack::swing_cooldown(state, h);
         if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
             u.move_slow = None;
             if let Some((_, speed)) = u.slowed_until.take() {
-                super::attack::unslow_cooldown(u, end, speed);
+                super::attack::unslow_cooldown(u, end, speed, cooldown);
             }
         }
         // A backswing that ends later resumes in the tick its new end falls

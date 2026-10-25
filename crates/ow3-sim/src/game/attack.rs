@@ -47,6 +47,10 @@ pub struct Attacking {
     pub(super) hit_at: Option<u32>,
     /// The queue time at which that swing started.
     pub(super) swing_q: u32,
+    /// The expiry of the cooldown timer started with that swing, once a
+    /// slow rescaled it (c-SBJ-1: kobold 6's, 1.8 s slowed at its swing,
+    /// sped up at the frost's end): the next swing starts there.
+    pub(super) cool_end: Option<u32>,
 }
 
 impl Attacking {
@@ -113,6 +117,7 @@ pub(super) fn begin(state: &mut State, h: u32, target: u32, tick: u64, order_id:
             renew_at: None,
             hit_at: Some(hit_at),
             swing_q,
+            cool_end: None,
         });
     }
     if !state.attacking.contains(&h) {
@@ -341,16 +346,18 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     let seq = s.cooldown_starts;
                     if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                         u.cooldown_seq = seq;
-                        let next = a.next + ticks(cooldown);
+                        // The next swing starts at the expiry of this one's
+                        // cooldown (SPEC-0016), a timer a slow may have
+                        // rescaled.
+                        let swing_q = a.cool_end.unwrap_or_else(|| add(a.swing_q, cooldown));
+                        let cool = ticks(sub(swing_q, a.swing_q));
+                        let next = a.next + cool;
                         let end = tick + ticks(backswing);
                         let resume = Some(end + 1);
                         // The next swing, and with it the new goal of a
                         // chase, at the first update from `D + cool -
                         // dmgpt` on (SPEC-0019).
-                        let renew_at = Some((tick + ticks(cooldown)).saturating_sub(ticks(point)));
-                        // The next swing starts at the expiry of this one's
-                        // cooldown (SPEC-0016).
-                        let swing_q = add(a.swing_q, cooldown);
+                        let renew_at = Some((tick + cool).saturating_sub(ticks(point)));
                         u.cooldown_end = swing_q;
                         u.cooldown_target = a.target;
                         u.backswing_end = add(a.hit_at.unwrap_or(0), backswing);
@@ -360,6 +367,7 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                             renew_at,
                             hit_at: Some(add(swing_q, point)),
                             swing_q,
+                            cool_end: None,
                             ..a
                         });
                         u.weapon_ready = next;
@@ -1243,19 +1251,19 @@ fn slowed(state: &State, h: u32, seconds: u32) -> u32 {
 /// the time left of the running cooldown of `u` is divided by it, and a
 /// swing waiting for that cooldown starts at the new end with its damage
 /// point divided too (SPEC-0037; c-RZH-1, creep 10 at 5281).
-pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
-    scale_times(u, now, |t| div(t, speed));
+pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32, cooldown: u32) {
+    scale_times(u, now, cooldown, |t| div(t, speed));
 }
 
 /// The end of a slow of attack-speed factor `speed` at the queue time
 /// `now`: the times left are sped up again (c-SBJ-1: kobold 6,
 /// 26 ticks of its cooldown left at the frost's end at 8.96, its swing
 /// 20 ticks later).
-pub(super) fn unslow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
+pub(super) fn unslow_cooldown(u: &mut super::Unit, now: u32, speed: u32, cooldown: u32) {
     // The rest divided by the slowed rate 1 / speed (c-SBJ-1: 0x3DCCCFC2,
     // 0x3F88F5F1, 0x3DCCD022, 0x3EF0A4BA read in the game).
     let rate = div(1.0f32.to_bits(), speed);
-    scale_times(u, now, |t| div(t, rate));
+    scale_times(u, now, div(cooldown, speed), |t| div(t, rate));
 }
 
 /// Ticks from `from` to `to`, negative when `to` is earlier.
@@ -1273,7 +1281,8 @@ fn shift(t: u64, by: i64) -> u64 {
 
 /// The rest of the backswing and of the cooldown of `u` after queue time
 /// `now`, and a swing waiting for that cooldown, scaled by `scale`.
-fn scale_times(u: &mut super::Unit, now: u32, scale: impl Fn(u32) -> u32) {
+/// `cooldown` is the cooldown a swing under way started with.
+fn scale_times(u: &mut super::Unit, now: u32, cooldown: u32, scale: impl Fn(u32) -> u32) {
     // So does the rest of a backswing (c-SBJ-1: gnoll 4, 40 ticks left at
     // the frost of 4.96, resumed 53 ticks later).
     let back = u.backswing_end;
@@ -1299,6 +1308,11 @@ fn scale_times(u: &mut super::Unit, now: u32, scale: impl Fn(u32) -> u32) {
         let end = add(now, scale(sub(hit, now)));
         a.next = shift(a.next, ticks_between(hit, end));
         a.hit_at = Some(end);
+        // Its cooldown timer, started with it.
+        let cool = a.cool_end.unwrap_or_else(|| add(a.swing_q, cooldown));
+        if f32::from_bits(cool) > f32::from_bits(now) {
+            a.cool_end = Some(add(now, scale(sub(cool, now))));
+        }
     }
     if f32::from_bits(old) <= f32::from_bits(now) {
         return;
@@ -1320,6 +1334,16 @@ fn scale_times(u: &mut super::Unit, now: u32, scale: impl Fn(u32) -> u32) {
 /// hero `cooldown / (1 + AgiAttackSpeedBonus * AGI)` (SPEC-0034). Its
 /// damage point and its backswing shrink the same way (c-RZJ-1: the Paladin,
 /// AGI 16, backswing 0.567 / 1.32 = 0.4295 s after his kill at 2836).
+/// The cooldown of `h`'s weapon on its attack's target, unslowed.
+pub(super) fn swing_cooldown(state: &State, h: u32) -> u32 {
+    let Some(u) = state.unit(Some(h)) else {
+        return 0;
+    };
+    let target = u.attack.map(|a| a.target);
+    let weapon = weapon_for(state, u.type_id, target).unwrap_or_default();
+    hero_cooldown(state, h, weapon.cooldown)
+}
+
 fn hero_cooldown(state: &State, h: u32, cooldown: u32) -> u32 {
     match state.unit(Some(h)).filter(|u| is_hero(u.type_id)) {
         Some(u) => {

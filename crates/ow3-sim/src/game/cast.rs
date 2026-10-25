@@ -1695,11 +1695,12 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
                 let until = tick + duration(hero);
                 let fresh = attack_slow(s, o).is_none();
+                let cooldown = super::attack::swing_cooldown(s, o);
                 if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
                     t.slowed_until = Some((until, speed));
                     t.move_slow = Some(n.data[2]);
                     if fresh {
-                        super::attack::slow_cooldown(t, now, speed);
+                        super::attack::slow_cooldown(t, now, speed, cooldown);
                     }
                 }
                 deferred.push(Deferred::Damage {
@@ -1848,11 +1849,12 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 // (`FrostMoveSpeedDecrease`) (c-SBJ-1: gnoll 4's swing
                 // at 5.22486).
                 let fresh = attack_slow(s, o).is_none();
+                let cooldown = super::attack::swing_cooldown(s, o);
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
                     u.slowed_until = Some((tick + duration(hero), FROST_ATTACK));
                     u.move_slow = Some(FROST_MOVE);
                     if fresh {
-                        super::attack::slow_cooldown(u, now, FROST_ATTACK);
+                        super::attack::slow_cooldown(u, now, FROST_ATTACK, cooldown);
                     }
                 }
                 deferred.push(damage(o, n.data[0], Some(add(now, seconds(hero)))));
@@ -2530,6 +2532,13 @@ fn wave_step(s: &mut State, b: &mut Bounce) {
         })
         .collect();
     let now = add(b.q, (IMPALE_STEP * k as f32).to_bits());
+    let ahead = movement::angle(dx.to_bits(), dy.to_bits());
+    let back = add(ahead, std::f32::consts::PI.to_bits());
+    let back = if f32::from_bits(back) >= std::f32::consts::TAU {
+        ow3_math::sub(back, std::f32::consts::TAU.to_bits())
+    } else {
+        back
+    };
     let [air, dur, hero_dur] = b.times;
     let landing = s.ticks + super::attack::ticks(air);
     for o in movement::call_order(s, reached) {
@@ -2546,6 +2555,13 @@ fn wave_step(s: &mut State, b: &mut Bounce) {
         );
         if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
             t.entries.impale = true;
+            // It is turned to face back along the wave: its facing and its
+            // walk heading the wave's direction + pi (c-SBJ-1: kobolds 7 and 8
+            // at pi after the wave of direction 0).
+            t.facing = back;
+            if let Some(m) = t.movement.as_mut() {
+                m.heading = back;
+            }
         }
         s.bounces.push(Bounce {
             caster: b.caster,

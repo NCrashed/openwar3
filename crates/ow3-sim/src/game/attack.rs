@@ -1423,6 +1423,41 @@ pub(super) fn spell_hit(
     }
 }
 
+/// A War Stomp's hit on `target`: its damage, then the objects of the stun
+/// and the stun itself (c-SBI-1: per unit hit, event, stun, its order,
+/// record and parts at 4.969878).
+pub(super) fn stomp_hit(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: u32,
+    target: u32,
+    amount: u32,
+    stun: (u32, u32),
+    at: u32,
+) {
+    {
+        let mut s = state.borrow_mut();
+        if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+            super::movement::retaliate(&mut s, target, h, None);
+        }
+    }
+    super::widgets::damage_widget(vm, state, Some(h), Some(target), amount, 0, 0);
+    let mut s = state.borrow_mut();
+    if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
+        super::table::stun_objects(&mut s, h, target, Vec::new());
+        // The stun counts from the effect (c-SBI-1: its end at 1595).
+        let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));
+        super::cast::stun(
+            &mut s,
+            target,
+            h,
+            if hero { stun.1 } else { stun.0 },
+            at,
+            true,
+        );
+    }
+}
+
 /// Whether the hit of attack `a` is due in this tick: by the expiry of
 /// its damage-point timer against the queue's time at the end of the tick,
 /// else by its tick.

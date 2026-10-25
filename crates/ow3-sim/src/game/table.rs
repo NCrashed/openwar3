@@ -3140,7 +3140,14 @@ pub(super) fn stun_ends(state: &mut super::State) {
 
 fn stuns_with(state: &mut super::State, backs: bool) {
     let tick = state.table.now;
-    let units: Vec<u32> = state.units.clone();
+    let mut units: Vec<u32> = state.units.clone();
+    // In the order the stuns were made (c-SBI-1: War Stomp's four).
+    let made = |s: &super::State, h: u32| {
+        s.unit(Some(h))
+            .and_then(|u| u.entries.stun_end.first().copied())
+            .map_or(u32::MAX, |o| s.table.creation_of(o))
+    };
+    units.sort_by_key(|&h| made(state, h));
     for h in units {
         let Some((end, back)) = entries(state, h).and_then(|e| e.stun_ticks) else {
             continue;

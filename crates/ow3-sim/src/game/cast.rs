@@ -1001,6 +1001,17 @@ enum Deferred {
     },
     /// The end of a channel's object, after its last wave's hits.
     ChannelEnd { caster: u32 },
+    /// A War Stomp's hit: its damage, then the stun (SPEC-0040).
+    StompHit {
+        caster: u32,
+        target: u32,
+        amount: u32,
+        stun: (u32, u32),
+        /// The effect's queue time, from which the stun counts.
+        at: u32,
+    },
+    /// War Stomp's own object after its hits, kept to queue time `end`.
+    StompEnd { end: u32 },
     /// The calls for help of an area pass's hits, after all of them.
     Calls {
         caster: u32,
@@ -1152,6 +1163,19 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
+            Deferred::StompHit {
+                caster,
+                target,
+                amount,
+                stun,
+                at,
+            } => super::attack::stomp_hit(vm, state, caster, target, amount, stun, at),
+            Deferred::StompEnd { end } => {
+                let mut s = state.borrow_mut();
+                let tick = s.table.now;
+                let o = s.table.take(tick, "war stomp: effect");
+                s.table.free_at_q(end, o, "war stomp: effect");
+            }
             Deferred::Calls {
                 caster,
                 targets,
@@ -1663,24 +1687,37 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                             .get(&t.type_id)
                             .is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
                         let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+                        // The area reaches the unit's edge (c-SBI-1: kobold 6 at 273,
+                        // collision 31, hit by the area 250).
+                        let reach = area
+                            + s.data
+                                .units
+                                .get(&t.type_id)
+                                .map_or(0.0, |d| f32::from_bits(d.collision));
                         t.alive
                             && !t.hidden
                             && ground
                             && movement::enemies(s, owner, t.owner)
-                            && dx * dx + dy * dy <= area * area
+                            && dx * dx + dy * dy <= reach * reach
                     })
                 })
                 .collect();
             let stun = (seconds(false), seconds(true));
+            // Its effect's event first, its own object after the hits, kept
+            // Dur (c-SBI-1: 4.969878 to 7.969760).
+            super::table::spell_effect_event(s, h);
             for o in movement::call_order(s, hit) {
-                deferred.push(Deferred::SpellHit {
+                deferred.push(Deferred::StompHit {
                     caster: h,
                     target: o,
                     amount: n.data[0],
                     stun,
-                    objects: Vec::new(),
+                    at: c.effect_q,
                 });
             }
+            deferred.push(Deferred::StompEnd {
+                end: add(c.effect_q, n.duration),
+            });
         }
         _ => {}
     }
@@ -2007,6 +2044,17 @@ pub enum BounceKind {
     Flame,
 }
 
+/// How long the objects of a bounce's effect and jumps are kept: 1 s for
+/// Chain Lightning, 2 s for Healing Wave (c-SBI-1).
+fn bounce_life(kind: BounceKind) -> u32 {
+    if kind == BounceKind::Heal {
+        2.0f32
+    } else {
+        1.0f32
+    }
+    .to_bits()
+}
+
 /// The time between two jumps, 0.25 s.
 const BOUNCE_TICKS: u64 = 50;
 
@@ -2014,12 +2062,13 @@ const BOUNCE_TICKS: u64 = 50;
 fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kind: BounceKind) {
     // Chain Lightning's effect: its event's objects and one kept 1 s (c-SBI-1:
     // 2.879976, freed at 3.880051). PROVISIONAL: the other spells' objects.
-    if kind == BounceKind::Lightning {
+    // Healing Wave's alike, kept 2 s (c-SBI-1: 6.899738 to 8.899607).
+    if kind != BounceKind::ManaBurn && kind != BounceKind::Roots {
         super::table::spell_effect_event(s, h);
         let tick = s.table.now;
-        let o = s.table.take(tick, "chain lightning: effect");
-        let end = ow3_math::add(c.effect_q, 1.0f32.to_bits());
-        s.table.free_at_q(end, o, "chain lightning: effect");
+        let o = s.table.take(tick, "bounce: effect");
+        let end = ow3_math::add(c.effect_q, bounce_life(kind));
+        s.table.free_at_q(end, o, "bounce: effect");
     }
     let (Some(target), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
         return;
@@ -2178,6 +2227,17 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
         }
         let alive = s.unit(Some(b.target)).is_some_and(|u| u.alive);
         if alive {
+            // The object of the jump on from this unit, kept as the effect's,
+            // made before the hit or heal; none at the last (c-SBI-1: the
+            // lightning at 627, 677 and 727, not 777; the wave at 1431 and
+            // 1481). PROVISIONAL: a jump taken as due while units are left.
+            if (b.kind == BounceKind::Lightning || b.kind == BounceKind::Heal) && b.left > 1 {
+                let now = s.table.now;
+                let o = s.table.take(now, "bounce: jump");
+                let q = s.event_time.unwrap_or_else(|| s.timers.time());
+                let end = ow3_math::add(q, bounce_life(b.kind));
+                s.table.free_at_q(end, o, "bounce: jump");
+            }
             if b.kind == BounceKind::ManaBurn {
                 let mut burnt = 0;
                 if let Some(Object::Unit(t)) = s.objects.get_mut(&b.target) {
@@ -2210,16 +2270,6 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
                     t.life.set(life);
                 }
             } else {
-                // The object of the jump on from this unit, kept 1 s, made before
-                // the hit; none at the last (c-SBI-1: 627, 677 and 727, not 777).
-                // PROVISIONAL: a jump taken as due while units are left to reach.
-                if b.left > 1 {
-                    let now = s.table.now;
-                    let o = s.table.take(now, "chain lightning: bolt");
-                    let q = s.event_time.unwrap_or_else(|| s.timers.time());
-                    let end = ow3_math::add(q, 1.0f32.to_bits());
-                    s.table.free_at_q(end, o, "chain lightning: bolt");
-                }
                 deferred.push(Deferred::Damage {
                     caster: b.caster,
                     target: b.target,

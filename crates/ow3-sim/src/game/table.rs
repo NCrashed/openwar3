@@ -1307,6 +1307,33 @@ pub(super) fn immediate_ordered(state: &mut super::State, h: u32) {
     }
 }
 
+/// Unit `h` takes Divine Shield, an order without a target and without a
+/// cast time (c-RZJ-1: the Paladin at 24.0): the order and its record;
+/// the object its old order kept for an impact goes first, then the
+/// record and the old order's objects. The order is given back, freed
+/// 0.0001 s later after the effect.
+pub(super) fn divine_shield_ordered(state: &mut super::State, h: u32) -> u32 {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script immediate order");
+    let record = state.table.take(tick, "order record");
+    impact_unused(state, h);
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    order
+}
+
+/// Unit `h`'s Divine Shield takes effect at queue time `at` for `seconds`:
+/// the effect's event, then the buff's object, freed at the buff's end
+/// (c-RZJ-1: 3680, 23.996973 to 38.996883).
+pub(super) fn divine_shield_effect(state: &mut super::State, h: u32, at: u32, seconds: u32) {
+    spell_effect_event(state, h);
+    let tick = state.table.now;
+    let buff = state.table.take(tick, "Divine Shield: buff");
+    state
+        .table
+        .free_at_q(ow3_math::add(at, seconds), buff, "Divine Shield: buff");
+}
+
 /// Unit `h` is ordered the spell it is casting again before its effect:
 /// the order is taken and kept.
 ///

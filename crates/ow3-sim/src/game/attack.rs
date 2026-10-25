@@ -1575,7 +1575,9 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             let super::movement::Order::Attack { target } = m.order else {
                 return None;
             };
-            state.unit(Some(target)).filter(|t| t.alive)?;
+            // One it can hit: an invulnerable target is lost (c-RZJ-1: kobold
+            // on the Paladin's Divine Shield, back to its guard at 24.01697).
+            standing(state, target).then_some(())?;
             let end = f32::from_bits(u.backswing_end);
             (end > f32::from_bits(state.move_clock)
                 && end <= f32::from_bits(next)

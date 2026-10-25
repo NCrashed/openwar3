@@ -257,6 +257,7 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     // time, and the caster is left with no order (SPEC-0045; c-RZJ-1:
     // the Paladin at 4801).
     if base_code(state, ability) == i32::from_be_bytes(*b"AHds") {
+        let order = super::table::divine_shield_ordered(state, h);
         movement::stop(state, h);
         let c = Casting {
             order_id,
@@ -276,6 +277,8 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
             u.attack_move = None;
             u.checks_off = true;
         }
+        // The order goes after the effect and the attackers' objects.
+        state.table.defer(order, "script immediate order");
         return Some(true);
     }
     // Wind Walk too, ending the order the unit had (SPEC-0040; c-SAK-1:
@@ -1382,6 +1385,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
                 u.invulnerable_until = Some(until);
             }
+            let at = s.timers.time();
+            super::table::divine_shield_effect(s, h, at, seconds(hero));
             movement::target_died(s, h);
         }
         // The creep Shockwave (SPEC-0047).

@@ -470,6 +470,14 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
     if hit.is_empty() {
         return;
     }
+    // In the grid order of the pass (SPEC-0019; c-RZJ-1: the wave of 15.7,
+    // footman 5 hit third).
+    let order = movement::call_order(s, hit.iter().map(|h| h.0).collect());
+    let hit: Vec<(u32, bool)> = order
+        .into_iter()
+        .filter_map(|o| hit.iter().find(|h| h.0 == o).copied())
+        .collect();
+    let order_hit: Vec<u32> = hit.iter().map(|h| h.0).collect();
     let share = div(n.data_f, ow3_math::i2r(hit.len() as i32));
     let each = if f32::from_bits(share) < f32::from_bits(n.data[1]) {
         share
@@ -494,12 +502,23 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             slow: None,
             at: Some(wave_q),
             fog: None,
-            later_calls: false,
+            later_calls: true,
         });
     }
     // A wave that hits makes or restarts the caster's fog modifier (1757).
     if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
         *fog = Some((h, wave_q));
+    }
+    // Each unit hit responds, then one call for the wave (as a
+    // Shockwave's step; c-RZJ-1: the wave of 15.699999).
+    if any {
+        deferred.push(Deferred::Calls {
+            caster: h,
+            targets: order_hit,
+            centre: point,
+            area: n.area,
+            at: wave_q,
+        });
     }
 }
 

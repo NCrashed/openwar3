@@ -361,6 +361,8 @@ pub struct UnitEntries {
     pub buff_end_waiting: Option<u32>,
     /// The object of a channel under way (Blizzard).
     pub channel: Option<u32>,
+    /// The object of a Blizzard wave's buff on it.
+    pub blizzard_buff: Option<(u32, u32)>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
     /// for one whose object is the bearer's own (made with it).
     pub aura_buffs: Vec<(i32, u32)>,
@@ -2242,15 +2244,18 @@ pub(super) fn shockwave_covered(state: &mut super::State, caster: u32, h: u32, a
 /// How long a Shockwave's hit buff lasts from its last start (0.12 s).
 const SHOCKWAVE_HIT: f32 = 0.12;
 
-/// A Blizzard wave hits unit `_h`: its short buff, taken off at queue
+/// A Blizzard wave hits unit `h`: its short buff, taken off at queue
 /// time `end` (the wave's plus 0.99 s) and freed at that tick's end
 /// (c-RZJ-1: 1751 at 4.139997, off at 5.129997).
 ///
 /// PROVISIONAL: a unit's death before that is not read.
-pub(super) fn blizzard_hit(state: &mut super::State, _h: u32, end: u32) {
+pub(super) fn blizzard_hit(state: &mut super::State, h: u32, end: u32) {
     let tick = state.table.now;
     let o = state.table.take(tick, "Blizzard: buff");
     state.table.free_at_q(end, o, "Blizzard: buff");
+    if let Some(e) = entries(state, h) {
+        e.blizzard_buff = Some((o, end));
+    }
 }
 
 /// A missile of an attack is launched (c-RZJ-1: the water elemental's at
@@ -2677,8 +2682,22 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for &e in queue[6..].iter().rev() {
         state.table.defer(e, "death order queue");
     }
+    // Its buffs, then the Defend order, with the rest after the levels its
+    // death gives (c-RZJ-1: footman 5 at 15.70, its Blizzard buff 2877,
+    // its Devotion buff 1446, then 2890, then its own).
+    // (Only one still on: its timer not run yet.)
+    if let Some((b, end)) = entries(state, h).and_then(|e| e.blizzard_buff.take())
+        && state.table.timed_q.iter().any(|t| t.1 == b && t.0 == end)
+    {
+        state.table.timed_q.retain(|t| !(t.1 == b && t.0 == end));
+        state.table.rest.push((b, "Blizzard: buff"));
+    }
+    let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
+    for (_, b) in auras.unwrap_or_default() {
+        state.table.rest.push((b, "aura buff"));
+    }
     if let Some(o) = other {
-        state.table.defer(o, "death order");
+        state.table.rest.push((o, "death order"));
     }
     // The rest go after the levels its experience gives (`death_rest`;
     // c-SAK-1: ogre 13 at 6052, both heroes' levels before 1143, 1144).
@@ -2689,12 +2708,6 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     // objects (c-RZH-1: tunneler 10's 3040 at 28.49).
     if let Some(b) = entries(state, h).and_then(|e| e.slow_buff.take()) {
         state.table.rest.push((b, "Thunder Clap effect"));
-    }
-    // Its aura buffs too (c-RZJ-1: footman 5's Devotion buff 1438 at
-    // 12.469).
-    let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
-    for (_, b) in auras.unwrap_or_default() {
-        state.table.rest.push((b, "aura buff"));
     }
     if let Some(e) = entries(state, h) {
         e.slow_end_q = None;

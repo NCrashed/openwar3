@@ -911,8 +911,31 @@ pub(super) fn spell_point_ordered(state: &mut super::State, h: u32, at_once: boo
 /// A creep's spell ordered by its spell timer (SPEC-0047; c-RZJ-1: the
 /// Ogre Lord's Shockwave at 3.177711): as a script's spell order, without
 /// a walk; the kept objects go with the cast's end (4.249930).
-pub(super) fn creep_spell_ordered(state: &mut super::State, h: u32) {
-    spell_order_objects(state, h, "creep spell order");
+pub(super) fn creep_spell_ordered(state: &mut super::State, h: u32, turned: bool) {
+    if turned {
+        spell_order_objects(state, h, "creep spell order");
+        return;
+    }
+    // Not facing its target, as a target spell walking into range: 12,
+    // the fifth at the cast's start, the sixth at the order's end, and a
+    // walk (c-RZJ-1: the Ogre Lord's second, 12.110987).
+    let tick = state.table.now;
+    let order = state.table.take(tick, "creep spell order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 12, "spell ability: order start");
+    for &e in ability[6..].iter().rev() {
+        state.table.defer(e, "spell ability: order start");
+    }
+    let mut kept: Vec<u32> = ability[..4].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+        e.cast_start = vec![ability[4]];
+        e.impact = vec![ability[5]];
+    }
+    walk_made_at_order(state, h);
 }
 
 fn spell_order_objects(state: &mut super::State, h: u32, tag: &'static str) {

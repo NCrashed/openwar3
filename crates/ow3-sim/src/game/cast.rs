@@ -674,15 +674,17 @@ pub(super) fn creep_cast(state: &mut State, h: u32, ability: i32, level: i32, ta
     };
     let turned =
         movement::position_of(state, target).is_some_and(|at| movement::turned_to(state, h, at));
-    // Its order's objects (SPEC-0024).
-    super::table::creep_spell_ordered(state, h);
     movement::stop(state, h);
     set(state);
+    // Its order's objects (SPEC-0024), after the order's own walk start
+    // (the walk is kept to the cast's start).
     if turned {
+        super::table::creep_spell_ordered(state, h, true);
         let tick = state.ticks;
         start(state, h, tick);
     } else if movement::cast_order(state, h, target, order_id) {
         set(state);
+        super::table::creep_spell_ordered(state, h, false);
     }
 }
 

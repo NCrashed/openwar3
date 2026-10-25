@@ -1486,6 +1486,7 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
         }
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.early_walk = true;
+            u.entries.early_walk_at = tick;
         }
         // A goal in reach ends at the unit's first update that starts with
         // its heading on the target, which may come before the chase here
@@ -1575,6 +1576,7 @@ pub(super) fn attack_move_resumes(state: &mut State, before: Option<u32>) {
         super::table::attack_move_resumed(state, h);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.early_walk = true;
+            u.entries.early_walk_at = tick;
         }
     }
     state.table.now = tick;

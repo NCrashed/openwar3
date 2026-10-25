@@ -278,6 +278,8 @@ pub struct UnitEntries {
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
+    /// The tick the early walk was made in.
+    pub early_walk_at: u64,
     /// The goal after its swing was taken at the backswing's end; the
     /// chase takes no other.
     pub early_goal: bool,
@@ -783,8 +785,14 @@ pub(super) fn chase_walk_ended(state: &mut super::State, h: u32) {
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     // A walk made early for a chase to come stays through its order.
+    // Not once an update of an earlier tick came after it: the walk was
+    // given up there (c-RZH-1: the Mountain King's walk of 5573, update
+    // 5574, his goal in 5575, freed at the update after, 5580; one in the
+    // goal's own tick keeps it, c-SAK-1: 6955).
+    let (last_update, now) = (state.last_update_tick, state.ticks);
     if let Some(e) = entries(state, h)
         && std::mem::take(&mut e.early_walk)
+        && (last_update <= e.early_walk_at || last_update == now)
     {
         return;
     }

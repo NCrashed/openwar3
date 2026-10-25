@@ -1023,6 +1023,17 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 let end_q = add(c.effect_q, after.to_bits());
                 movement::end_cast_at(s, h, end_q);
                 s.table_at(end_q);
+                // A spell without a missile kept its order's sixth for an
+                // impact: it goes first (c-RZJ-1: the Holy Light's 2221 at
+                // 11.829115).
+                let missile = s
+                    .data
+                    .abilities
+                    .get(&c.ability)
+                    .is_some_and(|a| a.code == i32::from_be_bytes(*b"AHtb"));
+                if !missile {
+                    super::table::impact_unused(s, h);
+                }
                 super::table::order_ended(s, h);
                 s.table.now = tick;
             }

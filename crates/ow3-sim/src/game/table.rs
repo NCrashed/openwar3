@@ -1253,6 +1253,16 @@ pub(super) fn spell_ordered_again(state: &mut super::State) {
     state.table.take(tick, "script target order");
 }
 
+/// Unit `h`'s cast ends with the object kept for an impact unused (a
+/// target spell without a missile): freed 0.0001 s later, before the
+/// order's.
+pub(super) fn impact_unused(state: &mut super::State, h: u32) {
+    let kept = entries(state, h).map(|e| std::mem::take(&mut e.impact));
+    for e in kept.unwrap_or_default() {
+        state.table.defer(e, "spell ability: order start");
+    }
+}
+
 /// Unit `h` starts a cast: the object of its order kept to then is freed.
 pub(super) fn cast_started(state: &mut super::State, h: u32) {
     let tick = state.table.now;

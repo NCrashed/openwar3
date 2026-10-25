@@ -1096,12 +1096,23 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     let expired: Vec<u32> = {
         let mut s = state.borrow_mut();
         let tick = s.ticks;
+        let next = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+        let (by_q, later_q): (Vec<_>, Vec<_>) = s
+            .timed_life_q
+            .iter()
+            .partition(|(q, _)| f32::from_bits(*q) < next);
+        s.timed_life_q = later_q;
         let (now, later): (Vec<_>, Vec<_>) = s.timed_life.iter().partition(|(t, _)| *t <= tick);
         s.timed_life = later;
-        now.into_iter().map(|(_, h)| h).collect()
+        now.into_iter()
+            .map(|(_, h)| h)
+            .chain(by_q.into_iter().map(|(_, h)| h))
+            .collect()
     };
     for h in expired {
+        state.borrow_mut().table.expiring = Some(h);
         super::widgets::kill_unit(vm, state, Some(h), None);
+        state.borrow_mut().table.expiring = None;
     }
     run_deferred(vm, state, deferred);
     let mut s = state.borrow_mut();
@@ -1345,7 +1356,10 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                         w.next_acquire = add(c.effect_q, mul(w.acquire_phase, 0x3F00_0000));
                     }
                     super::table::summon_made(s, h, e, n.cost);
-                    s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
+                    // It dies in the tick that holds the effect's queue time
+                    // plus its duration (c-RZJ-1: the first, effect at
+                    // 2.299991, dead at 62.298977).
+                    s.timed_life_q.push((add(c.effect_q, seconds(false)), e));
                     s.summons.push((h, e));
                 }
             }

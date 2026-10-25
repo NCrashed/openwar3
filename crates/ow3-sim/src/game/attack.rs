@@ -805,7 +805,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             // objects go 5.0 s after that impact (c-RZJ-1: the water
             // elemental's of 12.338930, target dead at 2495, freed at
             // 17.593147).
-            if !m.artillery && !standing(s, m.target) && (m.homing.is_some() || m.spell.is_some()) {
+            if !m.artillery && !standing(s, m.target) && m.spell.is_some() {
                 continue;
             }
             // A spell's bolt: it lands at its straight flight's end; at a
@@ -865,8 +865,17 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     }
                 }
                 Some((step, next)) if next == tick => {
-                    let Some(to) = super::movement::position_of(s, m.target) else {
-                        continue;
+                    // A homing one whose target is gone flies on to where the
+                    // target was last (c-RZJ-1: the Archmage's of 36.787998,
+                    // the Ogre Lord dead at 37.137806, freed at 42.295071).
+                    let to = if standing(s, m.target) {
+                        let Some(to) = super::movement::position_of(s, m.target) else {
+                            continue;
+                        };
+                        m.point = to;
+                        to
+                    } else {
+                        m.point
                     };
                     let left = distance(m.at, to);
                     if f32::from_bits(left) < f32::from_bits(step) {

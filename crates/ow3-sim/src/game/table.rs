@@ -51,6 +51,8 @@ pub struct ObjectTable {
     /// The unit whose death is being handled, and the objects of its
     /// attackers going on with their attack-moves (`attack_move_resumed`).
     pub dying: Option<u32>,
+    /// The summon dying as its time ran out (`unit_died`).
+    pub expiring: Option<u32>,
     pub resumed: Vec<u32>,
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
@@ -102,6 +104,7 @@ impl ObjectTable {
             cast_at_once: false,
             at_fade: false,
             dying: None,
+            expiring: None,
             resumed: Vec::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
@@ -2667,6 +2670,51 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         state
             .table
             .free_at(tick + 2, back, "order back after a stun");
+    }
+    // A summon whose time ran out: a record and 7 queue objects; freed at
+    // once the record, the last 3 of the queue, its buffs, the objects it
+    // kept to its death and the fourth of the queue; at the end of its
+    // death time the third and second of the queue, its corpse's objects
+    // and the first (c-RZJ-1: the first Water Elemental at 62.298977 and
+    // 63.798252).
+    if state.table.expiring == Some(h) && state.unit(Some(h)).is_some_and(|u| u.illusion.is_none())
+    {
+        let record = state.table.take(tick, "death order record");
+        let queue = state.table.take_n(tick, 7, "death order queue");
+        state.table.defer(record, "death order record");
+        for &e in queue[4..].iter().rev() {
+            state.table.defer(e, "death order queue");
+        }
+        let (buffs, death, corpse) = entries(state, h)
+            .map(|e| {
+                (
+                    std::mem::take(&mut e.aura_buffs),
+                    std::mem::take(&mut e.death),
+                    std::mem::take(&mut e.corpse),
+                )
+            })
+            .unwrap_or_default();
+        for (_, b) in buffs {
+            state.table.defer(b, "aura buff");
+        }
+        for e in death {
+            state.table.defer(e, "unit death");
+        }
+        state.table.defer(queue[3], "death order queue");
+        let at = state.event_time.unwrap_or_else(|| state.timers.time());
+        let time = state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .map_or(3.0f32.to_bits(), |t| t.death_time);
+        let later = ow3_math::add(at, time);
+        for &e in [queue[2], queue[1]]
+            .iter()
+            .chain(&corpse)
+            .chain([&queue[0]])
+        {
+            state.table.free_at_q(later, e, "summon: corpse");
+        }
+        return;
     }
     // A Mirror Image copy: a record and 7 queue objects; freed at once
     // the record, the last 3 of the queue, the first 5 objects it kept

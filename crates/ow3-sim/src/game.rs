@@ -999,6 +999,8 @@ pub struct State {
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
+    /// Summons dying in the tick that holds a queue time (SPEC-0044).
+    pub(super) timed_life_q: Vec<(u32, u32)>,
     /// The shockwaves under way (SPEC-0047).
     pub(super) waves: Vec<cast::Wave>,
     /// The calls of missile impacts are being handled (SPEC-0019).
@@ -1175,6 +1177,7 @@ impl State {
             record_only: Vec::new(),
             check_times: Vec::new(),
             timed_life: Vec::new(),
+            timed_life_q: Vec::new(),
             waves: Vec::new(),
             impact_now: false,
             leveled: Vec::new(),

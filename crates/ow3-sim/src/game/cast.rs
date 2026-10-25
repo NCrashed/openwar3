@@ -1012,6 +1012,11 @@ pub(super) fn attack_slow(state: &State, h: u32) -> Option<u32> {
         .map(|(_, factor)| factor)
 }
 
+/// The attack-speed factor of a unit hit by frost (1 - 0.25).
+const FROST_ATTACK: u32 = 0x3F40_0000;
+/// How much frost slows a unit's moves.
+const FROST_MOVE: u32 = 0x3F00_0000;
+
 /// What an effect does after the borrow of the state ends.
 enum Deferred {
     /// The hit of a storm bolt launched next to its target.
@@ -1630,7 +1635,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 // Its effect event and missile objects, as Storm Bolt's (c-SBJ-1:
                 // 2.949975, freed 5.0 s after the hit).
                 let objects = super::table::bolt_effect(s, h, n.cost);
-                match super::attack::launch_homing_spell(s, h, target, amount, speed) {
+                match super::attack::launch_spell_missile(s, h, target, amount, speed, c.effect_q) {
                     Some(mut missile) => {
                         missile.objects = objects;
                         s.missiles.push(missile);
@@ -1659,38 +1664,60 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 return true;
             };
             let area = f32::from_bits(n.area);
-            let others: Vec<u32> = s
+            let near: Vec<u32> = s
                 .units
                 .iter()
                 .copied()
                 .filter(|&o| {
-                    o != t
-                        && s.unit(Some(o)).is_some_and(|u| {
-                            let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
-                            u.alive
-                                && !u.hidden
-                                && movement::enemies(s, owner, u.owner)
-                                && dx * dx + dy * dy <= area * area
-                        })
+                    s.unit(Some(o)).is_some_and(|u| {
+                        let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
+                        u.alive
+                            && !u.hidden
+                            && movement::enemies(s, owner, u.owner)
+                            && dx * dx + dy * dy <= area * area
+                    })
                 })
                 .collect();
-            let hits = [(t, 0), (t, n.data[0]), (t, n.data[1])].into_iter().chain(
-                movement::call_order(s, others)
-                    .into_iter()
-                    .map(|o| (o, n.data[0])),
-            );
-            for (target, amount) in hits {
-                deferred.push(Deferred::Damage {
-                    caster: h,
-                    target,
-                    amount,
-                    call: None,
-                    slow: None,
-                    at: None,
-                    fog: None,
-                    later_calls: false,
-                });
+            // The target's 0 first, then DataA on every unit of the area,
+            // the target too, each slowed after its hit as by a thunder
+            // clap; the area's fog modifier, and the target's DataB last
+            // (c-SBJ-1: 4.959991, slows to 8.959991, the modifier to
+            // 7.964661).
+            // PROVISIONAL: the slow's speeds are not built.
+            let now = c.effect_q;
+            super::table::clap_effect(s, h, n.cost);
+            let damage = |target, amount, slow| Deferred::Damage {
+                caster: h,
+                target,
+                amount,
+                call: None,
+                slow,
+                at: None,
+                fog: None,
+                later_calls: false,
+            };
+            deferred.push(damage(t, 0, None));
+            for o in movement::call_order(s, near) {
+                let hero = s.unit(Some(o)).is_some_and(|u| is_hero(u.type_id));
+                // The frost of `Units\MiscData.txt`: attacks 0.25 slower
+                // (`FrostAttackSpeedDecrease`), moves 0.5 slower
+                // (`FrostMoveSpeedDecrease`) (c-SBJ-1: gnoll 4's swing
+                // at 5.22486).
+                let fresh = attack_slow(s, o).is_none();
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
+                    u.slowed_until = Some((tick + duration(hero), FROST_ATTACK));
+                    u.move_slow = Some(FROST_MOVE);
+                    if fresh {
+                        super::attack::slow_cooldown(u, now, FROST_ATTACK);
+                    }
+                }
+                deferred.push(damage(o, n.data[0], Some(add(now, seconds(hero)))));
             }
+            deferred.push(Deferred::ClapArea {
+                at: now,
+                first: Some(h),
+            });
+            deferred.push(damage(t, n.data[1], None));
         }
         // A damage event of 0 at the cast point, the burn DataB later
         // (SPEC-0041).

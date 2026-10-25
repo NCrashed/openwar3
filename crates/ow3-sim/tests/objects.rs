@@ -220,6 +220,22 @@ fn undead_spells_report() {
     turn_parts("c-SBJ-1");
 }
 
+/// `c-SBH-1`: Flame Strike (report only).
+#[test]
+fn flame_strike_report() {
+    eprintln!("c-SBH-1");
+    compare_objects("c-SBH-1");
+    turn_parts("c-SBH-1");
+}
+
+/// `c-SBK-1`: Night Elf spells (report only).
+#[test]
+fn night_elf_spells_report() {
+    eprintln!("c-SBK-1");
+    compare_objects("c-SBK-1");
+    turn_parts("c-SBK-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

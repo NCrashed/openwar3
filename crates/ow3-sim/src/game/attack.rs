@@ -785,43 +785,50 @@ fn launch(
     })
 }
 
-/// A homing missile of a spell from `h` at `target` with `amount` and no
-/// stun, at `speed`, launched from the caster's position (SPEC-0041:
-/// Death Coil); `None` when the target is within one step.
-///
-/// PROVISIONAL: launched from the caster's centre.
-pub(super) fn launch_homing_spell(
+/// A spell's missile from `h` at `target` with `amount` and no stun, at
+/// `speed` (SPEC-0041: Death Coil); `None` when the target is within one
+/// step of the launch point. It flies as an attack's missile that does not
+/// home: one timer of `L / speed` from the start of the tick the effect's
+/// queue time `effect_q` is in, `L` from the caster's launch point
+/// (`launchY` ahead along its facing, `launchX` to the right) to the
+/// target's centre (c-SBJ-1: launch point (-740, 20), hit at 3.134970).
+pub(super) fn launch_spell_missile(
     state: &State,
     h: u32,
     target: u32,
     amount: u32,
     speed: u32,
+    effect_q: u32,
 ) -> Option<Missile> {
     let u = state.unit(Some(h))?;
-    let at = [u.x, u.y];
+    let [side, ahead] = state.data.units.get(&u.type_id)?.launch;
+    let (fx, fy) = (cos(u.facing), sin(u.facing));
+    let at = [
+        add(u.x, add(mul(fx, ahead), mul(fy, side))),
+        add(u.y, sub(mul(fy, ahead), mul(fx, side))),
+    ];
     let to = super::movement::position_of(state, target)?;
     let flight = distance(at, to);
     let step = mul(speed, HOMING_STEP);
     if f32::from_bits(step) <= 0.0 || f32::from_bits(flight) < f32::from_bits(step) {
         return None;
     }
-    let launched = state.move_clock;
+    let next = add(state.move_clock, crate::timers::TICK);
+    let launched = if f32::from_bits(effect_q) >= f32::from_bits(next) {
+        next
+    } else if f32::from_bits(effect_q) >= f32::from_bits(state.move_clock) {
+        state.move_clock
+    } else {
+        state.last_move_clock
+    };
     Some(Missile {
         attacker: h,
         target,
-        // Its first step is the move of the launch (SPEC-0041: 400 at 1100,
-        // hit at the third step after).
-        at: {
-            let k = div(step, flight);
-            [
-                add(at[0], mul(sub(to[0], at[0]), k)),
-                add(at[1], mul(sub(to[1], at[1]), k)),
-            ]
-        },
+        at,
         point: to,
         launched,
         expiry: add(add(launched, div(flight, speed)), MIN_DELAY),
-        homing: Some((step, state.ticks + HOMING_TICKS)),
+        homing: None,
         artillery: false,
         amount,
         attack_type: 0,
@@ -860,30 +867,6 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             if m.spell.is_some()
                 && let Some((step, next)) = m.homing
             {
-                // A homing spell (Death Coil, no stun) steps to the target every
-                // 0.1 s and hits at the step that finds it within one step
-                // (SPEC-0041: 400 at 1100, hit 60 ticks after the launch).
-                if m.spell == Some((0, 0)) {
-                    if next == tick {
-                        let Some(to) = super::movement::position_of(s, m.target) else {
-                            continue;
-                        };
-                        let left = distance(m.at, to);
-                        if f32::from_bits(left) < f32::from_bits(step) {
-                            arrived.push(m);
-                            continue;
-                        }
-                        let k = div(step, left);
-                        m.at = [
-                            add(m.at[0], mul(sub(to[0], m.at[0]), k)),
-                            add(m.at[1], mul(sub(to[1], m.at[1]), k)),
-                        ];
-                        m.point = to;
-                        m.homing = Some((step, next + HOMING_TICKS));
-                    }
-                    flying.push(m);
-                    continue;
-                }
                 if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
                     arrived.push(m);
                     continue;
@@ -1257,6 +1240,19 @@ fn slowed(state: &State, h: u32, seconds: u32) -> u32 {
 ///
 /// PROVISIONAL: the end of a slow is not measured; the times stay.
 pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
+    // So does the rest of a backswing (c-SBJ-1: gnoll 4, 40 ticks left at
+    // the frost of 4.96, resumed 53 ticks later).
+    let back = u.backswing_end;
+    if f32::from_bits(back) > f32::from_bits(now) {
+        let end = add(now, div(sub(back, now), speed));
+        let later = ticks(sub(end, back));
+        u.backswing_end = end;
+        if let Some(a) = u.attack.as_mut()
+            && let Some(r) = a.resume
+        {
+            a.resume = Some(r + later);
+        }
+    }
     let old = u.cooldown_end;
     if f32::from_bits(old) <= f32::from_bits(now) {
         return;

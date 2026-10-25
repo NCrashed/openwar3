@@ -653,6 +653,24 @@ fn own_abilities(state: &super::State, type_id: i32) -> usize {
     })
 }
 
+/// A hero of type `type_id`: how many fewer objects it has before its
+/// attack ability, and how many its own abilities add.
+fn hero_layout(state: &super::State, type_id: i32) -> (usize, usize) {
+    let Some(t) = state.data.units.get(&type_id) else {
+        return (0, 0);
+    };
+    let fewer = usize::from(t.race == "nightelf");
+    let extra = t
+        .abilities
+        .iter()
+        .map(|a| match &a.to_be_bytes() {
+            b"AInv" | b"Aihn" | b"Aion" | b"Aien" | b"Aiun" => 0,
+            _ => 1,
+        })
+        .sum();
+    (fewer, extra)
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -718,12 +736,25 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             parts.push((0, None));
         }
     }
+    // A hero's own abilities (`abilList`, but the inventory) take theirs
+    // before its last two (c-SBK-1: Ultravision 1, Shadow Meld 1; c-SBH-1:
+    // the Blood Mage's spheres 1, and 3 of the second pool), and a Night Elf hero has one fewer
+    // before its attack ability (c-SBK-1: 12 before it, 13 in c-SBJ-1).
+    // PROVISIONAL: what the missing object is, and the race as its rule,
+    // are not read.
+    let (fewer, extra) = if crate::data::is_hero(type_id) {
+        hero_layout(state, type_id)
+    } else {
+        (0, 0)
+    };
     let shift = usize::from(mana);
     let at = |k: usize| {
-        let k = if k >= 12 { k + shift } else { k };
+        let hero = if k >= 22 { k + extra } else { k };
+        let hero = if k >= 13 { hero - fewer } else { hero };
+        let k = if hero >= 12 { hero + shift } else { hero };
         if k >= 14 + shift { k + parts.len() } else { k }
     };
-    let count = making.count + shift + parts.len();
+    let count = making.count + shift + parts.len() + extra - fewer;
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
     for &k in making.deferred {
@@ -765,7 +796,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             } else if std::ptr::eq(making, &GOLD_MINE) || std::ptr::eq(making, &TOWN_HALL) {
                 None
             } else {
-                Some(entries[13])
+                Some(entries[at(13)])
             },
             ..UnitEntries::default()
         };

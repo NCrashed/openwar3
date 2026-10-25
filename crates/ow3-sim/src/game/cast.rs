@@ -609,6 +609,8 @@ pub struct Wave {
     start: u64,
     /// The queue time of its start, the effect's.
     start_q: u32,
+    /// Its objects, freed as a missile's after its last step.
+    objects: Vec<u32>,
     /// The radius of its circle, its first distance and its length.
     area: u32,
     length: u32,
@@ -674,7 +676,14 @@ pub(super) fn creep_ready(state: &State, h: u32, ability: i32, level: i32) -> bo
 }
 
 /// The shockwave of `h` on `target` starts (SPEC-0047, "The wave").
-fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel, start_q: u32) {
+fn shockwave(
+    s: &mut State,
+    h: u32,
+    target: u32,
+    n: &crate::data::AbilityLevel,
+    start_q: u32,
+    objects: Vec<u32>,
+) {
     let (Some(u), Some(t)) = (s.unit(Some(h)), s.unit(Some(target))) else {
         return;
     };
@@ -690,6 +699,7 @@ fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel, 
         direction: [div(dx, length), div(dy, length)],
         start: s.ticks,
         start_q,
+        objects,
         area: n.area,
         length: n.data[2],
         amount: n.data[0],
@@ -769,6 +779,11 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         // 1693 at 3.937711).
         if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
             *fog = Some((w.caster, step_q));
+        }
+        // Its last step is its impact as a missile's (c-RZJ-1: the
+        // Ogre Lord's first, its objects freed at 9.504406).
+        if since == last {
+            super::table::missile_hit(s, &w.objects, step_q);
         }
         // In the order of the grid the area pass visits (SPEC-0019).
         let order = movement::call_order(s, restarts.iter().map(|r| r.1).collect());
@@ -1181,8 +1196,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // The creep Shockwave (SPEC-0047).
         b"AOsh" => {
             if let Some(target) = c.target {
-                super::table::shockwave_effect(s);
-                shockwave(s, h, target, &n, c.effect_q);
+                let objects = super::table::shockwave_effect(s);
+                shockwave(s, h, target, &n, c.effect_q, objects);
             }
         }
         b"AHhb" => {

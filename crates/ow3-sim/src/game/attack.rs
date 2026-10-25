@@ -380,6 +380,9 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                             s.move_clock,
                         )
                     {
+                        let mut missile = missile;
+                        // Its objects of the engine's table (SPEC-0024).
+                        missile.objects = super::table::missile_launched(s);
                         s.missiles.push(missile);
                         None
                     } else {
@@ -916,6 +919,13 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
             (true, None) => {}
             (false, _) => {
+                // Its objects go 5.0 s after the impact (c-RZJ-1: the water
+                // elemental's of 5.094869, freed at 10.099306).
+                {
+                    let mut s = state.borrow_mut();
+                    let at = s.event_time.unwrap_or_else(|| s.timers.time());
+                    super::table::missile_hit(&mut s, &m.objects, at);
+                }
                 // The impact calls for help round where the missile hits.
                 let impact = super::movement::position_of(&state.borrow(), m.target);
                 strike(

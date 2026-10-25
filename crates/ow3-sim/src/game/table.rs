@@ -2135,18 +2135,11 @@ pub(super) fn buff_end_carried_out(state: &mut super::State, h: u32) {
 
 /// A creep's Shockwave takes effect (c-RZJ-1, the Ogre Lord at 3.74):
 /// the wave's object and 4 of its missile (position, two regions, the
-/// flight), freed together about 5.77 s later (9.504406).
-///
-/// PROVISIONAL: what times the free is not read; the length is that one
-/// reading.
-pub(super) fn shockwave_effect(state: &mut super::State) {
+/// flight), freed as a missile's 5.0 s after the wave's last step
+/// (`missile_hit`; 9.504406).
+pub(super) fn shockwave_effect(state: &mut super::State) -> Vec<u32> {
     let tick = state.table.now;
-    let objects = state.table.take_n(tick, 5, "Shockwave: wave");
-    let at = state.event_time.unwrap_or_else(|| state.timers.time());
-    let end = ow3_math::add(at, SHOCKWAVE_OBJECTS.to_bits());
-    for e in objects {
-        state.table.free_at_q(end, e, "Shockwave: wave");
-    }
+    state.table.take_n(tick, 5, "Shockwave: wave")
 }
 
 /// Unit `h` is hit by a Shockwave of `caster` at the step of queue time
@@ -2201,8 +2194,28 @@ pub(super) fn blizzard_hit(state: &mut super::State, _h: u32, end: u32) {
     state.table.free_at_q(end, o, "Blizzard: buff");
 }
 
-/// The time to the free of a Shockwave's objects (`shockwave_effect`).
-const SHOCKWAVE_OBJECTS: f32 = 5.7667;
+/// A missile of an attack is launched (c-RZJ-1: the water elemental's at
+/// 4.839993): its own object, its position, two regions and its flight.
+pub(super) fn missile_launched(state: &mut super::State) -> Vec<u32> {
+    let tick = state.table.now;
+    state.table.take_n(tick, 5, "missile")
+}
+
+/// A missile hits at queue time `at`: its objects are freed by a 5.0 s
+/// timer from there, at that tick's end (c-RZJ-1: 5.094869 -> 10.099306;
+/// c-SAK-1: the Storm Bolt's, 3.699956 -> 8.704540).
+///
+/// PROVISIONAL: a missile lost with its target keeps its objects.
+pub(super) fn missile_hit(state: &mut super::State, objects: &[u32], at: u32) {
+    let end = ow3_math::add(at, MISSILE_AFTER.to_bits());
+    for &e in objects {
+        state.table.free_at_q(end, e, "missile");
+    }
+}
+
+/// The time from a missile's impact to the free of its objects (5.0 s).
+const MISSILE_AFTER: f32 = 5.0;
+
 
 /// Unit `h`'s Blizzard takes effect (c-RZJ-1 at 3.24): the spell effect
 /// event, then the channel's object, kept to the channel's end.

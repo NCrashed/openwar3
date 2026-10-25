@@ -86,11 +86,13 @@ fn thunder_clap_objects() {
     }
 }
 
-/// `c-SBG-1`: the turn checksums, with the object table as the game
-/// starts it (report only: turn 92 differs, ogre 3's remembered target).
+/// `c-SBG-1`: every turn checksum, with the object table as the game
+/// starts it.
 #[test]
-fn thunder_clap_checksums_report() {
-    turn_parts("c-SBG-1");
+fn thunder_clap_checksums() {
+    if let Some(first) = turn_parts("c-SBG-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
 }
 
 /// `c-RZJ-1`: the second hero test (Archmage, Paladin, water elementals,

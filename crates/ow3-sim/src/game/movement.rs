@@ -3314,6 +3314,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     if u.acquire_phase != super::NO_PHASE {
                         u.next_acquire = add(state.update_time, AFTER_DEATH);
                     }
+                    // A creep's return timer running starts again at the
+                    // move's end (SPEC-0030; c-SBG-1: ogre 3, 10.084434 ->
+                    // 13.82 at its move's end, 8.819954).
+                    if u.owner == super::creeps::CREEPS && u.creep.return_time.is_some() {
+                        u.creep.return_time =
+                            Some(add(state.update_time, state.combat.guard_return_time));
+                    }
                     super::table::order_ended(state, h);
                     super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);

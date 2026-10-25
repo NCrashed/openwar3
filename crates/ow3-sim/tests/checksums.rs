@@ -100,9 +100,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RZH-1.w3g",
-        "the hero test (Mountain King, footmen, creeps): all path agents and events are \
-         the game's (tests/agents.rs, tests/crowd.rs); the state changes differ from turn \
-         19 on, not looked at yet",
+        "the hero test (Mountain King, footmen, creeps): every turn checksum to its end \
+         matches with the object table started as the game has it (tests/objects.rs, \
+         heroes_one_checksums); this test runs without it",
     ),
     (
         "c-RZJ-1.w3g",

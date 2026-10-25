@@ -69,11 +69,12 @@ fn heroes_three_objects() {
     }
 }
 
-/// The hero test `c-RZH-1` (Mountain King, footmen, creeps): report only
-/// while its table is being built up.
+/// The hero test `c-RZH-1` (Mountain King, footmen, creeps).
 #[test]
-fn heroes_one_objects_report() {
-    compare_objects("c-RZH-1");
+fn heroes_one_objects() {
+    if let Some(first) = compare_objects("c-RZH-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBG-1`: the Thunder Clap probe (two ogres and a paladin slowed, the
@@ -97,6 +98,14 @@ fn compare_objects(name: &str) -> Option<Option<usize>> {
     // (Some ticks past the list's last, whose tick column runs ahead.)
     let until = game.last().map_or(0, |r| r.0) + 10;
     while playback.game.ticks() <= until && playback.step_tick() {}
+    // Not the objects the game makes at its end, after the replay's last
+    // turn (c-RZH-1 at 63.0 s, the tick of the list's first row marked so),
+    // which no turn checksum sees.
+    let end = game
+        .iter()
+        .find(|r| r.4.contains("after the last turn"))
+        .map_or(u64::MAX, |r| r.0);
+    let game: Vec<_> = game.into_iter().filter(|r| r.0 < end).collect();
     // (The frees of the map start, before the list's first row.)
     let first_tick = game.first().map_or(0, |r| r.0);
     let ours: Vec<_> = playback
@@ -181,11 +190,26 @@ fn compare_objects(name: &str) -> Option<Option<usize>> {
 /// up to the one constant of `K1`, `K2`, `K3` (SPEC-0024).
 #[test]
 fn heroes_three_checksums() {
-    let name = "c-SAK-1";
-    let Ok(text) = std::fs::read_to_string(game_data().join(format!("replays/{name}.parts.tsv")))
-    else {
-        return;
-    };
+    if let Some(first) = turn_parts("c-SAK-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-RZH-1`: every turn checksum, with the object table as the game
+/// starts it.
+#[test]
+fn heroes_one_checksums() {
+    if let Some(first) = turn_parts("c-RZH-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// The turns of replay `name` against its parts file: the first turn
+/// whose recorded checksum, parts or G differ, `None` when all match;
+/// nothing without the file.
+fn turn_parts(name: &str) -> Option<Option<usize>> {
+    let text =
+        std::fs::read_to_string(game_data().join(format!("replays/{name}.parts.tsv"))).ok()?;
     let dir = game_data().join("replays");
     let replay = Replay::parse(&std::fs::read(dir.join(format!("{name}.w3g"))).unwrap()).unwrap();
     let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
@@ -209,6 +233,7 @@ fn heroes_three_checksums() {
             marks.d,
             marks.e,
             marks.r,
+            marks.g,
         );
         let game = (
             hex(w[2]),
@@ -218,8 +243,8 @@ fn heroes_three_checksums() {
             w[6].parse().unwrap(),
             hex(w[7]),
             hex(w[8]),
+            hex(w[9]),
         );
-        assert_eq!(ours, game, "turn {k}");
         let parts = Parts {
             b: ours.1,
             n: ours.2,
@@ -227,10 +252,14 @@ fn heroes_three_checksums() {
             d: ours.4,
             e: ours.5,
             r: ours.6,
-            g: marks.g,
+            g: ours.7,
         };
-        assert_eq!(marks.g, hex(w[9]), "G of turn {k}");
         let rest = turn.recorded ^ turn_checksum(&Statics::default(), &parts);
-        assert_eq!(*constant.get_or_insert(rest), rest, "turn {k}");
+        if ours != game || *constant.get_or_insert(rest) != rest {
+            eprintln!("{name}: turn {k} differs\n  ours {ours:x?}\n  game {game:x?}");
+            return Some(Some(k));
+        }
     }
+    eprintln!("{name}: all turns match");
+    Some(None)
 }

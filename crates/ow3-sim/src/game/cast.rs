@@ -1243,6 +1243,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             }
         }
         b"AHhb" => {
+            // Its spell effect event (c-RZJ-1: the Paladin's at 10.159946).
+            super::table::spell_effect_event(s, h);
             if let Some(Object::Unit(t)) = c.target.and_then(|t| s.objects.get_mut(&t))
                 && t.alive
             {

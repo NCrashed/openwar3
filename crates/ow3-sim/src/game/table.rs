@@ -1823,7 +1823,7 @@ fn event_without_triggers(state: &mut super::State, registrations: usize) {
 
 /// The objects of the spell effect event of unit `h` (SPEC-0024, "Event
 /// objects").
-fn spell_effect_event(state: &mut super::State, h: u32) {
+pub(super) fn spell_effect_event(state: &mut super::State, h: u32) {
     let registrations = state
         .events
         .iter()

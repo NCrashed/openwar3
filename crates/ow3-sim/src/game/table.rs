@@ -2218,10 +2218,12 @@ pub(super) fn shockwave_hit(state: &mut super::State, caster: u32, h: u32, at: u
 /// A later step of `caster`'s Shockwave covers unit `h` again at queue
 /// time `at`: its hit buff starts again.
 pub(super) fn shockwave_covered(state: &mut super::State, caster: u32, h: u32, at: u32) {
+    // The latest (an earlier wave's buff on the unit may be gone).
     let Some(&(_, _, o)) = state
         .table
         .shock_buffs
         .iter()
+        .rev()
         .find(|b| b.0 == caster && b.1 == h)
     else {
         return;

@@ -56,9 +56,15 @@ the damage event (`GetEventDamage`).
     once, in the effect tick. `c-SAK-1` (log): the effect on gnoll 17,
     89.3 away, and its damage events (0.00, then 100.00) are all in
     tick 7982.
-  - Impact (damage and stun) in tick `e + n`, with `n = ceil(d /
-    0.15625)` and `d` the launch distance in cells. The impact position
-    is the launch point plus `n` steps, so it slightly overshoots.
+  - The straight flight is a timer of `d / 1000` seconds (`d` the
+    launch distance in world units), counted from the world clock of
+    the effect tick. When it fires, the agent is placed at the flight's
+    end (the launch point plus `n = ceil(d / 0.15625)` steps for `d`
+    in cells, so it slightly overshoots) and a 0.0001 s timer starts;
+    that timer gives the impact (damage and stun). So the impact is in
+    the first tick whose queue time is at least `clock(e) + d / 1000 +
+    0.0001`. This is mostly tick `e + n`, but it is one tick later when
+    the 0.0001 s crosses a tick's queue time (bolt 2 below).
   Read in the game, `c-RZH-1`, both bolts on creep 8, ticks by the
   movement clock:
   - bolt 1: the target was walking, `d` = 8.1708, `n` = 53, launch 891,
@@ -67,8 +73,11 @@ the damage event (`GetEventDamage`).
     updates (q 4.554908 and 4.654901) it stood, so no re-aim and no hit
     test, although at the second the bolt's logical point was 50.8 from
     it;
-  - bolt 2: standing target, `d` = 4.9974, `n` = 32, launch 2781,
-    impact 2813, 0.0016 cells past the target's centre.
+  - bolt 2: standing target, `d` = 4.99756 (flight 0.159922 s from
+    clock 13.898668, launch tick 2781), `n` = 32: the agent reaches the
+    flight's end in tick 2813 (q 14.058641), 0.0016 cells past the
+    target's centre, but the impact timer (14.058690) is past that
+    tick's queue time, so the impact is in tick 2814 (q 14.063641).
   The two earlier tests (damage in `e + 41` and `e + 20`, targets
   walking towards the caster) also fit this rule, checked by the
   implementer.

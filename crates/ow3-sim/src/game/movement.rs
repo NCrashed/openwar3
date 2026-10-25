@@ -1737,7 +1737,13 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
 /// earlier than tick `earliest`: a walking unit stops at once and stands
 /// during the delay (SPEC-0019).
 fn react(state: &mut State, h: u32, from: u64, delay: u32, earliest: u64) {
-    let clock = state.move_clock;
+    // At an impact, which comes at the end of the tick, it stops at its
+    // per-tick position of the impact's tick (SPEC-0018; c-SAK-1: ogre 18
+    // at the bolt of 22.562214).
+    let clock = match state.event_time {
+        Some(at) if state.impact_now => at,
+        _ => state.move_clock,
+    };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         if let Some(m) = u.movement.as_mut() {
             m.reaction = Some((from, delay, earliest));

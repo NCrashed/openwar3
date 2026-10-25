@@ -1148,11 +1148,11 @@ pub(super) fn launch_spell(
     amount: u32,
     stun: (u32, u32),
     speed: u32,
+    effect_q: u32,
 ) -> Option<Missile> {
     // It flies straight at the target's position at the launch, from the
-    // caster's position floored to 1/128 cell, at its speed per tick, and
-    // hits in the first tick in which it has flown the distance (SPEC-0037,
-    // "Flight"; c-RZH-1: launch 891, 8.1708 cells, 53 ticks, damage in 943).
+    // caster's position floored to 1/128 cell, at its speed (SPEC-0037,
+    // "Flight").
     let u = state.unit(Some(h))?;
     let from = [u.x, u.y];
     let to = super::movement::position_of(state, target)?;
@@ -1166,12 +1166,22 @@ pub(super) fn launch_spell(
     if f32::from_bits(per_tick) <= 0.0 {
         return None;
     }
-    let n = (f32::from_bits(div(d, per_tick))).ceil().max(1.0) as u64;
-    // The impact tick's own clock: due at the end of the tick before.
-    // Launched at the effect's queue time, the end of this tick (c-SAK-1:
-    // the bolt of 608 left at 3.039998 and hit at 3.699956, 132 ticks on).
+    // The flight is a timer of `d / speed` seconds from the clock of the
+    // tick the effect's queue time is in, and the impact a 0.0001 s timer
+    // after it: in the first tick whose queue time reaches that (c-SAK-1:
+    // effect q 3.039998, clock 3.039972, hit at 3.699956; c-RZH-1: bolt 2
+    // from clock 13.898668, 0.159922 s, impact timer 14.058690, hit at
+    // 14.063641).
     let start = add(state.move_clock, crate::timers::TICK);
-    let expiry = (0..n).fold(start, |c, _| add(c, crate::timers::TICK));
+    let from_clock = if f32::from_bits(effect_q) < f32::from_bits(start) {
+        state.move_clock
+    } else {
+        start
+    };
+    let expiry = add(
+        add(from_clock, div(d, mul(speed, CELLS))),
+        crate::timers::MIN_TIMEOUT,
+    );
     // It homes (SPEC-0016): its logical point a 0.1 s step on towards the
     // target, measured again at each step's end (c-SAK-1: the bolt of 2595).
     let step = mul(speed, HOMING_STEP);

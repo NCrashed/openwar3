@@ -366,6 +366,8 @@ pub struct UnitEntries {
     pub group_walk: bool,
     /// Its walk was made at its follow leg's end (`follow_leg_ended`).
     pub follow_walk: bool,
+    /// It went into a gold mine once (`first_worker_entered`).
+    pub entered_mine: bool,
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
@@ -1112,6 +1114,34 @@ pub(super) fn harvest_waited(state: &mut super::State, h: u32) {
     }
 }
 
+/// The player's first worker `h` goes into a mine for the first time, as
+/// another worker comes out at the queue time `at` (c-RXI-1: 1048684 at
+/// 6.349778; c-RXD-1: at 21.947317): a rate part of a unit state, ahead
+/// of the objects of the other's way out, freed by its own timer.
+///
+/// PROVISIONAL: what the part is is not read; its timer ran 13 s in
+/// c-RXI-1 and 12 s in c-RXD-1, and 13 s is taken.
+/// Worker `h` goes into a mine by itself: its first time in, without a
+/// rate part (only an entry at another's exit was seen to make one).
+pub(super) fn mine_entered(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.entered_mine = true;
+    }
+}
+
+pub(super) fn first_worker_entered(state: &mut super::State, h: u32, at: u32) {
+    if entries(state, h).is_none_or(|e| e.entered_mine) {
+        return;
+    }
+    if let Some(e) = entries(state, h) {
+        e.entered_mine = true;
+    }
+    let tick = state.table.now;
+    let part = state.table.take(tick, "unit state: rate part");
+    let end = ow3_math::add(at, 13f32.to_bits());
+    state.table.free_at_q(end, part, "unit state: rate part");
+}
+
 /// Worker `h` comes out of a gold mine with its gold (c-RXI-1: worker 5 at
 /// 1071): 13 parts of its order to take the gold back and its walk; then
 /// its object of being inside goes, then its harvest order's kept parts
@@ -1267,6 +1297,31 @@ pub(super) fn harvest_turned_back(state: &mut super::State, h: u32) {
     }
     if let Some(e) = entries(state, h) {
         e.order = parts[..7].iter().rev().copied().chain([order]).collect();
+    }
+}
+
+/// Worker `h` delivers its gold and goes back to its mine (c-RXI-1:
+/// worker 5 at 1849): the new harvest order's object, its 15 parts, the
+/// walk, then the return order's kept parts and object going, and parts
+/// 10 .. 14 0.0001 s later (8 and 9 at the arrival, 0 .. 7 and the object
+/// kept).
+pub(super) fn gold_delivered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "harvest: order");
+    let parts = state.table.take_n(tick, 15, "harvest: order start");
+    walk_made_at_order(state, h);
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for o in old {
+        state.table.defer(o, "harvest: return order");
+    }
+    for &e in parts[10..].iter().rev() {
+        state.table.defer(e, "harvest: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = vec![parts[9], parts[8]];
+        e.order = parts[..8].iter().rev().copied().chain([order]).collect();
     }
 }
 

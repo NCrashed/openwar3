@@ -959,6 +959,8 @@ pub struct State {
     /// Missiles of attacks that arrived at the end of the last tick, with
     /// the queue time of their impact.
     pub(super) held_impacts: Vec<(attack::Missile, u32)>,
+    /// The held impacts of the next tick are done already (`Game::begin_tick`).
+    pub(super) held_done: bool,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1162,6 +1164,7 @@ impl State {
             victim_only: false,
             reacquire: Vec::new(),
             held_impacts: Vec::new(),
+            held_done: false,
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1691,6 +1694,25 @@ impl<'a> Game<'a> {
         self.tick();
     }
 
+    /// The impacts of attacks' missiles that arrived at the end of the last
+    /// tick hit now, counted in the next tick: before the turn's checksum
+    /// and its actions (c-RXR-1: the hit of 6.649756 in turn 67's).
+    pub fn begin_tick(&mut self) {
+        if self.state.borrow().held_done {
+            return;
+        }
+        {
+            let mut s = self.state.borrow_mut();
+            s.held_done = true;
+            s.ticks += 1;
+            s.table.now = s.ticks;
+        }
+        attack::held_impacts(&mut self.vm, &self.state);
+        let mut s = self.state.borrow_mut();
+        s.ticks -= 1;
+        s.table.now = s.ticks;
+    }
+
     fn tick(&mut self) {
         {
             let mut state = self.state.borrow_mut();
@@ -1754,7 +1776,9 @@ impl<'a> Game<'a> {
         // The impacts of attacks' missiles that arrived at the end of the
         // tick before, after its frees (c-RZJ-1: the elemental's at
         // 8.094643, after the frees of 8.089743).
-        attack::held_impacts(&mut self.vm, &self.state);
+        if !std::mem::take(&mut self.state.borrow_mut().held_done) {
+            attack::held_impacts(&mut self.vm, &self.state);
+        }
         {
             let mut state = self.state.borrow_mut();
             let state = &mut *state;
@@ -1958,6 +1982,12 @@ impl<'a> Game<'a> {
             }
             if hit.is_none() {
                 break;
+            }
+            // The goals of backswings ending before it, or with it (their
+            // timers are the older), first (c-RXR-1: footman 6's walk before
+            // the hits of 10.939996).
+            if let Some(q) = hit {
+                attack::after_swing_walks(&mut self.state.borrow_mut(), Some(q + 1));
             }
             // The hits due with the earliest one.
             attack::hits_before(&mut self.vm, &self.state, hit.map(|e| e + 1));

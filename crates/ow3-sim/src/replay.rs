@@ -281,6 +281,7 @@ impl<'a> Playback<'a> {
                 // The turn's checksum comes before its actions (SPEC-0024,
                 // "When actions take effect"); after a slot of 0 ms it
                 // repeats the one before.
+                self.game.begin_tick();
                 match self.marks.last() {
                     Some(&last) if ms == 0 => self.marks.push(last),
                     _ => self.mark(),

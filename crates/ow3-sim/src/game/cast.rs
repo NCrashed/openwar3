@@ -1129,6 +1129,9 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             // The spell effect's event and the watches of its cost first
             // (SPEC-0024).
             super::table::clap_effect(s, h, n.cost);
+            // The units in the order of the grid of calls for help
+            // (SPEC-0019; c-SBG-1: paladin 2, ogre 3, ogre 1).
+            let hit = movement::call_order(s, hit);
             let centre = [u_x, u_y];
             for o in hit {
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));

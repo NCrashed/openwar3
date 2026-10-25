@@ -64,7 +64,23 @@ left in it.
   at 859. A worker that arrives while another is in the mine stands
   there with no further update of its path and no search until the
   mine is free (peasant 4: arrived at 865, entered at 1071, in the tick
-  peasant 5 left). The red cells are the inner 8 x 8 of the gold
+  peasant 5 left).
+  The step after the stand needs the walk's heading (SPEC-0018) turned
+  to the building's point. At the update of the stand the heading turns
+  towards the direction from the worker to the building's point by at
+  most `turnRate` (0.6). At each following update the remaining angle is
+  tested: within a small tolerance `T` the worker has arrived (it goes
+  in, starts to wait or delivers); otherwise it turns again and stands
+  for that update. Never in the update of the stand itself. Read in the
+  game: `c-RXI-1` peasant 5, 0.2748 rad off at the stand (q 4.319925),
+  0 at the next update (4.349923), went in; peasant 4, 0.0202 off at
+  the same stand, arrived at the next update; peasant 0, 0.6596 off at
+  the stand of 5.339851, 0.0596 left at 5.369849 and arrived there;
+  `c-RXD-1` peasant (950, 953) at the mine, 0.971 off at the stand of
+  21.749657, 0.371 at 21.779655 (not arrived, turned again), 0 at
+  21.809654 (arrived, started to wait). So `T` lies in [0.0596, 0.371)
+  (its value not read). The visible facing is not tested.
+  The red cells are the inner 8 x 8 of the gold
   mine's `16x16Goldmine` (the outer ring blocks building only), the
   inner 12 x 12 of the town hall's `16x16Simple` and the whole 10 x 10
   of the lumber mill's `10x10SimpleSolid`, placed by SPEC-0022
@@ -263,6 +279,16 @@ replace it), and the worker gets a harvest order on it. `c-RYP-1` peasant 4 (rea
 tree 22 in 1243 out of reach, at 1343 about 30 candidates with costs 4
 to 32, the first with cost 4 was the tree at (358, 378); it turned to
 it at 1351 and started chopping it at 1357.
+Each search runs to the candidate's own point, its cells and the
+worker's counted as free, and in every case read it found that point
+in one straight leg. So the cost was the straight-run cost from the start
+to the tree's point, `isqrt(4 * (dx^2 + dy^2))` with `dx`, `dy` in
+high-level grid units (2 cells). `c-RYP-1` peasant 0 after its delivery
+at 11578 (search from the felled tree 2's point, high-level (177, 191)):
+all 34 candidates had exactly that cost, from tree 1 (177, 190) and
+tree 9 (178, 191) with 2 to tree 34 (181, 195) with 11; tree 14 (179,
+189) had 5, so tree 9, the first of cost 2 in the visiting order (after
+trees 16, 15 and 14), was kept.
 
 **When the tree is gone.** A tree felled while a worker works at it
 (by that worker's hit or another's) ends the work of every worker at

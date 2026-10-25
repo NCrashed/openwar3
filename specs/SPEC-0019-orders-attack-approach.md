@@ -1116,6 +1116,21 @@ An idle unit with a weapon attacks an enemy unit on its own:
   periodic check at 13.5099993 (tick 2703) and grunt 13 by a call for
   help at 13.5299950 (2707), and after its backswing ended (13.5899954)
   its 0.01 s check took 10 with a reaction delay of 0.146777.
+  At the death of a target, every attacker of it that is in its
+  backswing has its current target cleared in that tick, whether it made
+  the kill or not. A check in the backswing then holds no target. It
+  fires the acquired event (its 2 objects, SPEC-0024) and stores the
+  candidate, and the next check comes 0.5 s later (1.0 s while a target
+  is held). The attack on the candidate starts after the backswing.
+  Read in the game: `c-RXR-1` footman 1048685 killed at 32.080585 by
+  headhunter 1048702's missile; it and headhunter 1048703, both in
+  their backswing, lost the target then and recorded riflemen at their
+  checks of 32.349987 and 32.379986. `c-SAK-1` ogre 18's death at
+  54.398029: image 20 (in its backswing), its source hero, the
+  mountain king and a footman lost the target; image 20 recorded at
+  54.553837. Other attackers of the dead target that were not in a
+  backswing (`c-RXR-1` grunt 1048698 and headhunter 1048700) got a
+  check 0.01 s later instead.
   When the current target is still alive and such a check in the
   backswing finds a better target (the rating above), the switch is
   made at once: the unit takes the new target and from its next
@@ -1174,6 +1189,30 @@ An idle unit with a weapon attacks an enemy unit on its own:
   but its swing at footman 5 started in the callback of its old
   cooldown at 12.2299929 (the last swing at footman 4 at 10.6299929
   plus `cool1` 1.6), the hit at 12.5599929.
+- **The chase at the expiry.** The expiry's callback itself runs the
+  attack start on the held target, also for a unit that stands waiting
+  for the cooldown after a swing. In reach, the swing (or the steps of
+  "Before a swing"). Out of reach, a chase whose search runs in that
+  callback (helper, cluster and path taken at the expiry). A walk the
+  unit still holds is replaced and freed at its next update. A unit
+  holding no target at the expiry does nothing. Read in the game:
+  `c-RXD-1` cooldown ends at 10.739948, 10.769948 and 10.799948 (two
+  kobolds and the taskmaster, targets out of reach): walks taken in
+  ticks 2149, 2155 and 2161 (the taskmaster's old walk freed at 2167);
+  12.389934 and 35.249161 (kobolds; walks in 2479 and 7051); `c-SAK-1`
+  footman at 41.909851 (player's attack order, range 90, walk in 8382,
+  old walk freed at 8388) and kobold 8 at 5.789993 (target in reach:
+  swing); the Blademaster image at 56.305359 held no target (cleared
+  at the death above): nothing.
+- **Too close.** In the attack start, after the range test passes, a
+  second test runs. If it fails, the unit does not swing or turn but
+  walks first: a chase whose move is given an unlimited range. Read in
+  `c-RXD-1`: kobold 1048692 at its cooldown end 35.039223, target
+  peasant 8.0 world units away (in reach 100, 1.95 rad off its facing):
+  the second test failed and the walk 1871 .. 1873 was made. The test
+  involves a factor 0.5 and both units. Taken as "nearer than 0.5
+  times the sum of the two collision sizes" by the implementation, which
+  then matches all replays; the test itself was not read.
 
 ## Edge cases
 

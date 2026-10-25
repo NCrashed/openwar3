@@ -218,6 +218,11 @@ The player sum:
   `q2`, `q3`, `q5` = 0, `q6` = 8. Every player had three more records
   made at game start, before any unit: `hrtt` (all 0, `q6` = 8), `otbk`
   (the same) and `uske` (`q0` = 25, the rest 0, `q6` = 8).
+  A building's record has `q6` = 4. In `c-RXI-1` at its first turn,
+  player 0's records were `hrtt`, `otbk`, `uske` as above, `htow`
+  2147483647 1 0 0 1 0 4 and `hpea` 2147483647 6 0 0 6 0 8. With 8 for
+  the town hall the turn's G comes out as `0x2CFB6A99` instead of the
+  game's `0x2FFB6A99`. Every unit type read so far had 8.
   Deaths change two of the values (read in `c-SAK-1`). A kill of a unit
   of type X by player p adds 1 to `q5` of p's record of X, the number of
   units of that type p has killed. If p has no record of X yet, one is
@@ -246,7 +251,14 @@ The player sum:
 
   Subgroups are the groups of same-type units within a selection. The
   lead unit was the first selected unit in the test; the second marked
-  unit was never set (open question 4).
+  unit was never set (open question 4). A player with nothing selected
+  has `Y = fold(0, 0xFFFFFFFF) = 0xFFFFFFFF`. `c-RTW-3` turn 39, player
+  slot 0 after selecting footman (825, 828) (idsum `0x28`): `Y` = 1,
+  then `0x148`, `0xA40` (j = 0), `0x5208` (subgroup count 1), `0x29100`,
+  `0x148940` (lead). G changed from `0x2CFB72CF` to `0xD9402D30`, which is
+  exactly that slot's `Y` going from `0xFFFFFFFF` to `0x148940`. The
+  slot index is the player's slot (here 0), not a count of players with
+  a selection.
 
 ### Object table
 
@@ -319,6 +331,8 @@ of the unit and its abilities. Counts measured (c-SBB, `c-SAK-1`):
 | creep (kobold, gnoll, ogre) joining a group | 28 |
 | creep starting a group | 29, plus 1 of the second pool |
 | barracks | 27 |
+| town hall | 30, plus 1 of the second pool |
+| gold mine | 23 |
 | farm | 0 |
 
 Some of them are freed deferred: a footman's last two, a hero's
@@ -326,6 +340,33 @@ positions 17 to 20, 22 and 23 (of 0 to 23), and eleven of a
 creep's. Two of a footman's and four of a creep's are freed at its
 death. `UnitAddAbility` of a hero ability (`AHhb`, `AHbz`) or of `Aslo`
 takes 2.
+
+The parts by position `k`, as each is made (`c-RXI-1`):
+- every unit: `k` 0 .. 9 the unit's own parts. A unit that moves has
+  one more at `k` 10 (none for a building). Then the part all units
+  have (footman `k` 11, building `k` 10).
+- footman: 12 Move, 13 Attack, 14 and 15 its abilities (Defend), 16
+  and 17 the start order objects (deferred).
+- peasant (22): 12 Build and 13 its second part, 14 Move, 15 Attack, 16
+  Harvest, 17 Call to Arms, 18 Repair, 19 a part of Harvest, 20 and 21
+  the start order objects (deferred).
+- buildings: after `k` 10, three building parts (11 .. 13), freed at
+  the end of the game together, 0.1 s before the unit's other parts.
+- gold mine (23): 14 its gold ability and 15 its second part, 16 one
+  more ability object, 17 Invulnerable, 18 and 19 the two abilities
+  every building has (on fire when damaged, and the alarm), 20 and 21
+  the start order objects (deferred), 22 one more object made at the
+  end of the making (kept).
+- town hall (30 + 1): 14 Train and 15 its second part, 16 Upgrade and
+  17 its second part, 18 an ability object with four data parts
+  (19 .. 22), all five freed at 2.204993 in `c-RXI-1`, 23 Call to Arms,
+  24 Return resources, 25 Rally, then the rally point (second pool),
+  26 and 27 the two building abilities, 28 and 29 the start order
+  objects (deferred).
+- `CreateDestructable` (a tree) takes 7: the destructable, three parts
+  of it, and three pathing parts (the kind of a building's 11 .. 13).
+  The pathing parts are freed when the tree falls (`c-RYP-1` tree 2 at
+  50.031601).
 
 **Event objects.** A unit event with at least one registered trigger
 takes one object for the event and one more for each registration that
@@ -344,6 +385,42 @@ and a hit on a unit without any takes none (c-SBA).
 
 "Ends" is when another order replaces it (or the unit dies). The frees
 then also come deferred from that moment.
+
+**Harvest.** Read in `c-RXI-1` (gold) and `c-RYP-1` (lumber), per
+worker:
+- a harvest order: the order, its record, then the order's parts
+  (gold 14, lumber 12, lumber 13 for the order a delivery gives), then
+  the walk. For the gold order, parts 10 .. 13 are freed deferred, 8 and 9
+  at the end of the walk to the mine (arrival, whether the worker goes in
+  or waits), and 0 .. 7 when the order ends (the worker comes out with
+  his load). For the lumber order, part 7 is freed at the arrival at the
+  tree, the last 4 (5 for the 13) deferred, and the others when the
+  order ends (the turn back with a full load);
+- arrival at a tree: 3 objects; two are freed deferred and one at the
+  worker's next update; then a short walk;
+- the walk back (return order): the order and 12 parts; 7 kept to the
+  delivery, 5 deferred;
+- a drop of the tree (failed arrival check): a stop's set of 3, freed
+  deferred, two kept parts of the harvest order freed, and one wait
+  object kept 0.5 s, to the moment another tree is taken;
+- at a mine: one object per worker that has to wait, made when it starts
+  to wait and freed when it goes in;
+- once, at the first worker's entry into a mine (`c-RXI-1` 871) and at
+  the first hit on a tree (`c-RYP-1` 1089): an ability object with three
+  parts in the second pool. At the mine one more main-table object comes
+  with it. All are kept;
+- a mine's queue timer: at the exit of a worker with which the next
+  worker goes in while at least one more is still waiting, the mine
+  makes (the first time) a rate part (a value of -1.0 per second over
+  11.0 s) or restarts its 11.0 s timer of the world clock. The part is
+  freed deferred when that timer runs out. `c-RXI-1`: made at 6.349778,
+  restarted at 7.349706 and 8.349600, freed at 19.349699; `c-RXD-1`:
+  made at 21.947317, restarted at 22.947149, freed at 33.947247.
+
+**Missiles.** A missile's objects are freed 5.0 s after its impact by
+a queue timer, whose expiry makes a deferred timer that frees them.
+`c-RXR-1`: impact at 13.778688, the 5.0 s timer at 18.778688 in the
+tick of world clock 18.777849, and the free at 18.777948.
 
 **Walks.** Every path search (at an order or at an update) takes a
 helper, a cluster and a path, and frees the helper at once. The walk's

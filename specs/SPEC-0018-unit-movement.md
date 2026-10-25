@@ -104,6 +104,36 @@ The orders of the tables above were given early in the game, where the
 updates still come first. How the cycle goes on once `U` has moved by
 a whole tick (after roughly 200 s at this rate) was not tested.
 
+**The world clock and its deferred timers.** Besides the timer queue
+(SPEC-0002) the game keeps a world clock with a second, small queue of
+its own.
+- At the start of every tick the world clock and the queue's time have
+  the same value, bit for bit. Both start at 0 and add the tick length
+  0.005 once per tick with the engine addition (SPEC-0004, shifted-out
+  bits dropped, never rounded up). Read in `c-RXR-1` (3801 ticks to
+  19.0 s, every step matching that rule): tick 201 `0x3F7FFFF0`
+  (0.999999), tick 1000 `0x409FD607` (4.994876), tick 3757 `0x41963909`
+  (18.777849).
+- While the tick's queue timers run (hits, checks, unit updates,
+  script timers, at their own queue times), the world clock stays at
+  the tick's start.
+- A deferred action of the game (most "freed 0.0001 s later" objects of
+  SPEC-0024, a missile's impact) is a timer of the world clock's queue:
+  its expiry is `add(world clock at the moment it is made, delay)`, so
+  0.0001 s after the tick's start for every one made by the queue
+  timers of that tick, whatever their own queue time.
+- The world clock's queue runs after the tick's queue timers. Each of
+  its timers fires in expiry order; equal expiries fire in the order
+  they were made (a running count is kept). While one fires the world
+  clock is set to its expiry, and a deferred timer made from inside it
+  counts from that value.
+`c-RXR-1` tick 3757 (start 18.777849): four 0.0001 s timers were made,
+by a 5.0 s queue timer at queue time 18.778688, a reaction end at
+18.779358, an update at 18.779993 and an acquisition check at
+18.779993, in that order. All four expire at 18.777948 (`0x4196393D`)
+and fired in that order. One of them, run at 18.777948, made a 0.1 s
+timer that expired at 18.877947.
+
 ### Two angles: heading and facing
 
 A unit has a **heading** `H`, the direction it moves in, and a separate

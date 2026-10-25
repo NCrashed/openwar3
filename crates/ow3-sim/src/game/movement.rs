@@ -4762,8 +4762,12 @@ fn rating(
     });
     // A unit whose attack ability was removed attacks nobody (c-SBI-1: the
     // heroes without Aatk, left for grunt 4 by every creep).
-    let hits_rater =
-        !o.attack_removed && super::attack::weapon_for(state, o.type_id, Some(h)).is_some();
+    // Nor does a worker (the `Peon` classification), whatever its weapons
+    // (c-SBI-1: the peon, below the grunts for the ogre; c-RXD-1: the
+    // peasants alike).
+    let hits_rater = !o.attack_removed
+        && !od.is_some_and(|d| d.worker)
+        && super::attack::weapon_for(state, o.type_id, Some(h)).is_some();
     // A stunned unit still counts as one that can attack (c-RXD-1,
     // c-RZH-1).
     let can_attack = !o.attack_removed && od.is_some_and(|d| d.weapon.is_some());

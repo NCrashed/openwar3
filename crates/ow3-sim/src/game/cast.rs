@@ -182,6 +182,7 @@ pub(super) fn order(state: &mut State, h: u32, name: &str, target: u32) -> Optio
         return Some(false);
     }
     end_wind_walk(state, h, ability);
+    end_hold(state, h);
     let casting = Casting {
         order_id,
         ability,
@@ -375,6 +376,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
             return Some(false);
         }
     }
+    end_hold(state, h);
     let casting = Casting {
         order_id,
         ability,
@@ -454,6 +456,15 @@ fn flame_mover(state: &mut State, h: u32, ability: i32) {
         q,
         times: [0; 3],
     });
+}
+
+/// An order of a spell on a unit or a point ends a hold position, one
+/// without a target keeps it (c-SBJ-1: the Crypt Lord after Impale runs
+/// from his attackers; c-SBK-1: the Warden after Fan of Knives does not).
+fn end_hold(state: &mut State, h: u32) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.holding = false;
+    }
 }
 
 /// The reach in cells of `h`'s cast on a point (`point_order`).

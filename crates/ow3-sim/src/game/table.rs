@@ -1124,12 +1124,25 @@ pub(super) fn guard_walk_made(state: &mut super::State, h: u32) {
 ///
 /// PROVISIONAL: read for script attack orders to a point only.
 pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
+    attack_point_parts(state, h, 11);
+}
+
+/// A unit that cannot attack runs from its attacker by an attack order to
+/// a point: as a script's, with 10 parts of its ability (c-SBJ-1: the
+/// Crypt Lord at 10.489942, 1570 .. 1584).
+///
+/// PROVISIONAL: when the order and the 5 kept parts go is not read.
+pub(super) fn flee_ordered(state: &mut super::State, h: u32) {
+    attack_point_parts(state, h, 10);
+}
+
+fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script point order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
-    let ability = state.table.take_n(tick, 11, "attack ability: order start");
+    let ability = state.table.take_n(tick, n, "attack ability: order start");
     for &e in ability[5..].iter().rev() {
         state.table.defer(e, "attack ability: order start");
     }

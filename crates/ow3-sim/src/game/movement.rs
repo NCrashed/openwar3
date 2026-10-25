@@ -5086,6 +5086,25 @@ pub(super) fn retaliate(
     // A sleeping creep wakes in this tick with the sleeping creeps near it,
     // and answers; one going home does not answer (SPEC-0030).
     super::creeps::wake_on_hit(state, victim, attacker);
+    // A unit that cannot attack, with no order, runs from its attacker:
+    // order 851983 to the point 300 straight away from it, ended on
+    // arrival; hits on the way give no new order (c-SBJ-1: the Crypt Lord
+    // at 10.489942, and again at log 2625).
+    // PROVISIONAL: the condition is read for one unit, a hero of a player
+    // without its attack ability and with no order.
+    if flees(state, victim) {
+        let dx = sub(x.to_bits(), at[0]);
+        let dy = sub(y.to_bits(), at[1]);
+        let len = sqrt(add(mul(dx, dx), mul(dy, dy)));
+        if real_of(len) > 0.0 {
+            let k = div(FLEE.to_bits(), len);
+            let point = [add(x.to_bits(), mul(dx, k)), add(y.to_bits(), mul(dy, k))];
+            if point_order(state, victim, "attack", point) {
+                super::table::flee_ordered(state, victim);
+            }
+        }
+        return;
+    }
     // A unit in its backswing takes the target only for show: no attack,
     // no draw; it acquires at its check after the backswing (c-RXR-1:
     // trolls 16 and 18 in 3689 and 3713).
@@ -6149,6 +6168,23 @@ pub(super) fn attacks(state: &State, h: u32) -> bool {
         .unit(Some(h))
         .and_then(|u| u.movement)
         .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+}
+
+/// How far a unit that cannot attack runs from its attacker (c-SBJ-1).
+const FLEE: f32 = 300.0;
+
+/// Whether unit `h`, hit, runs from its attacker: it cannot attack and
+/// has no order, and is not on hold position.
+fn flees(state: &State, h: u32) -> bool {
+    state.unit(Some(h)).is_some_and(|u| {
+        u.alive
+            && u.attack_removed
+            && u.movement.is_none()
+            && u.casting.is_none()
+            && !u.holding
+            && u.attack_move.is_none()
+            && !super::cast::stunned(state, h)
+    })
 }
 
 #[cfg(test)]

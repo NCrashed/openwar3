@@ -961,6 +961,8 @@ pub struct State {
     pub(super) held_impacts: Vec<(attack::Missile, u32)>,
     /// The held impacts of the next tick are done already (`Game::begin_tick`).
     pub(super) held_done: bool,
+    /// Workers that started to wait at a gold mine in this tick.
+    pub(super) harvest_waiters: Vec<u32>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1165,6 +1167,7 @@ impl State {
             reacquire: Vec::new(),
             held_impacts: Vec::new(),
             held_done: false,
+            harvest_waiters: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,

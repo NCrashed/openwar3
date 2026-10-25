@@ -3238,7 +3238,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.arrived = true;
                             m.walking = false;
                             m.velocity = [0, 0];
-                            state.drop_path(h);
+                            // A worker at its gold mine keeps its walk to its going
+                            // in (`harvest::start_waiting`; c-RXI-1: walks freed at 877).
+                            if matches!(m.order, Order::Gather { target } | Order::Work { target } if super::harvest::is_mine(state, target))
+                            {
+                                state.paths.remove(&h);
+                            } else {
+                                state.drop_path(h);
+                            }
                         }
                     }
                     match steer {

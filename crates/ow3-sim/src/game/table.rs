@@ -1052,6 +1052,33 @@ pub(super) fn harvest_entered(state: &mut super::State, h: u32) {
     }
 }
 
+/// Worker `h` comes out of a gold mine with its gold (c-RXI-1: worker 5 at
+/// 1071): 13 parts of its order to take the gold back and its walk; then
+/// its object of being inside goes, then its harvest order's kept parts
+/// and order, then the new parts 12 .. 8 (from the last), all 0.0001 s
+/// later; the new parts 7 .. 0 are kept with the new order.
+/// PROVISIONAL: when the kept ones go (at the delivery) is not read.
+pub(super) fn harvest_left(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let parts = state.table.take_n(tick, 13, "harvest: return order start");
+    walk_made_at_order(state, h);
+    let (inside, old) = entries(state, h)
+        .map(|e| (e.harvest_inside.take(), std::mem::take(&mut e.order)))
+        .unwrap_or_default();
+    if let Some(o) = inside {
+        state.table.defer(o, "gold mine: worker inside");
+    }
+    for o in old {
+        state.table.defer(o, "harvest: order");
+    }
+    for &e in parts[8..].iter().rev() {
+        state.table.defer(e, "harvest: return order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = parts[..8].iter().rev().copied().collect();
+    }
+}
+
 /// Worker `h`'s walk to the gold mine ends: two parts of its order go
 /// (c-RXI-1: 1136, 1135 at 4.350023).
 pub(super) fn harvest_arrived(state: &mut super::State, h: u32) {

@@ -601,6 +601,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     forget_others(&mut state.borrow_mut());
     start_waiting(&mut state.borrow_mut());
     leave_mines(vm, state);
+    {
+        let mut s = state.borrow_mut();
+        for w in std::mem::take(&mut s.harvest_waiters) {
+            super::table::harvest_arrived(&mut s, w);
+            super::table::walk_dropped_at_update(&mut s, w);
+        }
+    }
     hit_trees(vm, state);
 }
 
@@ -851,6 +858,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             walk_back(s, worker);
             // The walk to the drop-off is made (SPEC-0024).
             s.objects_change();
+            super::table::harvest_left(s, worker);
             let tick = s.ticks;
             let entry = s.mines.entry(mine).or_default();
             entry.inside = None;
@@ -1223,10 +1231,9 @@ fn start_waiting(state: &mut State) {
         };
         // One that goes in is hidden by the entries of this tick.
         if !goes_in {
-            // Its walk to the mine ends here (SPEC-0024; c-RXI-1: worker 4
-            // at 871).
-            super::table::harvest_arrived(state, w);
-            super::table::walk_dropped_at_update(state, w);
+            // Its walk to the mine ends here, after those going in
+            // (`leave_mines`; SPEC-0024; c-RXI-1: worker 4 at 871).
+            state.harvest_waiters.push(w);
             push_aside(state, w);
             pace(state, w);
         }

@@ -757,6 +757,7 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         let mut any = false;
         let mut restarts = Vec::new();
         let mut calls = Vec::new();
+        let mut fresh = Vec::new();
         for &o in &s.units {
             let Some(Object::Unit(u)) = s.objects.get(&o) else {
                 continue;
@@ -777,27 +778,32 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                 continue;
             }
             if covered {
-                w.hit.push(o);
-                any = true;
-                deferred.push(Deferred::ShockwaveHit {
-                    caster: w.caster,
-                    target: o,
-                    at: step_q,
-                });
-                // The calls of the step's hits come after all of them
-                // (c-RZJ-1: the second Shockwave's first step, 12.708868).
-                deferred.push(Deferred::Damage {
-                    caster: w.caster,
-                    target: o,
-                    amount: w.amount,
-                    call: Some((centre, w.area)),
-                    slow: None,
-                    at: Some(step_q),
-                    fog: None,
-                    later_calls: true,
-                });
-                calls.push(o);
+                fresh.push(o);
             }
+        }
+        // The new hits in the grid order of the pass (SPEC-0019; c-RZJ-1:
+        // footman 5, footman 2, the Paladin, footman 4 at 12.709924).
+        for o in movement::call_order(s, fresh) {
+            w.hit.push(o);
+            any = true;
+            deferred.push(Deferred::ShockwaveHit {
+                caster: w.caster,
+                target: o,
+                at: step_q,
+            });
+            // The calls of the step's hits come after all of them
+            // (c-RZJ-1: the second Shockwave's first step, 12.708868).
+            deferred.push(Deferred::Damage {
+                caster: w.caster,
+                target: o,
+                amount: w.amount,
+                call: Some((centre, w.area)),
+                slow: None,
+                at: Some(step_q),
+                fog: None,
+                later_calls: true,
+            });
+            calls.push(o);
         }
         // A step that hits makes or restarts the caster's fog modifier,
         // after its last damage and before the calls of that hit (c-RZJ-1:

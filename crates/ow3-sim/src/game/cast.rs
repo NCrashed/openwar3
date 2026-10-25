@@ -1114,6 +1114,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     fizzled(s, h, &c);
                     continue;
                 }
+                effect_frees(s, tick);
             }
             if let Some(e) = c.effect_at
                 && tick > e
@@ -1354,6 +1355,7 @@ pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32
             if !effect(s, h, &c, &mut deferred) {
                 fizzled(s, h, &c);
             }
+            effect_frees(s, tick);
             s.table.now = tick;
         }
         // So do the ends of casts (c-RZJ-1: the Ogre Lord's second
@@ -1379,6 +1381,15 @@ pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32
     run_deferred(vm, state, deferred);
     let mut s = state.borrow_mut();
     s.table.now = s.ticks;
+}
+
+/// An effect counted in the tick before `tick` frees its 0.0001 s objects
+/// in that tick (c-SBJ-1: Death Coil's at 2.952, freed at 2.950074).
+fn effect_frees(s: &mut State, tick: u64) {
+    if s.table.now < tick {
+        let now = s.table.now;
+        s.table.flush(now);
+    }
 }
 
 /// The effect of cast `c` of `h`; the mana is paid and the cooldown starts
@@ -1616,14 +1627,20 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     .get(&c.ability)
                     .map_or(0, |a| a.missile_speed);
                 let amount = ow3_math::mul(n.data[0], 0.5f32.to_bits());
+                // Its effect event and missile objects, as Storm Bolt's (c-SBJ-1:
+                // 2.949975, freed 5.0 s after the hit).
+                let objects = super::table::bolt_effect(s, h, n.cost);
                 match super::attack::launch_homing_spell(s, h, target, amount, speed) {
-                    Some(missile) => s.missiles.push(missile),
+                    Some(mut missile) => {
+                        missile.objects = objects;
+                        s.missiles.push(missile);
+                    }
                     None => deferred.push(Deferred::SpellHit {
                         caster: h,
                         target,
                         amount,
                         stun: (0, 0),
-                        objects: Vec::new(),
+                        objects,
                     }),
                 }
             }

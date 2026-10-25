@@ -1406,6 +1406,12 @@ pub(super) fn spell_hit(
         super::widgets::damage_widget(vm, state, Some(h), Some(target), damage, 0, 0);
     }
     let mut s = state.borrow_mut();
+    // A missile without a stun frees its objects 5.0 s after the hit
+    // (c-SBJ-1: Death Coil's).
+    if stun == (0, 0) {
+        let at = s.event_time.unwrap_or_else(|| s.timers.time());
+        super::table::missile_hit(&mut s, &objects, at);
+    }
     // Also a target the hit killed, for the objects kept to the stun's end.
     if matches!(s.objects.get(&target), Some(Object::Unit(_))) && stun != (0, 0) {
         let hero = s.unit(Some(target)).is_some_and(|u| is_hero(u.type_id));

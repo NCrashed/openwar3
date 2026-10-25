@@ -919,31 +919,56 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
             (true, None) => {}
             (false, _) => {
-                // Its objects go 5.0 s after the impact (c-RZJ-1: the water
-                // elemental's of 5.094869, freed at 10.099306).
-                {
-                    let mut s = state.borrow_mut();
-                    let at = s.event_time.unwrap_or_else(|| s.timers.time());
-                    super::table::missile_hit(&mut s, &m.objects, at);
-                }
-                // The impact calls for help round where the missile hits.
-                let impact = super::movement::position_of(&state.borrow(), m.target);
-                strike(
-                    vm,
-                    state,
-                    m.attacker,
-                    m.target,
-                    m.amount,
-                    m.attack_type,
-                    m.area,
-                    impact,
-                    false,
-                )
+                // It hits at the start of the next tick, after this tick's
+                // frees (`held_impacts`).
+                let mut s = state.borrow_mut();
+                let at = s.event_time.unwrap_or_else(|| s.timers.time());
+                s.held_impacts.push((m, at));
             }
         }
     }
     state.borrow_mut().impact_now = false;
     state.borrow_mut().event_time = None;
+}
+
+/// The attacks' missiles that arrived at the end of the last tick hit,
+/// at the queue time of their arrival: their objects go 5.0 s after it
+/// (c-RZJ-1: the water elemental's of 5.094869, freed at 10.099306), and
+/// the impact calls for help round where the missile hits.
+pub(super) fn held_impacts(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let held = std::mem::take(&mut state.borrow_mut().held_impacts);
+    // As an impact at the end of a tick (`impact_now`): a unit its call
+    // stops makes this tick's step and stands from the next.
+    state.borrow_mut().impact_now = !held.is_empty();
+    for (m, at) in held {
+        if !standing(&state.borrow(), m.target) {
+            continue;
+        }
+        {
+            let mut s = state.borrow_mut();
+            s.event_time = Some(at);
+            super::table::missile_hit(&mut s, &m.objects, at);
+            // At the very start of the tick, for the logs' timers.
+            let (tick, now) = (s.ticks, s.timers.time());
+            if let Some(trace) = s.hit_trace.as_mut() {
+                trace.push((tick, at, now, m.target));
+            }
+        }
+        let impact = super::movement::position_of(&state.borrow(), m.target);
+        strike(
+            vm,
+            state,
+            m.attacker,
+            m.target,
+            m.amount,
+            m.attack_type,
+            m.area,
+            impact,
+            false,
+        );
+        state.borrow_mut().event_time = None;
+    }
+    state.borrow_mut().impact_now = false;
 }
 
 /// A missile in flight as a viewer sees it: the type of the unit that

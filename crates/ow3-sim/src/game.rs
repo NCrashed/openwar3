@@ -951,6 +951,9 @@ pub struct State {
     creep_casts: Vec<(u32, i32, u32, u32)>,
     /// Units whose cast's effect ran before this tick's updates.
     early_effects: Vec<u32>,
+    /// Missiles of attacks that arrived at the end of the last tick, with
+    /// the queue time of their impact.
+    pub(super) held_impacts: Vec<(attack::Missile, u32)>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1147,6 +1150,7 @@ impl State {
             call_acquired: Vec::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
+            held_impacts: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1734,6 +1738,15 @@ impl<'a> Game<'a> {
                     unit.mana.advance(now, next);
                 }
             }
+        }
+        // The impacts of attacks' missiles that arrived at the end of the
+        // tick before, after its frees (c-RZJ-1: the elemental's at
+        // 8.094643, after the frees of 8.089743).
+        attack::held_impacts(&mut self.vm, &self.state);
+        {
+            let mut state = self.state.borrow_mut();
+            let state = &mut *state;
+            let tick = state.ticks;
             // Moving units advance every tick, before the timers (SPEC-0018).
             movement::step(state);
             construction(state, tick);

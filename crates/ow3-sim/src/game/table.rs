@@ -2776,6 +2776,30 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         state.table.timed_q.retain(|t| !(t.1 == b && t.0 == end));
         state.table.rest.push((b, "Blizzard: buff"));
     }
+    // A Shockwave's hit buff still on goes there too (c-RZJ-1: footman
+    // 4409 at 32.610394, before his Devotion buff).
+    let shocks: Vec<u32> = state
+        .table
+        .shock_buffs
+        .iter()
+        .filter(|b| b.1 == h)
+        .map(|b| b.2)
+        .filter(|o| {
+            state
+                .table
+                .timed_q
+                .iter()
+                .any(|t| t.1 == *o && t.2 == "Shockwave: hit buff")
+        })
+        .collect();
+    for o in shocks {
+        state
+            .table
+            .timed_q
+            .retain(|t| !(t.1 == o && t.2 == "Shockwave: hit buff"));
+        state.table.shock_buffs.retain(|b| b.2 != o);
+        state.table.rest.push((o, "Shockwave: hit buff"));
+    }
     let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
     for (_, b) in auras.unwrap_or_default() {
         state.table.rest.push((b, "aura buff"));

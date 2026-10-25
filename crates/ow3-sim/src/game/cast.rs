@@ -792,6 +792,11 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
             let Some(Object::Unit(u)) = s.objects.get(&o) else {
                 continue;
             };
+            // Nor an invulnerable one (c-RZJ-1: the Paladin under Divine
+            // Shield at 32.405407).
+            if !super::attack::standing(s, o) {
+                continue;
+            }
             if !u.alive || u.hidden || !movement::enemies(s, w.owner, u.owner) {
                 continue;
             }

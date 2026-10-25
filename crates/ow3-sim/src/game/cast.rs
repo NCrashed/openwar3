@@ -475,6 +475,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             amount: if building { mul(each, n.data_d) } else { each },
             call: Some((point, n.area)),
             slow: false,
+            at: None,
         });
     }
 }
@@ -712,6 +713,7 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                     amount: w.amount,
                     call: Some((centre, w.area)),
                     slow: false,
+                    at: None,
                 });
             }
         }
@@ -835,6 +837,9 @@ enum Deferred {
         call: Option<([u32; 2], u32)>,
         /// A thunder clap's slow, put on a target the hit leaves alive.
         slow: bool,
+        /// The queue time of the hit, for what it starts (a thunder
+        /// clap's effect; c-RZH-1: gnoll 11's death at 26.400000).
+        at: Option<u32>,
     },
 }
 
@@ -927,9 +932,15 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 amount,
                 call,
                 slow,
+                at,
             } => {
+                let previous = state.borrow().event_time;
+                if at.is_some() {
+                    state.borrow_mut().event_time = at;
+                }
                 super::widgets::damage_widget(vm, state, Some(caster), Some(target), amount, 0, 0);
                 let mut s = state.borrow_mut();
+                s.event_time = previous;
                 // The slow's objects after the hit's (SPEC-0024).
                 if slow && matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
                     super::table::clap_slowed(&mut s, target);
@@ -1135,6 +1146,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     amount: n.data[0],
                     call: Some((centre, n.area)),
                     slow: true,
+                    at: Some(now),
                 });
             }
             deferred.push(Deferred::ClapArea { at: now });

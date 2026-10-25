@@ -71,6 +71,15 @@ fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
         .map(|a| (a, 1))
 }
 
+/// The order an aura's pass gives its units: a call's grid order
+/// (SPEC-0019) read backwards (rows from the top, cells from the right,
+/// in a cell the unit that entered first).
+fn pass_order(state: &State, units: Vec<u32>) -> Vec<u32> {
+    let mut order = super::movement::call_order(state, units);
+    order.reverse();
+    order
+}
+
 /// The checks of this tick.
 pub(super) fn tick(state: &mut State) {
     let tick = state.ticks;
@@ -123,6 +132,8 @@ pub(super) fn tick(state: &mut State) {
             .and_then(|a| a.per_level.get((level - 1).max(0) as usize))
             .map_or(0.0, |n| f32::from_bits(n.area));
         let (owner, x, y) = (hero.owner, f32::from_bits(hero.x), f32::from_bits(hero.y));
+        let order = hero.aura_order;
+        let mut near = Vec::new();
         for &o in &state.units {
             let Some(u) = state.unit(Some(o)) else {
                 continue;
@@ -135,8 +146,13 @@ pub(super) fn tick(state: &mut State) {
             let friend = u.owner == owner || state.setup.is_ally(owner, u.owner);
             let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
             if u.alive && !u.hidden && ground && friend && dx * dx + dy * dy <= area * area {
-                given.push((o, ability, level, hero.aura_order));
+                near.push(o);
             }
+        }
+        // In the reverse of a call's grid order (SPEC-0038; c-RZJ-1: the
+        // Ogre Lord's creeps 15, 13, 10, 14, 8, 9, 12 at 1.505).
+        for o in pass_order(state, near) {
+            given.push((o, ability, level, order));
         }
     }
     for (o, ability, level, order) in given {
@@ -292,7 +308,7 @@ fn brilliance(state: &mut State) -> Vec<(u64, u32, i32)> {
                         < f32::from_bits(mul(reach, reach))
             })
             .collect();
-        for o in near {
+        for o in pass_order(state, near) {
             note(state, o, &mut before);
             // Only a unit with mana takes the buff's object (c-RZJ-1: the
             // Paladin at 1.505, not the footmen).

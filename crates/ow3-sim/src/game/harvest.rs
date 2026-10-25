@@ -1237,6 +1237,9 @@ fn take_another_tree(state: &mut State, h: u32, from_tree: bool) {
         g.switch_at = None;
         g.target = Some(tree);
         g.ready = false;
+        // A new tree has no walks again left (c-RYP-1: peasant 0 dropping
+        // tree 9 at 62.87366).
+        g.retries = 0;
         set(state, h, Some(g));
     }
     if let Some(at) = position(state, tree) {

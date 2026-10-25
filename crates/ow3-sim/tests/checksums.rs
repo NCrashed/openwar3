@@ -91,8 +91,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RYP-1.w3g",
-        "all path agents and events are the game's (tests/agents.rs, tests/crowd.rs); the \
-         objects of the lumber harvest (orders, paths, timers) are not compared yet",
+        "peasants harvesting lumber: every turn checksum to its end matches with the object \
+         table started as the game has it (tests/objects.rs, lumber_checksums); this test \
+         runs without it",
     ),
     (
         "c-RXD-1.w3g",

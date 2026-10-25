@@ -1118,9 +1118,16 @@ pub fn high_level_path_cost(
         let (a, z) = (b(s), b(g));
         isqrt(z[0] - a[0], z[1] - a[1])
     } else {
-        chain
+        // The legs from the start's point and to the goal's own point
+        // (c-RYP-1: peasant 0's search at 57.89, tree 14 costing 5).
+        let b = |p: [u32; 2]| ((floor(p[0]) >> 1), (floor(p[1]) >> 1));
+        let mut points: Vec<(i32, i32)> = chain.iter().map(|c| c.1).collect();
+        let n = points.len();
+        points[0] = b(s);
+        points[n - 1] = b(g);
+        points
             .windows(2)
-            .map(|w| isqrt(w[1].1.0 - w[0].1.0, w[1].1.1 - w[0].1.1))
+            .map(|w| isqrt(w[1].0 - w[0].0, w[1].1 - w[0].1))
             .sum()
     };
     Some((found.iterations, cost))

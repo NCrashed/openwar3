@@ -162,21 +162,33 @@ fn orders_objects() {
     }
 }
 
-/// `c-RXD-1`, `c-RYP-1`: harvest with creeps, lumber (report only).
+/// `c-RYP-1`: peasants harvesting lumber: every turn checksum.
 #[test]
-fn others_checksums_report() {
-    for name in ["c-RXD-1", "c-RYP-1"] {
-        turn_parts(name);
+fn lumber_checksums() {
+    if let Some(first) = turn_parts("c-RYP-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
     }
 }
 
-/// Their object tables (report only).
+/// `c-RYP-1`'s object table.
+#[test]
+fn lumber_objects() {
+    if let Some(first) = compare_objects("c-RYP-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}
+
+/// `c-RXD-1`: gold harvest with creeps attacking (report only).
+#[test]
+fn others_checksums_report() {
+    turn_parts("c-RXD-1");
+}
+
+/// Its object table (report only).
 #[test]
 fn others_objects_report() {
-    for name in ["c-RXD-1", "c-RYP-1"] {
-        eprintln!("{name}");
-        compare_objects(name);
-    }
+    eprintln!("c-RXD-1");
+    compare_objects("c-RXD-1");
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

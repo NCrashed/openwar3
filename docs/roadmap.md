@@ -44,7 +44,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Basic orders, order queue (Shift) | done | known | SPEC-0019, 0031. |
 | Attacks, damage, armor, missiles | done | known | SPEC-0015, 0016. |
 | Target choice, calls for help, creep camps | done | known | SPEC-0019, 0030, 0048. |
-| Resource gathering (Human peasant) | partial | unknown | Gold and lumber work; gold harvesting matches the game down to its internal objects (c-RXI-1), lumber not yet. Other races' workers (acolytes, wisps, peons) not started. |
+| Resource gathering (Human peasant) | partial | unknown | Gold and lumber work; gold and lumber harvesting match the game down to their internal objects (c-RXI-1, c-RYP-1). Other races' workers (acolytes, wisps, peons) not started. |
 | Building and training (Human) | partial | unknown | Placement, construction start, training queue. Other races, repair, cancel, upgrades and research not started. |
 | Fog of war | partial | known | What a unit reveals (SPEC-0032). Invisibility and detection not started. |
 | Regions and their events | done | known | SPEC-0049. |
@@ -88,6 +88,9 @@ the game's order.
 - The player orders test c-RTW-3 (footmen: moves, patrol, follow, group
   and Shift group orders, stop): its object table (1175 changes) and all
   900 turn checksums match the game.
+- The lumber harvest test c-RYP-1 (peasants, trees falling, another tree
+  looked for): its object table (2356 changes) and all 697 turn checksums
+  match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

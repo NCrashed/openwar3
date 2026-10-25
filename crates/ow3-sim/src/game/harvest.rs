@@ -555,6 +555,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             arrive_at_mine(&mut s, h, target);
         } else if is_tree(&s, target) {
             let tick = s.ticks;
+            super::table::tree_arrival_ended(&mut s, h);
             // The check of the place: the range test or the touch test
             // (SPEC-0029, "Arriving at the tree").
             let passes = within_reach(&s, h, target) || touches_tree(&s, h, target);
@@ -598,17 +599,11 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     // (c-RYP-1: peasant 4 at 1243).
                     g.switch_at = Some(tick + SWITCH_CHECK);
                     set(&mut s, h, Some(g));
+                    super::table::tree_dropped(&mut s, h);
                 }
             }
         } else {
             drop(s);
-        }
-    }
-    {
-        let mut s = state.borrow_mut();
-        let workers: Vec<u32> = s.units.clone();
-        for w in workers {
-            super::table::tree_arrival_ended(&mut s, w);
         }
     }
     forget_others(&mut state.borrow_mut());
@@ -962,6 +957,7 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         if g.switch_at == Some(tick) {
             let mut s = state.borrow_mut();
             take_another_tree(&mut s, h, false);
+            super::table::tree_switched(&mut s, h);
             continue;
         }
         let Some(hit) = g.next_hit.filter(|&e| due(&state.borrow(), e)) else {

@@ -436,6 +436,8 @@ pub struct UnitEntries {
     /// An object of its arrival at a tree, freed at its next update, and
     /// that update's tick.
     pub tree_arrival: Option<(u32, u64)>,
+    /// The object of its wait for another tree.
+    pub tree_wait: Option<u32>,
     /// Its object while inside a gold mine.
     pub harvest_inside: Option<u32>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
@@ -1194,6 +1196,55 @@ pub(super) fn tree_arrived(state: &mut super::State, h: u32) {
     let next = state.ticks + 6;
     if let Some(e) = entries(state, h) {
         e.tree_arrival = Some((parts[0], next));
+    }
+    walk_made_at_order(state, h);
+}
+
+/// Worker `h` drops a tree it cannot reach (c-RYP-1: peasant 4 at 1243):
+/// its harvest order's part 7 goes, a stop's 3 parts are made and freed
+/// at once (0.0001 s later, from the last), then its part 6, and an object
+/// of the wait before another tree is looked for, kept to then.
+pub(super) fn tree_dropped(state: &mut super::State, h: u32) {
+    harvest_arrived(state, h);
+    let tick = state.table.now;
+    let stop = state.table.take_n(tick, 3, "harvest: stop");
+    for &e in stop.iter().rev() {
+        state.table.defer(e, "harvest: stop");
+    }
+    let six = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(o) = six {
+        state.table.defer(o, "harvest: order start");
+    }
+    let wait = state.table.take(tick, "harvest: wait for a tree");
+    if let Some(e) = entries(state, h) {
+        e.tree_wait = Some(wait);
+    }
+}
+
+/// Worker `h` takes another tree after its wait (c-RYP-1: peasant 4 at
+/// 1343): the wait's object goes, the new order's object is made, the old
+/// order's kept parts go, then its 12 parts (8 .. 11 freed 0.0001 s
+/// later, 7 at the arrival, 0 .. 6 and the object kept) and the walk.
+pub(super) fn tree_switched(state: &mut super::State, h: u32) {
+    let wait = entries(state, h).and_then(|e| e.tree_wait.take());
+    if let Some(o) = wait {
+        state.table.defer(o, "harvest: wait for a tree");
+    }
+    let tick = state.table.now;
+    let order = state.table.take(tick, "harvest: order");
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for o in old {
+        state.table.defer(o, "harvest: order");
+    }
+    let parts = state.table.take_n(tick, 12, "harvest: order start");
+    for &e in parts[8..].iter().rev() {
+        state.table.defer(e, "harvest: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = vec![parts[7]];
+        e.order = parts[..7].iter().rev().copied().chain([order]).collect();
     }
     walk_made_at_order(state, h);
 }

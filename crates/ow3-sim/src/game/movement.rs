@@ -4110,7 +4110,7 @@ pub(super) fn first_check(state: &State) -> Option<u32> {
 /// with its return timer and guard checks started.
 fn stun_ends(state: &mut State) {
     let tick = state.ticks;
-    let ended: Vec<u32> = state
+    let mut ended: Vec<u32> = state
         .units
         .iter()
         .copied()
@@ -4120,6 +4120,14 @@ fn stun_ends(state: &mut State) {
                 .is_some_and(|u| u.alive && u.stunned_until == Some(tick))
         })
         .collect();
+    // In the order the stuns were made (c-SBI-1: kobold 6, the first
+    // stunned by War Stomp, checks first at 7.989999).
+    ended.sort_by_key(|&h| {
+        state
+            .unit(Some(h))
+            .and_then(|u| u.entries.stun_order.last().copied())
+            .map_or(u32::MAX, |o| state.table.creation_of(o))
+    });
     let now = state.move_clock;
     for h in ended {
         let Some(u) = state.unit(Some(h)) else {
@@ -4177,6 +4185,9 @@ fn stun_ends(state: &mut State) {
                 && u.acquire_phase != super::NO_PHASE
             {
                 u.next_acquire = add(now, AFTER_DEATH);
+                // A timer started now, after those of the units back before it.
+                state.acquire_starts += 1;
+                u.acquire_seq = state.acquire_starts;
             }
             super::creeps::after_stun(state, h, now);
         }

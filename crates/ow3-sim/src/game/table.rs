@@ -3144,7 +3144,13 @@ fn stuns_with(state: &mut super::State, backs: bool) {
     // In the order the stuns were made (c-SBI-1: War Stomp's four).
     let made = |s: &super::State, h: u32| {
         s.unit(Some(h))
-            .and_then(|u| u.entries.stun_end.first().copied())
+            .and_then(|u| {
+                u.entries
+                    .stun_end
+                    .first()
+                    .or(u.entries.stun_order.last())
+                    .copied()
+            })
             .map_or(u32::MAX, |o| s.table.creation_of(o))
     };
     units.sort_by_key(|&h| made(state, h));

@@ -277,11 +277,13 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     // with a cooldown, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
     // and AOcr 1). PROVISIONAL: read for learning the first level only.
     let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
-    // An aura takes 4 (c-RZJ-1: the Archmage's Brilliance, the Paladin's
-    // Devotion). PROVISIONAL: what they are is not read.
+    // An aura takes its ability object, the aura's object and the aura's
+    // buff on the hero, and Brilliance a rate part for that buff's mana
+    // regeneration (c-RZJ-1: the Archmage's Brilliance 4, the Paladin's
+    // Devotion 3). PROVISIONAL: a second level is not read.
     let aura = [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&data.code.to_be_bytes());
     let count = if aura {
-        4
+        3 + usize::from(data.code == i32::from_be_bytes(*b"AHab"))
     } else if cooled {
         2
     } else {

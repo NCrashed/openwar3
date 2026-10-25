@@ -454,26 +454,66 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     } else {
         &UNIT
     };
-    // A creep with a unit ability of its type (`abilList`) takes one more,
-    // at 15, kept (c-RZH-1: unit 10, nkot, with the creep Bash: 29).
-    let ability = owner == super::creeps::CREEPS
-        && !std::ptr::eq(making, &CAMP_CREEP)
-        && !std::ptr::eq(making, &CREEP_HERO)
-        && state
-            .data
-            .units
-            .get(&type_id)
-            .is_some_and(|t| !t.abilities.is_empty());
-    let at = |k: usize| if ability && k >= 15 { k + 1 } else { k };
-    let count = making.count + usize::from(ability);
+    // A creep's own abilities (`abilList`) take their objects before the
+    // creep's ability object (14), and one with mana a rate part at 12
+    // (c-RZJ-1: the Ogre Lord, 34: its mana, Devotion Aura's ability,
+    // aura and buff, Shockwave's ability and cost watch; c-RZH-1: unit
+    // 10, nkot, the creep Bash's ability).
+    // PROVISIONAL: the aura's buff of Brilliance and a second costed
+    // ability are not read on a creep.
+    let creep = owner == super::creeps::CREEPS && !crate::data::is_hero(type_id);
+    let (mana, abilities): (bool, Vec<i32>) = state
+        .data
+        .units
+        .get(&type_id)
+        .filter(|_| creep)
+        .map_or((false, Vec::new()), |t| {
+            (f32::from_bits(t.max_mana) > 0.0, t.abilities.clone())
+        });
+    // (death, cost of a watch)
+    let mut parts: Vec<(bool, Option<i32>)> = Vec::new();
+    for a in abilities {
+        let Some(d) = state.data.abilities.get(&a) else {
+            continue;
+        };
+        let level = d.per_level.first();
+        if [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&d.code.to_be_bytes()) {
+            parts.extend([(false, None), (true, None), (true, None)]);
+        } else if level.is_some_and(|l| l.cooldown != 0 && l.cost > 0) {
+            parts.extend([(false, None), (true, level.map(|l| l.cost))]);
+        } else {
+            parts.push((false, None));
+        }
+    }
+    let shift = usize::from(mana);
+    let at = |k: usize| {
+        let k = if k >= 12 { k + shift } else { k };
+        if k >= 14 + shift { k + parts.len() } else { k }
+    };
+    let count = making.count + shift + parts.len();
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
+    let mut death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
+    if mana {
+        death.push(entries[12]);
+    }
+    let mut watches = Vec::new();
+    for (i, &(dies, cost)) in parts.iter().enumerate() {
+        let e = entries[14 + shift + i];
+        if dies {
+            death.push(e);
+        }
+        if let Some(c) = cost {
+            watches.push((c, e, true));
+        }
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
-            death: making.death.iter().map(|&k| entries[at(k)]).collect(),
+            death,
+            mana_watches: watches,
             corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),

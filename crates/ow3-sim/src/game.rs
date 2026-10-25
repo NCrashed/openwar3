@@ -255,6 +255,8 @@ pub struct Unit {
     stunned_until: Option<u64>,
     /// The queue time at which its order comes back after the stun.
     stun_back: Option<u32>,
+    /// The stun dropped a swing of an attack it acquired (SPEC-0037).
+    stun_dropped_acquired: bool,
     slowed_until: Option<(u64, u32)>,
     /// The aura buffs it has: the aura ability, its level and the tick of
     /// the last check that found it in reach (SPEC-0038).

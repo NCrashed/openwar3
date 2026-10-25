@@ -3938,10 +3938,16 @@ fn stun_ends(state: &mut State) {
             }
             continue;
         }
-        let acquired = u.attack.is_some_and(|a| a.order_id == 0)
+        // Also one whose swing the stun dropped (c-RZH-1: creep 8, swinging
+        // at the bolt of 4.715).
+        let acquired = u.stun_dropped_acquired
+            || u.attack.is_some_and(|a| a.order_id == 0)
             || u.movement.is_some_and(|m| {
                 matches!(m.order, Order::Attack { .. }) && m.order_id == 0 && m.ordered()
             });
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.stun_dropped_acquired = false;
+        }
         if acquired {
             halt(state, h);
             // Its order back is none: it is idle, and its check is an idle

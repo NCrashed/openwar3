@@ -394,6 +394,7 @@ pub(super) fn create_unit(
         procced: None,
         stunned_until: None,
         stun_back: None,
+        stun_dropped_acquired: false,
         slowed_until: None,
         buffs: Vec::new(),
         aura_learned: None,

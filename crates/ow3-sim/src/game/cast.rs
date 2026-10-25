@@ -549,6 +549,7 @@ pub(super) fn stun(state: &mut State, h: u32, source: u32, duration: u32, at: u3
                 && a.hit_at.is_some_and(|t| f32::from_bits(t) > clock)
         })
     {
+        u.stun_dropped_acquired = u.attack.is_some_and(|a| a.order_id == 0);
         u.attack = None;
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)

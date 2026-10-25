@@ -1972,6 +1972,13 @@ impl<'a> Game<'a> {
         // The ends of stuns are timers before the checks (c-SAK-1: 18.073807
         // before the check at 18.077003 in 3616).
         // The goals of backswings ending before them come first (2583).
+        // The casts that end before the first stun end of the tick come first
+        // (c-SBI-1: the Shadow Hunter's at 7.969973 before War Stomp's stuns
+        // at 7.970000).
+        let first_stun = table::next_stun_end(&self.state.borrow());
+        if let Some(q) = first_stun {
+            cast::effects_before(&mut self.vm, &self.state, q);
+        }
         {
             let mut s = self.state.borrow_mut();
             if let Some(q) = table::next_stun_end(&s) {

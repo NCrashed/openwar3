@@ -2994,10 +2994,18 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     }
     // An attack-move keeps its order's own object through the stun; its
     // order comes back after it (c-RZH-1: the footman stunned by the
-    // bash of 8.03, his script order 1252 kept to 25.58).
+    // bash of 8.03, his script order 1252 kept to 25.58). So does a
+    // harvest order, the parts kept to its arrival going first (c-RXD-1:
+    // the peasant bashed at 21.677362, his order 1243 kept to 25.946646).
+    let harvesting = state
+        .unit(Some(target))
+        .is_some_and(|u| u.harvest.is_some());
+    if harvesting {
+        harvest_arrived(state, target);
+    }
     let kept = state
         .unit(Some(target))
-        .is_some_and(|u| u.attack_move.is_some())
+        .is_some_and(|u| u.attack_move.is_some() || harvesting)
         .then(|| entries(state, target).and_then(|e| e.order.pop()))
         .flatten();
     order_ended(state, target);

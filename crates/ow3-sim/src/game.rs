@@ -1959,6 +1959,13 @@ impl<'a> Game<'a> {
             }
         }
         table::stun_ends(&mut self.state.borrow_mut());
+        // The goals of backswings ending before the first check, or with it
+        // (their timers are the older), come first (c-RXR-1: a goal at
+        // 12.899995 before footman 3's check at that time).
+        let check = movement::first_check(&self.state.borrow());
+        if let Some(q) = check {
+            attack::after_swing_walks(&mut self.state.borrow_mut(), Some(q + 1));
+        }
         let mut first_batch = true;
         // Bounded: each round takes at least one hit (a guard against a
         // hit that never comes off the queue).

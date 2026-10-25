@@ -2781,7 +2781,22 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     // of the creeps 1 more (SPEC-0024, "Unit death").
     let record = state.table.take(tick, "death order record");
     let queue = state.table.take_n(tick, 9, "death order queue");
-    let other = (owner != super::creeps::CREEPS).then(|| state.table.take(tick, "death order"));
+    // (Defend's order at the death: only a unit with Defend; c-RXR-1:
+    // none for the grunt dead at 12.888838.)
+    let defends = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| {
+            t.abilities.iter().any(|&a| {
+                state
+                    .data
+                    .abilities
+                    .get(&a)
+                    .is_some_and(|d| d.code == i32::from_be_bytes(*b"Adef"))
+            })
+        });
+    let other =
+        (owner != super::creeps::CREEPS && defends).then(|| state.table.take(tick, "death order"));
     let held = entries(state, h).map(|e| {
         let death = std::mem::take(&mut e.death);
         // The last two of a creep's (its pair) before its order, the

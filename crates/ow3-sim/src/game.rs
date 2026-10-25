@@ -2328,8 +2328,18 @@ impl<'a> Game<'a> {
         if done && order == "attack" {
             table::attack_point_ordered(&mut state, unit);
         }
-        if done && order == "move" {
+        // A right click on the ground moves (c-RTW-3: 15.548391); its native
+        // gives false though the unit obeys.
+        let smart = order == "smart"
+            && state
+                .unit(Some(unit))
+                .and_then(|u| u.movement)
+                .is_some_and(|m| m.order_id() == movement::ORDER_SMART);
+        if (done && order == "move") || smart {
             table::move_point_ordered(&mut state, unit);
+        }
+        if done && order == "patrol" {
+            table::patrol_ordered(&mut state, unit);
         }
         state.player_orders = false;
         done

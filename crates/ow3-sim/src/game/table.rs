@@ -1036,19 +1036,34 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
-/// Worker `h` goes into a gold mine: an object kept while it is inside,
-/// before it the mine's own at its first worker (c-RXI-1: 1144, kept to
-/// the end, and worker 5's 1145 at 871).
-/// PROVISIONAL: the mine's object is taken as the first worker's.
-pub(super) fn harvest_entered(state: &mut super::State, h: u32) {
+/// A worker comes to a gold mine first: an object made once, kept to the
+/// end (c-RXI-1: 1144 at 871, with four objects of the second pool).
+/// PROVISIONAL: whether per mine or per game, and at the first arrival
+/// or entry, is not separated.
+pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
     let tick = state.table.now;
     if !state.table.mine_used {
         state.table.mine_used = true;
         state.table.take(tick, "gold mine: in use");
     }
-    let inside = state.table.take(tick, "gold mine: worker inside");
+}
+
+/// Worker `h` starts to wait at a gold mine: the mine's reference to it,
+/// freed when it goes in (c-RXI-1: worker 4's 1145 at 871, freed at
+/// 1071; 1162 .. 1165).
+pub(super) fn harvest_waits(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let reference = state.table.take(tick, "gold mine: waiting worker");
     if let Some(e) = entries(state, h) {
-        e.harvest_inside = Some(inside);
+        e.harvest_inside = Some(reference);
+    }
+}
+
+/// Worker `h`, which waited, goes into the gold mine: the reference to
+/// it goes 0.0001 s later.
+pub(super) fn harvest_waited(state: &mut super::State, h: u32) {
+    if let Some(r) = entries(state, h).and_then(|e| e.harvest_inside.take()) {
+        state.table.defer(r, "gold mine: waiting worker");
     }
 }
 
@@ -1058,16 +1073,17 @@ pub(super) fn harvest_entered(state: &mut super::State, h: u32) {
 /// and order, then the new parts 12 .. 8 (from the last), all 0.0001 s
 /// later; the new parts 7 .. 0 are kept with the new order.
 /// PROVISIONAL: when the kept ones go (at the delivery) is not read.
-pub(super) fn harvest_left(state: &mut super::State, h: u32) {
+pub(super) fn harvest_left(state: &mut super::State, h: u32, next: Option<u32>) {
     let tick = state.table.now;
     let parts = state.table.take_n(tick, 13, "harvest: return order start");
     walk_made_at_order(state, h);
-    let (inside, old) = entries(state, h)
-        .map(|e| (e.harvest_inside.take(), std::mem::take(&mut e.order)))
-        .unwrap_or_default();
-    if let Some(o) = inside {
-        state.table.defer(o, "gold mine: worker inside");
+    // The next worker's reference first, as it goes in (c-RXI-1: 1145).
+    if let Some(n) = next {
+        harvest_waited(state, n);
     }
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
     for o in old {
         state.table.defer(o, "harvest: order");
     }
@@ -1086,6 +1102,30 @@ pub(super) fn harvest_arrived(state: &mut super::State, h: u32) {
     for e in parts.unwrap_or_default() {
         state.table.defer(e, "harvest: order start");
     }
+}
+
+/// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an
+/// order object, its record and one more, all three freed 0.0001 s
+/// later (the record, the third, the first), the old order ends, then 12
+/// objects of the patrol's start (the last 5 freed 0.0001 s later, from
+/// the last; the first 7 kept to the order's end) and the walk.
+pub(super) fn patrol_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let first = state.table.take(tick, "patrol order");
+    let record = state.table.take(tick, "order record");
+    let third = state.table.take(tick, "patrol order");
+    state.table.defer(record, "order record");
+    state.table.defer(third, "patrol order");
+    state.table.defer(first, "patrol order");
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 12, "patrol: order start");
+    for &e in parts[7..].iter().rev() {
+        state.table.defer(e, "patrol: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = parts[..7].iter().rev().copied().collect();
+    }
+    walk_made_at_order(state, h);
 }
 
 /// Unit `h` takes a script's move order to a point (c-SBG-1, ogre 3 at

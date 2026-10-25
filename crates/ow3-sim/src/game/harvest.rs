@@ -604,6 +604,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     {
         let mut s = state.borrow_mut();
         for w in std::mem::take(&mut s.harvest_waiters) {
+            super::table::harvest_waits(&mut s, w);
             super::table::harvest_arrived(&mut s, w);
             super::table::walk_dropped_at_update(&mut s, w);
         }
@@ -858,7 +859,6 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             walk_back(s, worker);
             // The walk to the drop-off is made (SPEC-0024).
             s.objects_change();
-            super::table::harvest_left(s, worker);
             let tick = s.ticks;
             let entry = s.mines.entry(mine).or_default();
             entry.inside = None;
@@ -870,6 +870,7 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 .waiting
                 .iter()
                 .position(|w| !entry.starting.iter().any(|(s, _)| s == w));
+            let mut going_in = None;
             if left > 0
                 && let Some(i) = next
             {
@@ -877,7 +878,9 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 // Its timer starts as the other one's fires.
                 entry.inside = Some((next, tick, add(left_at, IN_MINE_TIME)));
                 hide(s, next, true);
+                going_in = Some(next);
             }
+            super::table::harvest_left(s, worker, going_in);
             left <= 0
         };
         if empty {

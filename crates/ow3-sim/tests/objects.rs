@@ -102,6 +102,12 @@ fn heroes_two_checksums_report() {
     turn_parts("c-RZJ-1");
 }
 
+/// `c-RZJ-1`'s object table (report only).
+#[test]
+fn heroes_two_objects_report() {
+    compare_objects("c-RZJ-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

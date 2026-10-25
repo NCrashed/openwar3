@@ -277,9 +277,17 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     // with a cooldown, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
     // and AOcr 1). PROVISIONAL: read for learning the first level only.
     let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
-    let objects = state
-        .table
-        .take_n(state.table.now, if cooled { 2 } else { 1 }, "hero skill");
+    // An aura takes 4 (c-RZJ-1: the Archmage's Brilliance, the Paladin's
+    // Devotion). PROVISIONAL: what they are is not read.
+    let aura = [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&data.code.to_be_bytes());
+    let count = if aura {
+        4
+    } else if cooled {
+        2
+    } else {
+        1
+    };
+    let objects = state.table.take_n(state.table.now, count, "hero skill");
     // The second is a watch on the mana at the ability's cost (c-SAK-1).
     if cooled {
         let cost = data.per_level.first().map_or(0, |l| l.cost);

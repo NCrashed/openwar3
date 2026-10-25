@@ -251,6 +251,9 @@ pub struct Moving {
     renew_at: Option<u64>,
     /// That renewal is the expiry of a cooldown from before this attack.
     renew_cooldown: bool,
+    /// The tick of the last renewal after a swing: a cooldown expiring in
+    /// that tick takes no chase of its own.
+    renewed: Option<u64>,
     /// An attack ordered by a script: the update at which the unit acts
     /// cannot start its swing yet (SPEC-0019, "When it starts").
     swing_waits: bool,
@@ -537,6 +540,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             faced: false,
             follow_check: false,
             renew_at: None,
+            renewed: None,
             renew_cooldown: false,
             chase: None,
             renew_stands: false,
@@ -575,6 +579,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             faced: false,
             follow_check: false,
             renew_at: None,
+            renewed: None,
             renew_cooldown: false,
             chase: None,
             renew_stands: false,
@@ -2741,6 +2746,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     .is_some_and(|u| !u.entries.walk.is_empty())
                                 {
                                     super::table::walk_made_at_order(state, h);
+                                    m.renewed = Some(tick);
                                 }
                                 m.target = at;
                                 // A goal of a timer: the countdown starts at
@@ -5559,7 +5565,7 @@ pub(super) fn next_cooldown_expiry(state: &State) -> Option<u32> {
                 return None;
             };
             let e = real_of(u.cooldown_end);
-            ((target != u.cooldown_target || m.faced) && e > start && e <= end)
+            (e > start && e <= end && state.unit(Some(target)).is_some_and(|t| t.alive))
                 .then_some(u.cooldown_end)
         })
         .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)))
@@ -5588,10 +5594,16 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
                 return None;
             };
             let e = real_of(u.cooldown_end);
-            // The same target too when the unit stands after a face movement
-            // (c-SAK-1: the Blademaster's image at 9854).
-            ((target != u.cooldown_target || m.faced) && e > start && e <= end)
-                .then_some((h, target, m.order_id))
+            // The cooldown timer's own handler: the attack start on the target
+            // it holds, the same one too (c-RXD-1: kobold 1048692 at
+            // 12.389934, out of reach: a chase). Nothing for a dead target
+            // (c-SAK-1: the image at 56.305359), and no second chase after
+            // the update's renewal of this tick made one (c-RXD-1: 2161).
+            (e > start
+                && e <= end
+                && m.renewed != Some(state.ticks)
+                && state.unit(Some(target)).is_some_and(|t| t.alive))
+            .then_some((h, target, m.order_id))
         })
         .collect();
     let tick = state.ticks;

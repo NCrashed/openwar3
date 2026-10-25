@@ -36,9 +36,11 @@ the damage event (`GetEventDamage`).
     that tick.
   - It moves at the missile speed (1000 = 0.15625 cells per tick) along
     that direction. Every 0.1 s after the launch a homing update looks
-    at the target: if the target has not moved since the last aim,
-    nothing changes (no new measure, no hit test), and the straight
-    flight goes on to its end; if it has moved, the bolt is aimed anew
+    at the target: if the target is not moving at that moment (it
+    stands, even if it moved since the last aim), nothing changes (no
+    new measure, no hit test, also with the target less than one step
+    away), and the straight flight goes on to its end; if it is moving,
+    the bolt is aimed anew
     from its logical point (the launch point moved 100 towards the aim
     point per 0.1 s step), and if the target's per-tick position is
     then less than one step (100) away the bolt hits (a 0.0001 s timer,
@@ -60,8 +62,11 @@ the damage event (`GetEventDamage`).
   Read in the game, `c-RZH-1`, both bolts on creep 8, ticks by the
   movement clock:
   - bolt 1: the target was walking, `d` = 8.1708, `n` = 53, launch 891,
-    impact 944 (the map's log labels the damage 943); creep 8 had
-    stopped elsewhere by then;
+    impact 944 (the map's log labels the damage 943); creep 8 walked on
+    for 10 ticks and stopped (tick 901) for a swing. At both homing
+    updates (q 4.554908 and 4.654901) it stood, so no re-aim and no hit
+    test, although at the second the bolt's logical point was 50.8 from
+    it;
   - bolt 2: standing target, `d` = 4.9974, `n` = 32, launch 2781,
     impact 2813, 0.0016 cells past the target's centre.
   The two earlier tests (damage in `e + 41` and `e + 20`, targets

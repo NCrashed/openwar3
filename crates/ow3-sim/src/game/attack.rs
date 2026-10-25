@@ -800,7 +800,16 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     let Some(to) = super::movement::position_of(s, m.target) else {
                         continue;
                     };
-                    if to != m.point {
+                    // Only a target moving at the step is aimed at anew and
+                    // tested against the step; one standing is left alone,
+                    // the bolt flying on to its straight flight's end
+                    // (c-RZH-1: the bolt at kobold 8, within a step at
+                    // 4.654901, hit at 4.714897).
+                    let moving = s
+                        .unit(Some(m.target))
+                        .and_then(|u| u.movement)
+                        .is_some_and(|t| super::movement::walking_now(&t));
+                    if to != m.point && moving {
                         let left = distance(m.at, to);
                         if f32::from_bits(left) < f32::from_bits(step) {
                             arrived.push(m);

@@ -2988,7 +2988,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 begin_attack = Some(target);
                             }
                         } else {
-                            motion(&mut m, goal, false, speed, limit, turn_rate, window);
+                            // Not while a swing runs: the agent stands, its goal
+                            // direction kept (c-RZJ-1: footman 3 swinging from
+                            // 20.549961 off his target, 0.6074 kept to 21.5697).
+                            let clock = real_of(state.move_clock);
+                            let swinging = state.unit(Some(unit)).is_some_and(|u| {
+                                u.attack.is_some_and(|a| {
+                                    real_of(a.swing_q) <= clock
+                                        && a.hit_at.is_some_and(|q| real_of(q) > clock)
+                                }) || (u.attack.is_some() && real_of(u.backswing_end) > clock)
+                            });
+                            if !swinging {
+                                motion(&mut m, goal, false, speed, limit, turn_rate, window);
+                            }
                         }
                         // After the step, the renewal: turned within 0.2 to the
                         // target where it is, the swing starts; else it is

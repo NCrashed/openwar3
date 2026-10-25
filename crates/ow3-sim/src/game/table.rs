@@ -320,6 +320,14 @@ impl ObjectTable {
 pub struct UnitEntries {
     /// Freed at its death, in this order.
     pub death: Vec<u32>,
+    /// A creep's ability parts freed at its death: before all its other
+    /// objects (an aura's first), and with its buffs after the experience
+    /// (an aura's buff, a costed ability's); its mana's part, in its core
+    /// after the first (c-RZJ-1: the Ogre Lord at 37.137905: 1093 first,
+    /// then 1094 and 1096, then 1087, 1089, 1088).
+    pub death_first: Vec<u32>,
+    pub death_late: Vec<u32>,
+    pub death_mana: Option<u32>,
     /// The objects of its making kept to its corpse's end, in the order
     /// they go then (`unit_died`).
     pub corpse: Vec<u32>,
@@ -579,19 +587,19 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         .map_or((false, Vec::new()), |t| {
             (f32::from_bits(t.max_mana) > 0.0, t.abilities.clone())
         });
-    // (death, cost of a watch)
-    let mut parts: Vec<(bool, Option<i32>)> = Vec::new();
+    // (freed at its death: 1 first, 2 with its buffs; cost of a watch)
+    let mut parts: Vec<(u8, Option<i32>)> = Vec::new();
     for a in abilities {
         let Some(d) = state.data.abilities.get(&a) else {
             continue;
         };
         let level = d.per_level.first();
         if [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&d.code.to_be_bytes()) {
-            parts.extend([(false, None), (true, None), (true, None)]);
+            parts.extend([(0, None), (1, None), (2, None)]);
         } else if level.is_some_and(|l| l.cooldown != 0 && l.cost > 0) {
-            parts.extend([(false, None), (true, level.map(|l| l.cost))]);
+            parts.extend([(0, None), (2, level.map(|l| l.cost))]);
         } else {
-            parts.push((false, None));
+            parts.push((0, None));
         }
     }
     let shift = usize::from(mana);
@@ -605,15 +613,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
-    let mut death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
-    if mana {
-        death.push(entries[12]);
-    }
+    let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
+    let death_mana = mana.then(|| entries[12]);
+    let (mut death_first, mut death_late) = (Vec::new(), Vec::new());
     let mut watches = Vec::new();
     for (i, &(dies, cost)) in parts.iter().enumerate() {
         let e = entries[14 + shift + i];
-        if dies {
-            death.push(e);
+        match dies {
+            1 => death_first.push(e),
+            2 => death_late.push(e),
+            _ => {}
         }
         if let Some(c) = cost {
             watches.push((c, e, true));
@@ -622,6 +631,9 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
             death,
+            death_first,
+            death_late,
+            death_mana,
             mana_watches: watches,
             corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
@@ -2700,6 +2712,10 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         // The last two of a creep's (its pair) before its order, the
         // first two after all (c-SAK-1: kobold 9 at 2753).
         let (core, pair) = death.split_at(death.len().min(2));
+        let mut core = core.to_vec();
+        if let Some(m) = e.death_mana.take() {
+            core.insert(core.len().min(1), m);
+        }
         // The objects of an order of the game and a stun's buff end go
         // before its stun's order, the rest of its own after the record
         // (c-SAK-1: gnoll 16 at 6130, 2625, 2643, 3439, then 4929 ..).
@@ -2733,7 +2749,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             game,
             pair.to_vec(),
             own,
-            core.to_vec(),
+            core,
             stun_order,
             stun_end,
             missile,
@@ -2755,6 +2771,18 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             state.table.dead_missiles.insert(h, missile);
         }
         _ => {}
+    }
+    // A creep's ability parts going first (`death_first`).
+    let (first, late) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.death_first),
+                std::mem::take(&mut e.death_late),
+            )
+        })
+        .unwrap_or_default();
+    for e in first {
+        state.table.defer(e, "unit death");
     }
     for e in pair.into_iter().chain(game).chain(stun_order) {
         state.table.defer(e, "unit death");
@@ -2803,6 +2831,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
     for (_, b) in auras.unwrap_or_default() {
         state.table.rest.push((b, "aura buff"));
+    }
+    for e in late {
+        state.table.rest.push((e, "unit death"));
     }
     if let Some(o) = other {
         state.table.rest.push((o, "death order"));

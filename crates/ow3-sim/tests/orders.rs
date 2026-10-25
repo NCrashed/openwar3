@@ -1359,6 +1359,30 @@ fn thunder_clap() {
     }
 }
 
+/// SPEC-0040, war stomp: two footmen next to a tauren chieftain take 25
+/// each at the cast point, 94 ticks after the order, and stand stunned
+/// (order 851973) for 3 s.
+#[test]
+fn war_stomp() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Otch', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2850, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -3000, -1848, 270)\n    call SelectHeroSkill(a, 'AOws')",
+        "call IssueImmediateOrder(a, \"stomp\")",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 800);
+    let at = |t: u64| path.iter().find(|(x, _)| *x == t).unwrap().1.clone();
+    let (before, after) = (at(ORDER_TICK + 93), at(ORDER_TICK + 94));
+    for i in [1, 2] {
+        let damage = before[i].life - after[i].life;
+        assert!((damage - 25.0).abs() < 0.01, "{i}: {damage}");
+        assert_eq!(at(ORDER_TICK + 95)[i].order, 851_973, "{i}");
+        assert_eq!(at(ORDER_TICK + 650)[i].order, 851_973, "{i}");
+        assert_ne!(at(ORDER_TICK + 790)[i].order, 851_973, "{i}");
+    }
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

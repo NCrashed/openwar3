@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 9] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 10] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -53,6 +53,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 9] = [
     ("thunderclap", *b"AHtc", 852_096, Aim::Nothing),
     ("windwalk", *b"AOwk", 852_129, Aim::Nothing),
     ("mirrorimage", *b"AOmi", 852_123, Aim::Nothing),
+    ("stomp", *b"AOws", 852_127, Aim::Nothing),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1524,6 +1525,47 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 at: now,
                 first: Some(h),
             });
+        }
+        // Every enemy ground unit within Area takes DataA and is stunned for
+        // Dur (heroes HeroDur) at the cast point (SPEC-0040).
+        // PROVISIONAL: the order of the hits taken as Thunder Clap's, and
+        // their objects as Storm Bolt's stun; neither is read.
+        b"AOws" => {
+            let Some(u) = s.unit(Some(h)) else {
+                return true;
+            };
+            let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+            let area = f32::from_bits(n.area);
+            let hit: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    s.unit(Some(o)).is_some_and(|t| {
+                        let ground = s
+                            .data
+                            .units
+                            .get(&t.type_id)
+                            .is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
+                        let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+                        t.alive
+                            && !t.hidden
+                            && ground
+                            && movement::enemies(s, owner, t.owner)
+                            && dx * dx + dy * dy <= area * area
+                    })
+                })
+                .collect();
+            let stun = (seconds(false), seconds(true));
+            for o in movement::call_order(s, hit) {
+                deferred.push(Deferred::SpellHit {
+                    caster: h,
+                    target: o,
+                    amount: n.data[0],
+                    stun,
+                    objects: Vec::new(),
+                });
+            }
         }
         _ => {}
     }

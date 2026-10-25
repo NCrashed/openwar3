@@ -185,6 +185,21 @@ impl ObjectTable {
         self.timed_q.push((q, entry, tag));
     }
 
+    /// The queue's timers that expire before `limit`, a script timer of
+    /// this tick: their frees join the tick's 0.0001 s frees now, ahead of
+    /// those the script timer makes (c-RZJ-1: the Shockwave's wave at
+    /// 9.499616, before the orders of the script's 9.5).
+    pub fn queue_before(&mut self, limit: u32) {
+        let now = self.now;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
+            .into_iter()
+            .partition(|&(q, e, _)| e != TAKE_AT && f32::from_bits(q) < f32::from_bits(limit));
+        self.timed_q = later;
+        for (_, entry, tag) in due {
+            self.deferred.push((now, entry, tag));
+        }
+    }
+
     /// The queue's timers of this tick, up to `limit`, free their objects.
     pub fn flush_q(&mut self, tick: u64, limit: u32) {
         let (mut due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
@@ -2146,7 +2161,8 @@ pub(super) fn buff_end_carried_out(state: &mut super::State, h: u32) {
 /// (`missile_hit`; 9.504406).
 pub(super) fn shockwave_effect(state: &mut super::State) -> Vec<u32> {
     let tick = state.table.now;
-    state.table.take_n(tick, 5, "Shockwave: wave")
+    let m = state.table.take_n(tick, 5, "Shockwave: wave");
+    vec![m[4], m[2], m[3], m[1], m[0]]
 }
 
 /// Unit `h` is hit by a Shockwave of `caster` at the step of queue time
@@ -2203,9 +2219,12 @@ pub(super) fn blizzard_hit(state: &mut super::State, _h: u32, end: u32) {
 
 /// A missile of an attack is launched (c-RZJ-1: the water elemental's at
 /// 4.839993): its own object, its position, two regions and its flight.
+/// Given in the order they are freed then: the flight, the regions, the
+/// position, its own (c-RZJ-1 at 10.099306, as the Storm Bolt's).
 pub(super) fn missile_launched(state: &mut super::State) -> Vec<u32> {
     let tick = state.table.now;
-    state.table.take_n(tick, 5, "missile")
+    let m = state.table.take_n(tick, 5, "missile");
+    vec![m[4], m[2], m[3], m[1], m[0]]
 }
 
 /// A missile hits at queue time `at`: its objects are freed by a 5.0 s

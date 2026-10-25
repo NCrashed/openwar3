@@ -73,9 +73,12 @@ the game's order.
 - The hero test c-RZH-1 (Mountain King, footmen, creeps, with Storm Bolt,
   Thunder Clap and creep Bash): its object table (4881 changes) and all
   629 turn checksums match the game.
-- The Thunder Clap probe c-SBG-1 (slows ending by time, hold position)
-  waits for the objects a creep hero and a creep group take at the map
-  start.
+- The hero test c-RZJ-1 (Archmage, Paladin, water elementals, footmen, an
+  Ogre Lord's camp, with Blizzard, Holy Light, Divine Shield, auras and
+  creep Shockwave): its object table (7596 changes) and all 828 turn
+  checksums match the game.
+- The Thunder Clap probe c-SBG-1 (slows ending by time, hold position):
+  its object table and every turn checksum match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

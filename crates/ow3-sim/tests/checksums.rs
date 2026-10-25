@@ -107,8 +107,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RZJ-1.w3g",
-        "the second hero test (Archmage, Paladin, water elementals): its abilities are not \
-         specified yet",
+        "the second hero test (Archmage, Paladin, water elementals, an Ogre Lord's camp): \
+         every turn checksum to its end matches with the object table started as the game \
+         has it (tests/objects.rs, heroes_two_checksums); this test runs without it",
     ),
     (
         "c-RXI-1.w3g",

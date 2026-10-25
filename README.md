@@ -22,10 +22,11 @@ What is checked against the game:
   random numbers match the game bit for bit;
 - 24 of 31 replays of our test maps (one mechanic each) match the game turn
   by turn, including the turn checksum the game uses to detect desyncs;
-- in both hero tests (Mountain King, Blademaster, footmen, creeps) every
-  one of the engine's internal object changes and every turn checksum
-  match the game: 11848 changes and 1614 turns (to 161 s) in one, 4881
-  changes and 629 turns in the other.
+- in the three hero tests (Mountain King, Blademaster, Archmage, Paladin,
+  footmen, water elementals, creeps) every one of the engine's internal
+  object changes and every turn checksum match the game: 11848 changes
+  and 1614 turns (to 161 s), 4881 changes and 629 turns, and 7596 changes
+  and 828 turns (to 83 s).
 
 ## Roadmap
 

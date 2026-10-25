@@ -96,16 +96,20 @@ fn thunder_clap_checksums() {
 }
 
 /// `c-RZJ-1`: the second hero test (Archmage, Paladin, water elementals,
-/// an Ogre Lord's camp): report only while its table is being built up.
+/// an Ogre Lord's camp): every turn checksum.
 #[test]
-fn heroes_two_checksums_report() {
-    turn_parts("c-RZJ-1");
+fn heroes_two_checksums() {
+    if let Some(first) = turn_parts("c-RZJ-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
 }
 
-/// `c-RZJ-1`'s object table (report only).
+/// `c-RZJ-1`'s object table.
 #[test]
-fn heroes_two_objects_report() {
-    compare_objects("c-RZJ-1");
+fn heroes_two_objects() {
+    if let Some(first) = compare_objects("c-RZJ-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

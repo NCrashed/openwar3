@@ -3329,7 +3329,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     state.table.homes.push(h);
                     super::table::walk_dropped(state, h);
                 } else if attack_move {
-                    super::table::attack_move_arrived(state, h);
+                    super::table::attack_move_arrived(state, h, None);
                     super::table::walk_dropped(state, h);
                 } else if !u.entries.order.is_empty() {
                     // Its check comes 0.01 s after the move's end (c-SBG-1:
@@ -3929,8 +3929,18 @@ pub(super) fn attack_moves_arrived(state: &mut State) {
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.next_acquire = a.next_check;
         }
+        // Its walk ended short of the point, outside the arrival radius,
+        // or reached it (c-SAK-1: footman 3 47.7 away at 57.388206;
+        // c-RZJ-1: footman 6 14.3 away at 38.577015).
+        let radius = mul(ARRIVAL, 32.0f32.to_bits());
+        let short = state.unit(Some(h)).and_then(|u| {
+            u.movement.map(|m| {
+                let (dx, dy) = (sub(u.x, m.target[0]), sub(u.y, m.target[1]));
+                real_of(add(mul(dx, dx), mul(dy, dy))) > real_of(mul(radius, radius))
+            })
+        });
         set_attack_move(state, h, None);
-        super::table::attack_move_arrived(state, h);
+        super::table::attack_move_arrived(state, h, short);
     }
 }
 
@@ -3987,7 +3997,7 @@ pub(super) fn attack_moves(state: &mut State) {
                 set_attack_move(state, h, None);
                 // Its objects go with it (c-SAK-1: the Blademaster at
                 // 5118).
-                super::table::attack_move_arrived(state, h);
+                super::table::attack_move_arrived(state, h, None);
             }
             // PROVISIONAL: the target is gone without a hit of this unit
             // (not measured); it walks on.

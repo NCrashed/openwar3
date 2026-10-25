@@ -805,13 +805,15 @@ pub(super) fn game_order_arrived(state: &mut super::State, h: u32) {
 
 /// Unit `h`'s attack-move ends at its arrival at its point (c-SAK-1:
 /// footman 3 at 57.388206): the first of its order's kept objects is
-/// freed, then, for an attack-move taken up again after an attack, the
-/// ending takes 3 objects, freed at once after it (the last first), then
-/// the rest of its order's objects.
+/// freed, then, for a walk that ended short of the point (`short`), the
+/// move ability starts the order once more: 3 objects, freed at once
+/// after it (the last first); then the rest of its order's objects. A
+/// walk that reached the point takes none (c-RZJ-1: footman 6 at
+/// 38.577015, 14.3 from it). Without `short`, an attack-move taken up
+/// again after an attack counts as ended short.
 ///
-/// PROVISIONAL: what the 3 objects are, and what makes them, is not read
-/// (the taking up again is the one difference seen).
-pub(super) fn attack_move_arrived(state: &mut super::State, h: u32) {
+/// PROVISIONAL: the other callers' rule is not read.
+pub(super) fn attack_move_arrived(state: &mut super::State, h: u32, short: Option<bool>) {
     let tick = state.table.now;
     let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
     if let Some(f) = first {
@@ -820,7 +822,7 @@ pub(super) fn attack_move_arrived(state: &mut super::State, h: u32) {
     // Only an attack-move taken up again after an attack (c-SAK-1: none
     // for the Blademaster's, never interrupted, at 1573).
     let resumed = entries(state, h).is_some_and(|e| std::mem::take(&mut e.resumed_move));
-    let ending = if resumed {
+    let ending = if short.unwrap_or(resumed) {
         state.table.take_n(tick, 3, "attack-move: arrival")
     } else {
         Vec::new()

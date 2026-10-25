@@ -725,21 +725,34 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         // 3.937711, 40 ticks after the effect of 3.737711).
         let step_q = add(w.start_q, (since as f32 * 0.005).to_bits());
         let mut any = false;
+        let mut restarts = Vec::new();
         for &o in &s.units {
             let Some(Object::Unit(u)) = s.objects.get(&o) else {
                 continue;
             };
-            if !u.alive || u.hidden || w.hit.contains(&o) || !movement::enemies(s, w.owner, u.owner)
-            {
+            if !u.alive || u.hidden || !movement::enemies(s, w.owner, u.owner) {
                 continue;
             }
             let collision = s.data.units.get(&u.type_id).map_or(0, |t| t.collision);
             let (dx, dy) = (sub(u.x, centre[0]), sub(u.y, centre[1]));
             let reach = add(w.area, collision);
-            if f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach)) {
+            let covered =
+                f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach));
+            // A unit hit already is only covered again: its hit buff
+            // starts again (c-RZJ-1: the Paladin's, restarted at 4.037711,
+            // 4.137711 and 4.237710).
+            if covered && w.hit.contains(&o) {
+                restarts.push((w.caster, o, step_q));
+                continue;
+            }
+            if covered {
                 w.hit.push(o);
                 any = true;
-                deferred.push(Deferred::ShockwaveHit);
+                deferred.push(Deferred::ShockwaveHit {
+                    caster: w.caster,
+                    target: o,
+                    at: step_q,
+                });
                 deferred.push(Deferred::Damage {
                     caster: w.caster,
                     target: o,
@@ -756,6 +769,9 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         // 1693 at 3.937711).
         if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
             *fog = Some((w.caster, step_q));
+        }
+        for (caster, o, at) in restarts {
+            super::table::shockwave_covered(s, caster, o, at);
         }
     }
     waves.retain(|w| tick - w.start < wave_end(w));
@@ -865,8 +881,9 @@ enum Deferred {
         stun: (u32, u32),
         objects: Vec<u32>,
     },
-    /// The object a shockwave's hit takes before its damage.
-    ShockwaveHit,
+    /// The object a shockwave's hit takes before its damage: the wave's
+    /// caster, the unit and the step's queue time.
+    ShockwaveHit { caster: u32, target: u32, at: u32 },
     /// The buff a Blizzard wave puts on a unit it hits, to queue time
     /// `end`.
     BlizzardHit { target: u32, end: u32 },
@@ -983,7 +1000,9 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
-            Deferred::ShockwaveHit => super::table::shockwave_hit(&mut state.borrow_mut()),
+            Deferred::ShockwaveHit { caster, target, at } => {
+                super::table::shockwave_hit(&mut state.borrow_mut(), caster, target, at);
+            }
             Deferred::BlizzardHit { target, end } => {
                 super::table::blizzard_hit(&mut state.borrow_mut(), target, end);
             }

@@ -69,6 +69,8 @@ pub struct ObjectTable {
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
     timed_q: Vec<(u32, u32, &'static str)>,
+    /// The hit buffs of Shockwaves: caster, unit, object.
+    pub shock_buffs: Vec<(u32, u32, u32)>,
     /// Objects freed by a timer of the world clock (`free_at_clock`).
     timed_w: Vec<(u32, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
@@ -106,6 +108,7 @@ impl ObjectTable {
             missiles: Default::default(),
             timed: Vec::new(),
             timed_q: Vec::new(),
+            shock_buffs: Vec::new(),
             timed_w: Vec::new(),
             ends_late: Vec::new(),
             log: None,
@@ -2146,15 +2149,46 @@ pub(super) fn shockwave_effect(state: &mut super::State) {
     }
 }
 
-/// A unit is hit by a Shockwave's step: an object before its damage
-/// (c-RZJ-1: 1690 at 3.937711).
-///
-/// PROVISIONAL: kept; what frees it (0.12 .. 0.42 s later in c-RZJ-1) is
-/// not read.
-pub(super) fn shockwave_hit(state: &mut super::State) {
+/// Unit `h` is hit by a Shockwave of `caster` at the step of queue time
+/// `at`: the wave's hit buff before its damage, ending `SHOCKWAVE_HIT`
+/// after the last step that covers the unit (`shockwave_covered`), then
+/// freed at that tick's end (c-RZJ-1: the Paladin's 1690, hit at
+/// 3.937711, last covered at 4.237710, off at 4.357710).
+pub(super) fn shockwave_hit(state: &mut super::State, caster: u32, h: u32, at: u32) {
     let tick = state.table.now;
-    state.table.take(tick, "Shockwave: hit");
+    let o = state.table.take(tick, "Shockwave: hit buff");
+    state.table.free_at_q(
+        ow3_math::add(at, SHOCKWAVE_HIT.to_bits()),
+        o,
+        "Shockwave: hit buff",
+    );
+    state.table.shock_buffs.push((caster, h, o));
 }
+
+/// A later step of `caster`'s Shockwave covers unit `h` again at queue
+/// time `at`: its hit buff starts again.
+pub(super) fn shockwave_covered(state: &mut super::State, caster: u32, h: u32, at: u32) {
+    let Some(&(_, _, o)) = state
+        .table
+        .shock_buffs
+        .iter()
+        .find(|b| b.0 == caster && b.1 == h)
+    else {
+        return;
+    };
+    if !state.table.timed_q.iter().any(|t| t.1 == o) {
+        return;
+    }
+    state.table.timed_q.retain(|t| t.1 != o);
+    state.table.free_at_q(
+        ow3_math::add(at, SHOCKWAVE_HIT.to_bits()),
+        o,
+        "Shockwave: hit buff",
+    );
+}
+
+/// How long a Shockwave's hit buff lasts from its last start (0.12 s).
+const SHOCKWAVE_HIT: f32 = 0.12;
 
 /// A Blizzard wave hits unit `_h`: its short buff, taken off at queue
 /// time `end` (the wave's plus 0.99 s) and freed at that tick's end

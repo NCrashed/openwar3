@@ -2029,6 +2029,17 @@ pub(super) fn slowed_now(state: &mut State, h: u32) {
     }
 }
 
+/// The earliest timed reaction end in this tick, if any.
+pub(super) fn next_reaction_end(state: &State) -> Option<u32> {
+    let limit = add(state.move_clock, crate::timers::TICK);
+    state
+        .moving
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)).and_then(|u| u.movement?.reaction_end))
+        .filter(|&e| real_of(e) <= real_of(limit))
+        .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)))
+}
+
 /// Whether unit `h` walks a move order now.
 pub(super) fn on_move(state: &State, h: u32) -> bool {
     state
@@ -5265,7 +5276,7 @@ pub(super) fn retaliate(
     if calls {
         for &h in &reached {
             if h != victim {
-                super::creeps::consider_spell(state, h, victim, attacker);
+                super::creeps::consider_spell(state, h, victim, attacker, None);
             }
         }
     }

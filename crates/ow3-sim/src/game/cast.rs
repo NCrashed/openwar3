@@ -878,8 +878,9 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .iter()
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
+        let early = std::mem::take(&mut s.early_effects);
         for (h, c) in casting {
-            if c.effect_at == Some(tick) {
+            if c.effect_at == Some(tick) && !early.contains(&h) {
                 // Its objects count in the tick of its queue time.
                 s.table_at(c.effect_q);
                 // A spell on a target that died ends the cast at once
@@ -925,6 +926,13 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     for h in expired {
         super::widgets::kill_unit(vm, state, Some(h), None);
     }
+    run_deferred(vm, state, deferred);
+    let mut s = state.borrow_mut();
+    s.table.now = s.ticks;
+}
+
+/// What the effects of a tick left for after the state's borrow.
+fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>) {
     for d in deferred {
         match d {
             Deferred::SpellHit {
@@ -970,6 +978,36 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
         }
     }
+}
+
+/// The effects due in this tick whose queue times come before `limit`,
+/// the time of the tick's updates: they run first, as timers of the queue
+/// ahead of the updates (c-RZJ-1: the Ogre Lord's Shockwave at 3.737711,
+/// before the updates of 3.738891).
+pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32) {
+    let mut deferred = Vec::new();
+    {
+        let mut s = state.borrow_mut();
+        let s = &mut *s;
+        let tick = s.ticks;
+        let due: Vec<(u32, Casting)> = s
+            .units
+            .iter()
+            .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
+            .filter(|(_, c)| {
+                c.effect_at == Some(tick) && f32::from_bits(c.effect_q) < f32::from_bits(limit)
+            })
+            .collect();
+        for (h, c) in due {
+            s.table_at(c.effect_q);
+            s.early_effects.push(h);
+            if !effect(s, h, &c, &mut deferred) {
+                movement::end_cast(s, h);
+            }
+            s.table.now = tick;
+        }
+    }
+    run_deferred(vm, state, deferred);
     let mut s = state.borrow_mut();
     s.table.now = s.ticks;
 }

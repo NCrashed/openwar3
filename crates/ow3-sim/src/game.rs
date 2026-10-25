@@ -948,7 +948,9 @@ pub struct State {
     call_acquired: Vec<u32>,
     /// Creep spells decided in this tick, ordered after its checks
     /// (SPEC-0047): caster, ability, target.
-    creep_casts: Vec<(u32, i32, u32)>,
+    creep_casts: Vec<(u32, i32, u32, u32)>,
+    /// Units whose cast's effect ran before this tick's updates.
+    early_effects: Vec<u32>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1144,6 +1146,7 @@ impl State {
             mirrors: Vec::new(),
             call_acquired: Vec::new(),
             creep_casts: Vec::new(),
+            early_effects: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1809,7 +1812,17 @@ impl<'a> Game<'a> {
             attack::after_swing_walks(&mut self.state.borrow_mut(), Some(at));
         }
         let bound = at.or_else(|| attack::first_hit_in_tick(&self.state.borrow()));
+        // The effects of casts due before the first of those ends come
+        // first (c-RZJ-1: the Shockwave at 3.737711 before a reaction end
+        // at 3.738891 in 748).
+        let first_end = movement::next_reaction_end(&self.state.borrow());
+        if let Some(end) = first_end {
+            cast::effects_before(&mut self.vm, &self.state, end);
+        }
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
+        if let Some(at) = at {
+            cast::effects_before(&mut self.vm, &self.state, at);
+        }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::attack_moves_arrived(&mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());
@@ -1910,8 +1923,10 @@ impl<'a> Game<'a> {
         // Shockwave at 3.177711, after the camp's acquisitions).
         {
             let mut s = self.state.borrow_mut();
-            for (h, ability, target) in std::mem::take(&mut s.creep_casts) {
+            for (h, ability, target, at) in std::mem::take(&mut s.creep_casts) {
+                let previous = s.event_time.replace(at);
                 cast::creep_cast(&mut s, h, ability, 1, target);
+                s.event_time = previous;
             }
         }
         // The zero hits after stuns, after the checks (SPEC-0037).
@@ -1937,8 +1952,10 @@ impl<'a> Game<'a> {
         // timer's place there is not read).
         {
             let mut s = self.state.borrow_mut();
-            for (h, ability, target) in std::mem::take(&mut s.creep_casts) {
+            for (h, ability, target, at) in std::mem::take(&mut s.creep_casts) {
+                let previous = s.event_time.replace(at);
                 cast::creep_cast(&mut s, h, ability, 1, target);
+                s.event_time = previous;
             }
         }
         // Internal objects of the checksum freed or made now (SPEC-0024).

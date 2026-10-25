@@ -574,7 +574,7 @@ fn splash_at(
 /// The answers to a hit of `h` on `target`: the creep's spell, the
 /// victim's call and its friends' (SPEC-0019, SPEC-0047).
 fn answer_hit(s: &mut State, h: u32, target: u32, impact: Option<[u32; 2]>) {
-    super::creeps::consider_spell(s, target, target, h);
+    super::creeps::consider_spell(s, target, target, h, None);
     if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
         super::movement::retaliate(
             s,

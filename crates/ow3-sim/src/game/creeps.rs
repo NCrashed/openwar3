@@ -302,7 +302,7 @@ pub(super) fn call_for_help(
     // The creeps the call reached may cast their spells, after they took
     // the target (SPEC-0047).
     for h in reached {
-        consider_spell(state, h, caller, target);
+        consider_spell(state, h, caller, target, from);
     }
     answered
 }
@@ -502,6 +502,10 @@ pub(super) fn after_stun(state: &mut State, h: u32, now: u32) {
     }
 }
 
+/// The timer from a creep spell's decision to its order, 0.001 s
+/// (SPEC-0047).
+const CREEP_SPELL_DELAY: u32 = 0x3A83_126F;
+
 /// How long a creep's spell decision holds the spell, 0.5 s (SPEC-0047).
 const DECISION_HOLD: u32 = 0x3F00_0000;
 
@@ -516,7 +520,13 @@ const DECISION_HOLD: u32 = 0x3F00_0000;
 /// PROVISIONAL: the per-player limit is taken as "no other unit of the
 /// player casting" (SPEC-0047, open question 1); the cast range is not
 /// checked.
-pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u32) {
+pub(super) fn consider_spell(
+    state: &mut State,
+    h: u32,
+    victim: u32,
+    attacker: u32,
+    call_q: Option<u32>,
+) {
     if !is_creep(state, h) {
         return;
     }
@@ -590,7 +600,12 @@ pub(super) fn consider_spell(state: &mut State, h: u32, victim: u32, attacker: u
         .count();
     let threshold = if victim == h && life < 400.0 { 2 } else { 3 };
     if count >= threshold {
-        state.creep_casts.push((h, ability, attacker));
+        // Ordered by a 0.001 s timer of the creep's computer player from
+        // the call's queue time (c-RZJ-1: 3.176711 -> 3.177711).
+        let call_q =
+            call_q.unwrap_or_else(|| state.event_time.unwrap_or_else(|| state.timers.time()));
+        let order_q = add(call_q, CREEP_SPELL_DELAY);
+        state.creep_casts.push((h, ability, attacker, order_q));
     }
 }
 

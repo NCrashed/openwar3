@@ -1329,8 +1329,14 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
         // The object of the old target goes 0.0001 s later; those kept to
         // the target's death follow the new one (c-SAK-1: gnoll 12, 908
         // and 4764).
-        let current = entries(state, h).and_then(|e| e.current.take());
-        if let Some(c) = current {
+        // A reaction delay still running goes first (c-RZJ-1: 2903, then
+        // the old target's 2902, at 15.708464).
+        let old = entries(state, h).map(|e| {
+            let mut old = std::mem::take(&mut e.reaction);
+            old.extend(e.current.take());
+            old
+        });
+        for c in old.unwrap_or_default() {
             state.table.defer(c, "acquisition: attack object");
         }
         let a = state.table.take_n(tick, 2, "acquisition: extra object");

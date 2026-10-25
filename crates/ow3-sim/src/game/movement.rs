@@ -4371,7 +4371,12 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             .nearest_enemy(state, h)
             // Also on an attack-move with no target (c-SAK-1: footman 4
             // took kobold 19, 1236 away, at 10005).
-            .or_else(|| remembered().filter(|_| idle || matches!(check, Check::AttackMove { .. })))
+            // Also at a check that only records (c-RXR-1: headhunters 1048703
+            // and 1048702 at 32.349987 and 32.379986).
+            .or_else(|| {
+                remembered()
+                    .filter(|_| idle || matches!(check, Check::AttackMove { .. } | Check::Record))
+            })
         else {
             continue;
         };

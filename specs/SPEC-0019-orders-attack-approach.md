@@ -475,6 +475,17 @@ SPEC-0004: with `R = range / 32 + c_a / 32 + c_t / 32` (at least
 0.49) and `d2` the squared distance between the two centres divided by
 32, the target is in range if `d2 < R * R` or `|d2 - R * R| < 0.001`.
 
+The attack start that comes at the end of a movement (the arrival of a
+chase or face movement, whose end runs the attack start) tests
+`range + 100` instead of `range` (100 is a game constant); every other
+start (at a cooldown's end, at a backswing's end, at an acquisition)
+tests the plain range. Read in `c-SBI-1`: the ogre (`nogr`, range 100,
+radius 1.5 cells) at its arrival at q 1.499999 tested 200 and passed at
+6.204 cells from grunt 4 (radius 1.0; `R` = 6.25 + 1.5 + 1.0 = 8.75),
+while its start at its cooldown end at 2.849999 tested 100; the other
+arrivals of 1.0 .. 3.25 s (2.819998 and kobold 7 at 3.179997) also
+tested 200.
+
 ### Chasing a moving target
 
 The attacker does not steer at the target's current position. It walks

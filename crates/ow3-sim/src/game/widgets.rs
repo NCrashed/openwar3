@@ -862,14 +862,17 @@ pub(super) fn kill_unit(
         // `bountysides` on game generator 0 (c-SAK-1: kobold 9 at 13.759973,
         // 1d3).
         // PROVISIONAL: the gold itself is not paid.
-        // A kill by the creeps rolls none (c-SAK-1: footman 7 at 23.82), nor
-        // one of the killer's own unit (c-RZJ-1: footman 5 in the Archmage's
-        // Blizzard at 15.70).
+        // Only a creep killed by a player rolls it: none for a kill by the
+        // creeps (c-SAK-1: footman 7 at 23.82), of the killer's own unit
+        // (c-RZJ-1: footman 5 in the Archmage's Blizzard at 15.70) or of
+        // another player's (c-RXR-1: a footman killed by player 1 at
+        // 11.799021).
         let paid = {
             let s = state.borrow();
             let owner = s.unit(Some(h)).map(|u| u.owner);
-            s.unit(killer)
-                .is_some_and(|k| k.owner != super::creeps::CREEPS && Some(k.owner) != owner)
+            owner == Some(super::creeps::CREEPS)
+                && s.unit(killer)
+                    .is_some_and(|k| k.owner != super::creeps::CREEPS)
         };
         // The records of the game sum: one alive less for the owner, one
         // killed more for the killer's player (SPEC-0024, "Game sum G";

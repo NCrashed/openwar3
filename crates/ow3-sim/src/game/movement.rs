@@ -5805,15 +5805,15 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // Below an attack it took on its own lies the walk back to its
             // guard point (c-RXR-1: grunt 14 at 4813). PROVISIONAL: the
             // 50 it accepts; creeps go home by SPEC-0030.
-            // A creep's walk to its guard point waits for the end of its
-            // backswing (c-RXD-1: creep 9, whose hit killed unit 3 at 6665,
-            // stood in its backswing).
-            let creep = u.owner == super::creeps::CREEPS;
+            // The walk to its guard point waits for the end of its backswing
+            // (c-RXD-1: creep 9, whose hit killed unit 3 at 6665, stood in
+            // its backswing); out of it, it walks at once, a player's unit as
+            // a creep (c-RXR-1: grunts 1048698 and 1048699 at 11.799021).
             let swinging = f32::from_bits(u.backswing_end) > f32::from_bits(now);
-            if own && (!creep || swinging) {
+            if own && swinging {
                 u.guard_return = Some(at);
             }
-            if own && creep && !swinging {
+            if own && !swinging {
                 to_guard.push(h);
             }
             u.acquire_seq = seq;
@@ -5848,7 +5848,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // An attack taken by answering a call ends with an object, freed
             // 0.0001 s later; one taken by its own check makes none
             // (SPEC-0024, "Unit death"; c-SAK-1: 4764).
-            if state.unit(Some(h)).is_some_and(|u| u.entries.by_call) {
+            // A creep's only: a player's unit makes none (c-RXR-1: headhunter
+            // 1048700 at 11.799021).
+            if state
+                .unit(Some(h))
+                .is_some_and(|u| u.entries.by_call && u.owner == super::creeps::CREEPS)
+            {
                 super::table::attack_ended(state, h, false);
             }
             // A creep walks back to its guard point at once, where its

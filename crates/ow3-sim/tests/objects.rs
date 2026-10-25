@@ -203,6 +203,15 @@ fn orc_spells_report() {
     turn_parts("c-SBI-1");
 }
 
+/// `c-SBJ-1`: Undead spells (Death Coil, Frost Nova, Impale, Carrion
+/// Swarm) (report only).
+#[test]
+fn undead_spells_report() {
+    eprintln!("c-SBJ-1");
+    compare_objects("c-SBJ-1");
+    turn_parts("c-SBJ-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

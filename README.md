@@ -20,7 +20,7 @@ What is checked against the game:
 
 - file formats, the JASS language and VM, the number arithmetic and the
   random numbers match the game bit for bit;
-- 25 of 31 replays of our test maps (one mechanic each) match the game turn
+- 26 of 31 replays of our test maps (one mechanic each) match the game turn
   by turn, including the turn checksum the game uses to detect desyncs;
 - in the three hero tests (Mountain King, Blademaster, Archmage, Paladin,
   footmen, water elementals, creeps), the battle test (footmen, riflemen,
@@ -36,7 +36,8 @@ What is checked against the game:
 - in the Orc hero spells test (Chain Lightning, War Stomp and Healing Wave
   on a creep camp) every object change (1431) and turn checksum (161)
   match too, and so do those of the Flame Strike test (640 changes, 160
-  turns).
+  turns) and the Night Elf spells test (Mana Burn, Fan of Knives,
+  Entangling Roots: 1276 changes, 161 turns).
 
 ## Roadmap
 

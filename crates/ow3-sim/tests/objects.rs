@@ -237,12 +237,21 @@ fn flame_strike_objects() {
     }
 }
 
-/// `c-SBK-1`: Night Elf spells (report only).
+/// `c-SBK-1`: Night Elf spells (Mana Burn, Fan of Knives, Entangling
+/// Roots): every turn checksum.
 #[test]
-fn night_elf_spells_report() {
-    eprintln!("c-SBK-1");
-    compare_objects("c-SBK-1");
-    turn_parts("c-SBK-1");
+fn night_elf_spells_checksums() {
+    if let Some(first) = turn_parts("c-SBK-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBK-1`'s object table.
+#[test]
+fn night_elf_spells_objects() {
+    if let Some(first) = compare_objects("c-SBK-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

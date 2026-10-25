@@ -718,6 +718,30 @@ fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
     sqrt(add(mul(dx, dx), mul(dy, dy)))
 }
 
+/// Where unit `h` is drawn, the base of its launch point: its position, or
+/// that + (-16, -16) for a unit whose footprint class (collision / 32:
+/// below 0.5, below 1.0, below 1.5, more) is odd (c-SBK-1: the kobold
+/// geomancer, collision 31, launching from (-436, -16) at (-420, 0)).
+fn drawn_position(state: &State, h: u32) -> [u32; 2] {
+    let Some(u) = state.unit(Some(h)) else {
+        return [0, 0];
+    };
+    let r = state
+        .data
+        .units
+        .get(&u.type_id)
+        .map_or(0.0, |t| f32::from_bits(t.collision) / 32.0);
+    let odd = (0.5..1.0).contains(&r) || r >= 1.5;
+    if odd {
+        [
+            add(u.x, (-16.0f32).to_bits()),
+            add(u.y, (-16.0f32).to_bits()),
+        ]
+    } else {
+        [u.x, u.y]
+    }
+}
+
 /// The missile of `h` launched now at `target`, if its type has a missile
 /// speed and the target is not nearer than `Missilespeed * 0.1` to the
 /// launch point (then it hits at once). The launch point is `launchY`
@@ -750,10 +774,11 @@ fn launch(
     // the right, floored to quarters (c-RXR-1, five troll missiles).
     let (fx, fy) = (cos(u.facing), sin(u.facing));
     let [side, ahead] = data.launch;
+    let [bx, by] = drawn_position(state, h);
     let quarter = |v: u32| mul(floor(mul(v, 4.0f32.to_bits())), 0.25f32.to_bits());
     let at = [
-        quarter(add(u.x, add(mul(fx, ahead), mul(fy, side)))),
-        quarter(add(u.y, sub(mul(fy, ahead), mul(fx, side)))),
+        quarter(add(bx, add(mul(fx, ahead), mul(fy, side)))),
+        quarter(add(by, sub(mul(fy, ahead), mul(fx, side)))),
     ];
     let flight = distance(at, to);
     let step = mul(speed, HOMING_STEP);
@@ -816,10 +841,11 @@ pub(super) fn launch_spell_missile(
     } else {
         state.data.units.get(&u.type_id)?.launch
     };
+    let [bx, by] = drawn_position(state, h);
     let (fx, fy) = (cos(u.facing), sin(u.facing));
     let at = [
-        add(u.x, add(mul(fx, ahead), mul(fy, side))),
-        add(u.y, sub(mul(fy, ahead), mul(fx, side))),
+        add(bx, add(mul(fx, ahead), mul(fy, side))),
+        add(by, sub(mul(fy, ahead), mul(fx, side))),
     ];
     let to = super::movement::position_of(state, target)?;
     let flight = distance(at, to);
@@ -984,7 +1010,13 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let previous = {
                 let mut s = state.borrow_mut();
                 let end = s.event_time.unwrap_or(s.move_clock);
-                let at = if m.homing.is_none() && f32::from_bits(m.expiry) < f32::from_bits(end) {
+                // (A missile of one timer, Death Coil's or a knife, at the end: c-SBK-1,
+                // the knife at 4.6952386 in the tick ending 4.699898.)
+                let one_timer = stun == (0, 0) || stun == KNIFE;
+                let at = if m.homing.is_none()
+                    && !one_timer
+                    && f32::from_bits(m.expiry) < f32::from_bits(end)
+                {
                     m.expiry
                 } else {
                     end

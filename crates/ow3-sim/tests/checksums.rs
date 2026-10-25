@@ -121,8 +121,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBK-1.w3g",
-        "the Night Elf spells test (Mana Burn, Fan of Knives, Entangling Roots): in \
-         progress (tests/objects.rs, night_elf_spells_report)",
+        "the Night Elf spells test (Mana Burn, Fan of Knives, Entangling Roots): every \
+         turn checksum to its end matches with the object table started as the game has \
+         it (tests/objects.rs, night_elf_spells_checksums); this test runs without it",
     ),
     (
         "c-SBJ-1.w3g",

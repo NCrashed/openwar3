@@ -194,6 +194,9 @@ pub struct AbilityLevel {
     pub data_f: u32,
     /// `UnitIDN`: the unit type an ability summons (SPEC-0044).
     pub unit_id: i32,
+    /// `CastN`: a spell's time from the cast point to its effect
+    /// (SPEC-0039, Flame Strike).
+    pub cast: u32,
 }
 
 /// The pathing of a destructable type (`DestructableData.slk`,
@@ -841,7 +844,7 @@ impl ObjectData {
         for level in 1..=4 {
             for field in [
                 "Cool", "Cost", "Rng", "DataA", "DataB", "DataC", "Dur", "HeroDur", "Area",
-                "DataD", "DataE", "DataF", "UnitID",
+                "DataD", "DataE", "DataF", "UnitID", "Cast",
             ] {
                 ability_columns.push(format!("{field}{level}"));
             }
@@ -868,7 +871,7 @@ impl ObjectData {
                     buff: code(values[10].as_ref()),
                     per_level: (0..4)
                         .map(|l| {
-                            let at = 11 + 13 * l;
+                            let at = 11 + 14 * l;
                             AbilityLevel {
                                 cooldown: real(values[at].as_ref()),
                                 cost: cost(values[at + 1].as_ref()),
@@ -881,6 +884,7 @@ impl ObjectData {
                                 data_e: real(values[at + 10].as_ref()),
                                 data_f: real(values[at + 11].as_ref()),
                                 unit_id: code(values[at + 12].as_ref()),
+                                cast: real(values[at + 13].as_ref()),
                             }
                         })
                         .collect(),

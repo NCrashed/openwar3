@@ -1515,6 +1515,31 @@ fn entangling_roots() {
     assert_eq!(hits, expected);
 }
 
+/// SPEC-0039, flame strike: two footmen 60 from the point take 15 at
+/// `o + 326` and every 0.33 s after, 9 times, to `o + 855`.
+#[test]
+fn flame_strike() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Hblm', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2440, -2000, 180)\n    call CreateUnit(Player(1), 'hfoo', -2500, -1940, 180)\n    call SelectHeroSkill(a, 'AHfs')\n    call IssueImmediateOrder(a, \"holdposition\")\n    call IssueImmediateOrder(t, \"holdposition\")",
+        "call IssuePointOrder(a, \"flamestrike\", -2500, -2000)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 1000);
+    let hits: Vec<u64> = path
+        .windows(2)
+        .filter(|w| (w[0].1[1].life - w[1].1[1].life - 15.0).abs() < 0.02)
+        .map(|w| w[1].0 - ORDER_TICK)
+        .collect();
+    // PROVISIONAL: the game's steps drift to 67 ticks once; ours stay 66.
+    let game = [326, 392, 458, 524, 590, 657, 723, 789, 855];
+    assert_eq!(hits.len(), game.len(), "{hits:?}");
+    for (ours, game) in hits.iter().zip(game) {
+        assert!(ours.abs_diff(game) <= 1, "{hits:?}");
+    }
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

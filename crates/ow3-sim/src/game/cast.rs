@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 16] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 17] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -60,6 +60,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 16] = [
     ("manaburn", *b"AEmb", 852_179, Aim::Enemy),
     ("deathcoil", *b"AUdc", 852_100, Aim::Enemy),
     ("entanglingroots", *b"AEer", 852_171, Aim::Enemy),
+    ("flamestrike", *b"AHfs", 852_488, Aim::Point),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -575,10 +576,16 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
             .abilities
             .get(&c.ability)
             .map_or(c.ability, |a| a.code);
-        (&base.to_be_bytes() == b"AHbz").then(|| {
-            let waves = f32::from_bits(numbers(state, c.ability, c.level).data[0]) as u64;
-            FIRST_WAVE + WAVE_EVERY * waves.saturating_sub(1) + CHANNEL_AFTER
-        })
+        (&base.to_be_bytes() == b"AHbz")
+            .then(|| {
+                let waves = f32::from_bits(numbers(state, c.ability, c.level).data[0]) as u64;
+                FIRST_WAVE + WAVE_EVERY * waves.saturating_sub(1) + CHANNEL_AFTER
+            })
+            // A Flame Strike's order ends at its landing (SPEC-0039).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AHfs")
+                    .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
+            })
     });
     let effect_q = add(
         state.event_time.unwrap_or_else(|| state.timers.time()),
@@ -1576,6 +1583,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         }
         // PROVISIONAL: the hold of the roots is not built.
         b"AEer" => bounce(s, h, c, &n, BounceKind::Roots),
+        b"AHfs" => flame_strike(s, h, c, &n),
         b"AUfn" => {
             let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
                 return true;
@@ -1978,6 +1986,9 @@ pub struct Bounce {
     left: u32,
     area: f32,
     hit: Vec<u32>,
+    /// A Flame Strike's point and the queue time of its next hit.
+    point: [u32; 2],
+    q: u32,
 }
 
 /// What a [`Bounce`] does where it arrives.
@@ -1992,6 +2003,8 @@ pub enum BounceKind {
     /// Entangling Roots' damage: a 0 event, nine hits a second apart, a
     /// last 0 event.
     Roots,
+    /// Flame Strike's hits on the units round its point.
+    Flame,
 }
 
 /// The time between two jumps, 0.25 s.
@@ -2024,6 +2037,53 @@ fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kin
         left,
         area: f32::from_bits(n.area),
         hit: Vec::new(),
+        point: [0, 0],
+        q: 0,
+    });
+}
+
+/// The tick whose clock, at its end, reaches queue time `q`.
+fn tick_of(s: &State, q: u32) -> u64 {
+    let (mut tick, mut clock) = (s.ticks, s.move_clock);
+    while f32::from_bits(q) > f32::from_bits(add(clock, crate::timers::TICK)) {
+        clock = add(clock, crate::timers::TICK);
+        tick += 1;
+    }
+    tick
+}
+
+/// A Flame Strike from `h` at `point`: it lands `Cast` after the cast
+/// point and hits the enemies within Area of it with DataA then and every
+/// DataB after, `HeroDur / DataB + 1` times (SPEC-0039: 9).
+///
+/// PROVISIONAL: the steps are exact 0.33 s on the clock, the game's drift
+/// to 67 ticks once (657) not read; the later DataC a second, the hits'
+/// order and the spell's objects are not built.
+fn flame_strike(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel) {
+    let (Some(point), Some(owner)) = (c.point, s.unit(Some(h)).map(|u| u.owner)) else {
+        return;
+    };
+    let q = add(c.effect_q, n.cast);
+    let every = f32::from_bits(n.data[1]);
+    let hits = if every > 0.0 {
+        (f32::from_bits(n.hero_duration) / every) as u32 + 1
+    } else {
+        1
+    };
+    let at = tick_of(s, q);
+    s.bounces.push(Bounce {
+        caster: h,
+        owner,
+        kind: BounceKind::Flame,
+        target: h,
+        at,
+        amount: n.data[0],
+        factor: n.data[1],
+        left: hits,
+        area: f32::from_bits(n.area),
+        hit: Vec::new(),
+        point,
+        q,
     });
 }
 
@@ -2044,6 +2104,40 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
         }
         // Entangling Roots: 0 at 30 ticks after the cast point, DataA 2 ticks
         // later and every second, nine times, then 0 (SPEC-0041).
+        if b.kind == BounceKind::Flame {
+            let [x, y] = b.point.map(f32::from_bits);
+            let hit: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    s.unit(Some(o)).is_some_and(|t| {
+                        let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+                        t.alive
+                            && !t.hidden
+                            && movement::enemies(s, b.owner, t.owner)
+                            && dx * dx + dy * dy <= b.area * b.area
+                    })
+                })
+                .collect();
+            for o in hit {
+                deferred.push(Deferred::Damage {
+                    caster: b.caster,
+                    target: o,
+                    amount: b.amount,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+            // The next hit DataB on the clock (`factor` holds it).
+            b.q = add(b.q, b.factor);
+            b.at = tick_of(s, b.q);
+            b.left -= 1;
+            continue;
+        }
         if b.kind == BounceKind::Roots {
             let amount = if b.left == 11 || b.left == 1 {
                 0

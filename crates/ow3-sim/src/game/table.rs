@@ -1288,10 +1288,11 @@ pub(super) fn impact_unused(state: &mut super::State, h: u32) {
 
 /// Unit `h` starts a cast: the object of its order kept to then is freed.
 pub(super) fn cast_started(state: &mut super::State, h: u32) {
-    let tick = state.table.now;
+    // At the tick's end (c-RZJ-1: the Ogre Lord's 2465 at 12.153961,
+    // after the walks freed at its update).
     let start = entries(state, h).map(|e| std::mem::take(&mut e.cast_start));
     for e in start.unwrap_or_default() {
-        state.table.free(tick, e, "spell ability: order start");
+        state.table.defer(e, "spell ability: order start");
     }
     // The walk into range ends.
     walk_dropped(state, h);

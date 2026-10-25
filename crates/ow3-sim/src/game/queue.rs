@@ -93,6 +93,7 @@ pub(super) fn push(state: &mut State, h: u32, order: Queued) -> bool {
                 u.orders.last = u.movement.map_or(0, |m| m.last_order_id());
             }
             u.orders.orders.push_back(order);
+            super::table::order_queued(state, h);
             true
         }
         _ => false,
@@ -176,7 +177,17 @@ pub(super) fn pass(state: &mut State) {
             _ => None,
         };
         if let Some(order) = order {
+            let moving = matches!(
+                order,
+                Queued::Point {
+                    name: "move" | "smart",
+                    ..
+                }
+            );
             start(state, h, order);
+            if moving {
+                super::table::queued_move_started(state, h);
+            }
         }
     }
 }

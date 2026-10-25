@@ -428,6 +428,8 @@ pub struct UnitEntries {
     pub blizzard_buff: Option<(u32, u32)>,
     /// The parts of a harvest order freed when the walk to the mine ends.
     pub harvest_arrive: Vec<u32>,
+    /// The objects of its queued orders, in their order.
+    pub queued: std::collections::VecDeque<u32>,
     /// Its object while inside a gold mine.
     pub harvest_inside: Option<u32>,
     /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
@@ -1101,6 +1103,37 @@ pub(super) fn harvest_arrived(state: &mut super::State, h: u32) {
     let parts = entries(state, h).map(|e| std::mem::take(&mut e.harvest_arrive));
     for e in parts.unwrap_or_default() {
         state.table.defer(e, "harvest: order start");
+    }
+}
+
+/// Unit `h` queues an order behind its current one: one object, kept with
+/// the queued order to its end (c-RTW-3: 1271 at 17.673035, freed with
+/// the order at 3631).
+pub(super) fn order_queued(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "order queue: entry");
+    if let Some(e) = entries(state, h) {
+        e.queued.push_back(o);
+    }
+}
+
+/// Unit `h` starts its queued move: as a move order without its own order
+/// object and record, the queued entry taking the order's place
+/// (c-RTW-3 at 17.728025: 12 parts, the walk, the last 6 freed 0.0001 s
+/// later, the first 6 and the entry kept to the order's end).
+pub(super) fn queued_move_started(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let Some(entry) = entries(state, h).and_then(|e| e.queued.pop_front()) else {
+        return;
+    };
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 12, "move ability: order start");
+    walk_made_at_order(state, h);
+    for &e in parts[6..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = parts[..6].iter().rev().copied().chain([entry]).collect();
     }
 }
 

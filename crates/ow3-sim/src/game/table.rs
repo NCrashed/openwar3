@@ -61,6 +61,8 @@ pub struct ObjectTable {
     /// The walks of group orders (`group_move_ordered`) and the members
     /// still on them.
     pub group_walks: Vec<(Vec<u32>, Vec<u32>)>,
+    /// Each gold mine's rate part while its timer runs (`mine_queue_timer`).
+    pub mine_queues: std::collections::BTreeMap<u32, u32>,
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
     rest: Vec<(u32, &'static str)>,
@@ -116,6 +118,7 @@ impl ObjectTable {
             expiring: None,
             resumed: Vec::new(),
             group_walks: Vec::new(),
+            mine_queues: std::collections::BTreeMap::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
             rest_w: Vec::new(),
@@ -366,8 +369,6 @@ pub struct UnitEntries {
     pub group_walk: bool,
     /// Its walk was made at its follow leg's end (`follow_leg_ended`).
     pub follow_walk: bool,
-    /// It went into a gold mine once (`first_worker_entered`).
-    pub entered_mine: bool,
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
@@ -1114,31 +1115,32 @@ pub(super) fn harvest_waited(state: &mut super::State, h: u32) {
     }
 }
 
-/// The player's first worker `h` goes into a mine for the first time, as
-/// another worker comes out at the queue time `at` (c-RXI-1: 1048684 at
-/// 6.349778; c-RXD-1: at 21.947317): a rate part of a unit state, ahead
-/// of the objects of the other's way out, freed by its own timer.
+/// A worker comes out of mine `mine` at the queue time `at` and the next
+/// goes in with more still waiting (c-RXI-1: the exits at 6.349778,
+/// 7.349706 and 8.349600; c-RXD-1: 21.947317 and 22.947149): the mine's
+/// rate part of a unit state, made ahead of the objects of the way out, or
+/// its 11 s timer started again; it is freed 0.0001 s after that timer.
 ///
-/// PROVISIONAL: what the part is is not read; its timer ran 13 s in
-/// c-RXI-1 and 12 s in c-RXD-1, and 13 s is taken.
-/// Worker `h` goes into a mine by itself: its first time in, without a
-/// rate part (only an entry at another's exit was seen to make one).
-pub(super) fn mine_entered(state: &mut super::State, h: u32) {
-    if let Some(e) = entries(state, h) {
-        e.entered_mine = true;
-    }
-}
-
-pub(super) fn first_worker_entered(state: &mut super::State, h: u32, at: u32) {
-    if entries(state, h).is_none_or(|e| e.entered_mine) {
-        return;
-    }
-    if let Some(e) = entries(state, h) {
-        e.entered_mine = true;
-    }
-    let tick = state.table.now;
-    let part = state.table.take(tick, "unit state: rate part");
-    let end = ow3_math::add(at, 13f32.to_bits());
+/// PROVISIONAL: what the part's value (-1.0/s) means is not read.
+pub(super) fn mine_queue_timer(state: &mut super::State, mine: u32, at: u32) {
+    let end = ow3_math::add(ow3_math::add(at, 11f32.to_bits()), 0x38D1_B717);
+    let running = state
+        .table
+        .mine_queues
+        .get(&mine)
+        .copied()
+        .filter(|&p| state.table.timed_q.iter().any(|t| t.1 == p));
+    let part = match running {
+        Some(p) => {
+            state.table.timed_q.retain(|t| t.1 != p);
+            p
+        }
+        None => {
+            let tick = state.table.now;
+            state.table.take(tick, "unit state: rate part")
+        }
+    };
+    state.table.mine_queues.insert(mine, part);
     state.table.free_at_q(end, part, "unit state: rate part");
 }
 

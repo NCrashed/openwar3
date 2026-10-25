@@ -827,7 +827,6 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             // Its objects of going in, then its walk ends (SPEC-0024;
             // c-RXI-1: worker 5 at 871).
             super::table::harvest_entered(&mut s, w);
-            super::table::mine_entered(&mut s, w);
             super::table::harvest_arrived(&mut s, w);
             super::table::walk_dropped_at_update(&mut s, w);
             push_aside(&mut s, w);
@@ -909,12 +908,10 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 hide(s, next, true);
                 going_in = Some(next);
             }
-            // The player's first worker going in for the first time (c-RXI-1:
-            // 1048684 at 6.349778; c-RXD-1: at 21.947317).
-            if let Some(n) = going_in
-                && first_worker(s, n) == Some(n)
-            {
-                super::table::first_worker_entered(s, n, left_at);
+            // The next going in with others still waiting: the mine's queue
+            // timer (c-RXI-1: 1271, 1471, 1671).
+            if going_in.is_some() && entry_waits(s, mine) {
+                super::table::mine_queue_timer(s, mine, left_at);
             }
             super::table::harvest_left(s, worker, going_in);
             left <= 0
@@ -1088,11 +1085,12 @@ fn deliver(state: &mut State, h: u32) {
     }
 }
 
-/// The first unit made for the owner of worker `h` that gathers.
-fn first_worker(state: &State, h: u32) -> Option<u32> {
-    let owner = state.unit(Some(h))?.owner;
-    state.units.iter().copied().find(|&w| {
-        state.unit(Some(w)).is_some_and(|u| u.owner == owner) && gathering(state, w).is_some()
+/// Whether a worker has started to wait at mine `mine`.
+fn entry_waits(state: &State, mine: u32) -> bool {
+    state.mines.get(&mine).is_some_and(|e| {
+        e.waiting
+            .iter()
+            .any(|w| !e.starting.iter().any(|(s, _)| s == w))
     })
 }
 

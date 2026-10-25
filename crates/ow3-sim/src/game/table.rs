@@ -2146,6 +2146,16 @@ pub(super) fn shockwave_effect(state: &mut super::State) {
     }
 }
 
+/// A unit is hit by a Shockwave's step: an object before its damage
+/// (c-RZJ-1: 1690 at 3.937711).
+///
+/// PROVISIONAL: kept; what frees it (0.12 .. 0.42 s later in c-RZJ-1) is
+/// not read.
+pub(super) fn shockwave_hit(state: &mut super::State) {
+    let tick = state.table.now;
+    state.table.take(tick, "Shockwave: hit");
+}
+
 /// The time to the free of a Shockwave's objects (`shockwave_effect`).
 const SHOCKWAVE_OBJECTS: f32 = 5.7667;
 

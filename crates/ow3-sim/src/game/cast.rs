@@ -481,6 +481,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             call: Some((point, n.area)),
             slow: None,
             at: None,
+            fog: None,
         });
     }
 }
@@ -590,6 +591,8 @@ pub struct Wave {
     origin: [u32; 2],
     direction: [u32; 2],
     start: u64,
+    /// The queue time of its start, the effect's.
+    start_q: u32,
     /// The radius of its circle, its first distance and its length.
     area: u32,
     length: u32,
@@ -655,7 +658,7 @@ pub(super) fn creep_ready(state: &State, h: u32, ability: i32, level: i32) -> bo
 }
 
 /// The shockwave of `h` on `target` starts (SPEC-0047, "The wave").
-fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel) {
+fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel, start_q: u32) {
     let (Some(u), Some(t)) = (s.unit(Some(h)), s.unit(Some(target))) else {
         return;
     };
@@ -670,6 +673,7 @@ fn shockwave(s: &mut State, h: u32, target: u32, n: &crate::data::AbilityLevel) 
         origin: [u.x, u.y],
         direction: [div(dx, length), div(dy, length)],
         start: s.ticks,
+        start_q,
         area: n.area,
         length: n.data[2],
         amount: n.data[0],
@@ -701,6 +705,10 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
             add(w.origin[0], mul(w.direction[0], distance)),
             add(w.origin[1], mul(w.direction[1], distance)),
         ];
+        // The step's queue time, the effect's plus its ticks (c-RZJ-1:
+        // 3.937711, 40 ticks after the effect of 3.737711).
+        let step_q = add(w.start_q, (since as f32 * 0.005).to_bits());
+        let mut any = false;
         for &o in &s.units {
             let Some(Object::Unit(u)) = s.objects.get(&o) else {
                 continue;
@@ -714,15 +722,24 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
             let reach = add(w.area, collision);
             if f32::from_bits(add(mul(dx, dx), mul(dy, dy))) < f32::from_bits(mul(reach, reach)) {
                 w.hit.push(o);
+                any = true;
+                deferred.push(Deferred::ShockwaveHit);
                 deferred.push(Deferred::Damage {
                     caster: w.caster,
                     target: o,
                     amount: w.amount,
                     call: Some((centre, w.area)),
                     slow: None,
-                    at: None,
+                    at: Some(step_q),
+                    fog: None,
                 });
             }
+        }
+        // A step that hits makes or restarts the caster's fog modifier,
+        // after its last damage and before the calls of that hit (c-RZJ-1:
+        // 1693 at 3.937711).
+        if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
+            *fog = Some((w.caster, step_q));
         }
     }
     waves.retain(|w| tick - w.start < wave_end(w));
@@ -832,6 +849,8 @@ enum Deferred {
         stun: (u32, u32),
         objects: Vec<u32>,
     },
+    /// The object a shockwave's hit takes before its damage.
+    ShockwaveHit,
     /// The object of a thunder clap's area pass, after its hits.
     ClapArea { at: u32, first: Option<u32> },
     /// Damage of a thunder clap.
@@ -848,6 +867,9 @@ enum Deferred {
         /// The queue time of the hit, for what it starts (a thunder
         /// clap's effect; c-RZH-1: gnoll 11's death at 26.400000).
         at: Option<u32>,
+        /// The fog modifier of an area pass whose last hit this is: its
+        /// caster and the pass's queue time.
+        fog: Option<(u32, u32)>,
     },
 }
 
@@ -942,6 +964,7 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
+            Deferred::ShockwaveHit => super::table::shockwave_hit(&mut state.borrow_mut()),
             Deferred::ClapArea { at, first } => {
                 super::table::clap_area(&mut state.borrow_mut(), at, first);
             }
@@ -952,6 +975,7 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 call,
                 slow,
                 at,
+                fog,
             } => {
                 let previous = state.borrow().event_time;
                 if at.is_some() {
@@ -965,6 +989,9 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                     && matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive)
                 {
                     super::table::clap_slowed(&mut s, target, end);
+                }
+                if let Some((caster, q)) = fog {
+                    super::table::fog_pass(&mut s, caster, q, true);
                 }
                 // The victim and its friends answer the hit (SPEC-0019).
                 if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
@@ -1107,7 +1134,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         b"AOsh" => {
             if let Some(target) = c.target {
                 super::table::shockwave_effect(s);
-                shockwave(s, h, target, &n);
+                shockwave(s, h, target, &n, c.effect_q);
             }
         }
         b"AHhb" => {
@@ -1218,6 +1245,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     call: Some((centre, n.area)),
                     slow: Some(ow3_math::add(now, seconds(hero))),
                     at: Some(now),
+                    fog: None,
                 });
             }
             deferred.push(Deferred::ClapArea {

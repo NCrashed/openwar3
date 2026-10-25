@@ -587,6 +587,9 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
                 (&base.to_be_bytes() == b"AHfs")
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
             })
+            // An Impale's 0.4 s after its effect (c-SBJ-1: 7.299809).
+            // PROVISIONAL: the timer that ends it is not read.
+            .or_else(|| (&base.to_be_bytes() == b"AUim").then_some(80))
     });
     let effect_q = add(
         state.event_time.unwrap_or_else(|| state.timers.time()),

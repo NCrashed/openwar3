@@ -2929,13 +2929,24 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
             .total_cmp(&f32::from_bits(b.1))
             .then(a.2.cmp(&b.2))
     });
-    for (h, _, _) in ending {
+    for (h, end, _) in ending {
         let Some(u) = state.unit(Some(h)) else {
             continue;
         };
         let creep = u.owner == super::creeps::CREEPS;
         let moving = super::movement::on_move(state, h);
-        if creep {
+        // A creep stunned or attacking holds it: freed when its stun's
+        // order comes back, or kept (c-SBJ-1: the frost on gnoll 4, under
+        // Impale, freed at 9.914337; kobolds 5 and 6 attacking).
+        let busy = state
+            .unit(Some(h))
+            .is_some_and(|u| u.entries.stun_ticks.is_some() || u.attack.is_some());
+        if creep && busy && !moving {
+            let buff_end = state.table.take(tick, "buff end");
+            if let Some(e) = entries(state, h) {
+                e.buff_end = Some(buff_end);
+            }
+        } else if creep {
             let buff_end = state.table.take(tick, "buff end");
             if moving {
                 if let Some(e) = entries(state, h) {
@@ -2947,9 +2958,13 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
                 state.table.defer(buff_end, "buff end");
             }
         }
-        // Its speed comes back at its next update (SPEC-0037).
+        // Its speed comes back at its next update (SPEC-0037), its attack
+        // times at once (c-SBJ-1: kobold 6 at 8.96).
         if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
             u.move_slow = None;
+            if let Some((_, speed)) = u.slowed_until.take() {
+                super::attack::unslow_cooldown(u, end, speed);
+            }
         }
         let buff = entries(state, h)
             .map(|e| {

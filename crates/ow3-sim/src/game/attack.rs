@@ -1237,36 +1237,73 @@ fn slowed(state: &State, h: u32, seconds: u32) -> u32 {
 /// the time left of the running cooldown of `u` is divided by it, and a
 /// swing waiting for that cooldown starts at the new end with its damage
 /// point divided too (SPEC-0037; c-RZH-1, creep 10 at 5281).
-///
-/// PROVISIONAL: the end of a slow is not measured; the times stay.
 pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
+    scale_times(u, now, |t| div(t, speed));
+}
+
+/// The end of a slow of attack-speed factor `speed` at the queue time
+/// `now`: the times left are multiplied by it again (c-SBJ-1: kobold 6,
+/// 26 ticks of its cooldown left at the frost's end at 8.96, its swing
+/// 20 ticks later).
+pub(super) fn unslow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
+    scale_times(u, now, |t| mul(t, speed));
+}
+
+/// Ticks from `from` to `to`, negative when `to` is earlier.
+fn ticks_between(from: u32, to: u32) -> i64 {
+    if f32::from_bits(to) >= f32::from_bits(from) {
+        ticks(sub(to, from)) as i64
+    } else {
+        -(ticks(sub(from, to)) as i64)
+    }
+}
+
+fn shift(t: u64, by: i64) -> u64 {
+    t.saturating_add_signed(by)
+}
+
+/// The rest of the backswing and of the cooldown of `u` after queue time
+/// `now`, and a swing waiting for that cooldown, scaled by `scale`.
+fn scale_times(u: &mut super::Unit, now: u32, scale: impl Fn(u32) -> u32) {
     // So does the rest of a backswing (c-SBJ-1: gnoll 4, 40 ticks left at
     // the frost of 4.96, resumed 53 ticks later).
     let back = u.backswing_end;
     if f32::from_bits(back) > f32::from_bits(now) {
-        let end = add(now, div(sub(back, now), speed));
-        let later = ticks(sub(end, back));
+        let end = add(now, scale(sub(back, now)));
+        let later = ticks_between(back, end);
         u.backswing_end = end;
         if let Some(a) = u.attack.as_mut()
             && let Some(r) = a.resume
         {
-            a.resume = Some(r + later);
+            a.resume = Some(shift(r, later));
         }
     }
     let old = u.cooldown_end;
+    // A swing under way: the rest of its damage point (c-SBJ-1: kobold
+    // 6, its hit at 1813).
+    if let Some(a) = u.attack.as_mut()
+        && f32::from_bits(a.swing_q) <= f32::from_bits(now)
+        && let Some(hit) = a
+            .hit_at
+            .filter(|&h| f32::from_bits(h) > f32::from_bits(now))
+    {
+        let end = add(now, scale(sub(hit, now)));
+        a.next = shift(a.next, ticks_between(hit, end));
+        a.hit_at = Some(end);
+    }
     if f32::from_bits(old) <= f32::from_bits(now) {
         return;
     }
-    let end = add(now, div(sub(old, now), speed));
-    let later = ticks(sub(end, old));
+    let end = add(now, scale(sub(old, now)));
+    let later = ticks_between(old, end);
     u.cooldown_end = end;
-    u.weapon_ready += later;
+    u.weapon_ready = shift(u.weapon_ready, later);
     if let Some(a) = u.attack.as_mut().filter(|a| a.swing_q == old) {
         let point = a.hit_at.map_or(0, |h| sub(h, old));
-        let slowed = div(point, speed);
+        let scaled = scale(point);
         a.swing_q = end;
-        a.hit_at = Some(add(end, slowed));
-        a.next += later + ticks(sub(slowed, point));
+        a.hit_at = Some(add(end, scaled));
+        a.next = shift(a.next, later + ticks_between(point, scaled));
     }
 }
 

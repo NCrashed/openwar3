@@ -1493,6 +1493,28 @@ fn death_coil() {
     );
 }
 
+/// SPEC-0041, verification 2: entangling roots: 15 damage nine times one
+/// second apart, the first 172 ticks after the order.
+#[test]
+fn entangling_roots() {
+    let Some(mut game) = game(
+        "set a = CreateUnit(Player(0), 'Ekee', -3000, -2000, 0)\n    set t = CreateUnit(Player(1), 'hfoo', -2600, -2000, 180)\n    call SelectHeroSkill(a, 'AEer')\n    call PauseUnit(t, true)\n    call IssueImmediateOrder(a, \"holdposition\")",
+        "call IssueTargetOrder(a, \"entanglingroots\", t)",
+        |_| {},
+    ) else {
+        return;
+    };
+    let path = run(&mut game, ORDER_TICK + 2100);
+    let hits: Vec<u64> = path
+        .windows(2)
+        // (The keeper's own attacks hit too: only the roots' 15.)
+        .filter(|w| (w[0].1[1].life - w[1].1[1].life - 15.0).abs() < 0.02)
+        .map(|w| w[1].0 - ORDER_TICK)
+        .collect();
+    let expected: Vec<u64> = (0..9).map(|k| 172 + 200 * k).collect();
+    assert_eq!(hits, expected);
+}
+
 /// SPEC-0038, verification 2: a footman walking through a tauren
 /// chieftain's endurance aura walks 1.485 a tick instead of 1.35.
 #[test]

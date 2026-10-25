@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 15] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 16] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -59,6 +59,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 15] = [
     ("frostnova", *b"AUfn", 852_226, Aim::Enemy),
     ("manaburn", *b"AEmb", 852_179, Aim::Enemy),
     ("deathcoil", *b"AUdc", 852_100, Aim::Enemy),
+    ("entanglingroots", *b"AEer", 852_171, Aim::Enemy),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1573,6 +1574,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 }
             }
         }
+        // PROVISIONAL: the hold of the roots is not built.
+        b"AEer" => bounce(s, h, c, &n, BounceKind::Roots),
         b"AUfn" => {
             let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
                 return true;
@@ -1986,6 +1989,9 @@ pub enum BounceKind {
     Heal,
     /// Mana Burn's loss of mana and as much damage, once.
     ManaBurn,
+    /// Entangling Roots' damage: a 0 event, nine hits a second apart, a
+    /// last 0 event.
+    Roots,
 }
 
 /// The time between two jumps, 0.25 s.
@@ -1999,6 +2005,8 @@ fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kin
     // Mana Burn reaches its unit DataB after the cast point, once.
     let (left, at) = if kind == BounceKind::ManaBurn {
         (1, s.ticks + super::attack::ticks(n.data[1]))
+    } else if kind == BounceKind::Roots {
+        (11, s.ticks + 30)
     } else {
         (
             f32::from_bits(n.data[1]).max(1.0) as u32,
@@ -2032,6 +2040,37 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
     let mut all = std::mem::take(&mut s.bounces);
     for b in &mut all {
         if b.at != tick {
+            continue;
+        }
+        // Entangling Roots: 0 at 30 ticks after the cast point, DataA 2 ticks
+        // later and every second, nine times, then 0 (SPEC-0041).
+        if b.kind == BounceKind::Roots {
+            let amount = if b.left == 11 || b.left == 1 {
+                0
+            } else {
+                b.amount
+            };
+            if s.unit(Some(b.target)).is_some_and(|u| u.alive) {
+                deferred.push(Deferred::Damage {
+                    caster: b.caster,
+                    target: b.target,
+                    amount,
+                    call: None,
+                    slow: None,
+                    at: None,
+                    fog: None,
+                    later_calls: false,
+                });
+            } else {
+                b.left = 1;
+            }
+            b.at = tick
+                + match b.left {
+                    11 => 2,
+                    2 => 199,
+                    _ => 200,
+                };
+            b.left -= 1;
             continue;
         }
         let alive = s.unit(Some(b.target)).is_some_and(|u| u.alive);

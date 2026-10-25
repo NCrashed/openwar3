@@ -4397,6 +4397,17 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     let mut marks: Vec<(usize, u32)> = Vec::new();
     for (expiry, _, h, check) in due {
         marks.push((acquired.len(), expiry));
+        // An idle unit's check reads its next delay when it fires: one that a
+        // call of an earlier check gave a target runs on 1.0 s (c-SBJ-1: ogre
+        // 4, taken by kobold 8's call at 9.919998, its next check at
+        // 10.919998).
+        if matches!(check, Check::Idle { .. })
+            && acquired.contains(&h)
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && u.next_acquire == add(expiry, HALF)
+        {
+            u.next_acquire = add(expiry, ONE);
+        }
         // The goals of backswings ending before this check come first
         // (c-SAK-1: gnoll 17 at 12.929933 before the check at 12.932871).
         super::attack::after_swing_walks(state, Some(expiry));
@@ -5508,11 +5519,22 @@ fn relay_callers(state: &State, victim: u32, now: f32) -> Vec<u32> {
         .collect()
 }
 
+/// Whether unit `h` is under Impale's stun.
+fn cu_impaled(state: &State, h: u32) -> bool {
+    state.unit(Some(h)).is_some_and(|u| u.entries.impale)
+}
+
 fn relay(state: &mut State, victim: u32, attacker: u32, now: f32, reached: &mut Vec<u32>) -> bool {
     let creep_reach = real_of(state.combat.creep_call_for_help);
     let mut any = false;
     for c in super::creeps::group_of(state, victim) {
         if c == victim {
+            continue;
+        }
+        // A member thrown up by Impale makes no call, and starts no cooldown
+        // (c-SBJ-1: the ogre and kobolds 7, 8 at the swarm's hits of 9.8, called
+        // by kobold 8 at 9.919998). A stunned one does (c-SAK-1).
+        if cu_impaled(state, c) {
             continue;
         }
         let Some(cu) = state.unit(Some(c)).filter(|u| u.alive) else {

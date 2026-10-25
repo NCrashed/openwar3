@@ -401,6 +401,11 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                             None
                         } else {
                             s.event_time = a.hit_at;
+                            // The queue's timers up to it free first (c-RZJ-1: a
+                            // missile's objects ahead of the hit of 30.135942).
+                            if let Some(at) = a.hit_at {
+                                s.table.queue_through(at);
+                            }
                             // The hit restarts the attacker's fog modifier
                             // (c-RZH-1: the Mountain King at 27.341698).
                             if let Some(at) = a.hit_at {

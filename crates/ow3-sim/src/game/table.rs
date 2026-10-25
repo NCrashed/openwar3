@@ -199,6 +199,18 @@ impl ObjectTable {
     /// this tick: their frees join the tick's 0.0001 s frees now, ahead of
     /// those the script timer makes (c-RZJ-1: the Shockwave's wave at
     /// 9.499616, before the orders of the script's 9.5).
+    /// `queue_before` with the timers at `limit` itself.
+    pub fn queue_through(&mut self, limit: u32) {
+        let now = self.now;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
+            .into_iter()
+            .partition(|&(q, e, _)| e != TAKE_AT && f32::from_bits(q) <= f32::from_bits(limit));
+        self.timed_q = later;
+        for (_, entry, tag) in due {
+            self.deferred.push((now, entry, tag));
+        }
+    }
+
     pub fn queue_before(&mut self, limit: u32) {
         let now = self.now;
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)

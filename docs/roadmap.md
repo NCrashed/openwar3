@@ -42,7 +42,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Movement and path finding around static obstacles | done | known | SPEC-0018, 0020. |
 | Units as obstacles, crowds, group orders, formations | done | partial | Matched on the test maps; large armies and narrow passages are less covered. |
 | Basic orders, order queue (Shift) | done | known | SPEC-0019, 0031. |
-| Attacks, damage, armor, missiles | done | known | SPEC-0015, 0016; one ranged battle replay (c-RXR-1) still differs. |
+| Attacks, damage, armor, missiles | done | known | SPEC-0015, 0016. |
 | Target choice, calls for help, creep camps | done | known | SPEC-0019, 0030, 0048. |
 | Resource gathering (Human peasant) | partial | unknown | Gold and lumber work; the internal objects of harvesting are not matched yet. Other races' workers (acolytes, wisps, peons) not started. |
 | Building and training (Human) | partial | unknown | Placement, construction start, training queue. Other races, repair, cancel, upgrades and research not started. |
@@ -79,6 +79,9 @@ the game's order.
   checksums match the game.
 - The Thunder Clap probe c-SBG-1 (slows ending by time, hold position):
   its object table and every turn checksum match the game.
+- The battle reference c-RXR-1 (footmen, riflemen, grunts, headhunters):
+  its object table (6892 changes) and all 408 turn checksums match the
+  game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

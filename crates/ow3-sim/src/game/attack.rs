@@ -1585,6 +1585,7 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
             u.entries.early_goal = true;
         }
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.early_walk_q = end;
             u.entries.early_walk = true;
             u.entries.early_walk_at = tick;
         }

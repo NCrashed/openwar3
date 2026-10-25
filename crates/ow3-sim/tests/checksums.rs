@@ -85,8 +85,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXR-1.w3g",
-        "the battle reference (melee, rifles, missiles): the game changes state at turn 16 \
-         where the simulation does not, and later turns differ; looked at next",
+        "the battle reference (melee, rifles, missiles): every turn checksum to its end \
+         matches with the object table started as the game has it (tests/objects.rs, \
+         battle_checksums); this test runs without it",
     ),
     (
         "c-RYP-1.w3g",

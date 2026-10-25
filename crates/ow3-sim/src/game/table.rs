@@ -356,6 +356,8 @@ pub struct UnitEntries {
     pub early_walk: bool,
     /// The tick the early walk was made in.
     pub early_walk_at: u64,
+    /// The queue time of that walk (the backswing's end).
+    pub early_walk_q: u32,
     /// The goal after its swing was taken at the backswing's end; the
     /// chase takes no other.
     pub early_goal: bool,

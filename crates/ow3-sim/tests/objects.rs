@@ -112,17 +112,21 @@ fn heroes_two_objects() {
     }
 }
 
-/// `c-RXR-1`: the battle reference (melee, riflemen, missiles), report
-/// only while its table is being built up.
+/// `c-RXR-1`: the battle reference (melee, riflemen, missiles): every
+/// turn checksum.
 #[test]
-fn battle_checksums_report() {
-    turn_parts("c-RXR-1");
+fn battle_checksums() {
+    if let Some(first) = turn_parts("c-RXR-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
 }
 
-/// `c-RXR-1`'s object table (report only).
+/// `c-RXR-1`'s object table.
 #[test]
-fn battle_objects_report() {
-    compare_objects("c-RXR-1");
+fn battle_objects() {
+    if let Some(first) = compare_objects("c-RXR-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-RXI-1`, `c-RTW-3`, `c-RXD-1`, `c-RYP-1`: walks, crowds and harvest

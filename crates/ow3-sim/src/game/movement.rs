@@ -3305,7 +3305,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // 1093, kobold 9 at 1123, gnoll 12 at 1129).
         // A goal taken early at the backswing's end, the unit facing its
         // target from the swing, ends at once (c-SAK-1: 3973).
-        if u.entries.quiet_walk && (m.heading == start_heading || u.entries.early_walk) {
+        // Not at an update before the backswing's end that made the walk,
+        // in the same tick on the queue (c-RXR-1: headhunter 1048702, update
+        // 35.009117, end 35.009159; the walk goes two updates on).
+        let later =
+            u.entries.early_walk && real_of(u.entries.early_walk_q) > real_of(state.update_time);
+        if u.entries.quiet_walk && !later && (m.heading == start_heading || u.entries.early_walk) {
             u.entries.quiet_walk = false;
             u.entries.early_walk = false;
             super::table::walk_dropped(state, h);

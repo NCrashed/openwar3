@@ -2415,6 +2415,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         // The stored heading at the start of the update (SPEC-0024 below).
         let start_heading = m.heading;
+        // A member of a group of several: its end waits (SPEC-0025; the
+        // analyst's reading of the group's pass, not done here).
+        let in_group = grouped(state, h);
         let class = crate::path::size_class(data.map_or(0, |t| t.collision));
         if !alive {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -3308,6 +3311,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.facing_step = step;
         }
         let facing_done = u.facing == heading;
+        let plain_move = m.order == Order::Point
+            && u.attack_move.is_none()
+            && !u.entries.game_order
+            && u.harvest.is_none()
+            && u.casting.is_none()
+            && !in_group;
         // A goal taken in reach after a swing ends at the first update that
         // starts with the stored heading on the goal direction, and its walk
         // is given up (SPEC-0024; c-SAK-1: kobold 8 at 1087, gnoll 11 at
@@ -3327,8 +3336,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
-        if m.arrived && facing_done && begin_attack.is_none() {
-            u.movement = None;
+        if m.arrived && (facing_done || plain_move) && begin_attack.is_none() {
+            // A plain move that ended before its facing: the unit still
+            // turns to its heading at its updates (c-RTW-3: footman (825,
+            // 828), facing 5.754847 at 2227, 5.754558 at 2233).
+            let turning = !facing_done;
+            u.movement = turning.then_some(m);
+            if turning {
+                still.push(h);
+            }
             // An attack-move that arrived at its place ends there; a group
             // member stays at its place in the formation (playtest item 9:
             // the group bunched on the point when its members walked on).

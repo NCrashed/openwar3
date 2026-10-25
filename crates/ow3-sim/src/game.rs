@@ -2353,6 +2353,31 @@ impl<'a> Game<'a> {
         let mut state = self.state.borrow_mut();
         state.player_orders = true;
         let done = movement::group_point_order(&mut state, units, order, target);
+        // The members nearest to the goal first (c-RTW-3: the footmen at
+        // 24.021969, by their squared distances).
+        let mut moved: Vec<u32> = units
+            .iter()
+            .copied()
+            .filter(|&h| {
+                state
+                    .unit(Some(h))
+                    .and_then(|u| u.movement)
+                    .is_some_and(|m| {
+                        m.given == state.orders_given
+                            && matches!(m.order_id(), movement::ORDER_MOVE | movement::ORDER_SMART)
+                    })
+            })
+            .collect();
+        let squared = |s: &State, h: u32| {
+            s.unit(Some(h)).map_or(f32::MAX, |u| {
+                let (dx, dy) = (x - f32::from_bits(u.x), y - f32::from_bits(u.y));
+                dx * dx + dy * dy
+            })
+        };
+        moved.sort_by(|&a, &b| squared(&state, a).total_cmp(&squared(&state, b)));
+        if !moved.is_empty() {
+            table::group_move_ordered(&mut state, &moved);
+        }
         state.player_orders = false;
         done
     }

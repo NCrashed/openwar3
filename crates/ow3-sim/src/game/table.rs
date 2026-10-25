@@ -58,6 +58,9 @@ pub struct ObjectTable {
     /// The summon dying as its time ran out (`unit_died`).
     pub expiring: Option<u32>,
     pub resumed: Vec<u32>,
+    /// The walks of group orders (`group_move_ordered`) and the members
+    /// still on them.
+    pub group_walks: Vec<(Vec<u32>, Vec<u32>)>,
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
     rest: Vec<(u32, &'static str)>,
@@ -112,6 +115,7 @@ impl ObjectTable {
             dying: None,
             expiring: None,
             resumed: Vec::new(),
+            group_walks: Vec::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
             rest_w: Vec::new(),
@@ -357,6 +361,11 @@ pub struct UnitEntries {
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
+    /// It walks on its group's walk (`group_move_ordered`): its searches
+    /// take none of their own.
+    pub group_walk: bool,
+    /// Its walk was made at its follow leg's end (`follow_leg_ended`).
+    pub follow_walk: bool,
     /// Its walk was made at a backswing's end for the chase of the next
     /// tick, whose order keeps it.
     pub early_walk: bool,
@@ -808,6 +817,8 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
         // new order at 2501).
         e.game_order = false;
         e.own_attack = false;
+        e.group_walk = false;
+        e.follow_walk = false;
         let mut old: Vec<u32> = Vec::new();
         // A reaction delay still running ends with it (c-SAK-1: 2701).
         old.extend(std::mem::take(&mut e.reaction));
@@ -823,6 +834,23 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
     });
     for e in old.unwrap_or_default() {
         state.table.defer(e, "order end");
+    }
+    // The last member of a group to end its order gives up the group's walk.
+    if let Some(i) = state
+        .table
+        .group_walks
+        .iter()
+        .position(|(m, _)| m.contains(&h))
+    {
+        state.table.group_walks[i].0.retain(|&m| m != h);
+        if state.table.group_walks[i].0.is_empty() {
+            let (_, walk) = state.table.group_walks.remove(i);
+            let own = entries(state, h).map(|e| std::mem::replace(&mut e.walk, walk));
+            walk_dropped(state, h);
+            if let (Some(e), Some(own)) = (entries(state, h), own) {
+                e.walk = own;
+            }
+        }
     }
 }
 
@@ -1136,7 +1164,7 @@ pub(super) fn order_queued(state: &mut super::State, h: u32) {
 /// object and record, the queued entry taking the order's place
 /// (c-RTW-3 at 17.728025: 12 parts, the walk, the last 6 freed 0.0001 s
 /// later, the first 6 and the entry kept to the order's end).
-pub(super) fn queued_move_started(state: &mut super::State, h: u32) {
+pub(super) fn queued_move_started(state: &mut super::State, h: u32, group: Option<&[u32]>) {
     let tick = state.table.now;
     let Some(entry) = entries(state, h).and_then(|e| e.queued.pop_front()) else {
         return;
@@ -1144,11 +1172,27 @@ pub(super) fn queued_move_started(state: &mut super::State, h: u32) {
     order_ended(state, h);
     let parts = state.table.take_n(tick, 12, "move ability: order start");
     walk_made_at_order(state, h);
+    // The walk replaces the one of the members that started before.
+    for &m in group.unwrap_or_default() {
+        if m != h && entries(state, m).is_some_and(|e| e.group_walk) {
+            if let Some(e) = entries(state, m) {
+                e.group_walk = false;
+            }
+            walk_dropped(state, m);
+            if let Some(e) = entries(state, m) {
+                e.group_walk = true;
+            }
+        }
+    }
     for &e in parts[6..].iter().rev() {
         state.table.defer(e, "move ability: order start");
     }
     if let Some(e) = entries(state, h) {
         e.order = parts[..6].iter().rev().copied().chain([entry]).collect();
+        // A member of a queued group walks on the walk made as it started:
+        // its searches take none (c-RTW-3: 27.176439, the walk of 26.786505
+        // freed at 27.206434 as the next member's replaced it).
+        e.group_walk = group.is_some();
     }
 }
 
@@ -1334,6 +1378,9 @@ pub(super) fn follow_leg_ended(state: &mut super::State, h: u32) {
         state.table.defer(p, "move ability: order start");
     }
     walk_made_at_order(state, h);
+    if let Some(e) = entries(state, h) {
+        e.follow_walk = true;
+    }
 }
 
 /// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an
@@ -1388,6 +1435,46 @@ pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
         e.order = kept;
     }
     walk_made_at_order(state, h);
+}
+
+/// The members `units` take a group's move or right click on the ground
+/// (c-RTW-3: 7 footmen at 24.021969): two search helpers, then each
+/// member's order as [`move_point_ordered`] without its own walk, then one
+/// walk for the group; the helpers are freed at the end.
+///
+/// The group's walk goes with the last member's order (c-RTW-3: freed at
+/// 27.686354, the update after the last member started its queued move).
+pub(super) fn group_move_ordered(state: &mut super::State, units: &[u32]) {
+    let tick = state.table.now;
+    let helpers = state.table.take_n(tick, 2, "search: helper");
+    for &h in units {
+        let order = state.table.take(tick, "script point order");
+        let record = state.table.take(tick, "order record");
+        state.table.defer(record, "order record");
+        let targeted =
+            entries(state, h).is_some_and(|e| !e.acquisition.is_empty() || e.current.is_some());
+        order_ended(state, h);
+        let n = if targeted { 13 } else { 12 };
+        let ability = state.table.take_n(tick, n, "move ability: order start");
+        for &e in ability[6..].iter().rev() {
+            state.table.defer(e, "move ability: order start");
+        }
+        let mut kept: Vec<u32> = ability[..6].iter().rev().copied().collect();
+        kept.push(order);
+        if let Some(e) = entries(state, h) {
+            e.order = kept;
+            e.group_walk = true;
+        }
+    }
+    let cluster = state.table.take(tick, "walk: cluster");
+    let path = state.table.take(tick, "walk: path");
+    state
+        .table
+        .group_walks
+        .push((units.to_vec(), vec![path, cluster]));
+    for &e in &helpers {
+        state.table.free(tick, e, "search: helper");
+    }
 }
 
 /// Unit `h` takes a script's order of a spell on a point (c-RZJ-1: the
@@ -1511,6 +1598,10 @@ pub(super) fn walk_made_at_order(state: &mut super::State, h: u32) {
 /// Unit `h` searches a new path: a new walk, unless its order made one.
 pub(super) fn path_searched(state: &mut super::State, h: u32) {
     match entries(state, h) {
+        Some(e) if e.group_walk => {}
+        // A follower keeps the walk of its leg's end through its later legs
+        // (c-RTW-3: 828's walk of 21.417406 kept to 91.438118).
+        Some(e) if e.follow_walk => {}
         Some(e) if e.walk_ready => e.walk_ready = false,
         Some(_) => walk_made(state, h),
         None => {}
@@ -1537,6 +1628,10 @@ pub(super) fn walk_dropped_at_update(state: &mut super::State, h: u32) {
 /// Unit `h`'s walk stops or is replaced: its path and cluster are freed
 /// at its first update after this tick (SPEC-0024, "Walks").
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
+    // The walk of a follow leg or of a group stays to the order's end.
+    if entries(state, h).is_some_and(|e| e.follow_walk || e.group_walk) {
+        return;
+    }
     // A walk made early for a chase to come stays through its order.
     // Not once an update of an earlier tick came after it: the walk was
     // given up there (c-RZH-1: the Mountain King's walk of 5573, update

@@ -182,11 +182,18 @@ pub(super) fn pass(state: &mut State) {
                 Queued::Point {
                     name: "move" | "smart",
                     ..
+                } | Queued::Group {
+                    name: "move" | "smart",
+                    ..
                 }
             );
+            let grouped = match order {
+                Queued::Group { group, .. } => state.queued_groups.get(group).cloned(),
+                _ => None,
+            };
             start(state, h, order);
             if moving {
-                super::table::queued_move_started(state, h);
+                super::table::queued_move_started(state, h, grouped.as_deref());
             }
         }
     }
@@ -196,6 +203,9 @@ pub(super) fn pass(state: &mut State) {
 /// "Groups"): each member queues it, and is laid out with the others that
 /// have started it when it starts.
 pub(super) fn push_group(state: &mut State, units: &[u32], name: &'static str, target: [u32; 2]) {
+    // Two search helpers around the members' entries (c-RTW-3: 26.196604).
+    let tick = state.table.now;
+    let helpers = state.table.take_n(tick, 2, "search: helper");
     let group = state.queued_groups.len();
     state.queued_groups.push(Vec::new());
     for &h in units {
@@ -208,5 +218,8 @@ pub(super) fn push_group(state: &mut State, units: &[u32], name: &'static str, t
                 group,
             },
         );
+    }
+    for e in helpers {
+        state.table.free(tick, e, "search: helper");
     }
 }

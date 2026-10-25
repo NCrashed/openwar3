@@ -639,6 +639,8 @@ pub struct Wave {
 /// The wave moves 105 every 20 ticks (1050 a second) and has a last
 /// update at its end (SPEC-0047).
 const WAVE_EVERY_TICKS: u64 = 20;
+/// 0.1 s, the wave's step on its timer.
+const WAVE_STEP_TIME: u32 = 0x3DCC_CCCD;
 const WAVE_STEP: f32 = 105.0;
 const WAVE_SPEED: f32 = 1050.0;
 
@@ -753,7 +755,13 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         ];
         // The step's queue time, the effect's plus its ticks (c-RZJ-1:
         // 3.937711, 40 ticks after the effect of 3.737711).
-        let step_q = add(w.start_q, (since as f32 * 0.005).to_bits());
+        // (Summed 0.1 s step by step, as the wave's timer: c-RZJ-1's steps
+        // at 12.709924, 12.809923, 12.909923, 13.009922, 13.109921.)
+        let step_q = if since % WAVE_EVERY_TICKS == 0 {
+            (0..since / WAVE_EVERY_TICKS).fold(w.start_q, |q, _| add(q, WAVE_STEP_TIME))
+        } else {
+            add(w.start_q, (since as f32 * 0.005).to_bits())
+        };
         let mut any = false;
         let mut restarts = Vec::new();
         let mut calls = Vec::new();

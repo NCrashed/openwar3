@@ -1892,6 +1892,12 @@ impl<'a> Game<'a> {
         auras::tick(&mut self.state.borrow_mut());
         // The hits that come before the first check of the tick.
         let first = movement::first_check(&self.state.borrow());
+        // The queue's timers before it free ahead of what it makes
+        // (c-RZJ-1: Shockwave hit buffs ending at 13.229921 before the
+        // check of 13.229922).
+        if let Some(at) = first {
+            self.state.borrow_mut().table.queue_before(at);
+        }
         if first.is_some() {
             attack::hits_before(&mut self.vm, &self.state, first);
         }

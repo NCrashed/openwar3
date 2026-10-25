@@ -2160,6 +2160,11 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for e in stun_end {
         state.table.rest.push((e, "unit death"));
     }
+    // A thunder clap's slow on it goes with its death, before its own
+    // objects (c-RZH-1: tunneler 10's 3040 at 28.49).
+    if let Some(b) = entries(state, h).and_then(|e| e.slow_buff.take()) {
+        state.table.rest.push((b, "Thunder Clap effect"));
+    }
     for e in core {
         state.table.rest.push((e, "unit death"));
     }

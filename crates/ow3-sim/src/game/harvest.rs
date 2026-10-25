@@ -1045,6 +1045,7 @@ fn deliver(state: &mut State, h: u32) {
         g.target = Some(t);
         set(state, h, Some(g));
         take_another_tree(state, h, true);
+        super::table::lumber_delivered(state, h);
         return;
     }
     let target = back.filter(|&t| is_mine(state, t) || is_tree(state, t));

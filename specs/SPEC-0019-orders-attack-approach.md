@@ -215,7 +215,8 @@ as their base:
   (16, -16), 783 only on one side of a victim at (0, 0), 800 nowhere;
   with `CallForHelp` 300: 480 yes, 485 no, 300 + 150 + 31 = 481). The
   150 is inferred from these values. Several missile and spell impact
-  routines make this call.
+  routines make this call, but not every missile attack: a plain missile
+  attack makes only the damaged unit's call (below).
 
 A walking unit that answers an impact call moves on through the tick
 of the impact and stands from the next tick. `c-RZJ-1` tick 1019: the
@@ -223,7 +224,13 @@ elemental's missile hits creep 10 first in that tick, and gnoll 13's
 commit after it still has its walking velocity. Its commit in 1020 is
 at the same position with velocity 0.
 
-Instant and melee hits make only the damaged unit's call.
+Instant and melee hits make only the damaged unit's call, and so does a
+plain missile attack: in `c-RXR-1` (all calls of 0 .. 30 s read in the
+game) the headhunters' spears made no call of `CallForHelp + 150`; their
+two hits on footmen whose timer was free (7.17972 and 23.02714) each
+made the footman's own call of radius 600 and started his 3.0 s timer,
+and their other hits fell in the victims' timers and made no call. All
+63 calls in that window had radius 600.
 
 **Spell damage.** Damage of an area spell makes a call around the
 spell's own centre, with the units of all players handed to the same
@@ -1216,6 +1223,8 @@ An idle unit with a weapon attacks an enemy unit on its own:
    life of the candidates) and their order.
 11. Whether spell damage also makes the damaged unit's own call and
    starts its 3.0 s timer ("Spell damage").
+12. Which missile attacks make the impact call (the glaive thrower's of
+   test RZG does, the headhunter's of `c-RXR-1` does not).
 
 ## Sources
 

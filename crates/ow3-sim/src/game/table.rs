@@ -721,7 +721,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         .map_or((false, Vec::new()), |t| {
             (f32::from_bits(t.max_mana) > 0.0, t.abilities.clone())
         });
-    // (freed at its death: 1 first, 2 with its buffs; cost of a watch)
+    // (freed at its death: 1 first, 2 with its buffs, 3 0.0001 s later;
+    // cost of a watch)
     let mut parts: Vec<(u8, Option<i32>)> = Vec::new();
     for a in abilities {
         let Some(d) = state.data.abilities.get(&a) else {
@@ -730,11 +731,18 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         let level = d.per_level.first();
         if [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
-        } else if level.is_some_and(|l| l.cooldown != 0 && l.cost > 0) {
+        } else if level.is_some_and(|l| l.cost > 0) {
             parts.extend([(0, None), (2, level.map(|l| l.cost))]);
         } else {
             parts.push((0, None));
         }
+    }
+    // An autocast on from the start (`auto`) takes one more, freed 0.0001 s
+    // later; a costed ability its cost watch also without a cooldown
+    // (c-SBK-1: the kobold geomancer, Slow on, Abolish Magic of no
+    // cooldown).
+    if creep && state.data.units.get(&type_id).is_some_and(|t| t.auto != 0) {
+        parts.push((3, None));
     }
     // A hero's own abilities (`abilList`, but the inventory) take theirs
     // before its last two (c-SBK-1: Ultravision 1, Shadow Meld 1; c-SBH-1:
@@ -757,6 +765,12 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     let count = making.count + shift + parts.len() + extra - fewer;
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
+    // (The autocast's first: c-SBK-1, 928.)
+    for (i, _) in parts.iter().enumerate().filter(|(_, p)| p.0 == 3) {
+        state
+            .table
+            .defer(entries[14 + shift + i], "map start: autocast");
+    }
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }

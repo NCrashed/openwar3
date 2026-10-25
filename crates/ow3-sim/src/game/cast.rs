@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 17] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 18] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -61,6 +61,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 17] = [
     ("deathcoil", *b"AUdc", 852_100, Aim::Enemy),
     ("entanglingroots", *b"AEer", 852_171, Aim::Enemy),
     ("flamestrike", *b"AHfs", 852_488, Aim::Point),
+    ("impale", *b"AUim", 852_555, Aim::Point),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1056,6 +1057,8 @@ enum Deferred {
     BlizzardHit { target: u32, end: u32 },
     /// The object of a thunder clap's area pass, after its hits.
     ClapArea { at: u32, first: Option<u32> },
+    /// An object taken now and freed by a queue timer at `end`.
+    Kept { end: u32 },
     /// Damage of a thunder clap.
     Damage {
         caster: u32,
@@ -1251,6 +1254,12 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
             }
             Deferred::BlizzardHit { target, end } => {
                 super::table::blizzard_hit(&mut state.borrow_mut(), target, end);
+            }
+            Deferred::Kept { end } => {
+                let mut s = state.borrow_mut();
+                let tick = s.table.now;
+                let o = s.table.take(tick, "spell: effect");
+                s.table.free_at_q(end, o, "spell: effect");
             }
             Deferred::ClapArea { at, first } => {
                 super::table::clap_area(&mut state.borrow_mut(), at, first);
@@ -1653,6 +1662,14 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // PROVISIONAL: the hold of the roots is not built.
         b"AEer" => bounce(s, h, c, &n, BounceKind::Roots),
         b"AHfs" => flame_strike(s, h, c, &n),
+        // A wave from the caster towards the point, DataA long and Area
+        // wide: the enemy ground units in it are thrown up, stunned for
+        // DataD and then Dur (heroes HeroDur), and take DataC when they
+        // land DataD later (SPEC-0041; c-SBJ-1: the effect at 6.9, three
+        // units, landing at 7.9, order back at 9.91).
+        // PROVISIONAL: every unit in the wave is reached at the effect;
+        // the wave's travel time is not built.
+        b"AUim" => impale(s, h, c, &n),
         b"AUfn" => {
             let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
                 return true;
@@ -1721,8 +1738,11 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         }
         // A damage event of 0 at the cast point, the burn DataB later
         // (SPEC-0041).
+        // Its effect event, the 0 hit, then an object kept 1 s (c-SBK-1:
+        // 2.909998, freed at 3.914951).
         b"AEmb" => {
             if let Some(t) = c.target {
+                super::table::spell_effect_event(s, h);
                 deferred.push(Deferred::Damage {
                     caster: h,
                     target: t,
@@ -1732,6 +1752,9 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     at: None,
                     fog: None,
                     later_calls: false,
+                });
+                deferred.push(Deferred::Kept {
+                    end: add(c.effect_q, 1.0f32.to_bits()),
                 });
             }
             bounce(s, h, c, &n, BounceKind::ManaBurn);
@@ -2104,6 +2127,8 @@ pub enum BounceKind {
     Heal,
     /// Mana Burn's loss of mana and as much damage, once.
     ManaBurn,
+    /// Impale's damage when a thrown unit lands, once.
+    Land,
     /// Entangling Roots' damage: a 0 event, nine hits a second apart, a
     /// last 0 event.
     Roots,
@@ -2120,6 +2145,70 @@ fn bounce_life(kind: BounceKind) -> u32 {
         1.0f32
     }
     .to_bits()
+}
+
+/// Impale's effect (`b"AUim"` in `effect`).
+fn impale(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel) {
+    let (Some(point), Some(u)) = (c.point, s.unit(Some(h))) else {
+        return;
+    };
+    let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+    let (dx, dy) = (f32::from_bits(point[0]) - x, f32::from_bits(point[1]) - y);
+    let length = ow3_math::natives::sqrt(add((dx * dx).to_bits(), (dy * dy).to_bits()));
+    let length = f32::from_bits(length);
+    let (wave, width) = (f32::from_bits(n.data[0]), f32::from_bits(n.area));
+    let hit: Vec<u32> = s
+        .units
+        .iter()
+        .copied()
+        .filter(|&o| {
+            s.unit(Some(o)).is_some_and(|t| {
+                let ground = s
+                    .data
+                    .units
+                    .get(&t.type_id)
+                    .is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
+                let (px, py) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+                let (along, across) = if length > 0.0 {
+                    (
+                        (px * dx + py * dy) / length,
+                        (px * dy - py * dx).abs() / length,
+                    )
+                } else {
+                    (0.0, (px * px + py * py).sqrt())
+                };
+                t.alive
+                    && !t.hidden
+                    && ground
+                    && movement::enemies(s, owner, t.owner)
+                    && (0.0..=wave).contains(&along)
+                    && across <= width
+            })
+        })
+        .collect();
+    super::table::clap_effect(s, h, n.cost);
+    let hit = movement::call_order(s, hit);
+    let landing = s.ticks + super::attack::ticks(n.data_d);
+    for o in hit {
+        let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
+        let air = if hero { n.hero_duration } else { n.duration };
+        super::table::stun_objects(s, h, o, Vec::new());
+        stun(s, o, h, add(n.data_d, air), c.effect_q, true);
+        s.bounces.push(Bounce {
+            caster: h,
+            owner,
+            kind: BounceKind::Land,
+            target: o,
+            at: landing,
+            amount: n.data[2],
+            factor: 0,
+            left: 1,
+            area: 0.0,
+            hit: Vec::new(),
+            point: [0, 0],
+            q: 0,
+        });
+    }
 }
 
 /// The time between two jumps, 0.25 s.

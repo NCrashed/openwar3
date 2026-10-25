@@ -94,6 +94,9 @@ pub struct UnitType {
     pub abilities: Vec<i32>,
     /// The abilities a hero may learn (`heroAbilList`), SPEC-0035.
     pub hero_abilities: Vec<i32>,
+    /// The ability whose autocast is on from the start (`auto`), 0 for
+    /// none.
+    pub auto: i32,
     /// Seconds from the start of a cast to its effect, and the order held
     /// after it (`castpt`, `castbsw` of `UnitWeapons.slk`), as reals.
     pub cast_point: u32,
@@ -898,7 +901,7 @@ impl ObjectData {
             melee,
             "Units\\UnitAbilities.slk",
             "unitAbilID",
-            &["abilList", "heroAbilList"],
+            &["abilList", "heroAbilList", "auto"],
         )? {
             if let Some(unit) = data.units.get_mut(&id) {
                 unit.abilities = values[0]
@@ -915,6 +918,7 @@ impl ObjectData {
                     .map(|a| code(Some(&a.to_owned())))
                     .filter(|&a| a != 0)
                     .collect();
+                unit.auto = code(values[2].as_ref());
             }
         }
         for (id, values) in rows(

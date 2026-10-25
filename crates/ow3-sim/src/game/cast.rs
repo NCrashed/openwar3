@@ -81,6 +81,11 @@ pub struct Casting {
     point: Option<[u32; 2]>,
 }
 
+/// Whether order `name` of unit `h` is a spell on a point it has.
+pub(super) fn is_point_spell(state: &State, h: u32, name: &str) -> bool {
+    ability_for(state, h, name).is_some_and(|(_, level, _, aim)| level > 0 && aim == Aim::Point)
+}
+
 /// The ability of unit `h` that order `name` casts: the ability, its
 /// level, the order id and what it is cast on.
 fn ability_for(state: &State, h: u32, name: &str) -> Option<(i32, i32, i32, Aim)> {
@@ -1009,6 +1014,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     {
                         w.next_acquire = add(c.effect_q, mul(w.acquire_phase, 0x3F00_0000));
                     }
+                    super::table::summon_made(s, h, e);
                     s.timed_life.push((tick + duration(false) + SUMMON_OVER, e));
                     s.summons.push((h, e));
                 }

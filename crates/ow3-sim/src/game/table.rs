@@ -432,6 +432,39 @@ const CAMP_CREEP: Making = Making {
     corpse: &[17, 14, 13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
 };
 
+/// A summoned unit (SPEC-0044): a player's unit's 18 without its two
+/// ability objects (14, 15), with its timed life (16, freed at its death)
+/// (c-RZJ-1: the first Water Elemental, 1465 .. 1481).
+const SUMMON: Making = Making {
+    count: 17,
+    deferred: &[15, 14],
+    death: &[16, 10, 11],
+    level: &[],
+    corpse: &[13, 12, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0],
+};
+
+/// Unit `h` was summoned by `caster` (SPEC-0044): the spell effect's
+/// event, then the unit's objects; the summon event's objects (1482,
+/// 1483) follow with the event (c-RZJ-1 at 2.3).
+///
+/// PROVISIONAL: read for the Water Elemental only.
+pub(super) fn summon_made(state: &mut super::State, caster: u32, h: u32) {
+    spell_effect_event(state, caster);
+    let tick = state.table.now;
+    let entries = state.table.take_n(tick, SUMMON.count, "summon: unit");
+    for &k in SUMMON.deferred {
+        state.table.defer(entries[k], "summon: unit");
+    }
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.entries = UnitEntries {
+            death: SUMMON.death.iter().map(|&k| entries[k]).collect(),
+            corpse: SUMMON.corpse.iter().map(|&k| entries[k]).collect(),
+            attack_ability: Some(entries[13]),
+            ..UnitEntries::default()
+        };
+    }
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -813,6 +846,33 @@ pub(super) fn move_point_ordered(state: &mut super::State, h: u32) {
         state.table.defer(e, "move ability: order start");
     }
     let mut kept: Vec<u32> = ability[..6].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+    walk_made_at_order(state, h);
+}
+
+/// Unit `h` takes a script's order of a spell on a point (c-RZJ-1: the
+/// Archmage's Blizzard at 2.5): as an attack order to a point, the order
+/// and its record, the old order ends, 11 objects of the ability (the
+/// last 6 freed 0.0001 s later, the first 5 kept with the order) and the
+/// walk.
+///
+/// PROVISIONAL: when the kept ones go is not read.
+pub(super) fn spell_point_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script point order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state
+        .table
+        .take_n(tick, 11, "spell ability: point order start");
+    for &e in ability[5..].iter().rev() {
+        state.table.defer(e, "spell ability: point order start");
+    }
+    let mut kept: Vec<u32> = ability[..5].iter().rev().copied().collect();
     kept.push(order);
     if let Some(e) = entries(state, h) {
         e.order = kept;

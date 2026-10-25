@@ -2090,6 +2090,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if done && name == "move" {
                 super::table::move_point_ordered(&mut s, h);
             }
+            if done && super::cast::is_point_spell(&s, h, name) {
+                super::table::spell_point_ordered(&mut s, h);
+            }
             drop(s);
             Ok(Some(Value::Boolean(done)))
         }

@@ -742,6 +742,15 @@ pub(super) fn walk_made(state: &mut super::State, h: u32) {
         // at 10557).
         e.quiet_walk = false;
     }
+    // The objects kept to the end of a backswing after its target's death
+    // go with a walk it takes instead of standing (c-RZH-1: creep 13 at
+    // 5142, after footman 2's death at 5116).
+    let lost = entries(state, h)
+        .map(|e| std::mem::take(&mut e.lost_later))
+        .unwrap_or_default();
+    for e in lost {
+        state.table.defer(e, "acquisition: attack object");
+    }
 }
 /// Unit `h` made a walk at its order: its first search takes none.
 pub(super) fn walk_made_at_order(state: &mut super::State, h: u32) {
@@ -1823,9 +1832,15 @@ fn stuns_with(state: &mut super::State, backs: bool) {
             continue;
         };
         if end == tick {
-            let buff = state.table.take(tick, "buff end");
+            // Only a creep is given the order that ends the stun, the buff
+            // end object (c-RZH-1: none at the ends of footman 2's bash
+            // stuns, 2007, 2817 and 4976).
+            let buff = state
+                .unit(Some(h))
+                .is_some_and(|u| u.owner == super::creeps::CREEPS)
+                .then(|| state.table.take(tick, "buff end"));
             let ended = entries(state, h).map(|e| {
-                e.buff_end = Some(buff);
+                e.buff_end = buff;
                 e.stun_ticks = Some((u64::MAX, back));
                 std::mem::take(&mut e.stun_end)
             });
@@ -1859,6 +1874,34 @@ fn stuns_with(state: &mut super::State, backs: bool) {
             }
             for &e in ability[6..].iter().rev() {
                 state.table.defer(e, "move ability: order start");
+            }
+            continue;
+        }
+        // An attack-move comes back as a new order: the 11 objects of the
+        // attack ability and a walk, the stun order's objects and the last
+        // 6 of the ability freed 0.0001 s later, the first 5 kept with the
+        // order's own object (c-RZH-1: footman 2 at 2009, after the bash
+        // of 8.03).
+        if backs && back == tick && state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some()) {
+            let ability = state.table.take_n(tick, 11, "attack ability: order start");
+            walk_made_at_order(state, h);
+            let (parts, buff) = entries(state, h)
+                .map(|e| {
+                    let mut kept: Vec<u32> = ability[..5].iter().rev().copied().collect();
+                    kept.append(&mut e.order);
+                    e.order = kept;
+                    e.stun_ticks = None;
+                    (std::mem::take(&mut e.stun_order), e.buff_end.take())
+                })
+                .unwrap_or_default();
+            for e in parts {
+                state.table.defer(e, "stun: order objects");
+            }
+            for &e in ability[5..].iter().rev() {
+                state.table.defer(e, "attack ability: order start");
+            }
+            if let Some(b) = buff {
+                state.table.defer(b, "buff end");
             }
             continue;
         }

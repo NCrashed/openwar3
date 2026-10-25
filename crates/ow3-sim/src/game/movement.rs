@@ -3914,7 +3914,9 @@ fn stun_ends(state: &mut State) {
         // A zero hit from the stunner follows 0.01 s after the order came
         // back, after the unit's check of that time (c-SAK-1: kobold 10 at
         // 1745).
-        if u.stunner.is_some() {
+        // Only for a creep (c-RZH-1: no zero hit after footman 2's bash
+        // stuns).
+        if u.stunner.is_some() && u.owner == super::creeps::CREEPS {
             let hit = add(now, AFTER_DEATH);
             let (mut t, mut clock) = (tick, state.move_clock);
             while real_of(hit) > real_of(add(clock, crate::timers::TICK)) {

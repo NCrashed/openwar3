@@ -1489,6 +1489,11 @@ pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
 /// 991, its check taking creep 7 at 993).
 pub(super) fn end_cast(state: &mut State, h: u32) {
     let now = state.move_clock;
+    end_cast_at(state, h, now);
+}
+
+/// `end_cast` at queue time `now`.
+pub(super) fn end_cast_at(state: &mut State, h: u32, now: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.attack_move = None;
         if u.acquire_phase != super::NO_PHASE {

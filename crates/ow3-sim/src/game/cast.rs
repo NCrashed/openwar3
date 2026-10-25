@@ -770,8 +770,12 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
         if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
             *fog = Some((w.caster, step_q));
         }
-        for (caster, o, at) in restarts {
-            super::table::shockwave_covered(s, caster, o, at);
+        // In the order of the grid the area pass visits (SPEC-0019).
+        let order = movement::call_order(s, restarts.iter().map(|r| r.1).collect());
+        for o in order {
+            if let Some(&(caster, _, at)) = restarts.iter().find(|r| r.1 == o) {
+                super::table::shockwave_covered(s, caster, o, at);
+            }
         }
     }
     waves.retain(|w| tick - w.start < wave_end(w));
@@ -956,12 +960,15 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
             if c.effect_at.is_some() && tick >= c.end_at {
                 super::table::channel_ended(s, h);
-                movement::end_cast(s, h);
                 // Its order ends (SPEC-0024), counted by the game in the
                 // tick of the end's queue time, the effect's plus the
-                // ticks after it.
+                // ticks after it; the unit's check comes 0.01 s after that
+                // time (c-RZJ-1: the Ogre Lord, end 4.247710, check
+                // 4.257710).
                 let after = (tick - c.effect_at.unwrap_or(tick)) as f32 * 0.005;
-                s.table_at(add(c.effect_q, after.to_bits()));
+                let end_q = add(c.effect_q, after.to_bits());
+                movement::end_cast_at(s, h, end_q);
+                s.table_at(end_q);
                 super::table::order_ended(s, h);
                 s.table.now = tick;
             }

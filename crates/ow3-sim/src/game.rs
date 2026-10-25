@@ -2426,7 +2426,18 @@ impl<'a> Game<'a> {
     pub fn queue_group_point_order(&mut self, units: &[u32], order: &str, x: f32, y: f32) {
         if let Some(name) = movement::known_order(order) {
             let target = [x.to_bits(), y.to_bits()];
-            queue::push_group(&mut self.state.borrow_mut(), units, name, target);
+            let mut state = self.state.borrow_mut();
+            // The members nearest to the point first, as for a group order
+            // (c-RTW-3: the queue entries of 26.196604).
+            let squared = |s: &State, h: u32| {
+                s.unit(Some(h)).map_or(f32::MAX, |u| {
+                    let (dx, dy) = (x - f32::from_bits(u.x), y - f32::from_bits(u.y));
+                    dx * dx + dy * dy
+                })
+            };
+            let mut units = units.to_vec();
+            units.sort_by(|&a, &b| squared(&state, a).total_cmp(&squared(&state, b)));
+            queue::push_group(&mut state, &units, name, target);
         }
     }
 

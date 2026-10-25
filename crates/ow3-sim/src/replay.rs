@@ -484,6 +484,17 @@ impl<'a> Playback<'a> {
                 let Some(name) = self.order(*order) else {
                     return;
                 };
+                // Units without an order take it first (c-RTW-3: the stop of
+                // 27.921314, the footman whose move had ended first).
+                let idle: std::collections::BTreeSet<u32> = self
+                    .game
+                    .units()
+                    .iter()
+                    .filter(|u| u.order == 0)
+                    .map(|u| u.handle)
+                    .collect();
+                let mut selected = selected;
+                selected.sort_by_key(|u| !idle.contains(u));
                 for unit in selected {
                     if flags & QUEUED != 0 {
                         self.game.queue_immediate_order(unit, name);

@@ -85,6 +85,9 @@ the game's order.
 - The gold harvest test c-RXI-1 (six peasants, a gold mine, a town hall):
   its object table (3263 changes) and all 610 turn checksums match the
   game.
+- The player orders test c-RTW-3 (footmen: moves, patrol, follow, group
+  and Shift group orders, stop): its object table (1175 changes) and all
+  900 turn checksums match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

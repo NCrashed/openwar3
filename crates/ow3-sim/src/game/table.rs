@@ -1913,6 +1913,9 @@ pub(super) fn hold_ordered(state: &mut super::State, h: u32) {
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
+    // A group member's walk, kept through its order, goes now (c-RTW-3:
+    // the stop of 27.921314, the last member's walk freed at its update).
+    walk_dropped(state, h);
     let start = state.table.take_n(tick, 5, "hold: order start");
     for &e in start.iter().rev() {
         state.table.defer(e, "hold: order start");

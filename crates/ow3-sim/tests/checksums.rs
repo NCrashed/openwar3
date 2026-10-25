@@ -79,9 +79,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RTW-3.w3g",
-        "all path events of the log are the game's (tests/crowd.rs, to tick 5600); the \
-         script generator sums differ from turn 268 on and turn 278 changes state here only: \
-         not looked at yet",
+        "player orders (moves, patrol, follow, group and Shift group orders, stop): every \
+         turn checksum to its end matches with the object table started as the game has it \
+         (tests/objects.rs, orders_checksums); this test runs without it",
     ),
     (
         "c-RXR-1.w3g",

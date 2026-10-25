@@ -24,11 +24,13 @@ What is checked against the game:
   by turn, including the turn checksum the game uses to detect desyncs;
 - in the three hero tests (Mountain King, Blademaster, Archmage, Paladin,
   footmen, water elementals, creeps), the battle test (footmen, riflemen,
-  grunts, headhunters) and the gold harvest test (six peasants) every one
-  of the engine's internal object changes and every turn checksum match
-  the game: 11848 changes and 1614 turns (to 161 s), 4881 changes and 629
-  turns, 7596 changes and 828 turns (to 83 s), 6892 changes and 408 turns
-  (to 41 s), and 3263 changes and 610 turns (to 61 s).
+  grunts, headhunters), the gold harvest test (six peasants) and the
+  player orders test (footmen moved alone, in groups and with Shift) every
+  one of the engine's internal object changes and every turn checksum
+  match the game: 11848 changes and 1614 turns (to 161 s), 4881 changes
+  and 629 turns, 7596 changes and 828 turns (to 83 s), 6892 changes and
+  408 turns (to 41 s), 3263 changes and 610 turns (to 61 s), and 1175
+  changes and 900 turns (to 91 s).
 
 ## Roadmap
 

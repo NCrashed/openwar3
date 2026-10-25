@@ -145,11 +145,27 @@ fn harvest_objects() {
     }
 }
 
-/// `c-RTW-3`, `c-RXD-1`, `c-RYP-1`: walks, crowds and harvest (report
-/// only).
+/// `c-RTW-3`: player orders to footmen (moves, patrol, follow, group and
+/// Shift group orders, stop): every turn checksum.
+#[test]
+fn orders_checksums() {
+    if let Some(first) = turn_parts("c-RTW-3") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-RTW-3`'s object table.
+#[test]
+fn orders_objects() {
+    if let Some(first) = compare_objects("c-RTW-3") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}
+
+/// `c-RXD-1`, `c-RYP-1`: harvest with creeps, lumber (report only).
 #[test]
 fn others_checksums_report() {
-    for name in ["c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+    for name in ["c-RXD-1", "c-RYP-1"] {
         turn_parts(name);
     }
 }
@@ -157,7 +173,7 @@ fn others_checksums_report() {
 /// Their object tables (report only).
 #[test]
 fn others_objects_report() {
-    for name in ["c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+    for name in ["c-RXD-1", "c-RYP-1"] {
         eprintln!("{name}");
         compare_objects(name);
     }

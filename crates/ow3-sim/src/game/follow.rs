@@ -704,7 +704,7 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
     // A worker at its gold mine gives its walk up as it goes in or starts
     // to wait (`harvest::start_waiting`; c-RXI-1: walks freed at 877).
     let at_mine = state.unit(Some(walker.handle)).and_then(|u| u.movement).is_some_and(|m| {
-        matches!(m.order, super::movement::Order::Work { target } | super::movement::Order::Gather { target } if super::harvest::is_mine(state, target))
+        matches!(m.order, super::movement::Order::Work { target } | super::movement::Order::Gather { target } | super::movement::Order::Return { building: target } if super::harvest::is_mine(state, target) || state.unit(Some(target)).is_some_and(|b| b.footprint.is_some()))
     });
     if decided != Steer::Hold || follow.advance {
         state.paths.insert(walker.handle, follow);

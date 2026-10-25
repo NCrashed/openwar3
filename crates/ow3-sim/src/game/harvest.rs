@@ -932,6 +932,7 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             g.cycling = true;
             set(&mut s, h, Some(g));
             walk_back(&mut s, h);
+            super::table::harvest_turned_back(&mut s, h);
             continue;
         }
         // At the end of its backswing a worker whose tree is gone takes
@@ -1048,6 +1049,8 @@ fn deliver(state: &mut State, h: u32) {
     set(state, h, Some(g));
     if target.is_none() || !walk_to_work(state, h) {
         movement::stop(state, h);
+    } else if target.is_some_and(|t| is_tree(state, t)) {
+        super::table::lumber_delivered(state, h);
     }
 }
 

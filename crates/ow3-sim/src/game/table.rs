@@ -1200,6 +1200,55 @@ pub(super) fn tree_arrived(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
+/// Worker `h` turns back from its tree with a full load (c-RYP-1: peasant
+/// 0 at 3183): the return order's object and 12 parts and the walk to the
+/// hall; the harvest order's kept parts and object go, then the new parts
+/// 11 .. 7 (0.0001 s later, from the last); 0 .. 6 and the object are kept
+/// to the delivery.
+pub(super) fn harvest_turned_back(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "harvest: return order");
+    let parts = state.table.take_n(tick, 12, "harvest: return order start");
+    walk_made_at_order(state, h);
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for o in old {
+        state.table.defer(o, "harvest: order");
+    }
+    for &e in parts[7..].iter().rev() {
+        state.table.defer(e, "harvest: return order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = parts[..7].iter().rev().copied().chain([order]).collect();
+    }
+}
+
+/// Worker `h` delivers its lumber and goes back to its tree (c-RYP-1:
+/// peasant 0 at 3985): the new harvest order's object, the return
+/// order's kept parts and object going, its 13 parts (8 .. 12 freed
+/// 0.0001 s later, 7 at the arrival, 0 .. 6 and the object kept) and the
+/// walk.
+pub(super) fn lumber_delivered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "harvest: order");
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for o in old {
+        state.table.defer(o, "harvest: return order");
+    }
+    let parts = state.table.take_n(tick, 13, "harvest: order start");
+    for &e in parts[8..].iter().rev() {
+        state.table.defer(e, "harvest: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = vec![parts[7]];
+        e.order = parts[..7].iter().rev().copied().chain([order]).collect();
+    }
+    walk_made_at_order(state, h);
+}
+
 /// Worker `h` drops a tree it cannot reach (c-RYP-1: peasant 4 at 1243):
 /// its harvest order's part 7 goes, a stop's 3 parts are made and freed
 /// at once (0.0001 s later, from the last), then its part 6, and an object

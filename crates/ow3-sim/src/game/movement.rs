@@ -3243,7 +3243,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.velocity = [0, 0];
                             // A worker at its gold mine keeps its walk to its going
                             // in (`harvest::start_waiting`; c-RXI-1: walks freed at 877).
-                            if matches!(m.order, Order::Gather { target } | Order::Work { target } if super::harvest::is_mine(state, target))
+                            if matches!(m.order, Order::Gather { target } | Order::Work { target } | Order::Return { building: target } if super::harvest::is_mine(state, target) || state.unit(Some(target)).is_some_and(|b| b.footprint.is_some()))
                             {
                                 state.paths.remove(&h);
                             } else {

@@ -86,6 +86,20 @@ fn thunder_clap_objects() {
     }
 }
 
+/// `c-SBG-1`: the turn checksums, with the object table as the game
+/// starts it (report only: turn 92 differs, ogre 3's remembered target).
+#[test]
+fn thunder_clap_checksums_report() {
+    turn_parts("c-SBG-1");
+}
+
+/// `c-RZJ-1`: the second hero test (Archmage, Paladin, water elementals,
+/// an Ogre Lord's camp): report only while its table is being built up.
+#[test]
+fn heroes_two_checksums_report() {
+    turn_parts("c-RZJ-1");
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {
@@ -98,7 +112,11 @@ fn compare_objects(name: &str) -> Option<Option<usize>> {
     let mut playback = Playback::new(&program, &map, &replay).unwrap();
     playback.game.set_table(start_table(), true);
     // (Some ticks past the list's last, whose tick column runs ahead.)
-    let until = game.last().map_or(0, |r| r.0) + 10;
+    // OW3_UNTIL: play to that tick instead.
+    let until = std::env::var("OW3_UNTIL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(game.last().map_or(0, |r| r.0) + 10);
     while playback.game.ticks() <= until && playback.step_tick() {}
     // Not the objects the game makes at its end, after the replay's last
     // turn (c-RZH-1 at 63.0 s, the tick of the list's first row marked so),

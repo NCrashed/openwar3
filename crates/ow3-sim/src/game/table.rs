@@ -1137,6 +1137,27 @@ pub(super) fn queued_move_started(state: &mut super::State, h: u32) {
     }
 }
 
+/// Unit `h` takes a move order on a unit, following it (c-RTW-3: a right
+/// click on a footman at 19.797678): the order and its record, the old
+/// order ends, then 17 objects of the move ability (the last 6 freed
+/// 0.0001 s later, from the last; the first 11 kept to the order's end)
+/// and the walk.
+pub(super) fn move_target_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "player target order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let ability = state.table.take_n(tick, 17, "move ability: order start");
+    for &e in ability[11..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = ability[..11].iter().rev().copied().chain([order]).collect();
+    }
+    walk_made_at_order(state, h);
+}
+
 /// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an
 /// order object, its record and one more, all three freed 0.0001 s
 /// later (the record, the third, the first), the old order ends, then 12

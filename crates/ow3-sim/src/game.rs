@@ -2571,7 +2571,18 @@ impl<'a> Game<'a> {
     }
 
     pub fn issue_target_order(&mut self, unit: u32, order: &str, target: u32) -> bool {
-        movement::target_order(&mut self.state.borrow_mut(), unit, order, target)
+        let mut state = self.state.borrow_mut();
+        let done = movement::target_order(&mut state, unit, order, target);
+        // Following a unit takes a move's objects (c-RTW-3: a right click
+        // on a footman at 19.797678).
+        let follows = state
+            .unit(Some(unit))
+            .and_then(|u| u.movement)
+            .is_some_and(|m| matches!(m.order, movement::Order::Follow { .. }));
+        if follows && matches!(order, "smart" | "move") {
+            table::move_target_ordered(&mut state, unit);
+        }
+        done
     }
 
     pub fn issue_immediate_order(&mut self, unit: u32, order: &str) -> bool {

@@ -398,6 +398,11 @@ pub(super) fn create_unit(
         holding: false,
         attack_removed: false,
         move_slow: None,
+        aura_setup: Some(state.ticks),
+        aura_order: {
+            state.aura_setups += 1;
+            state.aura_setups
+        },
         slowed_until: None,
         buffs: Vec::new(),
         aura_learned: None,

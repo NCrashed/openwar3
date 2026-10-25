@@ -74,26 +74,45 @@ fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
 /// The checks of this tick.
 pub(super) fn tick(state: &mut State) {
     let tick = state.ticks;
-    brilliance(state);
+    // The buffs gained: (the aura's setup order, unit, aura).
+    let mut gains = brilliance(state);
     if tick % REMOVAL == REMOVAL_PHASE {
         // Not found in reach since the removal check before.
         for &o in &state.units.clone() {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
+                let before: Vec<i32> = u.buffs.iter().map(|b| b.0).collect();
                 u.buffs.retain(|&(a, _, seen)| {
                     seen + REMOVAL > tick
                         || base_of(&state.data, a) == i32::from_be_bytes(BRILLIANCE)
                 });
+                let lost: Vec<i32> = before
+                    .into_iter()
+                    .filter(|a| !u.buffs.iter().any(|b| b.0 == *a))
+                    .collect();
+                for a in lost {
+                    super::table::aura_buff_lost(state, o, a);
+                }
             }
         }
     }
     if tick % PERIOD != 1 {
+        buff_objects(state, gains);
         return;
     }
-    let mut given: Vec<(u32, i32, i32)> = Vec::new();
+    let mut given: Vec<(u32, i32, i32, u64)> = Vec::new();
     for &h in &state.units {
         let Some((ability, level)) = aura_of(state, h) else {
             continue;
         };
+        // An aura set up in this tick, after the step (its timer at q
+        // 1.0001), gives its first buffs at the next (c-RZJ-1: the heroes'
+        // and the Ogre Lord's auras of tick 201, first given at 1.505).
+        if state
+            .unit(Some(h))
+            .is_some_and(|u| u.aura_setup == Some(tick))
+        {
+            continue;
+        }
         let Some(hero) = state.unit(Some(h)) else {
             continue;
         };
@@ -116,15 +135,32 @@ pub(super) fn tick(state: &mut State) {
             let friend = u.owner == owner || state.setup.is_ally(owner, u.owner);
             let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
             if u.alive && !u.hidden && ground && friend && dx * dx + dy * dy <= area * area {
-                given.push((o, ability, level));
+                given.push((o, ability, level, hero.aura_order));
             }
         }
     }
-    for (o, ability, level) in given {
+    for (o, ability, level, order) in given {
+        let fresh = state
+            .unit(Some(o))
+            .is_some_and(|u| !u.buffs.iter().any(|&(a, _, _)| a == ability));
         if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
             u.buffs.retain(|&(a, _, _)| a != ability);
             u.buffs.push((ability, level, tick));
         }
+        if fresh {
+            gains.push((order, o, ability));
+        }
+    }
+    buff_objects(state, gains);
+}
+
+/// A new buff takes its object, aura by aura in the order of their setup
+/// (SPEC-0024, SPEC-0038; c-RZJ-1 at 1.505: the Ogre Lord's 7,
+/// Brilliance's 1, the Paladin's Devotion 7).
+fn buff_objects(state: &mut State, mut gains: Vec<(u64, u32, i32)>) {
+    gains.sort_by_key(|g| g.0);
+    for (_, o, ability) in gains {
+        super::table::aura_buff_gained(state, o, ability);
     }
 }
 
@@ -161,23 +197,21 @@ pub(super) fn has_buff(state: &State, u: &super::Unit, buff: i32) -> bool {
         .any(|&(a, _, _)| state.data.abilities.get(&a).is_some_and(|d| d.buff == buff))
 }
 
-/// Brilliance Aura (SPEC-0046): pulses every `PERIOD` ticks from
-/// `FIRST_PULSE` after the hero learned it; every fourth pulse first takes
+/// Brilliance Aura (SPEC-0046): pulses at the auras' steps every `PERIOD`
+/// ticks from the first after the hero learned it; every fourth pulse first takes
 /// the buff from the units no pulse found since the fourth before, then
 /// each pulse gives it to the friendly units nearer the hero than `Area`
 /// plus their collision. A buffed unit regenerates `DataA` more mana a
 /// second.
 ///
-/// PROVISIONAL: the first pulse is taken 2 ticks after the learning (1 or
-/// 2 in the tests, SPEC-0046 open question 1); the buff goes in the tick
-/// of the pulse.
+/// PROVISIONAL: the buff goes in the tick of the pulse.
 const BRILLIANCE: [u8; 4] = *b"AHab";
-const FIRST_PULSE: u64 = 2;
 const PULSES_PER_REMOVAL: u64 = 4;
 
-fn brilliance(state: &mut State) {
+fn brilliance(state: &mut State) -> Vec<(u64, u32, i32)> {
     let tick = state.ticks;
     let code = i32::from_be_bytes(BRILLIANCE);
+    let mut gains = Vec::new();
     let heroes: Vec<(u32, i32, i32, u64)> = state
         .units
         .iter()
@@ -201,7 +235,13 @@ fn brilliance(state: &mut State) {
         }
     };
     for (h, ability, level, from) in heroes {
-        let first = from + FIRST_PULSE;
+        // The first step of the auras' 0.5 s steps after the learning
+        // (c-RZJ-1: learned in 201, first pulse at the step of 301; the
+        // tests' learning 1 or 2 ticks before a step, SPEC-0046).
+        let first = {
+            let step = from - from % PERIOD + 1;
+            if step > from { step } else { step + PERIOD }
+        };
         if tick < first || (tick - first) % PERIOD != 0 {
             continue;
         }
@@ -231,7 +271,8 @@ fn brilliance(state: &mut State) {
             .get(&ability)
             .and_then(|a| a.per_level.get((level - 1).max(0) as usize))
             .map_or(0, |n| n.area);
-        let (owner, x, y) = (hero.owner, hero.x, hero.y);
+        let (owner, x, y, order) = (hero.owner, hero.x, hero.y, hero.aura_order);
+        let hero_setup = hero.aura_setup;
         let near: Vec<u32> = state
             .units
             .iter()
@@ -253,9 +294,18 @@ fn brilliance(state: &mut State) {
             .collect();
         for o in near {
             note(state, o, &mut before);
+            // Only a unit with mana takes the buff's object (c-RZJ-1: the
+            // Paladin at 1.505, not the footmen).
+            let fresh = state.unit(Some(o)).is_some_and(|u| {
+                !u.buffs.iter().any(|&(a, _, _)| a == ability) && f32::from_bits(u.mana.max) > 0.0
+            });
             if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
                 u.buffs.retain(|&(a, _, _)| a != ability);
                 u.buffs.push((ability, level, tick));
+            }
+            // Not in the tick of its setup (as the other auras).
+            if fresh && hero_setup != Some(tick) {
+                gains.push((order, o, ability));
             }
         }
     }
@@ -272,4 +322,5 @@ fn brilliance(state: &mut State) {
             }
         }
     }
+    gains
 }

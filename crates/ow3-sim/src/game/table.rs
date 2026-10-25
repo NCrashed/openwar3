@@ -340,6 +340,9 @@ pub struct UnitEntries {
     pub clap_area: Option<(u32, u32)>,
     /// A buff end order waiting behind its move.
     pub buff_end_waiting: Option<u32>,
+    /// The objects of the aura buffs on it, by aura ability; `u32::MAX`
+    /// for one whose object is the bearer's own (made with it).
+    pub aura_buffs: Vec<(i32, u32)>,
     /// The object of its attack ability, made with the unit.
     pub attack_ability: Option<u32>,
     /// It walks back to its guard point after its target's death.
@@ -1024,6 +1027,43 @@ pub(super) fn spell_ordered(state: &mut super::State, h: u32, walks: bool) {
     }
     if walks {
         walk_made_at_order(state, h);
+    }
+}
+
+/// Unit `h` gains the buff of aura `ability`: its object, kept while it
+/// has the buff (c-RZJ-1 at 1.505). The bearer's own buff has its object
+/// from the aura's learning or the unit's making.
+///
+/// PROVISIONAL: the order of the gains in a check is the order of the
+/// bearers, then of the units.
+pub(super) fn aura_buff_gained(state: &mut super::State, h: u32, ability: i32) {
+    let tick = state.table.now;
+    let own = state.unit(Some(h)).is_some_and(|u| {
+        u.skills.iter().any(|&(a, _)| a == ability)
+            || state
+                .data
+                .units
+                .get(&u.type_id)
+                .is_some_and(|t| t.abilities.contains(&ability))
+    });
+    if own {
+        return;
+    }
+    let o = state.table.take(tick, "aura buff");
+    if let Some(e) = entries(state, h) {
+        e.aura_buffs.push((ability, o));
+    }
+}
+
+/// Unit `h` loses the buff of aura `ability`: its object goes 0.0001 s
+/// later.
+pub(super) fn aura_buff_lost(state: &mut super::State, h: u32, ability: i32) {
+    let lost = entries(state, h).and_then(|e| {
+        let k = e.aura_buffs.iter().position(|b| b.0 == ability)?;
+        Some(e.aura_buffs.remove(k).1)
+    });
+    if let Some(o) = lost {
+        state.table.defer(o, "aura buff");
     }
 }
 

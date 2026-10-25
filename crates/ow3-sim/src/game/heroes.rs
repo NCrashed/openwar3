@@ -271,6 +271,10 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
         if brilliance {
             u.aura_learned = Some(tick);
         }
+        // (Its aura, if this is one, starts with the learning.)
+        u.aura_setup = Some(tick);
+        state.aura_setups += 1;
+        u.aura_order = state.aura_setups;
         u.spent += 1;
     }
     // Its objects of the engine's table (SPEC-0024): 2 for an ability

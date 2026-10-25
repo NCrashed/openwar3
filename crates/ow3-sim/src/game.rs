@@ -264,6 +264,10 @@ pub struct Unit {
     attack_removed: bool,
     /// A thunder clap's movement slow on it: `DataC` (SPEC-0037).
     move_slow: Option<u32>,
+    /// The tick its aura was set up in (learned, or the unit made).
+    aura_setup: Option<u64>,
+    /// The order of its aura's setup among all auras (SPEC-0038).
+    aura_order: u64,
     slowed_until: Option<(u64, u32)>,
     /// The aura buffs it has: the aura ability, its level and the tick of
     /// the last check that found it in reach (SPEC-0038).
@@ -906,6 +910,8 @@ pub struct State {
     update_now: bool,
     /// The last tick with an update of the movers.
     last_update_tick: u64,
+    /// Auras set up so far, for their order in a step (SPEC-0038).
+    aura_setups: u64,
     /// The number of the last update cycle, 1 for the first (SPEC-0018).
     update_cycle: u64,
     /// Orders of a player are being given, between two ticks: a unit they
@@ -1120,6 +1126,7 @@ impl State {
             last_move_clock: 0,
             update_now: false,
             last_update_tick: 0,
+            aura_setups: 0,
             update_cycle: 0,
             player_orders: false,
             start_velocities: std::collections::BTreeMap::new(),

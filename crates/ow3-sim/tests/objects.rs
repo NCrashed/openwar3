@@ -160,9 +160,6 @@ fn heroes_three_objects() {
 /// `R`, `G`): `B`, `N`, `C`, `D`, `E` and `R` of the playback are the
 /// game's at every turn, and so is `G`; every recorded checksum follows,
 /// up to the one constant of `K1`, `K2`, `K3` (SPEC-0024).
-/// The turns of `c-SAK-1` whose checksums match so far.
-const CHECKED_TURNS: usize = 1168;
-
 #[test]
 fn heroes_three_checksums() {
     let name = "c-SAK-1";
@@ -184,10 +181,6 @@ fn heroes_three_checksums() {
     for line in text.lines().filter(|l| !l.starts_with('#')) {
         let w: Vec<&str> = line.split('\t').collect();
         let k: usize = w[0].parse().unwrap();
-        // The turns after 116.85 s are not matched yet (footman 7's corpse).
-        if k > CHECKED_TURNS {
-            break;
-        }
         let (turn, marks) = (&turns[k - 1], &playback.marks[k - 1]);
         let ours = (
             turn.recorded,

@@ -973,6 +973,8 @@ pub struct State {
     /// Heroes that gained a level, once a level, whose level events have
     /// not run yet.
     pub(super) leveled: Vec<u32>,
+    /// The timers `TimerStart` started at least once (SPEC-0024).
+    pub(super) timers_started: std::collections::BTreeSet<u32>,
     /// Each player's type records (SPEC-0024, "Game sum G"): per unit
     /// type, in the order made, the values `q0` .. `q6`.
     pub(super) type_records: std::collections::BTreeMap<i32, Vec<(i32, [u32; 7])>>,
@@ -1133,6 +1135,7 @@ impl State {
             waves: Vec::new(),
             impact_now: false,
             leveled: Vec::new(),
+            timers_started: Default::default(),
             type_records: Default::default(),
             level_parts: Vec::new(),
             call_entries: 0,
@@ -1276,6 +1279,9 @@ impl State {
         // 3353, after the 0.0001 s frees).
         let limit = self.timers.time();
         self.table.flush_q(tick, limit);
+        // The world clock's timers of the tick (a corpse's end).
+        let clock = add(self.move_clock, crate::timers::TICK);
+        self.table.flush_clock(tick, clock);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
         let before = self.object_ticks.len() + self.object_timers.len();
         self.object_ticks.retain(|&t| t != tick);
@@ -2810,7 +2816,17 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                 {
                     let mut s = state.borrow_mut();
                     let tick = s.table.now;
-                    s.table.take_n(tick, objects, tag);
+                    // A timer started before takes none when started again
+                    // (c-SAK-1: the 120 s timer of the map start, started
+                    // again in its callback at 120.05 s).
+                    let again = tag == "TimerStart"
+                        && match args.first() {
+                            Some(Value::Handle(Some(h))) => !s.timers_started.insert(*h),
+                            _ => false,
+                        };
+                    if !again {
+                        s.table.take_n(tick, objects, tag);
+                    }
                 }
                 f(vm, args)
             })

@@ -65,9 +65,12 @@ pub struct ObjectTable {
     copy_parts: Vec<u32>,
     missiles: std::collections::BTreeMap<u32, Vec<u32>>,
     rest_q: Vec<(u32, u32)>,
+    rest_w: Vec<(u32, u32)>,
     /// Objects freed in a later tick's batch (`free_at`).
     timed: Vec<(u64, u32, &'static str)>,
     timed_q: Vec<(u32, u32, &'static str)>,
+    /// Objects freed by a timer of the world clock (`free_at_clock`).
+    timed_w: Vec<(u32, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
     pub ends_late: Vec<u32>,
     /// The takings and freeings, when kept.
@@ -95,6 +98,7 @@ impl ObjectTable {
             resumed: Vec::new(),
             rest: Vec::new(),
             rest_q: Vec::new(),
+            rest_w: Vec::new(),
             homes: Vec::new(),
             copies: Default::default(),
             dead_missiles: Default::default(),
@@ -102,6 +106,7 @@ impl ObjectTable {
             missiles: Default::default(),
             timed: Vec::new(),
             timed_q: Vec::new(),
+            timed_w: Vec::new(),
             ends_late: Vec::new(),
             log: None,
             clocks: None,
@@ -179,10 +184,40 @@ impl ObjectTable {
 
     /// The queue's timers of this tick, up to `limit`, free their objects.
     pub fn flush_q(&mut self, tick: u64, limit: u32) {
-        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
+        let (mut due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
             .into_iter()
             .partition(|&(q, _, _)| f32::from_bits(q) <= f32::from_bits(limit));
         self.timed_q = later;
+        // An object made at the timer, before its frees, freed in its place
+        // among them (`TAKE_AT`).
+        for d in &mut due {
+            if d.1 == TAKE_AT {
+                d.1 = self.take(tick, d.2);
+            }
+        }
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
+    }
+
+    /// The object holding `entry` is freed by a timer of the world clock
+    /// expiring at `clock` (`TAKE_AT` for an object made there).
+    pub fn free_at_clock(&mut self, clock: u32, entry: u32, tag: &'static str) {
+        self.timed_w.push((clock, entry, tag));
+    }
+
+    /// The world clock's timers of the tick, up to `limit`, free their
+    /// objects; the objects they make come first.
+    pub fn flush_clock(&mut self, tick: u64, limit: u32) {
+        let (mut due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_w)
+            .into_iter()
+            .partition(|&(c, _, _)| f32::from_bits(c) <= f32::from_bits(limit));
+        self.timed_w = later;
+        for d in &mut due {
+            if d.1 == TAKE_AT {
+                d.1 = self.take(tick, d.2);
+            }
+        }
         for (_, entry, tag) in due {
             self.free(tick, entry, tag);
         }
@@ -2024,8 +2059,10 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     state.table.rest_q.push((three, queue[3]));
     state.table.rest_q.push((five, queue[2]));
     // Its corpse goes at the end of its decay, DecayTime and BoneDecayTime
-    // on (2 and 88 s): the second of the queue, the objects of its making
-    // it still has, the first of the queue (c-SAK-1: kobold 9 at 106.758).
+    // on (2 and 88 s), a timer of the world clock: the second of the queue,
+    // the objects of its making it still has, the first of the queue
+    // (c-SAK-1: kobold 9 at 106.758; footman 5's at 120.2495 after the
+    // turn checksum of 120.15, the queue time ahead of the world clock).
     // A hero leaves no corpse that decays.
     let corpse = entries(state, h)
         .map(|e| std::mem::take(&mut e.corpse))
@@ -2035,13 +2072,32 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         .is_some_and(|u| crate::data::is_hero(u.type_id))
     {
         let gone = ow3_math::add(five, (CORPSE_DECAY - 2.0).to_bits());
-        state.table.rest_q.push((gone, queue[1]));
-        for e in corpse {
-            state.table.rest_q.push((gone, e));
+        // A unit with Defend: the ability, taken away with the unit, orders
+        // its end, an object freed after the ability's (c-SAK-1: footman 7
+        // at 116.859).
+        let defend = state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .is_some_and(|t| {
+                t.abilities.iter().any(|a| {
+                    state.data.abilities.get(a).map_or(*a, |d| d.code)
+                        == i32::from_be_bytes(*b"Adef")
+                })
+            });
+        state.table.rest_w.push((gone, queue[1]));
+        for (k, e) in corpse.into_iter().enumerate() {
+            state.table.rest_w.push((gone, e));
+            if k == 0 && defend {
+                state.table.rest_w.push((gone, TAKE_AT));
+            }
         }
-        state.table.rest_q.push((gone, queue[0]));
+        state.table.rest_w.push((gone, queue[0]));
     }
 }
+
+/// In `ObjectTable::flush_q`, an object to be made at the timer and freed
+/// in its place.
+const TAKE_AT: u32 = u32::MAX;
 
 /// DecayTime + BoneDecayTime of the game's constants, from the end of the
 /// death time (c-SAK-1: 2 + 88).
@@ -2056,6 +2112,9 @@ pub(super) fn death_rest(state: &mut super::State) {
     }
     for (q, e) in std::mem::take(&mut state.table.rest_q) {
         state.table.free_at_q(q, e, "death order queue");
+    }
+    for (c, e) in std::mem::take(&mut state.table.rest_w) {
+        state.table.free_at_clock(c, e, "corpse");
     }
 }
 

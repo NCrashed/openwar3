@@ -4154,7 +4154,10 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     due.sort_by(|a, b| real_of(a.0).total_cmp(&real_of(b.0)).then(a.1.cmp(&b.1)));
     let targets = Targets::new(state);
     let mut acquired = Vec::new();
+    // Where each check's acquisitions start in `acquired`.
+    let mut marks: Vec<(usize, u32)> = Vec::new();
     for (expiry, _, h, check) in due {
+        marks.push((acquired.len(), expiry));
         // The goals of backswings ending before this check come first
         // (c-SAK-1: gnoll 17 at 12.929933 before the check at 12.932871).
         super::attack::after_swing_walks(state, Some(expiry));
@@ -4270,7 +4273,35 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             acquired.extend(super::creeps::call_for_help(state, h, target, expiry));
         }
     }
+    state.check_times = acquired
+        .iter()
+        .enumerate()
+        .map(|(k, &h)| {
+            let at = marks.iter().rev().find(|m| m.0 <= k).map_or(0, |m| m.1);
+            (h, at)
+        })
+        .collect();
     acquired
+}
+
+/// The units of `acquired` whose checks expired before the earliest
+/// reaction end still to come in this tick, and the others.
+pub(super) fn checked_before_reaction_end(state: &State, acquired: &[u32]) -> (Vec<u32>, Vec<u32>) {
+    let end = state
+        .moving
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)).and_then(|u| u.movement?.reaction_end))
+        .min_by(|a, b| real_of(*a).total_cmp(&real_of(*b)));
+    let Some(end) = end else {
+        return (acquired.to_vec(), Vec::new());
+    };
+    acquired.iter().partition(|&&h| {
+        state
+            .check_times
+            .iter()
+            .find(|c| c.0 == h)
+            .is_none_or(|c| real_of(c.1) < real_of(end))
+    })
 }
 
 /// The checks at the end of a backswing of the attackers that switched

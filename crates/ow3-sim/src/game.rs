@@ -965,6 +965,9 @@ pub struct State {
     quiet_events: bool,
     /// Units whose acquisition in this tick only recorded a target.
     record_only: Vec<u32>,
+    /// The expiries of the checks that made the last batch's
+    /// acquisitions, by unit.
+    check_times: Vec<(u32, u32)>,
     /// Summoned units and the tick in which their time runs out
     /// (SPEC-0044).
     pub(super) timed_life: Vec<(u64, u32)>,
@@ -1133,6 +1136,7 @@ impl State {
             event_objects: Vec::new(),
             quiet_events: false,
             record_only: Vec::new(),
+            check_times: Vec::new(),
             timed_life: Vec::new(),
             waves: Vec::new(),
             impact_now: false,
@@ -1852,11 +1856,20 @@ impl<'a> Game<'a> {
             let hit = attack::next_hit(&self.state.borrow());
             let acquired = movement::acquisitions(&mut self.state.borrow_mut(), hit, first_batch);
             if first_batch {
-                // Reaction delays that end after the first check.
+                // Reaction delays that end after the first check, after the
+                // acquisitions of the checks before them (c-RZH-1: a reaction
+                // end at 26.300463 after the checks at 26.299831 in 5260;
+                // c-SAK-1: one at 18.009829 before the check at
+                // 18.009998 in 3603).
+                let (before, after) =
+                    movement::checked_before_reaction_end(&self.state.borrow(), &acquired);
+                widgets::acquired(&mut self.vm, &self.state, &before);
                 movement::after_checks(&mut self.state.borrow_mut(), hit);
                 first_batch = false;
+                widgets::acquired(&mut self.vm, &self.state, &after);
+            } else {
+                widgets::acquired(&mut self.vm, &self.state, &acquired);
             }
-            widgets::acquired(&mut self.vm, &self.state, &acquired);
             if hit.is_none() {
                 break;
             }

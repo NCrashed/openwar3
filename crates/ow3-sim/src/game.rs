@@ -1912,6 +1912,11 @@ impl<'a> Game<'a> {
         // What the units see (SPEC-0032).
         fog::tick(&mut self.state.borrow_mut());
         // Internal objects of the checksum freed or made now (SPEC-0024).
+        {
+            let mut s = self.state.borrow_mut();
+            let limit = s.timers.time();
+            table::slow_ends(&mut s, limit);
+        }
         table::stuns(&mut self.state.borrow_mut());
         self.state.borrow_mut().objects_due();
         self.park();

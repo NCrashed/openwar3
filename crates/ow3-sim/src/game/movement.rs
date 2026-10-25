@@ -1985,6 +1985,14 @@ pub(super) fn stand_still(state: &mut State, h: u32, at: Option<u32>) {
     }
 }
 
+/// Whether unit `h` walks a move order now.
+pub(super) fn on_move(state: &State, h: u32) -> bool {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| m.ordered() && m.order == Order::Point)
+}
+
 /// Whether unit `h` holds its position with `target` out of its reach
 /// (SPEC-0019): it takes no such target, at a check or at a call (c-SBG-1).
 fn holds_off(state: &State, h: u32, target: u32) -> bool {
@@ -3256,6 +3264,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     super::table::walk_dropped(state, h);
                 } else if !u.entries.order.is_empty() {
                     super::table::order_ended(state, h);
+                    super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);
                 }
             }

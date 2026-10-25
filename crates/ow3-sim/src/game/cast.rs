@@ -474,7 +474,7 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
             target,
             amount: if building { mul(each, n.data_d) } else { each },
             call: Some((point, n.area)),
-            slow: false,
+            slow: None,
             at: None,
         });
     }
@@ -712,7 +712,7 @@ fn shockwaves(s: &mut State, deferred: &mut Vec<Deferred>) {
                     target: o,
                     amount: w.amount,
                     call: Some((centre, w.area)),
-                    slow: false,
+                    slow: None,
                     at: None,
                 });
             }
@@ -826,7 +826,7 @@ enum Deferred {
         objects: Vec<u32>,
     },
     /// The object of a thunder clap's area pass, after its hits.
-    ClapArea { at: u32 },
+    ClapArea { at: u32, first: Option<u32> },
     /// Damage of a thunder clap.
     Damage {
         caster: u32,
@@ -835,8 +835,9 @@ enum Deferred {
         /// The centre and area of the spell, for its call for help
         /// (SPEC-0019, "Spell damage").
         call: Option<([u32; 2], u32)>,
-        /// A thunder clap's slow, put on a target the hit leaves alive.
-        slow: bool,
+        /// A thunder clap's slow, put on a target the hit leaves alive:
+        /// the queue time it ends.
+        slow: Option<u32>,
         /// The queue time of the hit, for what it starts (a thunder
         /// clap's effect; c-RZH-1: gnoll 11's death at 26.400000).
         at: Option<u32>,
@@ -925,7 +926,9 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 stun,
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
-            Deferred::ClapArea { at } => super::table::clap_area(&mut state.borrow_mut(), at),
+            Deferred::ClapArea { at, first } => {
+                super::table::clap_area(&mut state.borrow_mut(), at, first);
+            }
             Deferred::Damage {
                 caster,
                 target,
@@ -942,8 +945,10 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 let mut s = state.borrow_mut();
                 s.event_time = previous;
                 // The slow's objects after the hit's (SPEC-0024).
-                if slow && matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
-                    super::table::clap_slowed(&mut s, target);
+                if let Some(end) = slow
+                    && matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive)
+                {
+                    super::table::clap_slowed(&mut s, target, end);
                 }
                 // The victim and its friends answer the hit (SPEC-0019).
                 if matches!(s.objects.get(&target), Some(Object::Unit(u)) if u.alive) {
@@ -1133,6 +1138,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             // (SPEC-0019; c-SBG-1: paladin 2, ogre 3, ogre 1).
             let hit = movement::call_order(s, hit);
             let centre = [u_x, u_y];
+            let first = hit.first().copied();
             for o in hit {
                 let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
                 let until = tick + duration(hero);
@@ -1148,11 +1154,11 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     target: o,
                     amount: n.data[0],
                     call: Some((centre, n.area)),
-                    slow: true,
+                    slow: Some(ow3_math::add(now, seconds(hero))),
                     at: Some(now),
                 });
             }
-            deferred.push(Deferred::ClapArea { at: now });
+            deferred.push(Deferred::ClapArea { at: now, first });
         }
         _ => {}
     }

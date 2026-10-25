@@ -332,8 +332,14 @@ pub struct UnitEntries {
     /// unit's backswing (`lost_at_backswing_end`).
     pub keep_lost: bool,
     pub lost_later: Vec<u32>,
-    /// The object of a thunder clap's slow on the unit.
+    /// The object of a thunder clap's slow on the unit, and the queue
+    /// time the slow ends.
     pub slow_buff: Option<u32>,
+    pub slow_end_q: Option<u32>,
+    /// A thunder clap's area object it holds, with the clap's time.
+    pub clap_area: Option<(u32, u32)>,
+    /// A buff end order waiting behind its move.
+    pub buff_end_waiting: Option<u32>,
     /// The object of its attack ability, made with the unit.
     pub attack_ability: Option<u32>,
     /// It walks back to its guard point after its target's death.
@@ -1812,37 +1818,115 @@ pub(super) fn clap_effect(state: &mut super::State, h: u32, cost: i32) {
 }
 
 /// A thunder clap's area pass at queue time `at`, after its hits, makes
-/// an object freed about 3.944 s later (c-RZH-1: 3059, made at 26.400000,
-/// freed at the end of the tick of q 30.345907).
+/// an object held by the first unit hit: freed with that unit's slow
+/// end (c-SBG-1: 1064 with the paladin's at 5.9); with no slow to end
+/// (the unit died or lives unslowed), about 3.944 s after the effect
+/// (c-RZH-1: 3059, made at 26.400000, freed at the end of the tick of q
+/// 30.345907, tunneler 10 dead at 28.49).
 ///
-/// PROVISIONAL: what it is and what times its free are not read; the
-/// length is that one reading.
-pub(super) fn clap_area(state: &mut super::State, at: u32) {
+/// PROVISIONAL: what lets it go is not read; the 3.944 s is one reading.
+pub(super) fn clap_area(state: &mut super::State, at: u32, first: Option<u32>) {
     let tick = state.table.now;
     let o = state.table.take(tick, "Thunder Clap: area");
-    let end = ow3_math::add(at, CLAP_AREA.to_bits());
-    state.table.free_at_q(end, o, "Thunder Clap: area");
+    let held = first
+        .and_then(|f| entries(state, f))
+        .filter(|e| e.slow_buff.is_some());
+    match held {
+        Some(e) => e.clap_area = Some((o, at)),
+        None => {
+            let end = ow3_math::add(at, CLAP_AREA.to_bits());
+            state.table.free_at_q(end, o, "Thunder Clap: area");
+        }
+    }
 }
 
 /// The time to the free of a thunder clap's area object (`clap_area`).
 const CLAP_AREA: f32 = 3.944;
 
-/// Unit `h` is slowed by a thunder clap and lives: the slow's object,
-/// kept, and its walk made again for the new speed (c-RZH-1: tunneler 10
-/// at 26.40 s).
+/// Unit `h` is slowed by a thunder clap and lives, to queue time `end`:
+/// the slow's object, kept, and its walk made again for the new speed
+/// (c-RZH-1: tunneler 10 at 26.40 s; c-SBG-1: ogre 3).
 ///
-/// PROVISIONAL: the slow's end is not read; the walk taken to be made
-/// again only for a unit that has one.
-pub(super) fn clap_slowed(state: &mut super::State, h: u32) {
+/// PROVISIONAL: the walk taken to be made again only for a unit that has
+/// one; a slow on a unit slowed already is not read.
+pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
     let tick = state.table.now;
     let buff = state.table.take(tick, "Thunder Clap effect");
     let walking = entries(state, h).is_some_and(|e| {
         e.slow_buff = Some(buff);
+        e.slow_end_q = Some(end);
         !e.walk.is_empty()
     });
     if walking {
         walk_made(state, h);
     }
+}
+
+/// The thunder clap slows that end by time in this tick (c-SBG-1: the
+/// paladin at q 5.900000, the ogres at 7.900000), in the order the clap
+/// hit them. A creep is given the order that ends the buff (its buff end
+/// object): standing, it is carried out at once with a second object,
+/// both freed 0.0001 s later; walking its move, it waits to the move's
+/// end (`buff_end_carried_out`). Then the slow's object goes, and with
+/// the first unit's the clap's area object.
+///
+/// PROVISIONAL: a player's unit is taken to have no buff end, as at a
+/// stun's end.
+pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
+    let tick = state.table.now;
+    let mut ending: Vec<(u32, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let end = state.unit(Some(h))?.entries.slow_end_q?;
+            (f32::from_bits(end) <= f32::from_bits(limit)).then_some((h, end))
+        })
+        .collect();
+    ending.sort_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
+    for (h, _) in ending {
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
+        let creep = u.owner == super::creeps::CREEPS;
+        let moving = super::movement::on_move(state, h);
+        if creep {
+            let buff_end = state.table.take(tick, "buff end");
+            if moving {
+                if let Some(e) = entries(state, h) {
+                    e.buff_end_waiting = Some(buff_end);
+                }
+            } else {
+                let second = state.table.take(tick, "buff end: second object");
+                state.table.defer(second, "buff end: second object");
+                state.table.defer(buff_end, "buff end");
+            }
+        }
+        let (buff, area) = entries(state, h)
+            .map(|e| {
+                e.slow_end_q = None;
+                (e.slow_buff.take(), e.clap_area.take())
+            })
+            .unwrap_or_default();
+        if let Some(b) = buff {
+            state.table.defer(b, "Thunder Clap effect");
+        }
+        if let Some((a, _)) = area {
+            state.table.defer(a, "Thunder Clap: area");
+        }
+    }
+}
+
+/// Unit `h`'s move ended with a buff end order waiting behind it: it is
+/// carried out now, a second object made, both freed 0.0001 s later
+/// (c-SBG-1: ogre 3 at 8.819954).
+pub(super) fn buff_end_carried_out(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let Some(buff_end) = entries(state, h).and_then(|e| e.buff_end_waiting.take()) else {
+        return;
+    };
+    let second = state.table.take(tick, "buff end: second object");
+    state.table.defer(second, "buff end: second object");
+    state.table.defer(buff_end, "buff end");
 }
 
 /// Unit `h`'s Storm Bolt takes effect (c-SAK-1, 3.04 s): the spell effect
@@ -2234,6 +2318,13 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     // objects (c-RZH-1: tunneler 10's 3040 at 28.49).
     if let Some(b) = entries(state, h).and_then(|e| e.slow_buff.take()) {
         state.table.rest.push((b, "Thunder Clap effect"));
+    }
+    if let Some(e) = entries(state, h) {
+        e.slow_end_q = None;
+    }
+    if let Some((a, at)) = entries(state, h).and_then(|e| e.clap_area.take()) {
+        let end = ow3_math::add(at, CLAP_AREA.to_bits());
+        state.table.free_at_q(end, a, "Thunder Clap: area");
     }
     for e in core {
         state.table.rest.push((e, "unit death"));

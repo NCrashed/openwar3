@@ -1076,7 +1076,11 @@ fn decide(
             // A chase at the end of its path: the member step reports it
             // blocked and it stands; the group arrives at its next update
             // (c-SAK-1: footman 2 blocked at 919, swinging at 925).
-            if walker.chase.is_some() && !follow.end_blocked {
+            // A walk with no path (its local path only its own position) has no
+            // stop: it arrives at its first update when turned (c-SBI-1: the
+            // ogre's chase of 2.099999, arrived at 2.129998).
+            let no_path = follow.local.len() <= 1 && follow.local.first().is_none_or(|&p| p == at);
+            if walker.chase.is_some() && !follow.end_blocked && !no_path {
                 follow.end_blocked = true;
                 shared.events.push(PathEvent {
                     tick,

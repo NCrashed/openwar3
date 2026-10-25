@@ -403,6 +403,9 @@ pub struct UnitEntries {
     pub stun_end: Vec<u32>,
     pub stun_order: Vec<u32>,
     pub stun_ticks: Option<(u64, u64)>,
+    /// A stun of Impale: at its end a 0.00 hit from the caster comes before
+    /// the stun's objects go, and there is no buff end (`impale_ends`).
+    pub impale: bool,
     pub buff_end: Option<u32>,
     /// The queue time of its stun's end.
     pub stun_end_q: u32,
@@ -2966,6 +2969,19 @@ pub(super) fn slow_ends(state: &mut super::State, limit: u32) {
                 super::attack::unslow_cooldown(u, end, speed);
             }
         }
+        // A backswing that ends later resumes in the tick its new end falls
+        // in (c-SBJ-1: kobold 5's at 9.059998, after kobold 6's hit at
+        // 9.059997).
+        let back = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
+        if f32::from_bits(back) > f32::from_bits(end) {
+            let resume = super::cast::tick_of(state, back) + 1;
+            if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(a) = u.attack.as_mut()
+                && a.resume.is_some()
+            {
+                a.resume = Some(resume);
+            }
+        }
         let buff = entries(state, h)
             .map(|e| {
                 e.slow_end_q = None;
@@ -3218,6 +3234,30 @@ pub(super) fn stuns(state: &mut super::State) {
 }
 
 /// The ends of stuns in this tick only, not the orders coming back.
+/// The ends of Impale's stuns in this tick, in the order of the stuns:
+/// per unit a 0.00 hit from the caster, then its stun's objects go
+/// (c-SBJ-1: 9.9, the three units thrown at 6.9).
+pub(super) fn impale_ends(
+    vm: &mut ow3_jass::vm::Vm,
+    state: &std::rc::Rc<std::cell::RefCell<super::State>>,
+) {
+    let ended = std::mem::take(&mut state.borrow_mut().impale_ends);
+    for h in ended {
+        let source = state.borrow().unit(Some(h)).and_then(|u| u.stunner);
+        super::widgets::damage_widget(vm, state, source, Some(h), 0, 0, 0);
+        let mut s = state.borrow_mut();
+        let objects = entries(&mut s, h)
+            .map(|e| {
+                e.impale = false;
+                std::mem::take(&mut e.stun_end)
+            })
+            .unwrap_or_default();
+        for e in objects {
+            s.table.defer(e, "stun end");
+        }
+    }
+}
+
 pub(super) fn stun_ends(state: &mut super::State) {
     stuns_with(state, false);
 }
@@ -3242,7 +3282,12 @@ fn stuns_with(state: &mut super::State, backs: bool) {
         let Some((end, back)) = entries(state, h).and_then(|e| e.stun_ticks) else {
             continue;
         };
-        if end == tick {
+        if end == tick && !backs && entries(state, h).is_some_and(|e| e.impale) {
+            if let Some(e) = entries(state, h) {
+                e.stun_ticks = Some((u64::MAX, back));
+            }
+            state.impale_ends.push(h);
+        } else if end == tick {
             // Only a creep is given the order that ends the stun, the buff
             // end object (c-RZH-1: none at the ends of footman 2's bash
             // stuns, 2007, 2817 and 4976).
@@ -3356,7 +3401,11 @@ fn stuns_with(state: &mut super::State, backs: bool) {
         }
         if backs && back == tick {
             let order = state.table.take(tick, "order back after a stun");
-            let other = state.table.take(tick, "order back: other");
+            // The buff end's order carried out, for a unit that holds one
+            // (c-SBJ-1: the gnoll's of the frost at 9.909338, none for the
+            // kobolds out of Impale's stun).
+            let holds = entries(state, h).is_some_and(|e| e.buff_end.is_some());
+            let other = holds.then(|| state.table.take(tick, "order back: other"));
             let (parts, buff) = entries(state, h)
                 .map(|e| {
                     // Freed 0.01 s later by the stun's own timer, after its 0.00
@@ -3370,7 +3419,9 @@ fn stuns_with(state: &mut super::State, backs: bool) {
             for e in parts {
                 state.table.defer(e, "stun: order objects");
             }
-            state.table.defer(other, "order back: other");
+            if let Some(o) = other {
+                state.table.defer(o, "order back: other");
+            }
             if let Some(b) = buff {
                 state.table.defer(b, "buff end");
             }

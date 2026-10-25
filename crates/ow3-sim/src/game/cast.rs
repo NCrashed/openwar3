@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 18] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 20] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -62,6 +62,8 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 18] = [
     ("entanglingroots", *b"AEer", 852_171, Aim::Enemy),
     ("flamestrike", *b"AHfs", 852_488, Aim::Point),
     ("impale", *b"AUim", 852_555, Aim::Point),
+    ("fanofknives", *b"AEfk", 852_526, Aim::Nothing),
+    ("carrionswarm", *b"AUcs", 852_218, Aim::Point),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -562,10 +564,23 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
         .units
         .get(&u.type_id)
         .map_or((0, 0), |t| (t.cast_point, t.cast_backswing));
+    // Fan of Knives has no cast point: its effect comes in the order's
+    // tick (SPEC-0041; c-SBK-1: 4.499912).
+    let knives = u.casting.is_some_and(|c| {
+        state
+            .data
+            .abilities
+            .get(&c.ability)
+            .map_or(c.ability, |a| a.code)
+            == i32::from_be_bytes(*b"AEfk")
+    });
+    let point = if knives { 0 } else { point };
     // A cast point between ticks lands in the tick that holds it (SPEC-0041:
     // the death knight's 0.452, 90.4 ticks, at `o + 91`).
     let exact = f64::from(f32::from_bits(point)) * 200.0;
-    let effect = if exact - exact.floor() > 0.01 {
+    let effect = if knives {
+        tick
+    } else if exact - exact.floor() > 0.01 {
         tick + exact.ceil() as u64
     } else {
         tick + super::attack::ticks(point)
@@ -587,9 +602,14 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
                 (&base.to_be_bytes() == b"AHfs")
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
             })
-            // An Impale's 0.4 s after its effect (c-SBJ-1: 7.299809).
-            // PROVISIONAL: the timer that ends it is not read.
-            .or_else(|| (&base.to_be_bytes() == b"AUim").then_some(80))
+            // An Impale's at its wave's time (DataB) + 0.1 after its effect
+            // (c-SBJ-1: 0.4 s, 7.299809).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AUim").then(|| {
+                    let wave = numbers(state, c.ability, c.level).data[1];
+                    super::attack::ticks(add(wave, 0.1f32.to_bits()))
+                })
+            })
     });
     let effect_q = add(
         state.event_time.unwrap_or_else(|| state.timers.time()),
@@ -1352,6 +1372,22 @@ fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
 /// the time of the tick's updates: they run first, as timers of the queue
 /// ahead of the updates (c-RZJ-1: the Ogre Lord's Shockwave at 3.737711,
 /// before the updates of 3.738891).
+/// The effect of `h`'s cast if it is due at the order itself (no cast point).
+pub(super) fn effect_at_order(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32) {
+    let q = {
+        let s = state.borrow();
+        let tick = s.ticks;
+        s.unit(Some(h))
+            .and_then(|u| u.casting)
+            .filter(|c| c.effect_at == Some(tick))
+            .map(|c| c.effect_q)
+    };
+    // (Just above the effect's queue time.)
+    if let Some(q) = q {
+        effects_before(vm, state, q + 1);
+    }
+}
+
 pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32) {
     let mut deferred = Vec::new();
     {
@@ -1647,7 +1683,9 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 // Its effect event and missile objects, as Storm Bolt's (c-SBJ-1:
                 // 2.949975, freed 5.0 s after the hit).
                 let objects = super::table::bolt_effect(s, h, n.cost);
-                match super::attack::launch_spell_missile(s, h, target, amount, speed, c.effect_q) {
+                match super::attack::launch_spell_missile(
+                    s, h, target, amount, speed, c.effect_q, false,
+                ) {
                     Some(mut missile) => {
                         missile.objects = objects;
                         s.missiles.push(missile);
@@ -1673,6 +1711,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // PROVISIONAL: every unit in the wave is reached at the effect;
         // the wave's travel time is not built.
         b"AUim" => impale(s, h, c, &n),
+        b"AEfk" => fan_of_knives(s, h, c, &n, deferred),
+        b"AUcs" => carrion_swarm(s, h, c, &n, deferred),
         b"AUfn" => {
             let (Some(t), Some(owner)) = (c.target, s.unit(Some(h)).map(|u| u.owner)) else {
                 return true;
@@ -2119,6 +2159,9 @@ pub struct Bounce {
     /// A Flame Strike's point and the queue time of its next hit.
     point: [u32; 2],
     q: u32,
+    /// An Impale wave's time in the air, and its stun after the landing
+    /// for units and heroes.
+    times: [u32; 3],
 }
 
 /// What a [`Bounce`] does where it arrives.
@@ -2132,6 +2175,8 @@ pub enum BounceKind {
     ManaBurn,
     /// Impale's damage when a thrown unit lands, once.
     Land,
+    /// Impale's wave: its next point, `left` of them to come.
+    Wave,
     /// Entangling Roots' damage: a 0 event, nine hits a second apart, a
     /// last 0 event.
     Roots,
@@ -2150,68 +2195,289 @@ fn bounce_life(kind: BounceKind) -> u32 {
     .to_bits()
 }
 
-/// Impale's effect (`b"AUim"` in `effect`).
-fn impale(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel) {
+/// Fan of Knives' effect (`b"AEfk"` in `effect`): a knife at each enemy
+/// within Area, the nearest first, at most DataB / DataA of them (DataB 0:
+/// no limit). Each draws on game generator 25 (its look) and 26 (its
+/// speed, Missilespeed + floor(out * 100 / 2^32)), and flies from the
+/// caster's centre as one timer, its objects freed 5.0 s after its hit
+/// (c-SBK-1: knives at kobolds 7, 5, 6 and ogre 4, speeds 717, 788, 798,
+/// 768).
+/// PROVISIONAL: the 100 is a field of the missile's data not yet found;
+/// whether the search sorts by distance or only came out so is not read.
+fn fan_of_knives(
+    s: &mut State,
+    h: u32,
+    c: &Casting,
+    n: &crate::data::AbilityLevel,
+    deferred: &mut Vec<Deferred>,
+) {
+    let Some(u) = s.unit(Some(h)) else {
+        return;
+    };
+    let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+    let area = f32::from_bits(n.area);
+    let mut near: Vec<(u32, f32)> = s
+        .units
+        .iter()
+        .copied()
+        .filter_map(|o| {
+            let t = s.unit(Some(o))?;
+            let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+            let d = dx * dx + dy * dy;
+            (t.alive && !t.hidden && movement::enemies(s, owner, t.owner) && d <= area * area)
+                .then_some((o, d))
+        })
+        .collect();
+    near.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let (amount, cap) = (f32::from_bits(n.data[0]), f32::from_bits(n.data[1]));
+    if cap > 0.0 && amount > 0.0 {
+        near.truncate((cap / amount) as usize);
+    }
+    super::table::clap_effect(s, h, n.cost);
+    let base = s
+        .data
+        .abilities
+        .get(&c.ability)
+        .map_or(0, |a| f32::from_bits(a.missile_speed) as u32);
+    for (target, _) in near {
+        s.game_random[KNIFE_LOOK].step();
+        let out = s.game_random[KNIFE_SPEED].step();
+        let speed = base + ((u64::from(out) * 100) >> 32) as u32;
+        let objects = super::table::missile_launched(s);
+        let speed = (speed as f32).to_bits();
+        match super::attack::launch_spell_missile(s, h, target, n.data[0], speed, c.effect_q, false)
+        {
+            Some(mut missile) => {
+                missile.spell = Some(super::attack::KNIFE);
+                missile.objects = objects;
+                s.missiles.push(missile);
+            }
+            None => deferred.push(Deferred::SpellHit {
+                caster: h,
+                target,
+                amount: n.data[0],
+                stun: super::attack::KNIFE,
+                objects,
+            }),
+        }
+    }
+}
+
+/// Carrion Swarm's effect (`b"AUcs"` in `effect`): a wave (Missilespeed)
+/// DataC long towards the point, Area wide at the caster and DataD at its
+/// end; each enemy in it takes an object, then DataA, at most DataB in
+/// all, the nearest along the line first; then the caster's area fog
+/// modifier. The wave's five missile objects go 5.0 s after its end
+/// (c-SBJ-1: the effect at 9.8, kobolds 6 and 5, objects freed at
+/// 10.124302, 12.80 and 15.533394).
+/// PROVISIONAL: every unit in the wave is taken at the effect, and the
+/// unit's object kept 0.32 s; the wave's travel is not read.
+fn carrion_swarm(
+    s: &mut State,
+    h: u32,
+    c: &Casting,
+    n: &crate::data::AbilityLevel,
+    deferred: &mut Vec<Deferred>,
+) {
     let (Some(point), Some(u)) = (c.point, s.unit(Some(h))) else {
         return;
     };
     let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
     let (dx, dy) = (f32::from_bits(point[0]) - x, f32::from_bits(point[1]) - y);
-    let length = ow3_math::natives::sqrt(add((dx * dx).to_bits(), (dy * dy).to_bits()));
-    let length = f32::from_bits(length);
-    let (wave, width) = (f32::from_bits(n.data[0]), f32::from_bits(n.area));
-    let hit: Vec<u32> = s
+    let length = f32::from_bits(ow3_math::natives::sqrt(add(
+        (dx * dx).to_bits(),
+        (dy * dy).to_bits(),
+    )));
+    let (reach, start, end) = (
+        f32::from_bits(n.data[2]),
+        f32::from_bits(n.area),
+        f32::from_bits(n.data_d),
+    );
+    let mut hit: Vec<(u32, f32)> = s
+        .units
+        .iter()
+        .copied()
+        .filter_map(|o| {
+            let t = s.unit(Some(o))?;
+            let (px, py) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+            let (along, across) = if length > 0.0 {
+                (
+                    (px * dx + py * dy) / length,
+                    (px * dy - py * dx).abs() / length,
+                )
+            } else {
+                (0.0, (px * px + py * py).sqrt())
+            };
+            let half = (start + (end - start) * along / reach) / 2.0;
+            (t.alive
+                && !t.hidden
+                && movement::enemies(s, owner, t.owner)
+                && (0.0..=reach).contains(&along)
+                && across <= half)
+                .then_some((o, along))
+        })
+        .collect();
+    hit.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let (amount, cap) = (f32::from_bits(n.data[0]), f32::from_bits(n.data[1]));
+    if cap > 0.0 && amount > 0.0 {
+        hit.truncate((cap / amount) as usize);
+    }
+    super::table::clap_effect(s, h, n.cost);
+    let objects = super::table::missile_launched(s);
+    let speed = s
+        .data
+        .abilities
+        .get(&c.ability)
+        .map_or(0, |a| a.missile_speed);
+    if f32::from_bits(speed) > 0.0 {
+        let gone = add(c.effect_q, ow3_math::div(n.data[2], speed));
+        super::table::missile_hit(s, &objects, gone);
+    }
+    for (target, _) in hit {
+        deferred.push(Deferred::Kept {
+            end: add(c.effect_q, 0.32f32.to_bits()),
+        });
+        deferred.push(Deferred::Damage {
+            caster: h,
+            target,
+            amount: n.data[0],
+            call: None,
+            slow: None,
+            at: None,
+            fog: None,
+            later_calls: false,
+        });
+    }
+    deferred.push(Deferred::ClapArea {
+        at: c.effect_q,
+        first: Some(h),
+    });
+}
+
+/// The game generators of a knife's look and speed (c-SBK-1).
+const KNIFE_LOOK: usize = 25;
+const KNIFE_SPEED: usize = 26;
+
+/// Impale's effect (`b"AUim"` in `effect`).
+fn impale(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel) {
+    let (Some(point), Some(owner)) = (c.point, s.unit(Some(h)).map(|u| u.owner)) else {
+        return;
+    };
+    super::table::clap_effect(s, h, n.cost);
+    let mut wave = Bounce {
+        caster: h,
+        owner,
+        kind: BounceKind::Wave,
+        target: 0,
+        at: s.ticks,
+        amount: n.data[2],
+        factor: 0,
+        left: WAVE_STEPS + 1,
+        area: f32::from_bits(n.data[0]),
+        hit: Vec::new(),
+        point,
+        q: c.effect_q,
+        times: [n.data_d, n.duration, n.hero_duration],
+    };
+    // Its first point at the effect itself.
+    wave_step(s, &mut wave);
+    if wave.left > 0 {
+        s.bounces.push(wave);
+    }
+}
+
+/// The steps of an Impale wave after its first point, 0.06 s apart, each
+/// DataA / 5 further on (c-SBJ-1).
+/// PROVISIONAL: the 5 steps, the 0.06 s and the first point's 125 are
+/// read in the game, their data fields are not found.
+const WAVE_STEPS: u32 = 5;
+const IMPALE_STEP: f32 = 0.06;
+const WAVE_FIRST: f32 = 125.0;
+
+/// The next point of Impale wave `b`: the enemy ground units within 125
+/// plus their collision size of it, not reached before, are thrown up:
+/// stunned for the time in the air and then Dur (heroes HeroDur), taking
+/// DataC when they land (SPEC-0041; c-SBJ-1: three at the effect, 6.9,
+/// landing at 7.9, order back at 9.91).
+fn wave_step(s: &mut State, b: &mut Bounce) {
+    let k = WAVE_STEPS + 1 - b.left;
+    let Some([x, y]) = s
+        .unit(Some(b.caster))
+        .map(|u| [f32::from_bits(u.x), f32::from_bits(u.y)])
+    else {
+        b.left = 0;
+        return;
+    };
+    let (dx, dy) = (
+        f32::from_bits(b.point[0]) - x,
+        f32::from_bits(b.point[1]) - y,
+    );
+    let length = f32::from_bits(ow3_math::natives::sqrt(add(
+        (dx * dx).to_bits(),
+        (dy * dy).to_bits(),
+    )));
+    let along = WAVE_FIRST + b.area / WAVE_STEPS as f32 * k as f32;
+    let (px, py) = if length > 0.0 {
+        (x + dx / length * along, y + dy / length * along)
+    } else {
+        (x, y)
+    };
+    let reached: Vec<u32> = s
         .units
         .iter()
         .copied()
         .filter(|&o| {
-            s.unit(Some(o)).is_some_and(|t| {
-                let ground = s
-                    .data
-                    .units
-                    .get(&t.type_id)
-                    .is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
-                let (px, py) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
-                let (along, across) = if length > 0.0 {
-                    (
-                        (px * dx + py * dy) / length,
-                        (px * dy - py * dx).abs() / length,
-                    )
-                } else {
-                    (0.0, (px * px + py * py).sqrt())
-                };
-                t.alive
-                    && !t.hidden
-                    && ground
-                    && movement::enemies(s, owner, t.owner)
-                    && (0.0..=wave).contains(&along)
-                    && across <= width
-            })
+            !b.hit.contains(&o)
+                && s.unit(Some(o)).is_some_and(|t| {
+                    let data = s.data.units.get(&t.type_id);
+                    let ground = data.is_some_and(|d| d.target_type.iter().any(|c| c == "ground"));
+                    let reach = WAVE_FIRST + data.map_or(0.0, |d| f32::from_bits(d.collision));
+                    let (ex, ey) = (f32::from_bits(t.x) - px, f32::from_bits(t.y) - py);
+                    t.alive
+                        && !t.hidden
+                        && ground
+                        && movement::enemies(s, b.owner, t.owner)
+                        && ex * ex + ey * ey <= reach * reach
+                })
         })
         .collect();
-    super::table::clap_effect(s, h, n.cost);
-    let hit = movement::call_order(s, hit);
-    let landing = s.ticks + super::attack::ticks(n.data_d);
-    for o in hit {
+    let now = add(b.q, (IMPALE_STEP * k as f32).to_bits());
+    let [air, dur, hero_dur] = b.times;
+    let landing = s.ticks + super::attack::ticks(air);
+    for o in movement::call_order(s, reached) {
+        b.hit.push(o);
         let hero = s.unit(Some(o)).is_some_and(|t| is_hero(t.type_id));
-        let air = if hero { n.hero_duration } else { n.duration };
-        super::table::stun_objects(s, h, o, Vec::new());
-        stun(s, o, h, add(n.data_d, air), c.effect_q, true);
+        super::table::stun_objects(s, b.caster, o, Vec::new());
+        stun(
+            s,
+            o,
+            b.caster,
+            add(air, if hero { hero_dur } else { dur }),
+            now,
+            true,
+        );
+        if let Some(Object::Unit(t)) = s.objects.get_mut(&o) {
+            t.entries.impale = true;
+        }
         s.bounces.push(Bounce {
-            caster: h,
-            owner,
+            caster: b.caster,
+            owner: b.owner,
             kind: BounceKind::Land,
             target: o,
             at: landing,
-            amount: n.data[2],
+            amount: b.amount,
             factor: 0,
             left: 1,
             area: 0.0,
             hit: Vec::new(),
             point: [0, 0],
             q: 0,
+            times: [0; 3],
         });
     }
+    b.left -= 1;
+    let next = add(b.q, (IMPALE_STEP * (k + 1) as f32).to_bits());
+    b.at = tick_of(s, next);
 }
 
 /// The time between two jumps, 0.25 s.
@@ -2256,11 +2522,12 @@ fn bounce(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLevel, kin
         hit: Vec::new(),
         point: [0, 0],
         q: 0,
+        times: [0; 3],
     });
 }
 
 /// The tick whose clock, at its end, reaches queue time `q`.
-fn tick_of(s: &State, q: u32) -> u64 {
+pub(super) fn tick_of(s: &State, q: u32) -> u64 {
     let (mut tick, mut clock) = (s.ticks, s.move_clock);
     while f32::from_bits(q) > f32::from_bits(add(clock, crate::timers::TICK)) {
         clock = add(clock, crate::timers::TICK);
@@ -2301,6 +2568,7 @@ fn flame_strike(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLeve
         hit: Vec::new(),
         point,
         q,
+        times: [0; 3],
     });
 }
 
@@ -2321,6 +2589,10 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
         }
         // Entangling Roots: 0 at 30 ticks after the cast point, DataA 2 ticks
         // later and every second, nine times, then 0 (SPEC-0041).
+        if b.kind == BounceKind::Wave {
+            wave_step(s, b);
+            continue;
+        }
         if b.kind == BounceKind::Flame {
             let [x, y] = b.point.map(f32::from_bits);
             let hit: Vec<u32> = s

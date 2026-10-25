@@ -2230,6 +2230,11 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 (Some(h), Some(name)) => immediate_order(&mut state.borrow_mut(), h, name),
                 _ => false,
             };
+            // An effect in the order's own tick runs at once, before the
+            // order's 0.0001 s frees (c-SBK-1: Fan of Knives at 4.499912).
+            if done && let Some(h) = handle(&args[0]) {
+                super::cast::effect_at_order(vm, state, h);
+            }
             Ok(Some(Value::Boolean(done)))
         }
     );

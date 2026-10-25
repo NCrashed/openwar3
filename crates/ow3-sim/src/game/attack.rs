@@ -690,7 +690,7 @@ pub struct Missile {
     area: Option<Area>,
     /// A missile of an ability: the stun of its hit, for units and for
     /// heroes, in seconds (SPEC-0037).
-    spell: Option<(u32, u32)>,
+    pub(super) spell: Option<(u32, u32)>,
     /// The objects of the engine's table of a spell's missile, kept to
     /// the end of the stun of its hit (SPEC-0024).
     pub(super) objects: Vec<u32>,
@@ -799,9 +799,15 @@ pub(super) fn launch_spell_missile(
     amount: u32,
     speed: u32,
     effect_q: u32,
+    centre: bool,
 ) -> Option<Missile> {
     let u = state.unit(Some(h))?;
-    let [side, ahead] = state.data.units.get(&u.type_id)?.launch;
+    // A knife of Fan of Knives leaves from the centre (c-SBK-1).
+    let [side, ahead] = if centre {
+        [0, 0]
+    } else {
+        state.data.units.get(&u.type_id)?.launch
+    };
     let (fx, fy) = (cos(u.facing), sin(u.facing));
     let at = [
         add(u.x, add(mul(fx, ahead), mul(fy, side))),
@@ -1242,11 +1248,14 @@ pub(super) fn slow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
 }
 
 /// The end of a slow of attack-speed factor `speed` at the queue time
-/// `now`: the times left are multiplied by it again (c-SBJ-1: kobold 6,
+/// `now`: the times left are sped up again (c-SBJ-1: kobold 6,
 /// 26 ticks of its cooldown left at the frost's end at 8.96, its swing
 /// 20 ticks later).
 pub(super) fn unslow_cooldown(u: &mut super::Unit, now: u32, speed: u32) {
-    scale_times(u, now, |t| mul(t, speed));
+    // The rest divided by the slowed rate 1 / speed (c-SBJ-1: 0x3DCCCFC2,
+    // 0x3F88F5F1, 0x3DCCD022, 0x3EF0A4BA read in the game).
+    let rate = div(1.0f32.to_bits(), speed);
+    scale_times(u, now, |t| div(t, rate));
 }
 
 /// Ticks from `from` to `to`, negative when `to` is earlier.
@@ -1411,6 +1420,10 @@ pub(super) fn launch_spell(
 /// The hit of a spell of `h` on `target`: a damage event of 0 first, then
 /// `amount` of the spells attack type, which armor does not reduce, and
 /// the stun (SPEC-0037).
+/// The `stun` of a spell missile that hits once with no stun: a knife of
+/// Fan of Knives.
+pub(super) const KNIFE: (u32, u32) = (u32::MAX, u32::MAX);
+
 pub(super) fn spell_hit(
     vm: &mut Vm,
     state: &Rc<RefCell<State>>,
@@ -1422,7 +1435,11 @@ pub(super) fn spell_hit(
 ) {
     // Each damage is a hit: its relay and the victim's call come first
     // (c-SAK-1: the bolt on kobold 14 at 4513 called ogre 18).
-    for (k, damage) in [0, amount].into_iter().enumerate() {
+    // A knife hits once, without the 0 first (c-SBK-1).
+    let knife = stun == KNIFE;
+    let stun = if knife { (0, 0) } else { stun };
+    let damages: &[u32] = if knife { &[amount] } else { &[0, amount] };
+    for (k, &damage) in damages.iter().enumerate() {
         // The objects of the stun come between the two (SPEC-0024).
         if k == 1 && stun != (0, 0) {
             let mut s = state.borrow_mut();

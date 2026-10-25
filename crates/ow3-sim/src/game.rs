@@ -951,6 +951,8 @@ pub struct State {
     creep_casts: Vec<(u32, i32, u32, u32)>,
     /// Units whose cast's effect ran before this tick's updates.
     early_effects: Vec<u32>,
+    /// Units whose Impale stun ended in this tick (`table::impale_ends`).
+    impale_ends: Vec<u32>,
     /// Chain Lightnings and Healing Waves on their way (SPEC-0040).
     bounces: Vec<cast::Bounce>,
     /// Units whose cast's end ran before this tick's updates.
@@ -1163,6 +1165,7 @@ impl State {
             call_acquired: Vec::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
+            impale_ends: Vec::new(),
             bounces: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
@@ -1986,6 +1989,7 @@ impl<'a> Game<'a> {
             }
         }
         table::stun_ends(&mut self.state.borrow_mut());
+        table::impale_ends(&mut self.vm, &self.state);
         // The goals of backswings ending before the first check, or with it
         // (their timers are the older), come first (c-RXR-1: a goal at
         // 12.899995 before footman 3's check at that time).

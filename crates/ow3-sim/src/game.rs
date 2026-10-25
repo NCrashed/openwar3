@@ -1897,6 +1897,7 @@ impl<'a> Game<'a> {
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         movement::attack_moves_arrived(&mut self.state.borrow_mut());
+        harvest::deliveries(&mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());
         table::homes_arrived(&mut self.state.borrow_mut());
         // The filters of the walkers that crossed region edges at their

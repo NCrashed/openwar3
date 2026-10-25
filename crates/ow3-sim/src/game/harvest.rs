@@ -514,6 +514,26 @@ pub(super) fn reached(state: &State, h: u32, here: [u32; 2], target: u32) -> boo
     }
 }
 
+/// The deliveries due at the updates of this tick, made in the updates:
+/// ahead of the walks freed after them (c-RXI-1: worker 0 at 5808 before
+/// worker 5's walk given up earlier).
+pub(super) fn deliveries(state: &mut State) {
+    let tick = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.deliveries)
+        .into_iter()
+        .partition(|&(_, at)| at <= tick);
+    state.deliveries = later;
+    for (h, _) in due {
+        // The walk back is made, then the old one freed (SPEC-0024).
+        let gold = get(state, h).is_some_and(|g| matches!(g.carry, Some((Resource::Gold, _))));
+        if gold {
+            state.objects_change_in(tick + UPDATE);
+            state.objects_change_in(tick + 2 * UPDATE);
+        }
+        deliver(state, h);
+    }
+}
+
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {

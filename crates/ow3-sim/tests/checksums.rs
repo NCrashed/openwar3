@@ -114,9 +114,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-RXI-1.w3g",
-        "the walks are the game's to the end of the log (tests/crowd.rs); the turns that \
-         change objects differ from turn 126 on (134 in the game, 126 here), and \
-         turn 195 is a timer of unknown cause (SPEC-0024)",
+        "six peasants harvesting gold: every turn checksum to its end matches with the \
+         object table started as the game has it (tests/objects.rs, harvest_checksums); \
+         this test runs without it",
     ),
 ];
 

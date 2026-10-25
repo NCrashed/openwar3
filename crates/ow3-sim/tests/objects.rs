@@ -129,11 +129,27 @@ fn battle_objects() {
     }
 }
 
-/// `c-RXI-1`, `c-RTW-3`, `c-RXD-1`, `c-RYP-1`: walks, crowds and harvest
-/// (report only).
+/// `c-RXI-1`: six peasants harvesting gold: every turn checksum.
+#[test]
+fn harvest_checksums() {
+    if let Some(first) = turn_parts("c-RXI-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-RXI-1`'s object table.
+#[test]
+fn harvest_objects() {
+    if let Some(first) = compare_objects("c-RXI-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}
+
+/// `c-RTW-3`, `c-RXD-1`, `c-RYP-1`: walks, crowds and harvest (report
+/// only).
 #[test]
 fn others_checksums_report() {
-    for name in ["c-RXI-1", "c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+    for name in ["c-RTW-3", "c-RXD-1", "c-RYP-1"] {
         turn_parts(name);
     }
 }
@@ -141,7 +157,7 @@ fn others_checksums_report() {
 /// Their object tables (report only).
 #[test]
 fn others_objects_report() {
-    for name in ["c-RXI-1", "c-RTW-3", "c-RXD-1", "c-RYP-1"] {
+    for name in ["c-RTW-3", "c-RXD-1", "c-RYP-1"] {
         eprintln!("{name}");
         compare_objects(name);
     }

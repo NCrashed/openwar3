@@ -467,6 +467,8 @@ pub struct Walker {
     pub building: Option<u32>,
     /// That building is a gold mine.
     pub mine: bool,
+    /// Its walk heading (SPEC-0018), as a bit pattern of radians.
+    pub heading: u32,
     /// For a walk to a tree, the tree: the high-level search takes its
     /// footprint as free (SPEC-0020, "Two searches, and a target's
     /// footprint").
@@ -1084,6 +1086,20 @@ fn decide(
                     at: walker.here,
                 });
                 return Steer::Stand(segment_goal);
+            }
+            // Then it arrives once its walk heading is within 0.2 of its goal
+            // point, turning at its update until then (SPEC-0019; c-SBJ-1: the
+            // ogre 0.7584 off at its stop of 1.799998, 0.2584 at 1.829998,
+            // arrived at 1.859998; c-SAK-1: footman 2, 0.6882 at 919, arrived at
+            // 925).
+            if walker.chase.is_some() {
+                let to = walker.order;
+                let (dx, dy) = (sub(to[0], walker.here[0]), sub(to[1], walker.here[1]));
+                let off =
+                    super::facing::angle_difference(super::movement::angle(dx, dy), walker.heading);
+                if real(off).abs() > 0.2 {
+                    return Steer::Stand(to);
+                }
             }
             // A walk to a building stands at the end of its path, where it
             // touched the building, before it goes in (SPEC-0029).

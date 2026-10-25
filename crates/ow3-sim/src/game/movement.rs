@@ -3035,6 +3035,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             chase: Some(chase_of(state, target, full_reach)),
                             building: None,
                             mine: false,
+                            heading: m.heading,
                             tree: None,
                             arrive: None,
                             place: None,
@@ -3202,6 +3203,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         chase,
                         building,
                         mine,
+                        heading: m.heading,
                         tree,
                         arrive,
                         place,
@@ -3800,6 +3802,10 @@ pub(super) fn chase(
             chase: Some(chase_of(state, target, reach)),
             building: None,
             mine: false,
+            heading: state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .map_or(0, |m| m.heading),
             tree: None,
             arrive: None,
             place: None,

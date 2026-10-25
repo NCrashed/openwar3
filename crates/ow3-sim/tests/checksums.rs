@@ -114,6 +114,16 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, heroes_two_checksums); this test runs without it",
     ),
     (
+        "c-SBH-1.w3g",
+        "the Human spell test (Flame Strike): its burning area's random timer and the \
+         later phase are not built yet",
+    ),
+    (
+        "c-SBK-1.w3g",
+        "the Night Elf spells test (Mana Burn, Fan of Knives, Entangling Roots): just \
+         recorded, not looked at yet",
+    ),
+    (
         "c-SBJ-1.w3g",
         "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): just \
          recorded, not looked at yet",

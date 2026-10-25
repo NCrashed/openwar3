@@ -473,18 +473,34 @@ fn waves(s: &State, h: u32, c: &Casting, since: u64, deferred: &mut Vec<Deferred
     } else {
         n.data[1]
     };
+    // The wave's queue time, the effect's plus its ticks (c-RZJ-1:
+    // 4.139997, 180 ticks after the effect of 3.239998).
+    let wave_q = add(c.effect_q, (since as f32 * 0.005).to_bits());
+    let any = !hit.is_empty();
     for (target, building) in hit {
+        // Each unit hit takes the wave's short buff, taken off 0.99 s on.
+        deferred.push(Deferred::BlizzardHit {
+            target,
+            end: add(wave_q, BLIZZARD_BUFF),
+        });
         deferred.push(Deferred::Damage {
             caster: h,
             target,
             amount: if building { mul(each, n.data_d) } else { each },
             call: Some((point, n.area)),
             slow: None,
-            at: None,
+            at: Some(wave_q),
             fog: None,
         });
     }
+    // A wave that hits makes or restarts the caster's fog modifier (1757).
+    if any && let Some(Deferred::Damage { fog, .. }) = deferred.last_mut() {
+        *fog = Some((h, wave_q));
+    }
 }
+
+/// How long a Blizzard wave's buff stays on a unit it hits (0.99 s).
+const BLIZZARD_BUFF: u32 = 0x3F7D_70A4;
 
 /// The cast of `h` starts in tick `tick`: the effect `castpt` later.
 pub(super) fn start(state: &mut State, h: u32, tick: u64) {
@@ -851,6 +867,9 @@ enum Deferred {
     },
     /// The object a shockwave's hit takes before its damage.
     ShockwaveHit,
+    /// The buff a Blizzard wave puts on a unit it hits, to queue time
+    /// `end`.
+    BlizzardHit { target: u32, end: u32 },
     /// The object of a thunder clap's area pass, after its hits.
     ClapArea { at: u32, first: Option<u32> },
     /// Damage of a thunder clap.
@@ -965,6 +984,9 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 objects,
             } => super::attack::spell_hit(vm, state, caster, target, amount, stun, objects),
             Deferred::ShockwaveHit => super::table::shockwave_hit(&mut state.borrow_mut()),
+            Deferred::BlizzardHit { target, end } => {
+                super::table::blizzard_hit(&mut state.borrow_mut(), target, end);
+            }
             Deferred::ClapArea { at, first } => {
                 super::table::clap_area(&mut state.borrow_mut(), at, first);
             }

@@ -2156,6 +2156,17 @@ pub(super) fn shockwave_hit(state: &mut super::State) {
     state.table.take(tick, "Shockwave: hit");
 }
 
+/// A Blizzard wave hits unit `_h`: its short buff, taken off at queue
+/// time `end` (the wave's plus 0.99 s) and freed at that tick's end
+/// (c-RZJ-1: 1751 at 4.139997, off at 5.129997).
+///
+/// PROVISIONAL: a unit's death before that is not read.
+pub(super) fn blizzard_hit(state: &mut super::State, _h: u32, end: u32) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "Blizzard: buff");
+    state.table.free_at_q(end, o, "Blizzard: buff");
+}
+
 /// The time to the free of a Shockwave's objects (`shockwave_effect`).
 const SHOCKWAVE_OBJECTS: f32 = 5.7667;
 

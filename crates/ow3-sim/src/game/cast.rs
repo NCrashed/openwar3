@@ -1068,6 +1068,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // The creep Shockwave (SPEC-0047).
         b"AOsh" => {
             if let Some(target) = c.target {
+                super::table::shockwave_effect(s);
                 shockwave(s, h, target, &n);
             }
         }

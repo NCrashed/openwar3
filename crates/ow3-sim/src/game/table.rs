@@ -2120,6 +2120,25 @@ pub(super) fn buff_end_carried_out(state: &mut super::State, h: u32) {
     state.table.defer(buff_end, "buff end");
 }
 
+/// A creep's Shockwave takes effect (c-RZJ-1, the Ogre Lord at 3.74):
+/// the wave's object and 4 of its missile (position, two regions, the
+/// flight), freed together about 5.77 s later (9.504406).
+///
+/// PROVISIONAL: what times the free is not read; the length is that one
+/// reading.
+pub(super) fn shockwave_effect(state: &mut super::State) {
+    let tick = state.table.now;
+    let objects = state.table.take_n(tick, 5, "Shockwave: wave");
+    let at = state.event_time.unwrap_or_else(|| state.timers.time());
+    let end = ow3_math::add(at, SHOCKWAVE_OBJECTS.to_bits());
+    for e in objects {
+        state.table.free_at_q(end, e, "Shockwave: wave");
+    }
+}
+
+/// The time to the free of a Shockwave's objects (`shockwave_effect`).
+const SHOCKWAVE_OBJECTS: f32 = 5.7667;
+
 /// Unit `h`'s Blizzard takes effect (c-RZJ-1 at 3.24): the spell effect
 /// event, then the channel's object, kept to the channel's end.
 pub(super) fn blizzard_effect(state: &mut super::State, h: u32) {

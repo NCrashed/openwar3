@@ -1420,10 +1420,9 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     // On attack-move, still attacking an acquired target: the object kept
     // to that target's death goes 0.0001 s later, and the same 2 and walk
     // (c-SAK-1: footman 7 answering a call at 965).
-    let attacking = state
-        .unit(Some(h))
-        .is_some_and(|u| u.attack_move.is_some() || u.entries.game_order)
-        && entries(state, h).is_some_and(|e| !e.target_death.is_empty());
+    // So does a creep that took its target walking back to its guard
+    // point (c-RZJ-1: the kobold of 24.186941 again at 25.686689).
+    let attacking = entries(state, h).is_some_and(|e| !e.target_death.is_empty());
     if attacking {
         // A reaction delay still running goes first (c-SAK-1: ogre 18 at
         // 2927).

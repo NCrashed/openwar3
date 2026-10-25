@@ -2438,6 +2438,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         super::regions::committed(state, h, m.origin);
         // The walk objects it gave up are freed at its update (SPEC-0024).
         super::table::unit_updated(state, h);
+        super::table::follow_leg_ended(state, h);
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
@@ -2871,6 +2872,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             // (5491).
                             if !standing && start_gap != add(FOLLOW_RANGE, 0x3F80_0000) {
                                 m.chase = Some(FOLLOWER_FIRST_RENEWAL);
+                                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                                    u.entries.follow_leg_end = Some(tick + UPDATE);
+                                }
                             }
                             // From now on by the follow range.
                             m.order = Order::Follow {

@@ -436,6 +436,8 @@ pub struct UnitEntries {
     /// An object of its arrival at a tree, freed at its next update, and
     /// that update's tick.
     pub tree_arrival: Option<(u32, u64)>,
+    /// The tick of the update at which its follow leg ends.
+    pub follow_leg_end: Option<u64>,
     /// The object of its wait for another tree.
     pub tree_wait: Option<u32>,
     /// Its object while inside a gold mine.
@@ -1310,6 +1312,28 @@ pub(super) fn tree_arrival_ended(state: &mut super::State, h: u32) {
         }
         state.table.defer(o, "harvest: at the tree");
     }
+}
+
+/// Unit `h`'s follow leg ends at its update after it stopped in the follow
+/// range (c-RTW-3: footman (825, 828) at 21.419670): 4 of the order's
+/// kept parts go 0.0001 s later and a new walk is made at once.
+pub(super) fn follow_leg_ended(state: &mut super::State, h: u32) {
+    let tick = state.ticks;
+    let due = entries(state, h).is_some_and(|e| e.follow_leg_end.is_some_and(|t| t <= tick));
+    if !due {
+        return;
+    }
+    let parts: Vec<u32> = entries(state, h)
+        .map(|e| {
+            e.follow_leg_end = None;
+            let n = e.order.len().saturating_sub(1).min(4);
+            e.order.drain(..n).collect()
+        })
+        .unwrap_or_default();
+    for p in parts {
+        state.table.defer(p, "move ability: order start");
+    }
+    walk_made_at_order(state, h);
 }
 
 /// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an

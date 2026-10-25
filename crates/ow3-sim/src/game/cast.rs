@@ -1047,7 +1047,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 // (SPEC-0035, edge cases; c-RZJ-1: the Paladin's order
                 // ended at the effect time 3227 and he acquired at 3229).
                 if !effect(s, h, &c, &mut deferred) {
-                    movement::end_cast(s, h);
+                    fizzled(s, h, &c);
                     continue;
                 }
             }
@@ -1205,6 +1205,16 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
     }
 }
 
+/// The cast of `h` ends at an effect on a dead target: its order ends
+/// with it, the object kept for the impact first (c-RZJ-1: the Paladin's
+/// Holy Light, 2850 before the order's objects at 16.128393).
+fn fizzled(s: &mut State, h: u32, c: &Casting) {
+    // Its check 0.01 s after the effect's queue time (c-RZJ-1: 3229).
+    movement::end_cast_at(s, h, c.effect_q);
+    super::table::impact_unused(s, h);
+    super::table::order_ended(s, h);
+}
+
 /// The order of cast `c` of `h` ends in tick `tick` (SPEC-0024).
 fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
     super::table::channel_ended(s, h);
@@ -1254,7 +1264,7 @@ pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32
             s.table_at(c.effect_q);
             s.early_effects.push(h);
             if !effect(s, h, &c, &mut deferred) {
-                movement::end_cast(s, h);
+                fizzled(s, h, &c);
             }
             s.table.now = tick;
         }

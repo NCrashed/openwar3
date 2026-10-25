@@ -856,7 +856,18 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     };
                     let left = distance(m.at, to);
                     if f32::from_bits(left) < f32::from_bits(step) {
-                        arrived.push(m);
+                        // Nearer than a step, it flies the rest at its speed
+                        // and hits at that flight's end, which may be in a
+                        // later tick (c-RZJ-1: the Archmage's missile 4.79
+                        // short at 3421, hit held into 3423).
+                        let speed = div(step, HOMING_STEP);
+                        m.expiry = add(add(s.move_clock, div(left, speed)), MIN_DELAY);
+                        m.homing = None;
+                        if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                            arrived.push(m);
+                        } else {
+                            flying.push(m);
+                        }
                         continue;
                     }
                     let k = div(step, left);

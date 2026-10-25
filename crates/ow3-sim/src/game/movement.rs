@@ -1485,14 +1485,8 @@ pub(super) fn move_home(state: &mut State, h: u32, home: [u32; 2]) -> bool {
 
 /// Unit `h`'s cast ends (SPEC-0035): it is left with no order (an
 /// attack-move before it is not taken up again), and its acquisition check
-/// comes 0.01 s later (c-RZH-1: the Mountain King's Storm Bolt ending at
-/// 991, its check taking creep 7 at 993).
-pub(super) fn end_cast(state: &mut State, h: u32) {
-    let now = state.move_clock;
-    end_cast_at(state, h, now);
-}
-
-/// `end_cast` at queue time `now`.
+/// comes 0.01 s after its queue time `now` (c-RZH-1: the Mountain King's
+/// Storm Bolt ending at 991, its check taking creep 7 at 993).
 pub(super) fn end_cast_at(state: &mut State, h: u32, now: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.attack_move = None;

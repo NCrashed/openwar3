@@ -2420,9 +2420,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         };
         // The stored heading at the start of the update (SPEC-0024 below).
         let start_heading = m.heading;
-        // A member of a group of several: its end waits (SPEC-0025; the
-        // analyst's reading of the group's pass, not done here).
-        let in_group = grouped(state, h);
         let class = crate::path::size_class(data.map_or(0, |t| t.collision));
         if !alive {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -3321,12 +3318,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.facing_step = step;
         }
         let facing_done = u.facing == heading;
+        // A group member's move ends at its arrival too, turning on (c-RTW-3:
+        // footman 915 at 27.809410, 0.67 rad off its heading).
         let plain_move = m.order == Order::Point
             && u.attack_move.is_none()
             && !u.entries.game_order
             && u.harvest.is_none()
-            && u.casting.is_none()
-            && !in_group;
+            && u.casting.is_none();
         // A goal taken in reach after a swing ends at the first update that
         // starts with the stored heading on the goal direction, and its walk
         // is given up (SPEC-0024; c-SAK-1: kobold 8 at 1087, gnoll 11 at

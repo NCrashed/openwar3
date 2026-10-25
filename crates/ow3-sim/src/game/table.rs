@@ -428,16 +428,27 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     } else {
         &UNIT
     };
+    // A creep with a unit ability of its type (`abilList`) takes one more,
+    // at 15, kept (c-RZH-1: unit 10, nkot, with the creep Bash: 29).
+    let ability = owner == super::creeps::CREEPS
+        && !std::ptr::eq(making, &CAMP_CREEP)
+        && state
+            .data
+            .units
+            .get(&type_id)
+            .is_some_and(|t| !t.abilities.is_empty());
+    let at = |k: usize| if ability && k >= 15 { k + 1 } else { k };
+    let count = making.count + usize::from(ability);
     let tick = state.table.now;
-    let entries = state.table.take_n(tick, making.count, "map start: unit");
+    let entries = state.table.take_n(tick, count, "map start: unit");
     for &k in making.deferred {
-        state.table.defer(entries[k], "map start: unit");
+        state.table.defer(entries[at(k)], "map start: unit");
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
-            death: making.death.iter().map(|&k| entries[k]).collect(),
-            corpse: making.corpse.iter().map(|&k| entries[k]).collect(),
-            level: making.level.iter().map(|&k| entries[k]).collect(),
+            death: making.death.iter().map(|&k| entries[at(k)]).collect(),
+            corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
+            level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
             ..UnitEntries::default()
         };

@@ -866,7 +866,7 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             let previous = {
                 let mut s = state.borrow_mut();
                 let end = s.event_time.unwrap_or(s.move_clock);
-                let at = if f32::from_bits(m.expiry) < f32::from_bits(end) {
+                let at = if m.homing.is_none() && f32::from_bits(m.expiry) < f32::from_bits(end) {
                     m.expiry
                 } else {
                     end

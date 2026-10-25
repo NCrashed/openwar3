@@ -64,10 +64,22 @@ fn start_table() -> ObjectTable {
 
 #[test]
 fn heroes_three_objects() {
-    let name = "c-SAK-1";
-    let Some(game) = game_rows(name) else {
-        return;
-    };
+    if let Some(first) = compare_objects("c-SAK-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}
+
+/// The hero test `c-RZH-1` (Mountain King, footmen, creeps): report only
+/// while its table is being built up.
+#[test]
+fn heroes_one_objects_report() {
+    compare_objects("c-RZH-1");
+}
+
+/// The rows of replay `name`'s object list against the simulation's: the
+/// first that differs, `None` when all match; nothing without the list.
+fn compare_objects(name: &str) -> Option<Option<usize>> {
+    let game = game_rows(name)?;
     let dir = game_data().join("replays");
     let replay = Replay::parse(&std::fs::read(dir.join(format!("{name}.w3g"))).unwrap()).unwrap();
     let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
@@ -152,7 +164,7 @@ fn heroes_three_objects() {
         });
         eprintln!("{k}: game {g:?}\n{k}: ours {o:?}");
     }
-    assert_eq!(first, None, "the object tables part at row {first:?}");
+    Some(first)
 }
 
 /// The turn checksums of `c-SAK-1` against the parts read in the game

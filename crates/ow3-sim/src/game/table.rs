@@ -330,6 +330,8 @@ pub struct UnitEntries {
     /// unit's backswing (`lost_at_backswing_end`).
     pub keep_lost: bool,
     pub lost_later: Vec<u32>,
+    /// The object of a thunder clap's slow on the unit.
+    pub slow_buff: Option<u32>,
     /// It walks back to its guard point after its target's death.
     pub guard_walk: bool,
     /// Its attack-move was taken up again after an attack
@@ -1222,6 +1224,9 @@ fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
     let watches = entries(state, h)
         .map(|e| e.mana_watches.clone())
         .unwrap_or_default();
+    // The old watches go 0.0001 s later, the last first (c-RZH-1: the
+    // Mountain King's Thunder Clap at 26.40, 2947 then 1167).
+    let mut old = Vec::new();
     for (k, (cost, entry, above)) in watches.into_iter().enumerate() {
         let now = mana >= cost as f32;
         if now == above {
@@ -1233,12 +1238,15 @@ fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
             continue;
         }
         let new = state.table.take(tick, "unit state: limit watch");
-        state.table.defer(entry, "unit state: limit watch");
+        old.push(entry);
         if let Some(e) = entries(state, h) {
             e.mana_watches[k] = (cost, new, now);
             e.watch_checks.retain(|&(w, _)| w != entry);
         }
         watch_scheduled(state, h, new);
+    }
+    for entry in old.into_iter().rev() {
+        state.table.defer(entry, "unit state: limit watch");
     }
 }
 
@@ -1715,6 +1723,47 @@ pub(super) fn mirror_hero_back(state: &mut super::State, h: u32, stand_in: u32) 
     state.table.defer(last, "Mirror Image: hero placed");
     if let Some(e) = effect {
         state.table.defer(e, "Mirror Image effect");
+    }
+}
+
+/// Unit `h`'s Thunder Clap takes effect (c-RZH-1, 26.40 s): the spell
+/// effect event, then the watches its cost crosses.
+pub(super) fn clap_effect(state: &mut super::State, h: u32, cost: i32) {
+    spell_effect_event(state, h);
+    mana_watches(state, h, cost);
+}
+
+/// A thunder clap's area pass at queue time `at`, after its hits, makes
+/// an object freed about 3.944 s later (c-RZH-1: 3059, made at 26.400000,
+/// freed at the end of the tick of q 30.345907).
+///
+/// PROVISIONAL: what it is and what times its free are not read; the
+/// length is that one reading.
+pub(super) fn clap_area(state: &mut super::State, at: u32) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "Thunder Clap: area");
+    let end = ow3_math::add(at, CLAP_AREA.to_bits());
+    state.table.free_at_q(end, o, "Thunder Clap: area");
+}
+
+/// The time to the free of a thunder clap's area object (`clap_area`).
+const CLAP_AREA: f32 = 3.944;
+
+/// Unit `h` is slowed by a thunder clap and lives: the slow's object,
+/// kept, and its walk made again for the new speed (c-RZH-1: tunneler 10
+/// at 26.40 s).
+///
+/// PROVISIONAL: the slow's end is not read; the walk taken to be made
+/// again only for a unit that has one.
+pub(super) fn clap_slowed(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let buff = state.table.take(tick, "Thunder Clap effect");
+    let walking = entries(state, h).is_some_and(|e| {
+        e.slow_buff = Some(buff);
+        !e.walk.is_empty()
+    });
+    if walking {
+        walk_made(state, h);
     }
 }
 

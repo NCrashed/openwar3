@@ -5329,21 +5329,13 @@ pub(super) fn retaliate(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            // A walker answering an impact's call stands from the next tick,
-            // and its delay counts from there (c-RZJ-1: footman 6, delay
-            // 0.0226 at 788, walked at 799).
-            // Others wait on the timer queue from the call (c-SAK-1: ogre 18,
+            // It waits on the timer queue from the call (c-SAK-1: ogre 18,
             // taking the Mountain King at 34.917, stood at its update of 7028
             // and its delay ended after it, at 35.129936; footman 2, walking
             // his attack-move, at the call of 53.698528, his delay ending at
-            // 53.719524).
-            // PROVISIONAL: what tells the walkers apart (the impact is the
-            // one difference seen).
-            if walker && impact.is_some() {
-                react(state, h, tick + 1, delay, tick + 1);
-            } else {
-                react_until(state, h, add(now.to_bits(), delay));
-            }
+            // 53.719524; c-RZJ-1: footman 2 at the Shockwave's call of
+            // 3.937711, delay 0.011478, its walk at the end, 3.949188).
+            react_until(state, h, add(now.to_bits(), delay));
             // A creep that answers enters the fight (SPEC-0030).
             super::creeps::enter_fight(state, h, state.move_clock);
         }

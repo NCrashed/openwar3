@@ -514,8 +514,11 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     if !u.alive || (real_of(speed) <= 0.0 && !attack && !state.data.units.is_empty()) {
         return false;
     }
-    // Any other order ends a hold position.
-    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+    // Any other order ends a hold position; an attack the unit took on its
+    // own does not (c-SBI-1: grunt 4 holding while it fought).
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && !(attack && order_id == 0)
+    {
         u.holding = false;
     }
     let Some(Object::Unit(u)) = state.objects.get(&h) else {

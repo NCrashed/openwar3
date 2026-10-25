@@ -93,6 +93,9 @@ the game's order.
   match the game.
 - The gold harvest test with kobolds attacking c-RXD-1: its object table
   (2289 changes) and all 385 turn checksums match the game.
+- The Orc hero spells test c-SBI-1 (Chain Lightning, War Stomp and
+  Healing Wave on a creep camp): its object table (1431 changes) and all
+  161 turn checksums match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

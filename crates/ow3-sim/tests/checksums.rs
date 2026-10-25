@@ -130,8 +130,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBI-1.w3g",
-        "the Orc spells test (Chain Lightning, War Stomp, Healing Wave): just recorded, \
-         not looked at yet",
+        "the Orc hero spells test (Chain Lightning, War Stomp, Healing Wave): every turn \
+         checksum to its end matches with the object table started as the game has it \
+         (tests/objects.rs, orc_spells_checksums); this test runs without it",
     ),
     (
         "c-RXI-1.w3g",

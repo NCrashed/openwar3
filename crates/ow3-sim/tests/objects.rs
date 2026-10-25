@@ -194,13 +194,21 @@ fn creeps_harvest_objects() {
     }
 }
 
-/// `c-SBI-1`: Orc spells (Chain Lightning, War Stomp, Healing Wave)
-/// (report only).
+/// `c-SBI-1`: Orc hero spells (Chain Lightning, War Stomp, Healing Wave):
+/// every turn checksum.
 #[test]
-fn orc_spells_report() {
-    eprintln!("c-SBI-1");
-    compare_objects("c-SBI-1");
-    turn_parts("c-SBI-1");
+fn orc_spells_checksums() {
+    if let Some(first) = turn_parts("c-SBI-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBI-1`'s object table.
+#[test]
+fn orc_spells_objects() {
+    if let Some(first) = compare_objects("c-SBI-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBJ-1`: Undead spells (Death Coil, Frost Nova, Impale, Carrion

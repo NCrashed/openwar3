@@ -32,7 +32,10 @@ What is checked against the game:
   changes and 828 turns (to 83 s), 6892 changes and 408 turns (to 41 s),
   3263 changes and 610 turns (to 61 s), 2289 changes and 385 turns (to
   46 s), 2356 changes and 697 turns (to 70 s), and 1175 changes and 900
-  turns (to 91 s).
+  turns (to 91 s);
+- in the Orc hero spells test (Chain Lightning, War Stomp and Healing Wave
+  on a creep camp) every object change (1431) and turn checksum (161)
+  match too.
 
 ## Roadmap
 

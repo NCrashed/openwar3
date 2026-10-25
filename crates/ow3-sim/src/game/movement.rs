@@ -4760,10 +4760,13 @@ fn rating(
         crate::data::is_hero(t.type_id)
             && (t.owner == u.owner || state.setup.is_ally(u.owner, t.owner))
     });
-    let hits_rater = super::attack::weapon_for(state, o.type_id, Some(h)).is_some();
+    // A unit whose attack ability was removed attacks nobody (c-SBI-1: the
+    // heroes without Aatk, left for grunt 4 by every creep).
+    let hits_rater =
+        !o.attack_removed && super::attack::weapon_for(state, o.type_id, Some(h)).is_some();
     // A stunned unit still counts as one that can attack (c-RXD-1,
     // c-RZH-1).
-    let can_attack = od.is_some_and(|d| d.weapon.is_some());
+    let can_attack = !o.attack_removed && od.is_some_and(|d| d.weapon.is_some());
     let life = real_of(o.life.value());
     let rank = threat(state, h, other);
     let key = [

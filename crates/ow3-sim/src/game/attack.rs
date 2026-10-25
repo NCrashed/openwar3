@@ -384,6 +384,11 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                         // Its objects of the engine's table (SPEC-0024).
                         missile.objects = super::table::missile_launched(s);
                         s.missiles.push(missile);
+                        // So does the launch restart the fog modifier (c-RZJ-1:
+                        // the Archmage at 21.227, 1757 freed at 24.227034).
+                        if let Some(at) = a.hit_at {
+                            super::table::fog_pass(s, h, at, false);
+                        }
                         None
                     } else {
                         if let (Some(trace), Some(at)) = (s.hit_trace.as_mut(), a.hit_at) {
@@ -791,7 +796,11 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let mut arrived = Vec::new();
         let mut flying = Vec::with_capacity(s.missiles.len());
         for mut m in std::mem::take(&mut s.missiles) {
-            if !m.artillery && !standing(s, m.target) {
+            // A plain missile whose target is gone flies on to its expiry: its
+            // objects go 5.0 s after that impact (c-RZJ-1: the water
+            // elemental's of 12.338930, target dead at 2495, freed at
+            // 17.593147).
+            if !m.artillery && !standing(s, m.target) && (m.homing.is_some() || m.spell.is_some()) {
                 continue;
             }
             // A spell's bolt: it lands at its straight flight's end; at a
@@ -953,6 +962,7 @@ pub(super) fn held_impacts(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     state.borrow_mut().impact_now = !held.is_empty();
     for (m, at) in held {
         if !standing(&state.borrow(), m.target) {
+            super::table::missile_hit(&mut state.borrow_mut(), &m.objects, at);
             continue;
         }
         {

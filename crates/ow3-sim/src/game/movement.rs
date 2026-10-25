@@ -3676,6 +3676,8 @@ pub(super) fn chase(
     renew_at: Option<u64>,
     in_reach: bool,
 ) {
+    // Standing when the goal comes: no update of this tick saw it.
+    let stood = state.unit(Some(h)).is_some_and(|u| u.movement.is_none());
     // After the swing: where the target is by its position formula with
     // the movement clock of the tick that holds the backswing end
     // (c-RXR-1: rifleman 9, 5053; c-RXD-1: creep 6 at 6978, its backswing
@@ -3770,7 +3772,11 @@ pub(super) fn chase(
             // Its update in this tick came before (the goal is due at the
             // backswing's end, the tick before): that update ends it (c-SAK-1:
             // the Mountain King, goal 1572, update 1573).
-            if state.updated.contains(&h) && state.table.now < state.ticks {
+            // So does an update of this tick that it missed, standing
+            // there: the game took the goal at the backswing's end (c-RZJ-1:
+            // the Archmage, goal 3444, update 3445, freed 3451).
+            let missed = early && stood && state.update_now && state.updates_started == state.ticks;
+            if (state.updated.contains(&h) || missed) && state.table.now < state.ticks {
                 state.table.now = state.ticks;
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                     u.entries.quiet_walk = false;

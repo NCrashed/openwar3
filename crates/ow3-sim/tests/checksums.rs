@@ -115,18 +115,19 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBH-1.w3g",
-        "the Human spell test (Flame Strike): its burning area's random timer and the \
-         later phase are not built yet",
+        "the Human spell test (Flame Strike): every turn checksum to its end matches with \
+         the object table started as the game has it (tests/objects.rs, \
+         flame_strike_checksums); this test runs without it",
     ),
     (
         "c-SBK-1.w3g",
-        "the Night Elf spells test (Mana Burn, Fan of Knives, Entangling Roots): just \
-         recorded, not looked at yet",
+        "the Night Elf spells test (Mana Burn, Fan of Knives, Entangling Roots): in \
+         progress (tests/objects.rs, night_elf_spells_report)",
     ),
     (
         "c-SBJ-1.w3g",
-        "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): just \
-         recorded, not looked at yet",
+        "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): in \
+         progress (tests/objects.rs, undead_spells_report)",
     ),
     (
         "c-SBI-1.w3g",

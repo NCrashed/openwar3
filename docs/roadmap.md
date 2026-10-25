@@ -49,7 +49,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Fog of war | partial | known | What a unit reveals (SPEC-0032). Invisibility and detection not started. |
 | Regions and their events | done | known | SPEC-0049. |
 | Heroes: experience, levels, attributes, skills | done | known | SPEC-0033 to 0035. |
-| Hero abilities | partial | known | Done: Storm Bolt, Thunder Clap, Bash, Critical Strike, Wind Walk, Mirror Image, Blizzard, Water Elemental, Divine Shield, three auras, Brilliance Aura, creep Shockwave. Specified but not built: Flame Strike, Chain Lightning, War Stomp, Healing Wave, Death Coil, Frost Nova, Impale, Carrion Swarm, Mana Burn, Fan of Knives, Entangling Roots. The rest of the 24 melee heroes not specified. |
+| Hero abilities | partial | known | Done: Storm Bolt, Thunder Clap, Bash, Critical Strike, Wind Walk, Mirror Image, Blizzard, Water Elemental, Divine Shield, three auras, Brilliance Aura, creep Shockwave, Chain Lightning, War Stomp, Healing Wave, Flame Strike. Built, being matched: Death Coil, Frost Nova, Impale, Carrion Swarm, Mana Burn, Fan of Knives, Entangling Roots. The rest of the 24 melee heroes not specified. |
 | Unit abilities (non-hero spells, autocast, morphs, transports) | not started | unknown | AbilityData.slk has about 800 entries; many share a base code, but nobody has counted the distinct mechanics yet. |
 | Buffs, dispels, summons in general | partial | unknown | Only what the done abilities need. |
 | Items: drops, use, shops, inventories | partial | unknown | Random item choice only (SPEC-0042). |
@@ -64,8 +64,8 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- 24 of 31 test replays match every turn checksum.
-- The other 7 are listed with the reason in
+- 25 of 31 test replays match every turn checksum.
+- The other 6 are listed with the reason in
   `crates/ow3-sim/tests/checksums.rs` (`UNSPECIFIED`).
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
@@ -96,6 +96,9 @@ the game's order.
 - The Orc hero spells test c-SBI-1 (Chain Lightning, War Stomp and
   Healing Wave on a creep camp): its object table (1431 changes) and all
   161 turn checksums match the game.
+- The Flame Strike test c-SBH-1 (the Blood Mage on four footmen: the
+  burning area's two phases and its timer of random delays): its object
+  table (640 changes) and all 160 turn checksums match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

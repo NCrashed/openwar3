@@ -953,6 +953,9 @@ pub struct State {
     early_effects: Vec<u32>,
     /// Units whose Impale stun ended in this tick (`table::impale_ends`).
     impale_ends: Vec<u32>,
+    /// Flame Strikes landing: the caster, the second phase's amount
+    /// (DataC) and step (DataD).
+    flame_second: Vec<(u32, u32, u32)>,
     /// Chain Lightnings and Healing Waves on their way (SPEC-0040).
     bounces: Vec<cast::Bounce>,
     /// Units whose cast's end ran before this tick's updates.
@@ -1166,6 +1169,7 @@ impl State {
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
             impale_ends: Vec::new(),
+            flame_second: Vec::new(),
             bounces: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,

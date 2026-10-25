@@ -220,12 +220,21 @@ fn undead_spells_report() {
     turn_parts("c-SBJ-1");
 }
 
-/// `c-SBH-1`: Flame Strike (report only).
+/// `c-SBH-1`: Flame Strike (its point mover, the area's two phases and
+/// its timer of random delays): every turn checksum.
 #[test]
-fn flame_strike_report() {
-    eprintln!("c-SBH-1");
-    compare_objects("c-SBH-1");
-    turn_parts("c-SBH-1");
+fn flame_strike_checksums() {
+    if let Some(first) = turn_parts("c-SBH-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBH-1`'s object table.
+#[test]
+fn flame_strike_objects() {
+    if let Some(first) = compare_objects("c-SBH-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBK-1`: Night Elf spells (report only).

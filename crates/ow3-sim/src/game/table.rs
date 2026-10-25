@@ -290,6 +290,15 @@ impl ObjectTable {
         self.deferred.len()
     }
 
+    /// The 0.0001 s frees given up since `from` go by a queue timer at `q`
+    /// instead, after the tick's 0.0001 s frees.
+    pub fn defer_to_q(&mut self, from: usize, q: u32) {
+        let moved: Vec<_> = self.deferred.drain(from..).collect();
+        for (_, entry, tag) in moved {
+            self.timed_q.push((q, entry, tag));
+        }
+    }
+
     /// The 0.0001 s frees given up since `from` count as early (`flush_early`).
     pub fn mark_early(&mut self, from: usize) {
         let new: Vec<u32> = self.deferred.iter().skip(from).map(|d| d.1).collect();

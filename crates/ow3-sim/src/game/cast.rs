@@ -404,6 +404,7 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
         // Its objects before the cast's start (SPEC-0024).
         super::table::spell_point_ordered(state, h, true);
         start(state, h, tick);
+        flame_mover(state, h, ability);
         return Some(true);
     } else {
         if in_range {
@@ -416,7 +417,43 @@ pub(super) fn point_order(state: &mut State, h: u32, name: &str, at: [u32; 2]) -
     }
     // Its objects (SPEC-0024; c-RZJ-1: the Blizzard order of 2.5).
     super::table::spell_point_ordered(state, h, false);
+    flame_mover(state, h, ability);
     Some(true)
+}
+
+/// A Flame Strike's order makes a point mover 0.01 s after it, aimed at
+/// the point to arrive in the caster's cast point; its five objects go
+/// 5.0 s after the arrival (c-SBH-1: 2.51, freed at 7.81).
+/// PROVISIONAL: what the mover is for is not read.
+fn flame_mover(state: &mut State, h: u32, ability: i32) {
+    if base_code(state, ability) != i32::from_be_bytes(*b"AHfs") {
+        return;
+    }
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let owner = u.owner;
+    let point = state.data.units.get(&u.type_id).map_or(0, |t| t.cast_point);
+    let q = add(
+        state.event_time.unwrap_or_else(|| state.timers.time()),
+        0.01f32.to_bits(),
+    );
+    let at = tick_of(state, q);
+    state.bounces.push(Bounce {
+        caster: h,
+        owner,
+        kind: BounceKind::Mover,
+        target: h,
+        at,
+        amount: 0,
+        factor: point,
+        left: 1,
+        area: 0.0,
+        hit: Vec::new(),
+        point: [0, 0],
+        q,
+        times: [0; 3],
+    });
 }
 
 /// The reach in cells of `h`'s cast on a point (`point_order`).
@@ -1364,14 +1401,16 @@ fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
     if !missile {
         super::table::impact_unused(s, h);
     }
+    let from = s.table.deferred_count();
     super::table::order_ended(s, h);
+    // A Flame Strike's by its cast timer at the landing, after the
+    // landing's hits (c-SBH-1: 4.134939).
+    if base_code(s, c.ability) == i32::from_be_bytes(*b"AHfs") {
+        s.table.defer_to_q(from, end_q);
+    }
     s.table.now = tick;
 }
 
-/// The effects due in this tick whose queue times come before `limit`,
-/// the time of the tick's updates: they run first, as timers of the queue
-/// ahead of the updates (c-RZJ-1: the Ogre Lord's Shockwave at 3.737711,
-/// before the updates of 3.738891).
 /// The effect of `h`'s cast if it is due at the order itself (no cast point).
 pub(super) fn effect_at_order(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32) {
     let q = {
@@ -1388,6 +1427,10 @@ pub(super) fn effect_at_order(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32) {
     }
 }
 
+/// The effects due in this tick whose queue times come before `limit`,
+/// the time of the tick's updates: they run first, as timers of the queue
+/// ahead of the updates (c-RZJ-1: the Ogre Lord's Shockwave at 3.737711,
+/// before the updates of 3.738891).
 pub(super) fn effects_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: u32) {
     let mut deferred = Vec::new();
     {
@@ -2182,6 +2225,10 @@ pub enum BounceKind {
     Roots,
     /// Flame Strike's hits on the units round its point.
     Flame,
+    /// The point mover a Flame Strike's order makes 0.01 s after it.
+    Mover,
+    /// A Flame Strike area's timer of random delays (game generator 23).
+    Flames,
 }
 
 /// How long the objects of a bounce's effect and jumps are kept: 1 s for
@@ -2547,13 +2594,8 @@ fn flame_strike(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLeve
     let (Some(point), Some(owner)) = (c.point, s.unit(Some(h)).map(|u| u.owner)) else {
         return;
     };
+    super::table::clap_effect(s, h, n.cost);
     let q = add(c.effect_q, n.cast);
-    let every = f32::from_bits(n.data[1]);
-    let hits = if every > 0.0 {
-        (f32::from_bits(n.hero_duration) / every) as u32 + 1
-    } else {
-        1
-    };
     let at = tick_of(s, q);
     s.bounces.push(Bounce {
         caster: h,
@@ -2563,13 +2605,51 @@ fn flame_strike(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLeve
         at,
         amount: n.data[0],
         factor: n.data[1],
-        left: hits,
+        left: u32::MAX,
         area: f32::from_bits(n.area),
         hit: Vec::new(),
         point,
         q,
-        times: [0; 3],
+        // The area's start (set at the landing), first phase and life;
+        // the second phase's step and amount.
+        times: [q, n.hero_duration, n.duration],
     });
+    s.flame_second.push((h, n.data[2], n.data_d));
+}
+
+/// The game generator of a Flame Strike area's timer of random delays.
+const FLAME_GENERATOR: usize = 23;
+
+/// A firing of a Flame Strike area's timer of random delays (`Flames`):
+/// its draws place flames only; the timer starts again with a delay
+/// drawn last, and stops with the area (c-SBH-1, 02:10: 2n + 4 steps for
+/// a count n).
+fn flames_fire(s: &mut State, b: &mut Bounce) {
+    // At its firing: n = 2 + two draws of 0 .. 9; past 5 one flame near
+    // the centre (two draws) and n - 1; a start angle; two draws a flame;
+    // then the next delay, a uniform draw.
+    let g = &mut s.game_random[FLAME_GENERATOR];
+    let die = |g: &mut crate::random::Random| ((u64::from(g.step()) * 10) >> 32) as u32;
+    let mut n = 2 + die(g) + die(g);
+    if n > 5 {
+        g.step();
+        g.step();
+        n -= 1;
+    }
+    g.step();
+    for _ in 0..n {
+        g.step();
+        g.step();
+    }
+    let out = g.step();
+    let delay = (f32::from_bits(0x3F80_0000 | (out & 0x7F_FFFF)) - 1.0).to_bits();
+    b.q = add(b.q, delay);
+    // It stops with the area (`factor` holds the area's end).
+    if f32::from_bits(b.q) > f32::from_bits(b.factor) {
+        b.left = 0;
+    } else {
+        b.at = tick_of(s, b.q);
+    }
 }
 
 /// The bounces that reach their units in this tick: a Chain Lightning's
@@ -2583,6 +2663,7 @@ fn flame_strike(s: &mut State, h: u32, c: &Casting, n: &crate::data::AbilityLeve
 fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
     let tick = s.ticks;
     let mut all = std::mem::take(&mut s.bounces);
+    let mut more = Vec::new();
     for b in &mut all {
         if b.at != tick {
             continue;
@@ -2593,7 +2674,49 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
             wave_step(s, b);
             continue;
         }
+        if b.kind == BounceKind::Mover {
+            let objects = super::table::missile_launched(s);
+            super::table::missile_hit(s, &objects, add(b.q, b.factor));
+            b.left = 0;
+            continue;
+        }
+        if b.kind == BounceKind::Flames {
+            flames_fire(s, b);
+            continue;
+        }
         if b.kind == BounceKind::Flame {
+            let [start, first, life] = b.times;
+            let end = add(add(start, life), 0.01f32.to_bits());
+            // At the landing the area's objects, kept, and its timer of
+            // random delays (c-SBH-1: 1021 .. 1024 at 4.13).
+            if b.q == start {
+                let tick = s.table.now;
+                for _ in 0..4 {
+                    let o = s.table.take(tick, "flame strike: area");
+                    s.table
+                        .free_at_q(add(end, 5.0f32.to_bits()), o, "flame strike: area");
+                }
+                let flames = Bounce {
+                    caster: b.caster,
+                    owner: b.owner,
+                    kind: BounceKind::Flames,
+                    target: b.caster,
+                    at: tick,
+                    amount: 0,
+                    factor: end,
+                    left: 1,
+                    area: 0.0,
+                    hit: Vec::new(),
+                    point: [0, 0],
+                    q: start,
+                    times: [0; 3],
+                };
+                let mut flames = flames;
+                flames_fire(s, &mut flames);
+                if flames.left > 0 {
+                    more.push(flames);
+                }
+            }
             let [x, y] = b.point.map(f32::from_bits);
             let hit: Vec<u32> = s
                 .units
@@ -2609,7 +2732,27 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
                     })
                 })
                 .collect();
-            for o in hit {
+            // The step's timer again, DataB on the clock; at the first
+            // phase's end (HeroDur) it is started anew with DataD, the hits
+            // then DataC (c-SBH-1: 4.00 from +3.67 to +8.67).
+            let second = add(start, first);
+            let mut next = add(b.q, b.factor);
+            let mut switch = None;
+            if f32::from_bits(b.q) < f32::from_bits(second)
+                && f32::from_bits(next) > f32::from_bits(second)
+                && let Some(&(_, amount, step)) =
+                    s.flame_second.iter().find(|(c, _, _)| *c == b.caster)
+            {
+                next = add(second, step);
+                switch = Some((amount, step));
+            }
+            // Per unit the step's object, kept the step's time less 0.01 s
+            // (0.32 s, then 0.99 s), then the hit; the area's fog modifier after them
+            // (c-SBH-1: footmen 3, 1, 4, 2; 1037 freed 3 s after the last
+            // step).
+            let kept = add(b.q, ow3_math::sub(b.factor, 0.01f32.to_bits()));
+            for o in movement::call_order(s, hit) {
+                deferred.push(Deferred::Kept { end: kept });
                 deferred.push(Deferred::Damage {
                     caster: b.caster,
                     target: o,
@@ -2621,10 +2764,21 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
                     later_calls: false,
                 });
             }
-            // The next hit DataB on the clock (`factor` holds it).
-            b.q = add(b.q, b.factor);
-            b.at = tick_of(s, b.q);
-            b.left -= 1;
+            deferred.push(Deferred::ClapArea {
+                at: b.q,
+                first: Some(b.caster),
+            });
+            if let Some((amount, step)) = switch {
+                b.factor = step;
+                b.amount = amount;
+            }
+            if f32::from_bits(next) > f32::from_bits(end) {
+                b.left = 0;
+                s.flame_second.retain(|(c, _, _)| *c != b.caster);
+            } else {
+                b.q = next;
+                b.at = tick_of(s, next);
+            }
             continue;
         }
         if b.kind == BounceKind::Roots {
@@ -2763,4 +2917,5 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
     }
     all.retain(|b| b.left > 0);
     s.bounces.extend(all);
+    s.bounces.extend(more);
 }

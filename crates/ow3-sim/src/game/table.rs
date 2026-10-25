@@ -40,6 +40,8 @@ pub struct ObjectTable {
     pub day: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// The pathing parts of each destructable, freed when it dies.
+    pub destructable_paths: std::collections::BTreeMap<u32, Vec<u32>>,
     /// A gold mine had a worker inside (its object taken).
     pub mine_used: bool,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
@@ -103,6 +105,7 @@ impl ObjectTable {
             day: Vec::new(),
             walks_due: Vec::new(),
             mine_used: false,
+            destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
             cast_at_once: false,
             at_fade: false,
@@ -1156,6 +1159,18 @@ pub(super) fn move_target_ordered(state: &mut super::State, h: u32) {
         e.order = ability[..11].iter().rev().copied().chain([order]).collect();
     }
     walk_made_at_order(state, h);
+}
+
+/// A script made destructable `h` (c-RYP-1: 35 trees after the hall): 7
+/// objects, itself, three parts of it and three pathing parts, all kept
+/// (the pathing parts to its death).
+pub(super) fn destructable_made(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let parts = state.table.take_n(tick, 7, "destructable");
+    state
+        .table
+        .destructable_paths
+        .insert(h, parts[4..].to_vec());
 }
 
 /// Unit `h` takes a patrol order (c-RTW-3: the player's at 13.523731): an

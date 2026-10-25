@@ -1962,6 +1962,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 died_at,
             }));
             state.destructables.push(h);
+            super::table::destructable_made(&mut state, h);
             super::obstacles::refresh_destructable(&mut state, h);
             Ok(Some(Value::Handle(Some(h))))
         });

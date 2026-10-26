@@ -1027,6 +1027,104 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
     acquired_with(vm, state, units, true);
 }
 
+/// `EVENT_UNIT_DROP_ITEM` and `EVENT_UNIT_USE_ITEM`.
+const EVENT_UNIT_DROP_ITEM: i32 = 85;
+const EVENT_UNIT_USE_ITEM: i32 = 87;
+
+/// Fires unit `h`'s triggers registered for unit event `event`, as one
+/// event with its objects.
+fn unit_event(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, event: i32) {
+    let registrations = state.borrow().events.clone();
+    super::begin_event(state);
+    for registration in &registrations {
+        if let Registration::Unit {
+            trigger,
+            unit,
+            event: e,
+        } = *registration
+            && unit == h
+            && e == event
+        {
+            let context = Context {
+                event_id: Some(event),
+                triggering_unit: Some(h),
+                triggering_widget: Some(h),
+                ..Context::default()
+            };
+            fire_trigger(vm, state, trigger, context);
+        }
+    }
+    super::end_event(state);
+}
+
+/// `UnitUseItem` of a hero carrying a potion (c-SBQ-1 at 9.0, hub #2): the
+/// use order's objects, the heal at once (`DataA` of its ability), the use
+/// event, and for the last charge the drop event and the item gone with
+/// its objects; the hero's attack ends, its acquisition check 0.01 s later.
+/// PROVISIONAL: only an item whose ability heals (base AIhe, as AIh1); the
+/// cooldown timers have no objects and are not kept.
+fn use_item(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, item: u32) -> bool {
+    let heal = {
+        let s = state.borrow();
+        let Some(Object::Item(i)) = s.objects.get(&item) else {
+            return false;
+        };
+        if i.carried_by != Some(h) || i.charges <= 0 {
+            return false;
+        }
+        s.data
+            .item_abilities
+            .get(&i.type_id)
+            .into_iter()
+            .flatten()
+            .find_map(|a| {
+                let d = s.data.abilities.get(a)?;
+                (d.code == i32::from_be_bytes(*b"AIhe"))
+                    .then(|| d.per_level.first().map_or(0, |l| l.data[0]))
+            })
+    };
+    let Some(heal) = heal else {
+        return false;
+    };
+    let rest = {
+        let mut s = state.borrow_mut();
+        let rest = super::table::item_used(&mut s, h);
+        if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+            let life = add(u.life.value(), heal);
+            u.life.set(life);
+            // Its attack ends with its order.
+            u.attack = None;
+            u.movement = None;
+        }
+        if let Some(Object::Item(i)) = s.objects.get_mut(&item) {
+            i.charges -= 1;
+        }
+        rest
+    };
+    unit_event(vm, state, h, EVENT_UNIT_USE_ITEM);
+    let used_up =
+        matches!(state.borrow().objects.get(&item), Some(Object::Item(i)) if i.charges <= 0);
+    if used_up {
+        unit_event(vm, state, h, EVENT_UNIT_DROP_ITEM);
+    }
+    let mut s = state.borrow_mut();
+    let gone = if used_up {
+        s.items.retain(|&i| i != item);
+        match s.objects.remove(&item) {
+            Some(Object::Item(i)) => Some((i.held, i.objects)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    super::table::item_used_end(&mut s, rest, gone);
+    let at = add(s.timers.time(), super::movement::AFTER_DEATH);
+    if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+        u.next_acquire = at;
+    }
+    true
+}
+
 /// `EVENT_UNIT_PICKUP_ITEM`.
 const EVENT_UNIT_PICKUP_ITEM: i32 = 86;
 
@@ -2117,21 +2215,35 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 .get(&type_id)
                 .copied()
                 .unwrap_or(UNKNOWN_LIFE);
+            // Its four objects of the engine's table: the item and three
+            // path-side objects (c-SBQ-1: the claws' and the potion's at the map
+            // start), kept while it exists.
+            let tick = state.table.now;
+            let objects = state.table.take_n(tick, 4, "item");
+            let charges = state.data.item_uses.get(&type_id).copied().unwrap_or(0);
             let h = state.create(Object::Item(Item {
                 type_id,
                 x: real(&args[1]),
                 y: real(&args[2]),
                 life,
                 carried_by: None,
+                charges,
+                objects,
+                held: Vec::new(),
             }));
             state.items.push(h);
-            // Its four objects of the engine's table: the item and three
-            // path-side objects (c-SBQ-1: the claws' and the potion's at the map
-            // start).
-            // PROVISIONAL: kept; a used-up item's go at its use, not built.
-            let tick = state.table.now;
-            state.table.take_n(tick, 4, "item");
             Ok(Some(Value::Handle(Some(h))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native UnitUseItem takes unit whichUnit, item whichItem returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some(item)) = (handle(&args[0]), handle(&args[1])) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            Ok(Some(Value::Boolean(use_item(vm, state, h, item))))
         }
     );
     native!(

@@ -464,8 +464,6 @@ pub struct UnitEntries {
     /// A stun of Impale: at its end a 0.00 hit from the caster comes before
     /// the stun's objects go, and there is no buff end (`impale_ends`).
     pub impale: bool,
-    /// The objects of the abilities of the items it carries (`item_picked`).
-    pub item_abilities: Vec<u32>,
     /// Its order is a script's attack order on a unit (`attack_target_ordered`).
     pub script_attack: bool,
     /// The objects of such an order lost with its target, due at the end of
@@ -1394,16 +1392,11 @@ pub(super) fn item_picked(state: &mut super::State, h: u32, item: u32) {
         }
         _ => false,
     };
-    if charged {
-        let watch = state.table.take(tick, "item: limit watch");
-        if let Some(e) = entries(state, h) {
-            e.item_abilities.push(watch);
-        }
+    let watch = charged.then(|| state.table.take(tick, "item: limit watch"));
+    if let Some(super::Object::Item(i)) = state.objects.get_mut(&item) {
+        i.held = std::iter::once(ability).chain(watch).collect();
     }
-    let first = entries(state, h).and_then(|e| {
-        e.item_abilities.push(ability);
-        (!e.order.is_empty()).then(|| e.order.remove(0))
-    });
+    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
     if let Some(o) = first {
         state.table.defer(o, "item order: start");
     }
@@ -1419,6 +1412,48 @@ pub(super) fn item_picked_end(state: &mut super::State, h: u32) {
         state.table.defer(o, "item order: start");
     }
     walk_dropped(state, h);
+}
+
+/// Hero `h` uses an item (c-SBQ-1 at 9.0): the order and its record, the old
+/// order ends, nine parts, the last five freed 0.0001 s later now; the
+/// first four and the order are returned, freed after the use's events
+/// (`item_used_end`).
+pub(super) fn item_used(state: &mut super::State, h: u32) -> Vec<u32> {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script immediate order");
+    let record = state.table.take(tick, "order record");
+    let parts = state.table.take_n(tick, 9, "item use: order start");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    for &e in parts[4..].iter().rev() {
+        state.table.defer(e, "item use: order start");
+    }
+    let mut rest: Vec<u32> = parts[..4].iter().rev().copied().collect();
+    rest.push(order);
+    rest
+}
+
+/// After the use's events: a used-up item's ability and watch on the hero
+/// and its four objects go (in the order 2, 3, 1, 0), then the order's
+/// rest (c-SBQ-1: 1242, 1241, 1001, 1002, 1000, 999, then 1305 .. 1300).
+pub(super) fn item_used_end(
+    state: &mut super::State,
+    rest: Vec<u32>,
+    gone: Option<(Vec<u32>, Vec<u32>)>,
+) {
+    if let Some((held, objects)) = gone {
+        for o in held.into_iter().rev() {
+            state.table.defer(o, "item ability");
+        }
+        for k in [2, 3, 1, 0] {
+            if let Some(&o) = objects.get(k) {
+                state.table.defer(o, "item");
+            }
+        }
+    }
+    for o in rest {
+        state.table.defer(o, "item use: order start");
+    }
 }
 
 /// Worker `h` takes a harvest order on a gold mine (c-RXI-1 at 1.5 s): the
@@ -4104,8 +4139,14 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for e in pair.into_iter().chain(game).chain(stun_order) {
         state.table.defer(e, "unit death");
     }
+    // A hero's own objects go after the first of its three, before the
+    // record (c-SBQ-1: the Paladin's acquisition objects at 9.329535).
+    let mut own = own;
     if let Some(o) = &hero_order {
         state.table.defer(o[0], "hero death order");
+        for e in std::mem::take(&mut own) {
+            state.table.defer(e, "unit death");
+        }
     }
     state.table.defer(record, "death order record");
     if let Some(o) = &hero_order {
@@ -4321,6 +4362,29 @@ pub(super) fn paused(state: &mut super::State, h: u32) {
     let order = state.table.take(tick, "pause: order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
+    // The order it had ends (c-SBQ-1: the ogre paused in the Paladin's death
+    // event, its script attack's 1130 .. 1126), but the order's own object
+    // stays (1125, kept to the game's end).
+    // PROVISIONAL: what keeps it is not read.
+    // (Also when the order lost its target and waits for its backswing's end.)
+    let kept_order = entries(state, h).and_then(|e| {
+        if e.order.is_empty() {
+            e.order_ending.pop().map(|(q, o)| (Some(q), o))
+        } else {
+            e.order.pop().map(|o| (None, o))
+        }
+    });
+    if let Some((Some(q), o)) = kept_order {
+        state
+            .table
+            .timed_q
+            .retain(|t| *t != (q, o, "attack: order end"));
+    }
+    let kept_order = kept_order.map(|(_, o)| o);
+    order_ended(state, h);
+    if let (Some(o), Some(e)) = (kept_order, entries(state, h)) {
+        e.game_objects.push(o);
+    }
     let parts = state.table.take_n(tick, 9, "pause: order objects");
     for &e in parts[5..].iter().rev() {
         state.table.defer(e, "pause: order objects");
@@ -4347,6 +4411,32 @@ pub(super) fn invulnerable_set(state: &mut super::State, h: u32, on: bool) {
         let o = state.table.take(tick, "invulnerability");
         if let Some(e) = entries(state, h) {
             e.invulnerable = Some(o);
+        }
+        // The units attacking it lose it: their acquisition's objects go
+        // (c-SBQ-1: the Archmage on the ogre made invulnerable in the
+        // Paladin's death event, 1323 .. 1317).
+        // PROVISIONAL: read for one attacker standing on hold position.
+        let attackers: Vec<u32> = state
+            .units
+            .iter()
+            .copied()
+            .filter(|&a| {
+                a != h
+                    && state.unit(Some(a)).is_some_and(|u| {
+                        u.alive
+                            && (u.attack.is_some_and(|t| t.target == h)
+                                || u.movement.is_some_and(|m| {
+                                    m.order == super::movement::Order::Attack { target: h }
+                                }))
+                    })
+            })
+            .collect();
+        for a in attackers {
+            order_ended(state, a);
+            if let Some(super::Object::Unit(u)) = state.objects.get_mut(&a) {
+                u.attack = None;
+                u.movement = None;
+            }
         }
     } else if let Some(o) = entries(state, h).and_then(|e| e.invulnerable.take()) {
         state.table.defer(o, "invulnerability");

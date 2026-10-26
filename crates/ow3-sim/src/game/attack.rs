@@ -352,6 +352,10 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 Some(a) if due(s, &a) && standing(s, a.target) => {
                     let weapon = weapon_for(s, type_id, Some(a.target)).unwrap_or_default();
                     let primary = hero_primary(s, h);
+                    // Plus the attack bonus of the items it carries (c-SBQ-1: Claws
+                    // of Attack +6, AIat; the Archmage's kill of the kobold at
+                    // 24.25693).
+                    let primary = ow3_math::add(primary, item_attack_bonus(s, h));
                     // A thunder clap slows the attacks (SPEC-0037).
                     let cooldown = slowed(s, h, hero_cooldown(s, h, weapon.cooldown));
                     let backswing = slowed(s, h, hero_cooldown(s, h, weapon.backswing));
@@ -1274,6 +1278,35 @@ fn proc_effect(state: &State, h: u32, amount: u32) -> (u32, Option<(u32, u32, u3
     } else {
         (amount, None)
     }
+}
+
+/// The attack bonus (`DataA` of AIat abilities) of the items hero `h`
+/// carries.
+fn item_attack_bonus(state: &State, h: u32) -> u32 {
+    let code = i32::from_be_bytes(*b"AIat");
+    let mut total = 0.0f32;
+    for &i in &state.items {
+        let Some(Object::Item(item)) = state.objects.get(&i) else {
+            continue;
+        };
+        if item.carried_by != Some(h) {
+            continue;
+        }
+        for a in state
+            .data
+            .item_abilities
+            .get(&item.type_id)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(d) = state.data.abilities.get(a).filter(|d| d.code == code)
+                && let Some(l) = d.per_level.first()
+            {
+                total += f32::from_bits(l.data[0]);
+            }
+        }
+    }
+    total.to_bits()
 }
 
 /// The primary attribute of hero `h` times `StrAttackBonus`, added to the

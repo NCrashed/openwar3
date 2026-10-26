@@ -4647,6 +4647,11 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
                 .unit(Some(r))
                 .filter(|o| o.alive && enemies(state, u.owner, o.owner))?;
             // Only one its player sees (SPEC-0019, "Remembered enemy").
+            // Nor an invulnerable one (c-SBQ-1: the Archmage, the ogre that hit
+            // him made invulnerable at 9.329, no acquisition after).
+            if super::cast::invulnerable(state, r) {
+                return None;
+            }
             if !super::fog::unit_visible(state, r, u.owner) {
                 return None;
             }

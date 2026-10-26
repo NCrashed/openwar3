@@ -177,6 +177,12 @@ pub struct Item {
     life: u32,
     /// The hero carrying it, if one picked it up.
     carried_by: Option<u32>,
+    /// Its charges left.
+    charges: i32,
+    /// Its four objects of the engine's table, and those of its ability on
+    /// the hero that carries it (`table::item_picked`).
+    objects: Vec<u32>,
+    held: Vec<u32>,
 }
 
 /// PROVISIONAL: a placeholder unit with what the enumerations need, until
@@ -3049,22 +3055,28 @@ fn fire_trigger(vm: &mut Vm, state: &Rc<RefCell<State>>, trigger: u32, base: Con
     // registration that fires, and every registration that fires one
     // more, all freed 0.0001 s later (SPEC-0024, "Event objects").
     // PROVISIONAL: other events take only the registration's.
-    if !state.borrow().quiet_events {
+    let object = if state.borrow().quiet_events {
+        None
+    } else {
         let mut s = state.borrow_mut();
         let tick = s.table.now;
         if let Some(None) = s.event_objects.last() {
             let e = s.table.take(tick, "event");
             *s.event_objects.last_mut().unwrap() = Some(e);
         }
-        let e = s.table.take(tick, "event object");
-        s.table.defer(e, "event object");
-    }
+        // Freed after what the trigger's actions free (c-SBQ-1: the death
+        // event of 9.329535, its object after the pause its action gives).
+        Some(s.table.take(tick, "event object"))
+    };
     let enabled = state
         .borrow_mut()
         .trigger(Some(trigger))
         .is_some_and(|t| t.enabled);
     if enabled && evaluate_trigger(vm, state, trigger, base) {
         execute_trigger(vm, state, trigger, base);
+    }
+    if let Some(e) = object {
+        state.borrow_mut().table.defer(e, "event object");
     }
 }
 

@@ -367,7 +367,7 @@ pub struct Unit {
 /// life when a worker comes back, `base` then that life and the end the
 /// time the rest takes at `rate`. Damage taken is kept apart (`lost`) and
 /// taken off the growing life.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Construction {
     base: u32,
     rate: u32,
@@ -380,6 +380,12 @@ pub struct Construction {
     /// timers expire (hub #13).
     paying: usize,
     pay: [Option<u32>; 2],
+    /// Its helpers and the queue times they started (their 1.0 s timers),
+    /// whether its first builder left, and a helper taking over: it, the
+    /// tick its takeover ends and the work order it made.
+    helpers: Vec<(u32, u32)>,
+    gone: Option<u32>,
+    taking: Option<(u32, u64, u32)>,
     max: u32,
     build_time: u32,
     begin: u64,
@@ -401,6 +407,9 @@ impl Construction {
             builder: 0,
             paying: 0,
             pay: [None, None],
+            helpers: Vec::new(),
+            gone: None,
+            taking: None,
             max,
             build_time,
             begin,
@@ -1018,6 +1027,8 @@ pub struct State {
     /// Workers that took up work on a building under construction in this
     /// tick, and the building (`power_building`).
     helpers_started: Vec<(u32, u32)>,
+    /// The building a worker given `stop` was building (`table::hold_ordered`).
+    building_left: Option<u32>,
     /// The Deaths and Decays acting (c-SBX-1).
     decays: Vec<cast::Decay>,
     /// Units whose cast's end ran before this tick's updates.
@@ -1238,6 +1249,7 @@ impl State {
             bounces: Vec::new(),
             quakes: Vec::new(),
             helpers_started: Vec::new(),
+            building_left: None,
             decays: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
@@ -4116,6 +4128,7 @@ fn power_building(state: &mut State) {
         .and_then(|a| a.per_level.first())
         .map_or(0, |l| l.data_d);
     let mut changed = Vec::new();
+    let mut takeovers = Vec::new();
     let mut retimed = Vec::new();
     for &h in &state.units.clone() {
         let workers = movement::workers_of(state, h);
@@ -4125,12 +4138,50 @@ fn power_building(state: &mut State) {
         let Some(c) = u.construction.as_mut() else {
             continue;
         };
+        let now = state.timers.time();
+        for &w in &workers {
+            if w != c.builder && c.helpers.iter().all(|x| x.0 != w) {
+                c.helpers.push((w, now));
+            }
+        }
+        c.helpers.retain(|x| workers.contains(&x.0));
+        // Its first builder left: plain speed, no payments until a helper
+        // takes over at its next 1.0 s timer (hub #13).
+        if c.gone.is_none() && c.tb.is_some() && !workers.contains(&c.builder) {
+            c.gone = Some(now);
+        }
+        if let Some(gone) = c.gone
+            && c.taking.is_none()
+            && !workers.contains(&c.builder)
+        {
+            let next = f32::from_bits(add(clock, crate::timers::TICK));
+            let fire = |since: u32| {
+                let mut t = add(since, 0x3F80_0000);
+                while f32::from_bits(t) <= f32::from_bits(gone) {
+                    t = add(t, 0x3F80_0000);
+                }
+                t
+            };
+            let first = c
+                .helpers
+                .iter()
+                .map(|&(w, since)| (w, fire(since)))
+                .filter(|&(_, t)| f32::from_bits(t) < next)
+                .min_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
+            if let Some((w, _)) = first {
+                takeovers.push((h, w));
+            }
+        }
         let helpers = if workers.contains(&c.builder) {
             workers.len().saturating_sub(1)
         } else {
             0
         };
-        let factor = add(0x3F80_0000, mul(bonus, ow3_math::i2r(helpers as i32)));
+        let factor = if c.gone.is_some() {
+            0x3F80_0000
+        } else {
+            add(0x3F80_0000, mul(bonus, ow3_math::i2r(helpers as i32)))
+        };
         if helpers != c.paying && c.tb.is_some() {
             c.paying = helpers;
             changed.push(h);
@@ -4148,6 +4199,36 @@ fn power_building(state: &mut State) {
     for (h, end) in retimed {
         training::cancel_timer(state, training::EngineTimer::Construction(h));
         training::start_timer(state, end, training::EngineTimer::Construction(h));
+    }
+    // A helper takes over: its new work order now, the rest one update
+    // later (c-SBZ-1: 19.757685 and 19.767683).
+    let tick = state.ticks;
+    for (h, w) in takeovers {
+        let order = table::takeover_started(state);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(c) = u.construction.as_mut()
+        {
+            c.taking = Some((w, tick + 2, order));
+        }
+    }
+    let done: Vec<(u32, u32, u32)> = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let c = state.unit(Some(h))?.construction.as_ref()?;
+            let (w, at, order) = c.taking?;
+            (at == tick && c.builder != w).then_some((h, w, order))
+        })
+        .collect();
+    for (h, w, order) in done {
+        table::takeover_done(state, w, h, order);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(c) = u.construction.as_mut()
+        {
+            c.builder = w;
+            c.helpers.retain(|x| x.0 != w);
+            c.paying = 0;
+        }
     }
     helpers_pay(state, &changed);
 }

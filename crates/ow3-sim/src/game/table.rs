@@ -2441,7 +2441,27 @@ pub(super) fn hold_ordered(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script immediate order");
     let record = state.table.take(tick, "order record");
+    // A builder leaving its building: the building's rate row and its
+    // work's two timers first, its work's parts and order after the record
+    // (c-SBZ-1: peasant 0's stop at 19.497728, hub #13).
+    let work = entries(state, h)
+        .map(|e| std::mem::take(&mut e.work))
+        .unwrap_or_default();
+    if work.len() == 7 {
+        if let Some(b) = state.building_left.take()
+            && let Some(o) = entries(state, b).and_then(|e| e.construction_rates.pop())
+        {
+            state.table.defer(o, "unit state: rate part");
+        }
+        state.table.defer(work[6], "work order: timer");
+        state.table.defer(work[5], "work order: timer");
+    }
     state.table.defer(record, "order record");
+    if work.len() == 7 {
+        for &e in work[..5].iter().rev() {
+            state.table.defer(e, "work order");
+        }
+    }
     order_ended(state, h);
     // A group member's walk, kept through its order, goes now (c-RTW-3:
     // the stop of 27.921314, the last member's walk freed at its update).
@@ -5067,6 +5087,42 @@ pub(super) fn helper_started(state: &mut super::State, h: u32, building: u32) {
     }
     if let Some(o) = entries(state, building).and_then(|e| e.first_helper.take()) {
         state.table.defer(o, "work order: timer");
+    }
+}
+
+/// A helper takes over a building whose builder left, at its 1.0 s timer
+/// (c-SBZ-1: peasant 2 at 19.757685, hub #13): its new work order. The
+/// order.
+pub(super) fn takeover_started(state: &mut super::State) -> u32 {
+    let tick = state.table.now;
+    state.table.take(tick, "work order")
+}
+
+/// The takeover of `building` by helper `h` ends one update later
+/// (c-SBZ-1: 19.767683, hub #13): ten parts of its new work order (the last
+/// six freed 0.0001 s later), the building's rate rows (a rate part, a
+/// limit watch, a rate part, kept to the completion); its repair order's
+/// kept parts and order go, then the new parts.
+pub(super) fn takeover_done(state: &mut super::State, h: u32, building: u32, order: u32) {
+    let tick = state.table.now;
+    let parts = state.table.take_n(tick, 10, "work order: order start");
+    let rates = state.table.take_n(tick, 3, "unit state: rate part");
+    let repair = entries(state, h)
+        .map(|e| std::mem::take(&mut e.work))
+        .unwrap_or_default();
+    for e in repair.into_iter().rev() {
+        state.table.defer(e, "repair order");
+    }
+    for &e in parts[4..].iter().rev() {
+        state.table.defer(e, "work order: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        let mut kept = vec![order];
+        kept.extend(&parts[..4]);
+        e.work = kept;
+    }
+    if let Some(e) = entries(state, building) {
+        e.construction_rates.extend(rates);
     }
 }
 #[cfg(test)]

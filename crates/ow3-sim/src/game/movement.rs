@@ -1846,6 +1846,15 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
     }
     match name {
         "stop" | "holdposition" => {
+            // (The building a builder leaves, for its objects.)
+            state.building_left =
+                state
+                    .unit(Some(h))
+                    .and_then(|u| u.movement)
+                    .and_then(|m| match m.order {
+                        Order::Repair { building } => Some(building),
+                        _ => None,
+                    });
             let done = halt(state, h);
             if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.holding = name == "holdposition";

@@ -1286,7 +1286,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     // PROVISIONAL: `q2` up by one here, down at the completion, gives the
     // same sums; a building lost under construction would tell them apart.
     super::widgets::type_record(state, owner, type_id, |q| q[4] -= 1);
-    super::table::construction_started(state, h, building);
+    super::table::construction_begun(state, h, building);
     // It enters its regions where it stands (SPEC-0049).
     super::regions::test_unit(state, building);
     // Its food comes when it is finished.
@@ -1307,6 +1307,18 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let begin = state.ticks + delay;
     let mut construction = super::Construction::new(base, rate, max, build_time, begin);
     construction.builder = h;
+    construction.turning = delay > 0;
+    // The rest of its start after the start event's triggers, if its owner
+    // has any (`widgets::constructions`; c-SCA-1, hub #14).
+    let triggers = state.events.iter().any(|r| {
+        matches!(*r, super::widgets::Registration::PlayerUnit { player, event, .. }
+            if player == owner && event == super::widgets::EVENT_PLAYER_UNIT_CONSTRUCT_START)
+    });
+    if triggers {
+        state.pending_starts.push((h, building, delay > 0));
+    } else {
+        super::table::construction_rest(state, h, building, delay > 0);
+    }
     let end = (delay == 0).then(|| construction.work(add(state.move_clock, GROWTH_OFFSET)));
     if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
         b.life = super::Regenerating::full(max, 0);

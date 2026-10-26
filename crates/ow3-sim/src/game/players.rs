@@ -103,6 +103,8 @@ pub struct Setup {
     pub clock_base: u32,
     pub clock_time: u32,
     pub clock_start: u32,
+    /// Whether a script set the time of day (`SetFloatGameState`).
+    pub clock_set: bool,
 }
 
 /// A slot as a lobby set it (for a replay).
@@ -192,6 +194,7 @@ impl Setup {
             clock_base: 8.0f32.to_bits(),
             clock_time: 0,
             clock_start: 0,
+            clock_set: false,
         }
     }
 
@@ -795,13 +798,20 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 let value = real(&args[1]);
                 let mut state = state.borrow_mut();
                 let setup = &mut state.setup;
+                // The time of day before the call: as set, or 0.05 an hour
+                // per second from the start (hub #14: 0.05 at 1.0 s).
+                let old = match setup.float_game_states.get(&(s as i32)) {
+                    Some(&v) if setup.clock_set => v,
+                    _ => ow3_math::mul(setup.clock_time, 0x3D4C_CCCD),
+                };
                 setup.float_game_states.insert(s as i32, value);
                 // The clock goes on from the time set (SPEC-0017).
                 if s == 2 {
+                    setup.clock_set = true;
                     setup.clock_base = value;
                     setup.clock_start = setup.clock_time;
                     let tick = state.table.now;
-                    super::table::time_of_day_set(&mut state.table, tick);
+                    super::table::time_of_day_set(&mut state.table, tick, old, value);
                 }
             }
             Ok(None)

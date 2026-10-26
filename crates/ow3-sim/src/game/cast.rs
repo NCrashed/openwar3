@@ -270,7 +270,7 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
     // of a Wind Walk (c-SAK-1: the Blademaster's Mirror Image at 7101).
     // PROVISIONAL: read for Mirror Image only.
     let code = base_code(state, ability);
-    if code != i32::from_be_bytes(*b"AHds") && code != i32::from_be_bytes(*b"AOwk") {
+    if ![*b"AHds", *b"AOwk", *b"AOww"].contains(&code.to_be_bytes()) {
         super::table::immediate_ordered(state, h);
     }
     end_wind_walk(state, h, ability);
@@ -299,6 +299,37 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> Option<b
             u.checks_off = true;
         }
         // The order goes after the effect and the attackers' objects.
+        state.table.defer(order, "script immediate order");
+        return Some(true);
+    }
+    // Bladestorm as well: its effect in the order's tick, the attack the
+    // hero had ending, the order freed after the effect's objects
+    // (c-SBW-1: the Blademaster at 4.499912, hub #10).
+    if code == i32::from_be_bytes(*b"AOww") {
+        let order = super::table::divine_shield_ordered(state, h);
+        movement::stop(state, h);
+        // His attack order ends with it: no goal at his backswing's end
+        // (c-SBW-1: none at 4.68).
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.movement = None;
+        }
+        let c = Casting {
+            order_id,
+            ability,
+            level,
+            target: None,
+            effect_at: None,
+            end_at: 0,
+            effect_q: 0,
+            point: None,
+        };
+        let mut deferred = Vec::new();
+        effect(state, h, &c, &mut deferred);
+        // No target check of his own until a hit or an order (c-SBW-1: his
+        // acquisition at 4.73, after a kobold's hit).
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.checks_off = true;
+        }
         state.table.defer(order, "script immediate order");
         return Some(true);
     }
@@ -1274,6 +1305,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         decays(s, &mut deferred);
         starfalls(s, &mut deferred);
         tranquilities(s);
+        bladestorms(s, &mut deferred);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1735,6 +1767,27 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             let at = s.timers.time();
             super::table::divine_shield_effect(s, h, at, seconds(hero));
             movement::target_died(s, h);
+        }
+        // Bladestorm: its effect event; every 0.2 s from it each enemy in
+        // Area takes a fifth of DataA, to HeroDur (Dur for a unit) after the
+        // effect (c-SBW-1: 22.00 at 4.699898, hub #10).
+        b"AOww" => {
+            super::table::spell_effect_event(s, h);
+            let hero = s.unit(Some(h)).is_some_and(|u| is_hero(u.type_id));
+            let at = s.timers.time();
+            let steps = (f32::from_bits(seconds(hero)) / 0.2).round() as u32 + 2;
+            s.bladestorms.push(Bladestorm {
+                caster: h,
+                area: n.area,
+                damage: mul(n.data[0], BLADESTORM_STEP),
+                next: add(at, BLADESTORM_STEP),
+                // 27 steps of 0.2 s for HeroDur 5 (c-SBW-1: its end at
+                // 9.899340, 5.4 s after the effect, hub #10).
+                // PROVISIONAL: the count's rule from one case.
+                left: steps,
+                hit: false,
+                end: (0..steps).fold(at, |q, _| add(q, BLADESTORM_STEP)),
+            });
         }
         // Avatar (c-SBV-1): DataB more life, DataC more damage for Dur.
         // PROVISIONAL: the armor (DataA) and the spell immunity are not
@@ -3586,6 +3639,109 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
         true
     });
     s.decays.extend(decays);
+}
+
+/// 0.2 s, the step of a Bladestorm.
+const BLADESTORM_STEP: u32 = 0x3E4C_CCCD;
+
+/// A Bladestorm (c-SBW-1, hub #10): its hero, Area, the damage of a step,
+/// the queue times of its next step and of its end.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bladestorm {
+    caster: u32,
+    area: u32,
+    damage: u32,
+    next: u32,
+    /// The steps left, the last its end.
+    left: u32,
+    /// Whether a step has hit yet (the first makes one more object).
+    hit: bool,
+    end: u32,
+}
+
+/// The Bladestorms acting in this tick (c-SBW-1, hub #10): at each step
+/// every living enemy within Area of the hero, in the call grid's order,
+/// gets an object freed 0.01 s before the next step, then the step's
+/// damage as spell damage; after the last one more object, kept.
+///
+/// PROVISIONAL: the units in Area taken as for Death and Decay (the call
+/// grid's cells); the kept object's end (10.439348 for the first), the
+/// hero's own attacks doing nothing and its end's objects are not read;
+/// a step with no target makes nothing.
+fn bladestorms(s: &mut State, deferred: &mut Vec<Deferred>) {
+    let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+    let mut list = std::mem::take(&mut s.bladestorms);
+    list.retain_mut(|d| {
+        while d.left > 0 && f32::from_bits(d.next) < next_clock {
+            d.left -= 1;
+            if d.left == 0 {
+                // Its end: the hero's attack order ends (c-SBW-1: 9.899340).
+                s.table_at(d.next);
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&d.caster) {
+                    u.checks_off = false;
+                }
+                movement::stop(s, d.caster);
+                super::table::order_ended(s, d.caster);
+                s.table.now = s.ticks;
+                break;
+            }
+            let caster = d.caster;
+            let area = f32::from_bits(d.area);
+            let targets: Vec<u32> = match s.unit(Some(caster)).filter(|u| u.alive) {
+                Some(u) => {
+                    let [x0, y0] = [s.world_bounds[0], s.world_bounds[1]].map(f32::from_bits);
+                    let (px, py) = (f32::from_bits(u.x) - x0, f32::from_bits(u.y) - y0);
+                    let cell = |v: f32| (v / movement::CALL_CELL).floor() as i64;
+                    let (cx, cy) = (
+                        cell(px - area)..=cell(px + area),
+                        cell(py - area)..=cell(py + area),
+                    );
+                    let inside: Vec<u32> = s
+                        .units
+                        .iter()
+                        .copied()
+                        .filter(|&o| {
+                            let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                                return false;
+                            };
+                            u.alive
+                                && !u.hidden
+                                && movement::hostile(s, caster, o)
+                                && u.call_cells
+                                    .iter()
+                                    .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
+                        })
+                        .collect();
+                    movement::call_order(s, inside)
+                }
+                None => Vec::new(),
+            };
+            let after = sub(add(d.next, BLADESTORM_STEP), 0.01f32.to_bits());
+            for &target in &targets {
+                deferred.push(Deferred::Kept { end: after });
+                deferred.push(Deferred::Damage {
+                    caster,
+                    target,
+                    amount: d.damage,
+                    call: None,
+                    slow: None,
+                    at: Some(d.next),
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+            // The first hitting step one more object, freed 0.54 s after
+            // the end (c-SBW-1: 1241, to 10.439348).
+            if !targets.is_empty() && !std::mem::replace(&mut d.hit, true) {
+                deferred.push(Deferred::Kept {
+                    end: add(d.end, 0.54f32.to_bits()),
+                });
+            }
+            d.next = add(d.next, BLADESTORM_STEP);
+        }
+        d.left > 0
+    });
+    s.bladestorms.extend(list);
 }
 
 /// A Tranquility's area (c-SBY-1, hub #11): its caster, Area, the heal

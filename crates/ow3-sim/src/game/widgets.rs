@@ -602,7 +602,7 @@ pub(super) fn type_record(
 /// The game generator of the kills' gold bounties.
 const BOUNTY: usize = 0;
 
-const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
+pub(super) const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
 const EVENT_PLAYER_UNIT_CONSTRUCT_FINISH: i32 = 28;
 
 /// Runs the triggers of the player unit events of buildings started and
@@ -657,6 +657,16 @@ pub(super) fn constructions(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     fire_trigger(vm, state, trigger, context);
                     state.borrow_mut().quiet_events = was;
                 }
+            }
+        }
+        // The rest of a start, after its triggers (`movement::start_construction`).
+        if !finished {
+            let mut s = state.borrow_mut();
+            let pending = std::mem::take(&mut s.pending_starts);
+            let (now, later): (Vec<_>, Vec<_>) = pending.into_iter().partition(|p| p.1 == building);
+            s.pending_starts = later;
+            for (h, b, turning) in now {
+                super::table::construction_rest(&mut s, h, b, turning);
             }
         }
     }

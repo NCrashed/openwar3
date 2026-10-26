@@ -376,6 +376,8 @@ pub struct Construction {
     base_rate: u32,
     factor: u32,
     pub(crate) builder: u32,
+    /// Its builder turns to it before the work begins (hub #14).
+    turning: bool,
     /// The helpers paying for it, and the queue times its gold and lumber
     /// timers expire (hub #13).
     paying: usize,
@@ -405,6 +407,7 @@ impl Construction {
             base_rate: rate,
             factor: 0x3F80_0000,
             builder: 0,
+            turning: false,
             paying: 0,
             pay: [None, None],
             helpers: Vec::new(),
@@ -464,6 +467,7 @@ fn construction(state: &mut State, tick: u64) {
     // The buildings a worker builds now.
     let worked = movement::worked(state);
     let mut ends = Vec::new();
+    let mut turned = Vec::new();
     let mut paused = Vec::new();
     for &h in &state.units {
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -490,6 +494,9 @@ fn construction(state: &mut State, tick: u64) {
             // Work that begins later, the worker moved, grows from the
             // clock itself (SPEC-0026); so does work taken up again.
             ends.push((h, c.work(clock)));
+            if std::mem::take(&mut c.turning) {
+                turned.push((c.builder, h));
+            }
         }
         let life = if c.lost == 0 {
             c.grown(clock)
@@ -501,6 +508,9 @@ fn construction(state: &mut State, tick: u64) {
     }
     for h in paused {
         training::cancel_timer(state, training::EngineTimer::Construction(h));
+    }
+    for (w, b) in turned {
+        table::turned_to_work(state, w, b);
     }
     for (h, end) in ends {
         training::start_timer(state, end, training::EngineTimer::Construction(h));
@@ -1069,6 +1079,10 @@ pub struct State {
     decays: Vec<cast::Decay>,
     starfalls: Vec<cast::Starfall>,
     tranquilities: Vec<cast::Tranquility>,
+    bladestorms: Vec<cast::Bladestorm>,
+    /// Construction starts whose rest waits for their event's triggers:
+    /// worker, building, whether it turns to it first.
+    pending_starts: Vec<(u32, u32, bool)>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1291,6 +1305,8 @@ impl State {
             decays: Vec::new(),
             starfalls: Vec::new(),
             tranquilities: Vec::new(),
+            bladestorms: Vec::new(),
+            pending_starts: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,

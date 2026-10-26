@@ -419,6 +419,9 @@ pub struct UnitEntries {
     pub dispel: Vec<u32>,
     pub construction_work: Option<u32>,
     pub first_helper: Option<u32>,
+    /// A builder turning to its building: the fifth part of its work order,
+    /// let go when it faces it (`turned_to_work`).
+    pub turn_part: Option<u32>,
     /// A helper's order part freed when its help starts.
     pub repair_part: Option<u32>,
     /// The rate parts of a building's life set anew by its helpers.
@@ -882,6 +885,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         let level = d.per_level.first();
         if [*b"AHab", *b"AHad", *b"AOae", *b"AUau", *b"AOac"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
+        // Spiked Carapace (the turtle's Thorns Aura, ANth) two (c-SCA-1,
+        // hub #14; PROVISIONAL: when they go is not read).
+        } else if d.code.to_be_bytes() == *b"AUts" {
+            parts.extend([(0, None), (0, None)]);
         } else if level.is_some_and(|l| l.cost > 0) {
             parts.extend([(0, None), (2, level.map(|l| l.cost))]);
         } else {
@@ -907,13 +914,30 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         (0, 0)
     };
     let shift = usize::from(mana);
+    // A unit with more abilities of its own than one: an object more for
+    // each after the first, after its first (c-SCA-1: the archer, 21 with
+    // Aco2, Ashm and Ault, hub #14).
+    // PROVISIONAL: where the extra ones go at the corpse's end is not read.
+    let more = if std::ptr::eq(making, &UNIT) {
+        // (Shadowmeld two: PROVISIONAL, which of the three takes the
+        // second is not read.)
+        let shadowmeld = state
+            .data
+            .units
+            .get(&type_id)
+            .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Ashm")));
+        own_abilities(state, type_id).saturating_sub(1) + usize::from(shadowmeld)
+    } else {
+        0
+    };
     let at = |k: usize| {
+        let k = if k >= 15 { k + more } else { k };
         let hero = if k >= 22 { k + extra } else { k };
         let hero = if k >= 13 { hero - fewer } else { hero };
         let k = if hero >= 12 { hero + shift } else { hero };
         if k >= 14 + shift { k + parts.len() } else { k }
     };
-    let count = building.map_or(making.count, |b| b.0) + shift + parts.len() + extra - fewer;
+    let count = building.map_or(making.count, |b| b.0) + shift + parts.len() + extra - fewer + more;
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
     // (The autocast's first: c-SBK-1, 928.)
@@ -966,7 +990,18 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             death_late,
             death_mana,
             mana_watches: watches,
-            corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
+            corpse: {
+                let mut corpse: Vec<u32> = making.corpse.iter().map(|&k| entries[at(k)]).collect();
+                if let Some(i) = corpse
+                    .iter()
+                    .position(|&e| e == entries[14])
+                    .filter(|_| more > 0)
+                {
+                    let extra: Vec<u32> = (15..15 + more).rev().map(|k| entries[k]).collect();
+                    corpse.splice(i..i, extra);
+                }
+                corpse
+            },
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
             dispel: pending_dispel,
@@ -1005,14 +1040,29 @@ pub(super) fn level_changed(state: &mut super::State, h: u32) {
     }
 }
 
-/// The time of day is set (SPEC-0017): its event takes an object for
+/// The time of day is set from `old` to `new` hours (SPEC-0017): when that
+/// crosses a watched hour, its event takes an object for
 /// 0.0001 s, it gets 3 new watches and its old parts are freed 0.0001 s
 /// later (c-SAK-1: SetTimeOfDay at the map start, the day standing
 /// still, so no new rate part).
 ///
 /// PROVISIONAL: read with the clock suspended right after; a running
 /// clock may make a rate part as well.
-pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64) {
+pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64, old: u32, new: u32) {
+    // Only a change across a watched hour (dawn or dusk) makes them; else
+    // the last old part goes alone (hub #14: c-SCA-1, 0.05 -> 0.0, freed
+    // only 819 0.0001 s later).
+    // PROVISIONAL: the watched hours inferred from two cases; whether that
+    // part goes with the setting or with SuspendTimeOfDay is not read.
+    let crosses = [6.0f32, 18.0]
+        .iter()
+        .any(|&w| (f32::from_bits(old) < w) != (f32::from_bits(new) < w));
+    if !crosses {
+        if let Some(e) = table.day.pop() {
+            table.defer(e, "time of day");
+        }
+        return;
+    }
     let event = table.take(tick, "event object");
     table.defer(event, "event object");
     let new = table.take_n(tick, 3, "time of day");
@@ -4975,14 +5025,19 @@ pub(super) fn build_ordered(state: &mut super::State, h: u32) {
 /// the order, one kept to the first helper). The build order's objects go
 /// then: its sixth part first, before the building's.
 ///
+/// This first part takes the building and the start's first two; the
+/// construction-start event's triggers run after it, before the rest
+/// (`construction_rest`; c-SCA-1: the script's timer 1101, 1102 after the
+/// event's 1100, hub #14).
+///
 /// PROVISIONAL: the construction-start event's object is taken whatever
 /// triggers are registered.
-pub(super) fn construction_started(state: &mut super::State, h: u32, building: u32) {
+pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32) {
     let tick = state.table.now;
-    let order = entries(state, h)
-        .map(|e| std::mem::take(&mut e.build_order))
-        .unwrap_or_default();
-    if let Some(&first) = order.first() {
+    if let Some(e) = entries(state, h)
+        && !e.build_order.is_empty()
+    {
+        let first = e.build_order.remove(0);
         state.table.defer(first, "build order");
     }
     state.table.constructing = true;
@@ -4990,17 +5045,39 @@ pub(super) fn construction_started(state: &mut super::State, h: u32, building: u
     state.table.constructing = false;
     let one = state.table.take(tick, "construction: start");
     let event = state.table.take(tick, "construction: event");
+    state.table.defer(event, "construction: event");
+    state.table.defer(one, "construction: start");
+}
+
+/// The rest of the start: the progress pair, three timers, the worker's
+/// work order with its parts, and the construction's life rows. A worker
+/// not yet facing the building (`turning`) takes a twelfth part (its
+/// fifth, let go when it faces it) and a walk that turns it, and the life
+/// rows come only then (`turned_to_work`; c-SCA-1: 1109 .. 1123, the rows
+/// at 6.959734, hub #14).
+pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32, turning: bool) {
+    let tick = state.table.now;
+    let order = entries(state, h)
+        .map(|e| std::mem::take(&mut e.build_order))
+        .unwrap_or_default();
     let progress = state.table.take_n(tick, 2, "construction: progress");
     let timer = state.table.take_n(tick, 3, "construction: timer");
     let work = state.table.take(tick, "work order");
-    let parts = state.table.take_n(tick, 11, "work order: order start");
-    let more = state.table.take_n(tick, 3, "work order: timer");
-    state.table.defer(event, "construction: event");
-    state.table.defer(one, "construction: start");
+    let mut parts = state.table.take_n(
+        tick,
+        if turning { 12 } else { 11 },
+        "work order: order start",
+    );
+    let turn_part = turning.then(|| parts.remove(4));
+    let more = if turning {
+        Vec::new()
+    } else {
+        state.table.take_n(tick, 3, "work order: timer")
+    };
     for &e in timer.iter().rev() {
         state.table.defer(e, "construction: timer");
     }
-    for &e in order.iter().skip(1) {
+    for &e in &order {
         state.table.defer(e, "build order");
     }
     for &e in parts[5..].iter().rev() {
@@ -5009,14 +5086,37 @@ pub(super) fn construction_started(state: &mut super::State, h: u32, building: u
     if let Some(e) = entries(state, h) {
         let mut kept = vec![work];
         kept.extend(&parts[..4]);
-        kept.extend(&more[..2]);
+        kept.extend(more.iter().take(2));
         e.work = kept;
+        e.turn_part = turn_part;
     }
     if let Some(e) = entries(state, building) {
         e.construction = progress;
         e.construction_work = Some(parts[4]);
+        e.first_helper = more.get(2).copied();
+    }
+    if turning {
+        walk_made(state, h);
+    }
+}
+
+/// Worker `h` faces `building` and its work begins (c-SCA-1: 6.959734, two
+/// updates after the start, hub #14): the construction's life rows, the
+/// fifth part of its order let go, its turning walk freed at its next
+/// update.
+pub(super) fn turned_to_work(state: &mut super::State, h: u32, building: u32) {
+    let tick = state.table.now;
+    let more = state.table.take_n(tick, 3, "work order: timer");
+    if let Some(e) = entries(state, h) {
+        e.work.extend(&more[..2]);
+        if let Some(o) = e.turn_part.take() {
+            state.table.defer(o, "work order: order start");
+        }
+    }
+    if let Some(e) = entries(state, building) {
         e.first_helper = Some(more[2]);
     }
+    walk_dropped_at_update(state, h);
 }
 
 /// Building `building` is finished at queue time `q` (c-SBZ-1: the

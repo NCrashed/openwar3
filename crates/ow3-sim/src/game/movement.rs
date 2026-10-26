@@ -2173,15 +2173,14 @@ pub(super) fn slowed_now(state: &mut State, h: u32) {
 /// taken as the Blademaster at 3.799953, in reach at its update of 3.81,
 /// walk freed at 3.839952). At its next update it steers on, then searches
 /// its path to the target's place then (kobold 5 at 3.809953, hub #10).
-///
-/// PROVISIONAL: a standing unit's remade walk (kobold 4) is not done.
+/// So too a unit standing in a wait (kobold 4).
 pub(super) fn chase_renewed(state: &mut State, h: u32) {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let Some(u) = state.unit(Some(h)) else {
         return;
     };
     let here = relative([u.x, u.y], min);
-    let Some(Order::Attack { target }) = u.movement.filter(|m| m.walking).map(|m| m.order) else {
+    let Some(Order::Attack { target }) = u.movement.map(|m| m.order) else {
         return;
     };
     let Some(at) = position_of(state, target) else {

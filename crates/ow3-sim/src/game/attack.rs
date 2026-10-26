@@ -989,10 +989,19 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         flying.push(m);
                     }
                 }
+                // A homing missile (hub #12): its flight timer runs from the
+                // launch; at each step of 0.1 s a target that moved is aimed
+                // at anew, the timer started again from the step with the
+                // distance left, or ended there when that is under a step;
+                // a target that stood restarts nothing (c-SBX-1: the Lich at
+                // the walking ogre, hit at the step of 4.6599; c-RZJ-1: the
+                // Archmage at a standing target, hit at its launch timer's
+                // end in 3423).
                 Some((step, next)) if next == tick => {
                     // A homing one whose target is gone flies on to where the
                     // target was last (c-RZJ-1: the Archmage's of 36.787998,
                     // the Ogre Lord dead at 37.137806, freed at 42.295071).
+                    let old = m.point;
                     let to = if standing(s, m.target) {
                         let Some(to) = super::movement::position_of(s, m.target) else {
                             continue;
@@ -1003,32 +1012,24 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         m.point
                     };
                     let left = distance(m.at, to);
-                    if f32::from_bits(left) < f32::from_bits(step) {
-                        // Nearer than a step, it flies the rest at its speed
-                        // and hits at that flight's end, which may be in a
-                        // later tick (c-RZJ-1: the Archmage's missile 4.79
-                        // short at 3421, hit held into 3423); at a target
-                        // walking it hits at once, 0.0001 s on (c-SBX-1: the
-                        // Lich's, 76.96 short of the ogre at 4.6599, hub #12).
-                        // PROVISIONAL: the analyst knows no such split; the
-                        // hit is a 0.0001 s timer from the step's end, which
-                        // we do not place yet (hub #12).
-                        let speed = div(step, HOMING_STEP);
-                        let moving = s
-                            .unit(Some(m.target))
-                            .and_then(|u| u.movement)
-                            .is_some_and(|t| super::movement::walking_now(&t));
-                        let rest = if moving { 0 } else { div(left, speed) };
-                        m.expiry = add(add(s.move_clock, rest), MIN_DELAY);
-                        m.homing = None;
-                        if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                    if to != old {
+                        if f32::from_bits(left) < f32::from_bits(step) {
+                            m.expiry = s.move_clock;
                             arrived.push(m);
-                        } else {
-                            flying.push(m);
+                            continue;
                         }
+                        let speed = div(step, HOMING_STEP);
+                        m.expiry = add(add(s.move_clock, div(left, speed)), MIN_DELAY);
+                    }
+                    if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                        arrived.push(m);
                         continue;
                     }
-                    let k = div(step, left);
+                    let k = if f32::from_bits(left) > f32::from_bits(step) {
+                        div(step, left)
+                    } else {
+                        0x3F80_0000
+                    };
                     m.at = [
                         add(m.at[0], mul(sub(to[0], m.at[0]), k)),
                         add(m.at[1], mul(sub(to[1], m.at[1]), k)),
@@ -1036,7 +1037,13 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     m.homing = Some((step, next + HOMING_TICKS));
                     flying.push(m);
                 }
-                Some(_) => flying.push(m),
+                Some(_) => {
+                    if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
+                        arrived.push(m);
+                    } else {
+                        flying.push(m);
+                    }
+                }
             }
         }
         s.missiles = flying;

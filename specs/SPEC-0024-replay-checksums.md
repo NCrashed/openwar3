@@ -200,7 +200,14 @@ The player sum:
 
 - `h1`, `h2`: two 32-bit fields of the player, both the float 1.0
   (`0x3F800000`) for every player in the tests (open question 3).
-- The 7-entry list was empty in all tests (open question 3).
+- The 7-entry list holds the player's dead heroes. A hero joins it at
+  the end of its death time (`death` of `Units\UnitData.slk`, 1.5 s for
+  the paladin) after it dies, and the entries are folded in the order
+  the heroes joined. `c-SBP-1`: paladin 12 (ids 1189, 1192) died at
+  6.199680 and joined at 7.699680, so the next turn's G changed from
+  `0x2CFB6A98` to `0x24BAF689`; paladin 15 joined at 8.449735. When a
+  hero leaves the list (a revival) was not tested. It was empty in the
+  other tests, which had no dead heroes.
 - `T`: the type record sum. Each player has a list of records, one per
   unit type, kept in the order they were created. With the record's
   values `q0 .. q6`:
@@ -493,8 +500,8 @@ the damage event and its registration (see "Event objects").
 2. Which actions create and free entries of the object table, and in
    which order. Without this `C`, `D` and the id pairs cannot be
    reproduced; see Verification 4 for a way to use the checksum anyway.
-3. The meaning of `h1`, `h2` (possibly handicaps) and of the 7-entry
-   list of the player.
+3. The meaning of `h1`, `h2` (possibly handicaps); when a hero leaves
+   the dead-hero list (revival).
 4. The second marked unit of the selection; the key order of the 10
    control groups (groups were empty in the tests).
 5. How `K1`, `K2`, `K3` are computed from the data, and their values on

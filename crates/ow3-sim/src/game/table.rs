@@ -25,6 +25,10 @@ pub struct ObjectTable {
     free: Vec<u32>,
     /// The next creation number.
     next: u32,
+    /// Objects made by a queue timer (`take_at_q`) and freed later, by key.
+    made: std::collections::BTreeMap<u32, u32>,
+    /// The next key of such an object.
+    made_next: u32,
     /// The objects holding entries: entry -> creation number (`u32::MAX`
     /// in the log for an object made before the table was set).
     live: std::collections::BTreeMap<u32, u32>,
@@ -107,6 +111,8 @@ impl ObjectTable {
             size,
             free,
             next,
+            made: Default::default(),
+            made_next: 0,
             live: Default::default(),
             deferred: Vec::new(),
             now: 0,
@@ -215,6 +221,23 @@ impl ObjectTable {
         self.timed_q.push((q, entry, tag));
     }
 
+    /// An object made by a queue timer at `q`, kept: its key, which
+    /// `free_at_q` takes as its entry for its free.
+    pub fn take_at_q(&mut self, q: u32, tag: &'static str) -> u32 {
+        let key = MADE_KEY | self.made_next;
+        self.made_next += 1;
+        self.timed_q.push((q, key | MADE_NOW, tag));
+        key
+    }
+
+    /// Whether a timer's free of `entry` may join the 0.0001 s frees: not
+    /// one making an object, nor the free of one not made yet.
+    fn movable(&self, entry: u32) -> bool {
+        entry != TAKE_AT
+            && entry & MADE_NOW == 0
+            && (entry & MADE_KEY == 0 || self.made.contains_key(&entry))
+    }
+
     /// The queue's timers that expire before `limit`, a script timer of
     /// this tick: their frees join the tick's 0.0001 s frees now, ahead of
     /// those the script timer makes (c-RZJ-1: the Shockwave's wave at
@@ -224,9 +247,10 @@ impl ObjectTable {
         let now = self.now;
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
             .into_iter()
-            .partition(|&(q, e, _)| e != TAKE_AT && f32::from_bits(q) <= f32::from_bits(limit));
+            .partition(|&(q, e, _)| self.movable(e) && f32::from_bits(q) <= f32::from_bits(limit));
         self.timed_q = later;
         for (_, entry, tag) in due {
+            let entry = self.made.remove(&entry).unwrap_or(entry);
             self.deferred.push((now, entry, tag));
         }
     }
@@ -235,9 +259,10 @@ impl ObjectTable {
         let now = self.now;
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed_q)
             .into_iter()
-            .partition(|&(q, e, _)| e != TAKE_AT && f32::from_bits(q) < f32::from_bits(limit));
+            .partition(|&(q, e, _)| self.movable(e) && f32::from_bits(q) < f32::from_bits(limit));
         self.timed_q = later;
         for (_, entry, tag) in due {
+            let entry = self.made.remove(&entry).unwrap_or(entry);
             self.deferred.push((now, entry, tag));
         }
     }
@@ -249,13 +274,20 @@ impl ObjectTable {
             .partition(|&(q, _, _)| f32::from_bits(q) <= f32::from_bits(limit));
         self.timed_q = later;
         // An object made at the timer, before its frees, freed in its place
-        // among them (`TAKE_AT`).
+        // among them (`TAKE_AT`), or kept (`take_at_q`).
+        let mut frees = Vec::new();
         for d in &mut due {
             if d.1 == TAKE_AT {
                 d.1 = self.take(tick, d.2);
+            } else if d.1 & MADE_NOW != 0 {
+                let e = self.take(tick, d.2);
+                self.made.insert(d.1 & !MADE_NOW, e);
+                continue;
             }
+            frees.push(*d);
         }
-        for (_, entry, tag) in due {
+        for (_, entry, tag) in frees {
+            let entry = self.made.remove(&entry).unwrap_or(entry);
             self.free(tick, entry, tag);
         }
     }
@@ -2018,6 +2050,14 @@ pub(super) fn aura_buff_gained(state: &mut super::State, h: u32, ability: i32) {
 
 /// Unit `h` loses the buff of aura `ability`: its object goes 0.0001 s
 /// later.
+/// The creation number of unit `h`'s buff of aura `ability`.
+pub(super) fn aura_buff_creation(state: &super::State, h: u32, ability: i32) -> u32 {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.entries.aura_buffs.iter().find(|b| b.0 == ability))
+        .map_or(u32::MAX, |b| state.table.creation_of(b.1))
+}
+
 pub(super) fn aura_buff_lost(state: &mut super::State, h: u32, ability: i32) {
     let lost = entries(state, h).and_then(|e| {
         let k = e.aura_buffs.iter().position(|b| b.0 == ability)?;
@@ -3940,6 +3980,10 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         .map_or(3.0f32.to_bits(), |t| t.death_time);
     let three = ow3_math::add(at, death);
     let five = ow3_math::add(three, 2.0f32.to_bits());
+    if hero {
+        hero_dead(state, &queue, three);
+        return;
+    }
     state.table.rest_q.push((three, queue[4]));
     state.table.rest_q.push((three, queue[3]));
     state.table.rest_q.push((five, queue[2]));
@@ -3983,6 +4027,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
 /// In `ObjectTable::flush_q`, an object to be made at the timer and freed
 /// in its place.
 const TAKE_AT: u32 = u32::MAX;
+/// The keys of `ObjectTable::take_at_q`, and its mark for the making.
+const MADE_KEY: u32 = 0x2000_0000;
+const MADE_NOW: u32 = 0x4000_0000;
 
 /// DecayTime + BoneDecayTime of the game's constants, from the end of the
 /// death time (c-SAK-1: 2 + 88).
@@ -4085,6 +4132,28 @@ pub(super) fn invulnerable_set(state: &mut super::State, h: u32, on: bool) {
     }
 }
 
+/// A player's hero dead, at the end of its death time `end`: 5 objects
+/// of its state are made (a state change, a path agent's, a rate part
+/// and two limit watches), then the third to fifth of its death queue go;
+/// the last watch 0.5 s later; the first two of the queue 3.0 s after the
+/// end, then the other four (c-SBP-1: the paladin dead at 6.199680, 1650
+/// .. 1654 at 7.699680, 1654 at 8.19978, the rest at 10.6997).
+///
+/// PROVISIONAL: what the 3.0 s is, and what a revival does with them.
+fn hero_dead(state: &mut super::State, queue: &[u32], end: u32) {
+    let made: Vec<u32> = (0..5)
+        .map(|_| state.table.take_at_q(end, "dead hero state"))
+        .collect();
+    for k in [4, 3, 2] {
+        state.table.rest_q.push((end, queue[k]));
+    }
+    let half = ow3_math::add(end, 0.5f32.to_bits());
+    state.table.rest_q.push((half, made[4]));
+    let later = ow3_math::add(end, 3.0f32.to_bits());
+    for e in [queue[1], queue[0], made[3], made[1], made[0], made[2]] {
+        state.table.rest_q.push((later, e));
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

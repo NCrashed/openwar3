@@ -90,6 +90,8 @@ pub(super) fn tick(state: &mut State) {
         // tick before a check (q 7.005) comes after it (q 7.0001), so it
         // counts for the next one (c-SBL-1: the ogre lord, last found by the
         // taskmaster's pass of 7.005, lost its buff at 11.0).
+        // Their objects go in the order they were made (c-SBP-1 at 9.0).
+        let mut all: Vec<(u32, u32, i32)> = Vec::new();
         for &o in &state.units.clone() {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
                 let before: Vec<i32> = u.buffs.iter().map(|b| b.0).collect();
@@ -102,9 +104,13 @@ pub(super) fn tick(state: &mut State) {
                     .filter(|a| !u.buffs.iter().any(|b| b.0 == *a))
                     .collect();
                 for a in lost {
-                    super::table::aura_buff_lost(state, o, a);
+                    all.push((super::table::aura_buff_creation(state, o, a), o, a));
                 }
             }
+        }
+        all.sort_unstable();
+        for (_, o, a) in all {
+            super::table::aura_buff_lost(state, o, a);
         }
     }
     if tick % PERIOD != 1 {

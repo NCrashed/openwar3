@@ -127,8 +127,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBN-1.w3g",
-        "the Undead levelling test (Death Knight, footman, creeps): in progress \
-         (tests/objects.rs, levelling_report)",
+        "the Undead levelling test (Death Knight, footman, creeps): every turn checksum \
+         to its end matches with the object table started as the game has it \
+         (tests/objects.rs, levelling_checksums); this test runs without it",
     ),
     (
         "c-SBO-1.w3g",

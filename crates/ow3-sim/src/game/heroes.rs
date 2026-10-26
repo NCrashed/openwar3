@@ -263,6 +263,9 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     }
     let tick = state.ticks;
     let brilliance = data.code == i32::from_be_bytes(*b"AHab") && next == 1;
+    let aura_code =
+        [*b"AHab", *b"AHad", *b"AOae", *b"AUau", *b"AOac"].contains(&data.code.to_be_bytes());
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         match u.skills.iter_mut().find(|(a, _)| *a == ability) {
             Some(entry) => entry.1 = next,
@@ -272,9 +275,12 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
             u.aura_learned = Some(tick);
         }
         // (Its aura, if this is one, starts with the learning.)
-        u.aura_setup = Some(tick);
-        state.aura_setups += 1;
-        u.aura_order = state.aura_setups;
+        if aura_code {
+            u.aura_setup = Some(tick);
+            u.aura_q = Some(now);
+            state.aura_setups += 1;
+            u.aura_order = state.aura_setups;
+        }
         u.spent += 1;
     }
     // Its objects of the engine's table (SPEC-0024): 2 for an ability

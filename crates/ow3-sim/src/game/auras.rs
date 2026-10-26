@@ -113,9 +113,41 @@ pub(super) fn tick(state: &mut State) {
             super::table::aura_buff_lost(state, o, a);
         }
     }
-    if tick % PERIOD != 1 {
+    // Each aura passes every 0.5 s from its setup, its making or its
+    // learning (c-SBN-1: the Death Knight's Unholy Aura learned at the
+    // level-up of 11.689039, first given at 12.189039).
+    let passes = |u: &super::Unit| {
+        u.aura_setup
+            .map_or(tick % PERIOD == 1, |s| tick > s && (tick - s) % PERIOD == 0)
+    };
+    let passing = state
+        .units
+        .iter()
+        .any(|&h| aura_of(state, h).is_some() && state.unit(Some(h)).is_some_and(passes));
+    if !passing {
         buff_objects(state, gains);
         return;
+    }
+    // A learned aura's pass is a queue timer: the after-swing walks due
+    // before it come first, also those at its expiry, their timers older
+    // (c-SBN-1: the footman's backswing end at 12.189039, its walk back
+    // before the pass of 12.189039, the aura learned at the kill).
+    let first_q = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h)).filter(|u| passes(u))?;
+            aura_of(state, h)?;
+            let (setup, mut q) = (u.aura_setup?, u.aura_q?);
+            for _ in 0..(tick - setup) / PERIOD {
+                q = add(q, 0.5f32.to_bits());
+            }
+            Some(q)
+        })
+        .min_by(|a, b| f32::from_bits(*a).total_cmp(&f32::from_bits(*b)));
+    if let Some(q) = first_q {
+        // (One ulp past it.)
+        super::attack::after_swing_walks(state, Some(q + 1));
     }
     // The 0.0001 s frees of the hits ahead of the tick's script timers
     // (`ObjectTable::mark_early`), before the step, go first (c-RZJ-1:
@@ -126,13 +158,9 @@ pub(super) fn tick(state: &mut State) {
         let Some((ability, level)) = aura_of(state, h) else {
             continue;
         };
-        // An aura set up in this tick, after the step (its timer at q
-        // 1.0001), gives its first buffs at the next (c-RZJ-1: the heroes'
-        // and the Ogre Lord's auras of tick 201, first given at 1.505).
-        if state
-            .unit(Some(h))
-            .is_some_and(|u| u.aura_setup == Some(tick))
-        {
+        // (c-RZJ-1: the heroes' and the Ogre Lord's auras of tick 201,
+        // first given at 1.505.)
+        if !state.unit(Some(h)).is_some_and(passes) {
             continue;
         }
         let Some(hero) = state.unit(Some(h)) else {

@@ -401,6 +401,7 @@ pub(super) fn create_unit(
         attack_removed: false,
         move_slow: None,
         aura_setup: Some(state.ticks),
+        aura_q: None,
         aura_order: {
             state.aura_setups += 1;
             state.aura_setups

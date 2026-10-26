@@ -2040,20 +2040,19 @@ pub(super) fn aura_buff_gained(state: &mut super::State, h: u32, ability: i32) {
         e.aura_buffs.push((ability, o));
     }
     // Brilliance's buff makes a rate part for its mana regeneration
-    // (c-RZJ-1: 1444 after the Paladin's buff 1443 at 1.505).
+    // (c-RZJ-1: 1444 after the Paladin's buff 1443 at 1.505), Unholy
+    // Aura's for its life's (c-SBN-1: 1527 at 12.189039).
     // PROVISIONAL: kept; what frees it is not read.
     let brilliance = state
         .data
         .abilities
         .get(&ability)
-        .is_some_and(|d| d.code == i32::from_be_bytes(*b"AHab"));
+        .is_some_and(|d| [*b"AHab", *b"AUau"].contains(&d.code.to_be_bytes()));
     if brilliance {
         state.table.take(tick, "aura buff: rate part");
     }
 }
 
-/// Unit `h` loses the buff of aura `ability`: its object goes 0.0001 s
-/// later.
 /// The creation number of unit `h`'s buff of aura `ability`.
 pub(super) fn aura_buff_creation(state: &super::State, h: u32, ability: i32) -> u32 {
     state
@@ -2062,6 +2061,8 @@ pub(super) fn aura_buff_creation(state: &super::State, h: u32, ability: i32) -> 
         .map_or(u32::MAX, |b| state.table.creation_of(b.1))
 }
 
+/// Unit `h` loses the buff of aura `ability`: its object goes 0.0001 s
+/// later.
 pub(super) fn aura_buff_lost(state: &mut super::State, h: u32, ability: i32) {
     let lost = entries(state, h).and_then(|e| {
         let k = e.aura_buffs.iter().position(|b| b.0 == ability)?;

@@ -271,6 +271,8 @@ pub struct Unit {
     move_slow: Option<u32>,
     /// The tick its aura was set up in (learned, or the unit made).
     aura_setup: Option<u64>,
+    /// The queue time of a learned aura's setup, the origin of its passes.
+    aura_q: Option<u32>,
     /// The order of its aura's setup among all auras (SPEC-0038).
     aura_order: u64,
     slowed_until: Option<(u64, u32)>,

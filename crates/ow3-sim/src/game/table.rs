@@ -67,6 +67,12 @@ pub struct ObjectTable {
     pub dying: Option<u32>,
     /// The summon dying as its time ran out (`unit_died`).
     pub expiring: Option<u32>,
+    /// The unit being made is a building whose construction starts
+    /// (`unit_made`, `construction_started`).
+    pub constructing: bool,
+    /// Work on finished buildings that ends at a tick: the building and
+    /// its workers (`work_ended`).
+    pub work_ends: Vec<(u64, u32, Vec<u32>)>,
     pub resumed: Vec<u32>,
     /// The walks of group orders (`group_move_ordered`) and the members
     /// still on them.
@@ -133,6 +139,8 @@ impl ObjectTable {
             at_fade: false,
             dying: None,
             expiring: None,
+            constructing: false,
+            work_ends: Vec::new(),
             resumed: Vec::new(),
             group_walks: Vec::new(),
             mine_queues: std::collections::BTreeMap::new(),
@@ -400,6 +408,21 @@ pub struct UnitEntries {
     pub dead_queue: Vec<u32>,
     /// An Avatar's buff and watch, kept to its end.
     pub avatar: Vec<u32>,
+    /// A worker's build order: its order and kept parts, freed at the
+    /// construction's start, the sixth part first.
+    pub build_order: Vec<u32>,
+    /// A worker's work on a building: its order and kept parts.
+    pub work: Vec<u32>,
+    /// A building under construction: its progress pair, its dispel's
+    /// five (from its completion) and the work's part kept to the end.
+    pub construction: Vec<u32>,
+    pub dispel: Vec<u32>,
+    pub construction_work: Option<u32>,
+    pub first_helper: Option<u32>,
+    /// A helper's order part freed when its help starts.
+    pub repair_part: Option<u32>,
+    /// The rate parts of a building's life set anew by its helpers.
+    pub construction_rates: Vec<u32>,
     pub dead_corpse: Option<(u32, Vec<u32>)>,
     /// A creep's ability parts freed at its death: before all its other
     /// objects (an aura's first), and with its buffs after the experience
@@ -902,14 +925,21 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
+    let mut pending_dispel = Vec::new();
     if let Some((count, at, after)) = building {
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
-        let end = ow3_math::add(state.timers.time(), after.to_bits());
-        for k in DISPEL_PARTS {
-            state
-                .table
-                .free_at_q(end, entries[at + k], "building: dispel");
+        // A building under construction dispels from its completion
+        // (`construction_finished`; c-SBZ-1: the farm, hub #13).
+        if std::mem::take(&mut state.table.constructing) {
+            pending_dispel = DISPEL_PARTS.map(|k| entries[at + k]).to_vec();
+        } else {
+            let end = ow3_math::add(state.timers.time(), after.to_bits());
+            for k in DISPEL_PARTS {
+                state
+                    .table
+                    .free_at_q(end, entries[at + k], "building: dispel");
+            }
         }
     }
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
@@ -939,6 +969,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             corpse: making.corpse.iter().map(|&k| entries[at(k)]).collect(),
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
+            dispel: pending_dispel,
             attack_ability: if std::ptr::eq(making, &PEASANT) {
                 Some(entries[15])
             } else if std::ptr::eq(making, &GOLD_MINE) || type_id == i32::from_be_bytes(*b"htow") {
@@ -4854,6 +4885,183 @@ pub(super) fn decay_step(state: &mut super::State, end: u32) {
     let tick = state.table.now;
     let o = state.table.take(tick, "Death and Decay: step");
     state.table.free_at_q(end, o, "Death and Decay: step");
+}
+
+/// Worker `h` takes a build order (c-SBZ-1 at 1.999998, hub #13): the
+/// order, its record (freed 0.0001 s later), twelve parts (the last six
+/// freed 0.0001 s later, the first six kept with the order to the
+/// construction's start), then its walk to the site.
+pub(super) fn build_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "build order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 12, "build order: order start");
+    for &e in parts[6..].iter().rev() {
+        state.table.defer(e, "build order: order start");
+    }
+    walk_made_at_order(state, h);
+    if let Some(e) = entries(state, h) {
+        let mut kept = vec![parts[5]];
+        kept.extend(parts[..5].iter().rev());
+        kept.push(order);
+        e.build_order = kept;
+    }
+}
+
+/// Worker `h` starts building `building` (c-SBZ-1 at 2.759979, hub #13):
+/// the building's objects as a unit made by a script (its dispel waiting
+/// for the completion), then the start's: one freed 0.0001 s later, the
+/// construction-start event's, the construction's progress pair (kept to
+/// the completion), three freed 0.0001 s later, the worker's work order
+/// with eleven parts (four kept with it, one kept by the building to the
+/// completion, six freed 0.0001 s later) and three more (two kept with
+/// the order, one kept to the first helper). The build order's objects go
+/// then: its sixth part first, before the building's.
+///
+/// PROVISIONAL: the construction-start event's object is taken whatever
+/// triggers are registered.
+pub(super) fn construction_started(state: &mut super::State, h: u32, building: u32) {
+    let tick = state.table.now;
+    let order = entries(state, h)
+        .map(|e| std::mem::take(&mut e.build_order))
+        .unwrap_or_default();
+    if let Some(&first) = order.first() {
+        state.table.defer(first, "build order");
+    }
+    state.table.constructing = true;
+    unit_made(state, building);
+    state.table.constructing = false;
+    let one = state.table.take(tick, "construction: start");
+    let event = state.table.take(tick, "construction: event");
+    let progress = state.table.take_n(tick, 2, "construction: progress");
+    let timer = state.table.take_n(tick, 3, "construction: timer");
+    let work = state.table.take(tick, "work order");
+    let parts = state.table.take_n(tick, 11, "work order: order start");
+    let more = state.table.take_n(tick, 3, "work order: timer");
+    state.table.defer(event, "construction: event");
+    state.table.defer(one, "construction: start");
+    for &e in timer.iter().rev() {
+        state.table.defer(e, "construction: timer");
+    }
+    for &e in order.iter().skip(1) {
+        state.table.defer(e, "build order");
+    }
+    for &e in parts[5..].iter().rev() {
+        state.table.defer(e, "work order: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        let mut kept = vec![work];
+        kept.extend(&parts[..4]);
+        kept.extend(&more[..2]);
+        e.work = kept;
+    }
+    if let Some(e) = entries(state, building) {
+        e.construction = progress;
+        e.construction_work = Some(parts[4]);
+        e.first_helper = Some(more[2]);
+    }
+}
+
+/// Building `building` is finished at queue time `q` (c-SBZ-1: the
+/// barracks at 44.043449, hub #13): an object and the construction-finish
+/// event's, both freed at once after the construction's progress pair;
+/// its dispel runs from 0.01 s after the completion.
+pub(super) fn construction_finished(state: &mut super::State, building: u32, q: u32) {
+    let tick = state.table.now;
+    let type_id = state.unit(Some(building)).map_or(0, |u| u.type_id);
+    let after = building_layout(state, type_id).map_or(0, |b| b.2.to_bits());
+    let one = state.table.take(tick, "construction: finished");
+    let event = state.table.take(tick, "construction: event");
+    let (progress, dispel) = entries(state, building)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.construction),
+                std::mem::take(&mut e.dispel),
+            )
+        })
+        .unwrap_or_default();
+    for &e in progress.iter().rev() {
+        state.table.defer(e, "construction: progress");
+    }
+    state.table.free(tick, event, "construction: event");
+    state.table.free(tick, one, "construction: finished");
+    let end = ow3_math::add(ow3_math::add(q, 0.01f32.to_bits()), after);
+    for e in dispel {
+        state.table.free_at_q(end, e, "building: dispel");
+    }
+}
+
+/// The work on building `building` ends one tick after its completion
+/// (c-SBZ-1: 44.054104): each worker's work order and kept parts, then the
+/// construction's kept part.
+pub(super) fn work_ended(state: &mut super::State, workers: &[u32], building: u32) {
+    for &w in workers {
+        let work = entries(state, w)
+            .map(|e| std::mem::take(&mut e.work))
+            .unwrap_or_default();
+        for e in work.into_iter().rev() {
+            state.table.defer(e, "work order");
+        }
+    }
+    if let Some(o) = entries(state, building).and_then(|e| e.construction_work.take()) {
+        state.table.defer(o, "work order");
+    }
+}
+
+/// The work that ends in this tick (`work_ended`).
+pub(super) fn work_ends_due(state: &mut super::State) {
+    let now = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.table.work_ends)
+        .into_iter()
+        .partition(|w| w.0 <= now);
+    state.table.work_ends = later;
+    for (_, building, workers) in due {
+        work_ended(state, &workers, building);
+    }
+}
+
+/// Worker `h` takes a repair order on a building under construction
+/// (c-SBZ-1: peasant 1 at 7.499695, hub #13): the order, its record (freed
+/// 0.0001 s later), eleven parts (the last six freed 0.0001 s later, the
+/// fifth at the start of its help, the first four kept with the order),
+/// then its walk to the building.
+pub(super) fn repair_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "repair order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 11, "repair order: order start");
+    for &e in parts[5..].iter().rev() {
+        state.table.defer(e, "repair order: order start");
+    }
+    walk_made_at_order(state, h);
+    if let Some(e) = entries(state, h) {
+        let mut kept = vec![order];
+        kept.extend(&parts[..4]);
+        e.work = kept;
+        e.repair_part = Some(parts[4]);
+    }
+}
+
+/// Worker `h` starts helping on `building` (c-SBZ-1: peasant 1 at 8.489576,
+/// hub #13): the building's life rate is set anew (a rate part, kept to
+/// the completion), then the fifth part of the worker's order and, for the
+/// first helper, the building's object kept for it go.
+pub(super) fn helper_started(state: &mut super::State, h: u32, building: u32) {
+    let tick = state.table.now;
+    let rate = state.table.take(tick, "unit state: rate part");
+    if let Some(e) = entries(state, building) {
+        e.construction_rates.push(rate);
+    }
+    if let Some(o) = entries(state, h).and_then(|e| e.repair_part.take()) {
+        state.table.defer(o, "repair order: order start");
+    }
+    if let Some(o) = entries(state, building).and_then(|e| e.first_helper.take()) {
+        state.table.defer(o, "work order: timer");
+    }
 }
 #[cfg(test)]
 mod tests {

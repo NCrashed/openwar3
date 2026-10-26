@@ -413,6 +413,7 @@ pub(super) fn create_unit(
         invulnerable_until: None,
         wind_walk: None,
         avatar: None,
+        raised: false,
         illusion: None,
         stunner: None,
         zero_hit: None,
@@ -650,7 +651,11 @@ pub(super) fn constructions(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         triggering_widget: Some(building),
                         ..Context::default()
                     };
+                    // Their objects are taken with the construction's
+                    // (`table::construction_started`, `construction_finished`).
+                    let was = std::mem::replace(&mut state.borrow_mut().quiet_events, true);
                     fire_trigger(vm, state, trigger, context);
+                    state.borrow_mut().quiet_events = was;
                 }
             }
         }
@@ -907,7 +912,7 @@ pub(super) fn kill_unit(
             let mut s = state.borrow_mut();
             let dead = s
                 .unit(Some(h))
-                .filter(|u| u.illusion.is_none())
+                .filter(|u| u.illusion.is_none() && !u.raised)
                 .map(|u| (u.owner, u.type_id));
             let by = s.unit(killer).map(|k| k.owner);
             if let Some((owner, type_id)) = dead {

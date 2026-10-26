@@ -302,6 +302,8 @@ pub struct Unit {
     /// bonus and the queue time its first second ends, 0 once passed
     /// (c-SBV-1).
     avatar: Option<[u32; 4]>,
+    /// Raised by Animate Dead: the records of the game sum leave it out.
+    raised: bool,
     /// Set for an illusion (SPEC-0040, Mirror Image).
     illusion: Option<cast::Illusion>,
     /// Who stunned it last, and the tick of the zero hit that follows the
@@ -369,6 +371,11 @@ pub struct Unit {
 pub struct Construction {
     base: u32,
     rate: u32,
+    /// The rate alone, the factor of its helpers on it, and the worker who
+    /// started it (c-SBZ-1, hub #13).
+    base_rate: u32,
+    factor: u32,
+    pub(crate) builder: u32,
     max: u32,
     build_time: u32,
     begin: u64,
@@ -385,6 +392,9 @@ impl Construction {
         Construction {
             base,
             rate,
+            base_rate: rate,
+            factor: 0x3F80_0000,
+            builder: 0,
             max,
             build_time,
             begin,
@@ -474,6 +484,7 @@ fn construction(state: &mut State, tick: u64) {
     for (h, end) in ends {
         training::start_timer(state, end, training::EngineTimer::Construction(h));
     }
+    power_building(state);
 }
 
 /// The construction of building `h` is finished, by its timer of the
@@ -498,6 +509,13 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
             .player_states
             .entry((owner, PLAYER_STATE_RESOURCE_FOOD_CAP))
             .or_default() += food;
+        let q = s.event_time.unwrap_or_else(|| s.timers.time());
+        table::construction_finished(s, h, q);
+        // The work on it ends one tick later (c-SBZ-1: 44.054104).
+        let tick = s.ticks + 1;
+        s.table
+            .work_ends
+            .push((tick, h, movement::workers_of(s, h)));
         s.constructions.push((true, h));
         owner
     };
@@ -991,6 +1009,9 @@ pub struct State {
     bounces: Vec<cast::Bounce>,
     /// The Earthquakes acting (c-SBW-1).
     quakes: Vec<cast::Quake>,
+    /// Workers that took up work on a building under construction in this
+    /// tick, and the building (`power_building`).
+    helpers_started: Vec<(u32, u32)>,
     /// The Deaths and Decays acting (c-SBX-1).
     decays: Vec<cast::Decay>,
     /// Units whose cast's end ran before this tick's updates.
@@ -1210,6 +1231,7 @@ impl State {
             flame_second: Vec::new(),
             bounces: Vec::new(),
             quakes: Vec::new(),
+            helpers_started: Vec::new(),
             decays: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
@@ -1873,6 +1895,7 @@ impl<'a> Game<'a> {
         // Timers of the engine come before the script's (SPEC-0027): the
         // ends of trainings and constructions.
         training::fire_engine_timers(&mut self.vm, &self.state);
+        table::work_ends_due(&mut self.state.borrow_mut());
         self.park();
         // The unit updates come at the time `U` of the update cycle among
         // the script's timers of the tick (SPEC-0018, "Order within an
@@ -4059,6 +4082,62 @@ pub(super) fn start_records() -> Vec<(i32, [u32; 7])> {
         (id(b"otbk"), [0, 0, 0, 0, 0, 0, 8]),
         (id(b"uske"), [25, 0, 0, 0, 0, 0, 8]),
     ]
+}
+
+/// Helpers on buildings under construction (c-SBZ-1, hub #13): each
+/// worker that starts to help makes its objects; a building with its
+/// builder at work grows faster by Repair's DataD for each helper, from
+/// the helper's start: its life goes on from where it stands at the new
+/// rate and its completion is timed again. Without its builder it grows
+/// at its plain rate.
+///
+/// PROVISIONAL: the helpers' payments and the rate set again 0.27 s after
+/// the builder leaves are not done.
+fn power_building(state: &mut State) {
+    let clock = state.move_clock;
+    for (h, building) in std::mem::take(&mut state.helpers_started) {
+        let others = movement::workers_of(state, building)
+            .into_iter()
+            .any(|w| w != h);
+        if others {
+            table::helper_started(state, h, building);
+        }
+    }
+    let bonus = state
+        .data
+        .abilities
+        .get(&i32::from_be_bytes(*b"Ahrp"))
+        .and_then(|a| a.per_level.first())
+        .map_or(0, |l| l.data_d);
+    let mut retimed = Vec::new();
+    for &h in &state.units.clone() {
+        let workers = movement::workers_of(state, h);
+        let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
+            continue;
+        };
+        let Some(c) = u.construction.as_mut() else {
+            continue;
+        };
+        let helpers = if workers.contains(&c.builder) {
+            workers.len().saturating_sub(1)
+        } else {
+            0
+        };
+        let factor = add(0x3F80_0000, mul(bonus, ow3_math::i2r(helpers as i32)));
+        if factor == c.factor || c.tb.is_none() {
+            continue;
+        }
+        c.base = c.grown(clock);
+        c.tb = Some(clock);
+        c.factor = factor;
+        c.rate = mul(c.base_rate, factor);
+        let end = add(clock, div(sub(c.max, c.base), c.rate));
+        retimed.push((h, end));
+    }
+    for (h, end) in retimed {
+        training::cancel_timer(state, training::EngineTimer::Construction(h));
+        training::start_timer(state, end, training::EngineTimer::Construction(h));
+    }
 }
 
 #[cfg(test)]

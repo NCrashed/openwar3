@@ -1741,6 +1741,8 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             if let Some(point) = c.point {
                 let end = add(add(c.effect_q, n.duration), 0.1f32.to_bits());
                 let last = super::table::decay_area(s, end);
+                // Its first art spawn, at the effect.
+                let delay = decay_spawn(s);
                 s.decays.push(Decay {
                     point,
                     area: n.area,
@@ -1751,6 +1753,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     next: 0,
                     end,
                     last,
+                    spawn: add(c.effect_q, delay),
                 });
             }
         }
@@ -3248,6 +3251,7 @@ fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel, q: u32, an
         if animate {
             u.owner = owner;
             u.script_invulnerable = true;
+            u.raised = true;
         }
         if animate {
             for g in &mut s.creep_groups {
@@ -3262,8 +3266,9 @@ fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel, q: u32, an
         let max = u.life.max;
         u.life.set(max);
         let type_id = u.type_id;
-        // A raised unit counts alive again for no player (c-SBX-1: G to turn 51
-        // with none, hub #12). PROVISIONAL: the rule is asked.
+        // A raised unit counts for no player, alive or dead (c-SBX-1: G to the
+        // end, hub #12). PROVISIONAL: the analyst's reading of the owner
+        // change is still to come.
         if !animate {
             super::widgets::type_record(s, owner, type_id, |q| q[4] += 1);
         }
@@ -3421,6 +3426,8 @@ pub struct Decay {
     end: u32,
     /// Its last object, freed at its end.
     last: u32,
+    /// The queue time of its next art spawn.
+    spawn: u32,
 }
 
 /// Game generator 22, which draws the delay of a Death and Decay's first
@@ -3441,6 +3448,14 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
     let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
     let mut decays = std::mem::take(&mut s.decays);
     decays.retain_mut(|d| {
+        // Its art spawns, through its channel (c-SBX-1: 5.677326, 6.549392,
+        // 6.765161, hub #12).
+        while f32::from_bits(d.spawn) < next_clock
+            && f32::from_bits(d.spawn) <= f32::from_bits(d.end)
+        {
+            let delay = decay_spawn(s);
+            d.spawn = add(d.spawn, delay);
+        }
         if d.step != 0 && f32::from_bits(d.step) < next_clock {
             s.table_at(d.step);
             let delay = s.game_random[DECAY_GENERATOR].fraction();
@@ -3507,4 +3522,31 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
         true
     });
     s.decays.extend(decays);
+}
+
+/// Game generator 23, which draws a Death and Decay's art (hub #12).
+const ART_GENERATOR: usize = 23;
+
+/// A Death and Decay's art spawn (c-SBX-1, hub #12), its draws on game
+/// generator 23: two dice of 10 for the count N = 2 + d1 + d2; above 5 a
+/// piece near the centre (two draws) and N - 1 on the ring, else N; the
+/// ring's start angle; two draws a ring piece; the delay to the next
+/// spawn, a fraction of 1. The delay. The pieces themselves are art only.
+fn decay_spawn(s: &mut State) -> u32 {
+    let g = &mut s.game_random[ART_GENERATOR];
+    let die = |r: u32| ((u64::from(r) * 10) >> 32) as u32;
+    let n = 2 + die(g.step()) + die(g.step());
+    let ring = if n > 5 {
+        g.step();
+        g.step();
+        n - 1
+    } else {
+        n
+    };
+    g.step();
+    for _ in 0..ring {
+        g.step();
+        g.step();
+    }
+    g.fraction()
 }

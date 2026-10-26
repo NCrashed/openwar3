@@ -612,7 +612,6 @@ fn bladestorm_earthquake_objects() {
 /// `c-SBX-1`: the Death Knight's Animate Dead and the Lich's Death and
 /// Decay at level 6: every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn animate_dead_decay_checksums() {
     if let Some(first) = turn_parts("c-SBX-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
@@ -621,7 +620,6 @@ fn animate_dead_decay_checksums() {
 
 /// `c-SBX-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn animate_dead_decay_objects() {
     if let Some(first) = compare_objects("c-SBX-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

@@ -64,7 +64,7 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- All 38 test replays match every turn checksum.
+- All 39 test replays match every turn checksum.
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
   does every one of its 1614 turn checksums (to 161 s).

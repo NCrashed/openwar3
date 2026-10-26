@@ -1097,9 +1097,15 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
     if !place_allowed(state, owner, type_id, target) {
         return false;
     }
+    // The worker walks to the site snapped to the building's grid (c-SBZ-1:
+    // the farm ordered at (0, -400), walked to as (0, -384), hub #13).
+    let facing = super::facing::from_degrees(270f32.to_bits());
+    let (sx, sy) = super::obstacles::site(state, type_id, target[0], target[1], facing);
+    let target = [sx, sy];
     if !order(state, h, Order::Build { type_id }, type_id, target) {
         return false;
     }
+    super::table::build_ordered(state, h);
     set_attack_move(state, h, None);
     let states = &mut state.setup.player_states;
     *states.entry((owner, GOLD)).or_default() -= gold;
@@ -1265,6 +1271,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
     let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
+    super::table::construction_started(state, h, building);
     // It enters its regions where it stands (SPEC-0049).
     super::regions::test_unit(state, building);
     // Its food comes when it is finished.
@@ -1280,6 +1287,7 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let delay = if moved { WORK_DELAY_MOVED } else { 0 };
     let begin = state.ticks + delay;
     let mut construction = super::Construction::new(base, rate, max, build_time, begin);
+    construction.builder = h;
     let end = (delay == 0).then(|| construction.work(add(state.move_clock, GROWTH_OFFSET)));
     if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
         b.life = super::Regenerating::full(max, 0);
@@ -1697,7 +1705,7 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
     if matches!(name, "smart" | "repair") && unfinished_of_own(state, h, target) {
         // PROVISIONAL (not in SPEC-0026): a worker sent to its player's
         // building under construction goes on building it.
-        return match position_of(state, target) {
+        let taken = match position_of(state, target) {
             Some(at) => order(
                 state,
                 h,
@@ -1707,6 +1715,11 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             ),
             None => false,
         };
+        // Its objects (c-SBZ-1: peasant 1 at 7.499695, hub #13).
+        if taken {
+            super::table::repair_ordered(state, h);
+        }
+        return taken;
     }
     // A worker on a gold mine or tree gathers from it; with a load on a
     // building that takes it, it delivers there (SPEC-0029).
@@ -2745,8 +2758,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         {
             if !unfinished_of_own(state, h, building) {
                 m.arrived = true;
-            } else if super::harvest::reached(state, h, here, building) {
+            } else if repair_reach(state, h, here, building) {
                 m.order = Order::Repair { building };
+                // Its walk ends there, its help starts at once (c-SBZ-1: peasant
+                // 1 at 8.489576, hub #13).
+                super::table::chase_walk_ended(state, h);
+                let others = workers_of(state, building).into_iter().any(|w| w != h);
+                if others {
+                    super::table::helper_started(state, h, building);
+                }
                 m.arrived = false;
                 m.walking = false;
                 m.velocity = [0, 0];
@@ -3552,6 +3572,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             && unfinished_of_own(state, h, building)
         {
             m.order = Order::Repair { building };
+            state.helpers_started.push((h, building));
             m.arrived = false;
             face_target(state, &mut m, building, min);
         }
@@ -6617,6 +6638,46 @@ fn flees(state: &State, h: u32) -> bool {
             && u.attack_move.is_none()
             && !super::cast::stunned(state, h)
     })
+}
+
+/// The living workers building `building` now (order `repair` on it), in
+/// the order of the units.
+pub(super) fn workers_of(state: &State, building: u32) -> Vec<u32> {
+    state
+        .units
+        .iter()
+        .copied()
+        .filter(|h| match state.objects.get(h) {
+            Some(Object::Unit(u)) if u.alive => {
+                u.movement.map(|m| m.order) == Some(Order::Repair { building })
+            }
+            _ => false,
+        })
+        .collect()
+}
+
+/// Whether worker `h` at `here` (cells) is near enough to `building` to
+/// take up its work: within Repair's range plus both collision sizes of
+/// the building's centre (c-SBZ-1: peasant 1 stopped 136.5 from the farm,
+/// 50 + 72 + 16 = 138, hub #13).
+fn repair_reach(state: &State, h: u32, here: [u32; 2], building: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let collision = |o: u32| {
+        state
+            .unit(Some(o))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .map_or(0, |t| t.collision)
+    };
+    let range = state
+        .data
+        .abilities
+        .get(&i32::from_be_bytes(*b"Ahrp"))
+        .map_or(0, |a| a.range);
+    let Some(at) = position_of(state, building) else {
+        return false;
+    };
+    let reach = mul(add(add(range, collision(h)), collision(building)), CELL);
+    in_range(here, relative(at, min), reach)
 }
 
 #[cfg(test)]

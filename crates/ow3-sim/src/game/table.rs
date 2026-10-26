@@ -1160,8 +1160,8 @@ fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {
 /// Unit `h` takes a script's attack order on a unit (c-SBL-1 at 2.0 s): the
 /// order and its record, the old order ends (an acquisition's objects of
 /// that moment go), then 13 objects of the order's start; the record and
-/// the last 6 (from the last) are freed 0.0001 s later, the first 7 and the
-/// order kept with it.
+/// the last 6 (from the last) are freed 0.0001 s later, the seventh when
+/// the reaction delay ends, the first 6 and the order kept with it.
 ///
 /// PROVISIONAL: when the kept ones go is not read.
 pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
@@ -1174,10 +1174,13 @@ pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
     for &e in parts[7..].iter().rev() {
         state.table.defer(e, "attack: order start");
     }
-    let mut kept: Vec<u32> = parts[..7].iter().rev().copied().collect();
+    // The seventh goes when the order is carried out at its reaction's end
+    // (c-SBL-1: 1276 at 2.060097).
+    let mut kept: Vec<u32> = parts[..6].iter().rev().copied().collect();
     kept.push(order);
     if let Some(e) = entries(state, h) {
         e.order = kept;
+        e.reaction.push(parts[6]);
     }
 }
 

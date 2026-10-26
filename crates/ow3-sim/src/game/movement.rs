@@ -1725,6 +1725,13 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
+            // A reaction timer already running (an acquisition's) is started again
+            // with the order's delay, and the order is carried out at its end
+            // (c-SBL-1: the Mountain King at 2.0, its walk at 2.062619).
+            let timer = state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .is_some_and(|m| m.reaction_end.is_some());
             let tick = state.ticks;
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
@@ -1733,11 +1740,16 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
                 // of `main` counts as given in tick 1. It swings one update
                 // later at the earliest (SPEC-0019, "When it starts").
                 let given = tick.max(1);
-                react(state, h, given, delay, given + ORDER_FIRST_ACT);
-                if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-                    && let Some(m) = u.movement.as_mut()
-                {
-                    m.swing_waits = true;
+                if timer {
+                    let now = state.event_time.unwrap_or_else(|| state.timers.time());
+                    react_until(state, h, add(now, delay));
+                } else {
+                    react(state, h, given, delay, given + ORDER_FIRST_ACT);
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                        && let Some(m) = u.movement.as_mut()
+                    {
+                        m.swing_waits = true;
+                    }
                 }
             }
             done

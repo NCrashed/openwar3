@@ -1279,27 +1279,14 @@ pub(super) fn touching(state: &State, h: u32) -> bool {
     state.paths.get(&h).is_some_and(|f| f.touching)
 }
 
-/// The movement type of unit `h` as a small key: units of different types
-/// are never made to wait for each other (SPEC-0021, "Blocked by a unit";
-/// the size class plays no part there, c-RZH-1 at 343).
+/// The 4-bit field of unit `h`'s path compared at blocks: units with
+/// different values are never made to wait for each other (SPEC-0021,
+/// "Blocked by a unit"). It is the owning player (c-SBJ-1: 0 for the
+/// four heroes of player 0, foot and hover alike, 0xC for the creeps of
+/// player 12; analyst 11-15 03:00).
+/// PROVISIONAL: read in one map with one player and the creeps.
 fn move_kind(state: &State, h: u32) -> u8 {
-    let kind = state
-        .unit(Some(h))
-        .and_then(|u| state.data.units.get(&u.type_id))
-        .map_or("", |t| t.move_type.as_str());
-    match kind {
-        "foot" => 0,
-        "horse" => 1,
-        "fly" => 2,
-        // A hovering unit counts as one on foot (c-SBJ-1: the Lich, slower,
-        // made to wait by the Death Knight at 13.619911, the Death Knight
-        // blocked; analyst 11-15 01:20).
-        // PROVISIONAL: the field itself is not read.
-        "hover" => 0,
-        "float" => 4,
-        "amph" => 5,
-        _ => 6,
-    }
+    state.unit(Some(h)).map_or(0xFF, |u| (u.owner & 0xF) as u8)
 }
 
 /// The contact test of an attack start (SPEC-0019): a cell round unit `h`'s

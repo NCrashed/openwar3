@@ -1001,8 +1001,16 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                     // A homing one whose target is gone flies on to where the
                     // target was last (c-RZJ-1: the Archmage's of 36.787998,
                     // the Ogre Lord dead at 37.137806, freed at 42.295071).
-                    let old = m.point;
-                    let to = if standing(s, m.target) {
+                    // Only a target walking at the step is aimed at anew, the
+                    // timer counted from the step's queue time (c-SBY-1: the
+                    // Keeper's missile at the ogre, walking at 6.154814,
+                    // 99.71 left, hit at 6.270580; standing at 6.254814,
+                    // nothing new, hub #11).
+                    let walking = standing(s, m.target)
+                        && s.unit(Some(m.target))
+                            .and_then(|u| u.movement)
+                            .is_some_and(|t| super::movement::walking_now(&t));
+                    let to = if walking {
                         let Some(to) = super::movement::position_of(s, m.target) else {
                             continue;
                         };
@@ -1012,14 +1020,15 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         m.point
                     };
                     let left = distance(m.at, to);
-                    if to != old {
+                    if walking {
                         if f32::from_bits(left) < f32::from_bits(step) {
                             m.expiry = s.move_clock;
                             arrived.push(m);
                             continue;
                         }
                         let speed = div(step, HOMING_STEP);
-                        m.expiry = add(add(s.move_clock, div(left, speed)), MIN_DELAY);
+                        let q = s.timers.time();
+                        m.expiry = add(q, div(left, speed));
                     }
                     if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
                         arrived.push(m);

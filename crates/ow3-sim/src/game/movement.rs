@@ -2076,6 +2076,11 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
         return Vec::new();
     };
     let (t_owner, at) = (t.owner, [t.x, t.y]);
+    let t_collision = state
+        .data
+        .units
+        .get(&t.type_id)
+        .map_or(0.0, |d| real_of(d.collision));
     let units: Vec<u32> = state
         .units
         .iter()
@@ -2088,6 +2093,15 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
                         .units
                         .get(&u.type_id)
                         .map_or(0.0, |d| real_of(d.acquire));
+                    // Its acquisition range and both collision sizes (c-SBO-1: the
+                    // Warden, 650, took the ogre 716 away; c-SBL-1: the Mountain
+                    // King, 500, did not).
+                    let own = state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .map_or(0.0, |d| real_of(d.collision));
+                    let acquire = acquire + own + t_collision;
                     let (dx, dy) = (real_of(u.x) - real_of(at[0]), real_of(u.y) - real_of(at[1]));
                     u.alive
                         && !u.attack_removed

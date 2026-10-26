@@ -533,7 +533,7 @@ struct Making {
 const HERO: Making = Making {
     count: 24,
     deferred: &[17, 18, 23, 22],
-    death: &[],
+    death: &[10, 11],
     level: &[19, 20],
     corpse: &[],
 };
@@ -3687,6 +3687,15 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     }
     // Its death order: a record and 9 queue objects, and for a unit not
     // of the creeps 1 more (SPEC-0024, "Unit death").
+    // A hero's: 3 more before them, freed with the record (c-SBP-1: the
+    // paladins at 6.2 and 6.95).
+    // PROVISIONAL: read for heroes on hold position killed by KillUnit.
+    // PROVISIONAL: a hero of the creeps is not read.
+    let hero = owner != super::creeps::CREEPS
+        && state
+            .unit(Some(h))
+            .is_some_and(|u| crate::data::is_hero(u.type_id));
+    let hero_order = hero.then(|| state.table.take_n(tick, 3, "hero death order"));
     let record = state.table.take(tick, "death order record");
     let queue = state.table.take_n(tick, 9, "death order queue");
     // (Defend's order at the death: only a unit with Defend; c-RXR-1:
@@ -3717,6 +3726,11 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         };
         let (core, pair) = death.split_at(n);
         let mut core = core.to_vec();
+        // A hero's: its level's parts, then the two (c-SBP-1: the paladin
+        // at 6.2, 1211, 1212, 1202, 1203).
+        if hero {
+            core.splice(0..0, std::mem::take(&mut e.level));
+        }
         if let Some(m) = e.death_mana.take() {
             core.insert(core.len().min(1), m);
         }
@@ -3797,7 +3811,14 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for e in pair.into_iter().chain(game).chain(stun_order) {
         state.table.defer(e, "unit death");
     }
+    if let Some(o) = &hero_order {
+        state.table.defer(o[0], "hero death order");
+    }
     state.table.defer(record, "death order record");
+    if let Some(o) = &hero_order {
+        state.table.defer(o[2], "hero death order");
+        state.table.defer(o[1], "hero death order");
+    }
     for e in own {
         state.table.defer(e, "unit death");
     }

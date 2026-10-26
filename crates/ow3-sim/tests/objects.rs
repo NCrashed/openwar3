@@ -258,7 +258,7 @@ fn night_elf_spells_objects() {
 /// kills, one per race (report only).
 #[test]
 fn levelling_report() {
-    for name in ["c-SBL-1", "c-SBM-1", "c-SBN-1", "c-SBO-1"] {
+    for name in ["c-SBL-1", "c-SBM-1", "c-SBN-1", "c-SBO-1", "c-SBP-1"] {
         eprintln!("{name}");
         compare_objects(name);
         turn_parts(name);

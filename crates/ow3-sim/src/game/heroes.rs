@@ -295,6 +295,12 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
         1
     };
     let objects = state.table.take_n(state.table.now, count, "hero skill");
+    // An aura's second goes first at the hero's death, its third with its
+    // buffs (c-SBP-1: the paladin at 6.2, 1313 and 1314).
+    if aura && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.entries.death_first.push(objects[1]);
+        u.entries.death_late.push(objects[2]);
+    }
     // The second is a watch on the mana at the ability's cost (c-SAK-1).
     if cooled {
         let cost = data.per_level.first().map_or(0, |l| l.cost);

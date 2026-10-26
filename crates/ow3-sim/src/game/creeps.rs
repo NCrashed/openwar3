@@ -530,7 +530,9 @@ pub(super) fn consider_spell(
     if !is_creep(state, h) {
         return;
     }
-    let Some(u) = state.unit(Some(h)).filter(|u| u.alive) else {
+    // A paused creep decides nothing (c-SBL-1: the paused ogre lord, hit to
+    // 1.46 life at 10.979 with the hero and the footman near, cast nothing).
+    let Some(u) = state.unit(Some(h)).filter(|u| u.alive && !u.paused) else {
         return;
     };
     let owner = u.owner;

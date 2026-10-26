@@ -59,10 +59,11 @@ pub(super) fn start(vm: &mut Vm, state: &Rc<RefCell<State>>, altar: u32, hero: u
             (t.gold_cost, t.food_used, f32::from_bits(t.build_time))
         });
         // 0.40 of the gold cost and 0.10 more a level above the first, cut
-        // to whole tens (c-SBQ-1: 170 at level 1; c-SBR-1: 210 at level 2).
-        // PROVISIONAL: two points; the cut to tens is a guess that fits them.
+        // down to a multiple of 5 (c-SBQ-1: 170 at level 1; c-SBR-1: 210 at
+        // level 2; c-SBS-1: 255 at level 3; hub #5).
+        // PROVISIONAL: the cut and a rounding of halves to even both fit.
         let share = GOLD_FACTOR + LEVEL_FACTOR * (level.max(1) - 1) as f32;
-        let cost = ((gold as f32 * share) as i32 / 10) * 10;
+        let cost = ((gold as f32 * share) as i32 / 5) * 5;
         *s.setup.player_states.entry((owner, GOLD)).or_default() -= cost;
         *s.setup.player_states.entry((owner, FOOD_USED)).or_default() += food;
         let seconds = (build * TIME_FACTOR).floor() * level.max(1) as f32;

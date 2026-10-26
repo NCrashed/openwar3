@@ -970,9 +970,6 @@ pub struct State {
     /// Heroes that dropped an item at their updates of this tick: (hero,
     /// item, point), for `widgets::items_dropped`.
     dropped: Vec<(u32, u32, [u32; 2])>,
-    /// Pick-ups of items in reach at the order, due in that tick: (tick, hero,
-    /// item).
-    picks_due: Vec<(u64, u32, u32)>,
     /// Heroes being revived: their altar, the revive's kept objects and
     /// its first object (`revive`).
     reviving: BTreeMap<u32, (u32, Vec<u32>, u32)>,
@@ -1198,7 +1195,6 @@ impl State {
             call_acquired: Vec::new(),
             picked_up: Vec::new(),
             dropped: Vec::new(),
-            picks_due: Vec::new(),
             reviving: BTreeMap::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
@@ -1789,8 +1785,6 @@ impl<'a> Game<'a> {
                 c.push((tick, clock));
             }
             table::unpause_starts(state);
-            // Pick-ups due without an update come with this tick's.
-            movement::picks_due(state);
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less

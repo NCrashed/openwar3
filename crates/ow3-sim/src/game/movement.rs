@@ -2828,6 +2828,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 } else {
                     m.drop_ready = true;
                 }
+                // It goes on turning to the point (c-SBR-1: facing it, 2.3
+                // degrees off, at the pick-up after).
+                motion(&mut m, at, false, speed, limit, turn_rate, window);
                 m.walking = false;
                 m.velocity = [0, 0];
                 cast_turn = true;
@@ -6498,53 +6501,11 @@ fn pick_up_order(state: &mut State, h: u32, item: u32) -> bool {
     let Some(at) = position_of(state, item) else {
         return false;
     };
-    // Already within 100 of it: picked up 0.01 s later, without a turn or an
-    // update (c-SBR-1: the salve 91.2 away, order 12.498903, picked up
-    // 12.508902; c-SBQ-1: the claws 126.5 away turned to first).
-    // PROVISIONAL: the 100 (DropItemRange) is a guess between the two.
-    let min = [state.world_bounds[0], state.world_bounds[1]];
-    let ready = state.unit(Some(h)).is_some_and(|u| {
-        let own = state
-            .data
-            .units
-            .get(&u.type_id)
-            .map_or(0.0, |t| real_of(t.collision));
-        let here = relative([u.x, u.y], min);
-        let place = relative(at, min);
-        let _ = own;
-        in_range(here, place, (DROP_RANGE / 32.0).to_bits())
-    });
     if !order(state, h, Order::PickUp { item }, ORDER_SMART, at) {
         return false;
     }
     super::table::item_ordered(state, h);
-    if ready {
-        let due = state.ticks + 2;
-        state.picks_due.push((due, h, item));
-    }
     true
-}
-
-/// The pick-ups of items in reach at their order due in this tick: they
-/// join the tick's pick-ups (`widgets::items_picked`).
-pub(super) fn picks_due(state: &mut State) {
-    let tick = state.ticks;
-    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.picks_due)
-        .into_iter()
-        .partition(|p| p.0 <= tick);
-    state.picks_due = later;
-    for (_, h, item) in due {
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-            && let Some(m) = u.movement.as_mut()
-            && matches!(m.order, Order::PickUp { item: i } if i == item)
-            && !m.arrived
-        {
-            m.arrived = true;
-            m.walking = false;
-            m.velocity = [0, 0];
-            state.picked_up.push((h, item));
-        }
-    }
 }
 
 /// How far a unit that cannot attack runs from its attacker (c-SBJ-1).

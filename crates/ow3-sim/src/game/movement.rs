@@ -3141,6 +3141,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // To the goal point by the paths of SPEC-0020 and
                         // SPEC-0021, as a point order.
                         let walker = follow::Walker {
+                            flee: false,
                             handle: h,
                             here,
                             order: goal,
@@ -3319,7 +3320,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         .then(|| state.member_now.get(&h).copied())
                         .flatten();
                     let mine = building.is_some_and(|b| super::harvest::is_mine(state, b));
+                    let flee = state
+                        .unit(Some(h))
+                        .is_some_and(|u| u.attack_removed && u.attack_move.is_some());
                     let walker = |order| follow::Walker {
+                        flee,
                         handle: h,
                         here,
                         order,
@@ -3948,6 +3953,7 @@ pub(super) fn chase(
     if state.grid.is_some() {
         let goal = relative(at, min);
         let walker = follow::Walker {
+            flee: false,
             handle: h,
             here,
             order: goal,

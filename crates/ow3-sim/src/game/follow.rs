@@ -449,6 +449,8 @@ pub(super) fn new_group(state: &mut State, h: u32) {
 /// A unit at an update, as `steer` needs it.
 pub struct Walker {
     pub handle: u32,
+    /// A unit that cannot attack running from its attacker (SPEC-0019).
+    pub flee: bool,
     /// Its committed position and the order point, relative to the world
     /// corner.
     pub here: [u32; 2],
@@ -1071,6 +1073,15 @@ fn decide(
                     b: None,
                     at: walker.here,
                 });
+                return Steer::Stand(walker.order);
+            }
+            // A flee at the end of its path still outside its limit of the goal
+            // goes on: it stands and tries a new local path at each update
+            // until one is found (c-SBJ-1: the Dreadlord at its last waypoint at
+            // 13.829909, a path found at 13.949908; analyst 11-14 22:30).
+            if walker.flee && !super::movement::in_range(walker.here, walker.order, 0) {
+                follow.local.clear();
+                follow.next = Next::Search;
                 return Steer::Stand(walker.order);
             }
             // A chase at the end of its path: the member step reports it

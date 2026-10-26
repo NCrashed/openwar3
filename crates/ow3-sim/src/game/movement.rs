@@ -5963,6 +5963,13 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         {
             super::table::script_attack_lost(state, h);
             super::table::attack_ended(state, h, false);
+            // Its attack on it ends (c-SBO-1: the footman after its kill of
+            // kobold 5 at 7.28, idle when kobold 6 turns vulnerable at 8.5).
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && u.attack.is_some_and(|a| a.target == dead)
+            {
+                u.attack = None;
+            }
         }
         super::attack::swing_cut(state, h, now);
         // A creep that took a target on its way home goes on to the next

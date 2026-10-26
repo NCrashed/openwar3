@@ -4030,7 +4030,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         for e in death {
             state.table.defer(e, "unit death");
         }
-        state.table.defer(queue[3], "death order queue");
+        // The fourth after the death's events (c-SBX-1: 1517 at 43.449436,
+        // after the event object of the raised kobold's death).
+        state.table.rest_after.push(queue[3]);
         let at = state.event_time.unwrap_or_else(|| state.timers.time());
         let time = state
             .unit(Some(h))
@@ -4779,7 +4781,13 @@ pub(super) fn quake_ended(state: &mut super::State, objects: &[u32], inside: &[(
 pub(super) fn animated(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let (queue, corpse) = held_dead(state, h);
-    state.table.take_n(tick, 3, "Animate Dead: unit state");
+    // The first goes 3.0001 s on by the world clock (c-SBX-1: 1152, 1161, 1170
+    // at 6.450062).
+    let parts = state.table.take_n(tick, 3, "Animate Dead: unit state");
+    let at = ow3_math::add(state.move_clock, 3.0001f32.to_bits());
+    state
+        .table
+        .free_at_clock(at, parts[0], "Animate Dead: unit state");
     let order = state.table.take_n(tick, 5, "Animate Dead: start order");
     let kept = state.table.take(tick, "Animate Dead: unit");
     for &o in queue.iter().rev() {
@@ -4793,6 +4801,10 @@ pub(super) fn animated(state: &mut super::State, h: u32) {
             e.corpse = list;
         }
         e.death.push(kept);
+        // Then its state's third and second (c-SBX-1: 1160, 1154, 1153 at
+        // 43.449436).
+        e.death.push(parts[2]);
+        e.death.push(parts[1]);
     }
 }
 
@@ -4819,17 +4831,20 @@ pub(super) fn quake_occupied(state: &mut super::State) -> u32 {
 }
 
 /// A Death and Decay takes effect (c-SBX-1 at 4.9, hub #12): its area's
-/// eight objects, the last freed at its end, the others 5.0 s after it.
-pub(super) fn decay_area(state: &mut super::State, end: u32) {
+/// eight objects, the others freed 5.0 s after its end; the last, returned,
+/// goes at its end (`cast::decays`), before the channel's order.
+pub(super) fn decay_area(state: &mut super::State, end: u32) -> u32 {
     let tick = state.table.now;
     let objects = state.table.take_n(tick, 8, "Death and Decay: area");
     let later = ow3_math::add(end, 5.0f32.to_bits());
-    for &o in &objects[..7] {
-        state.table.free_at_q(later, o, "Death and Decay: area");
+    // In this order (c-SBX-1: 1285, 1286, 1284, 1282, 1283, 1281, 1280 at
+    // 44.998585).
+    for k in [5, 6, 4, 2, 3, 1, 0] {
+        state
+            .table
+            .free_at_q(later, objects[k], "Death and Decay: area");
     }
-    state
-        .table
-        .free_at_q(end, objects[7], "Death and Decay: area");
+    objects[7]
 }
 
 /// A Death and Decay's step 0.01 s after its effect: an object, freed at

@@ -1516,6 +1516,12 @@ fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
     if !missile {
         super::table::impact_unused(s, h);
     }
+    // A Death and Decay's area ends with its channel, its last object first
+    // (c-SBX-1: 1287 at 39.996334, then the order's).
+    if let Some(k) = s.decays.iter().position(|d| d.caster == h) {
+        let d = s.decays.remove(k);
+        s.table.defer(d.last, "Death and Decay: area");
+    }
     let from = s.table.deferred_count();
     super::table::order_ended(s, h);
     // A Flame Strike's by its cast timer at the landing, after the
@@ -1734,7 +1740,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             super::table::spell_effect_event(s, h);
             if let Some(point) = c.point {
                 let end = add(add(c.effect_q, n.duration), 0.1f32.to_bits());
-                super::table::decay_area(s, end);
+                let last = super::table::decay_area(s, end);
                 s.decays.push(Decay {
                     point,
                     area: n.area,
@@ -1744,6 +1750,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     effect: c.effect_q,
                     next: 0,
                     end,
+                    last,
                 });
             }
         }
@@ -3255,7 +3262,11 @@ fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel, q: u32, an
         let max = u.life.max;
         u.life.set(max);
         let type_id = u.type_id;
-        super::widgets::type_record(s, owner, type_id, |q| q[4] += 1);
+        // A raised unit counts alive again for no player (c-SBX-1: G to turn 51
+        // with none, hub #12). PROVISIONAL: the rule is asked.
+        if !animate {
+            super::widgets::type_record(s, owner, type_id, |q| q[4] += 1);
+        }
     }
     // Their check timers are started twice in the tick, the second time
     // the last first (c-SBV-1: footmen 6 and 8 at 9.009489, hub #9).
@@ -3408,6 +3419,8 @@ pub struct Decay {
     effect: u32,
     next: u32,
     end: u32,
+    /// Its last object, freed at its end.
+    last: u32,
 }
 
 /// Game generator 22, which draws the delay of a Death and Decay's first
@@ -3486,7 +3499,12 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
             }
             d.next = add(d.next, 1.0f32.to_bits());
         }
-        f32::from_bits(d.end) >= next_clock
+        if f32::from_bits(d.end) < next_clock {
+            s.table_at(d.end);
+            s.table.now = tick;
+            return false;
+        }
+        true
     });
     s.decays.extend(decays);
 }

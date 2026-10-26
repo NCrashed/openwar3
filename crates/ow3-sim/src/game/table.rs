@@ -394,6 +394,13 @@ pub struct UnitEntries {
     pub id: Option<[u32; 2]>,
     /// A dead hero: the queue time it joins its player's list of dead heroes.
     pub dead_listed: Option<u32>,
+    /// A dead unit not a hero: the first five of its death order's queue,
+    /// and its corpse's end with the objects freed then, for a
+    /// Resurrection (`resurrected`).
+    pub dead_queue: Vec<u32>,
+    /// An Avatar's buff and watch, kept to its end.
+    pub avatar: Vec<u32>,
+    pub dead_corpse: Option<(u32, Vec<u32>)>,
     /// A creep's ability parts freed at its death: before all its other
     /// objects (an aura's first), and with its buffs after the experience
     /// (an aura's buff, a costed ability's); its mana's part, in its core
@@ -1314,7 +1321,7 @@ fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {
 /// the reaction delay ends, the first 6 and the order kept with it.
 ///
 /// PROVISIONAL: when the kept ones go is not read.
-pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
+pub(super) fn attack_target_ordered(state: &mut super::State, h: u32, idle: bool) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
     // A unit let go from its pause in this tick takes the order alone now;
@@ -1332,8 +1339,14 @@ pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
         state.table.unpause_starts.push((state.ticks + 2, h));
         return;
     }
-    let record = state.table.take(tick, "order record");
-    state.table.defer(record, "order record");
+    // An idle unit has no order to record (c-SBV-1: the Mountain King after
+    // his Avatar at 4.999876, 13 parts and no record).
+    // PROVISIONAL: read once.
+    let idle = idle && entries(state, h).is_some_and(|e| e.order.is_empty());
+    if !idle {
+        let record = state.table.take(tick, "order record");
+        state.table.defer(record, "order record");
+    }
     order_ended(state, h);
     let parts = state.table.take_n(tick, 13, "attack: order start");
     for &e in parts[7..].iter().rev() {
@@ -4345,6 +4358,10 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
                         == i32::from_be_bytes(*b"Adef")
                 })
             });
+        if let Some(e) = entries(state, h) {
+            e.dead_queue = queue[..5].to_vec();
+            e.dead_corpse = Some((gone, corpse.clone()));
+        }
         state.table.rest_w.push((gone, queue[1]));
         for (k, e) in corpse.into_iter().enumerate() {
             state.table.rest_w.push((gone, e));
@@ -4588,6 +4605,164 @@ pub(super) fn position_set(state: &mut super::State) {
     state.table.defer(first, "position: order");
 }
 
+/// Dead unit `h` is brought back by a Resurrection (c-SBV-1 at 3.5): a limit
+/// watch and a rate part of its state, a Defend order for a unit with
+/// Defend, its start order's five; then, 0.0001 s later, the Defend order,
+/// the five of its death order's queue still held (the last first) and
+/// the start order's (the last first). Its corpse no longer decays: the
+/// objects of its making stay with it.
+///
+/// PROVISIONAL: what the watch and the rate part are, and when they go,
+/// is not read.
+pub(super) fn resurrected(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let (queue, corpse) = entries(state, h)
+        .map(|e| (std::mem::take(&mut e.dead_queue), e.dead_corpse.take()))
+        .unwrap_or_default();
+    state.table.timed_q.retain(|t| !queue.contains(&t.1));
+    if let Some((gone, list)) = &corpse {
+        state.table.timed_w.retain(|t| {
+            !(t.0 == *gone && (t.1 == TAKE_AT || list.contains(&t.1) || queue.contains(&t.1)))
+        });
+    }
+    state.table.take_n(tick, 2, "resurrection: unit state");
+    let defends = state
+        .unit(Some(h))
+        .filter(|u| u.owner != super::creeps::CREEPS)
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| {
+            t.abilities.iter().any(|a| {
+                state.data.abilities.get(a).map_or(*a, |d| d.code) == i32::from_be_bytes(*b"Adef")
+            })
+        });
+    let defend = defends.then(|| state.table.take(tick, "resurrection: Defend's order"));
+    let order = state.table.take_n(tick, 5, "resurrection: start order");
+    if let Some(d) = defend {
+        state.table.defer(d, "resurrection: Defend's order");
+    }
+    for &o in queue.iter().rev() {
+        state.table.defer(o, "death order queue");
+    }
+    for &o in order.iter().rev() {
+        state.table.defer(o, "resurrection: start order");
+    }
+    if let (Some((_, list)), Some(e)) = (corpse, entries(state, h)) {
+        e.corpse = list;
+    }
+}
+
+/// Hero `h`'s Avatar takes effect at `q` (c-SBV-1 at 4.5): its effect's
+/// event, an object kept to its end, a rate part of the hero's state freed
+/// 1.0 s later, a limit watch kept to its end. The watch on the cost of
+/// `ability` goes 0.0001 s later, after the effect's event.
+///
+/// PROVISIONAL: what the kept object and the watch are is not read.
+pub(super) fn avatar_effect(state: &mut super::State, h: u32, ability: i32, q: u32) {
+    let tick = state.table.now;
+    spell_effect_event(state, h);
+    let kept = state.table.take(tick, "Avatar: buff");
+    let rate = state.table.take(tick, "Avatar: rate part");
+    let watch = state.table.take(tick, "Avatar: limit watch");
+    state.table.free_at_q(
+        ow3_math::add(q, 1.0f32.to_bits()),
+        rate,
+        "Avatar: rate part",
+    );
+    let cost = state
+        .data
+        .abilities
+        .get(&ability)
+        .and_then(|d| d.per_level.first())
+        .map_or(0, |l| l.cost);
+    let old = entries(state, h).and_then(|e| {
+        let k = e.mana_watches.iter().position(|w| w.0 == cost)?;
+        let w = e.mana_watches.remove(k).1;
+        e.watch_checks.retain(|&(x, _)| x != w);
+        Some(w)
+    });
+    if let Some(w) = old {
+        state.table.defer(w, "unit state: limit watch");
+    }
+    if let Some(e) = entries(state, h) {
+        e.avatar = vec![watch, kept];
+    }
+}
+
+/// Hero `h`'s Avatar ends (c-SBV-1 at 64.5): a rate part and two limit
+/// watches, the second the watch on the cost of `ability` again; its kept
+/// two go 0.0001 s later.
+///
+/// PROVISIONAL: what the first watch is and when it goes is not read.
+pub(super) fn avatar_ended(state: &mut super::State, h: u32, ability: i32) {
+    let tick = state.table.now;
+    state.table.take(tick, "Avatar end: rate part");
+    state.table.take(tick, "Avatar end: limit watch");
+    let watch = state.table.take(tick, "unit state: limit watch");
+    let cost = state
+        .data
+        .abilities
+        .get(&ability)
+        .and_then(|d| d.per_level.first())
+        .map_or(0, |l| l.cost);
+    let mana = state
+        .unit(Some(h))
+        .map_or(0.0, |u| f32::from_bits(u.mana.value()));
+    let kept = entries(state, h).map(|e| {
+        e.mana_watches.push((cost, watch, mana >= cost as f32));
+        std::mem::take(&mut e.avatar)
+    });
+    if mana < cost as f32 {
+        watch_scheduled(state, h, watch);
+    }
+    for o in kept.unwrap_or_default() {
+        state.table.defer(o, "Avatar: end");
+    }
+}
+
+/// An Earthquake's area acts the first time (c-SBW-1 at 3.8, hub #10): its
+/// five objects, kept to its last action.
+pub(super) fn quake_area(state: &mut super::State) -> Vec<u32> {
+    let tick = state.table.now;
+    state.table.take_n(tick, 5, "Earthquake: area")
+}
+
+/// Unit `h` comes into an Earthquake: walking, its walk is made again at the
+/// slowed speed, then its object, kept while it stays (c-SBW-1 at 3.8 and
+/// 4.8). It goes with the unit at its death.
+pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
+    let tick = state.table.now;
+    let walking = entries(state, h).is_some_and(|e| !e.walk.is_empty());
+    if walking {
+        walk_made(state, h);
+        super::movement::slowed_now(state, h);
+    }
+    let o = state.table.take(tick, "Earthquake: unit");
+    if let Some(e) = entries(state, h) {
+        e.death.push(o);
+    }
+    o
+}
+
+/// Unit `h` left an Earthquake: its object goes (c-SBW-1: 1215 at 10.8).
+pub(super) fn quake_left(state: &mut super::State, h: u32, o: u32) {
+    if let Some(e) = entries(state, h) {
+        e.death.retain(|&d| d != o);
+    }
+    state.table.defer(o, "Earthquake: unit");
+}
+
+/// An Earthquake's last action (c-SBW-1 at 27.8): its objects go, the
+/// first, the fourth, the fifth, the third, the second, then its units'.
+pub(super) fn quake_ended(state: &mut super::State, objects: &[u32], inside: &[(u32, u32)]) {
+    for k in [0, 3, 4, 2, 1] {
+        if let Some(&o) = objects.get(k) {
+            state.table.defer(o, "Earthquake: area");
+        }
+    }
+    for &(h, o) in inside {
+        quake_left(state, h, o);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

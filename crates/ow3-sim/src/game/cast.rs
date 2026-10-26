@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 21] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 25] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -65,6 +65,10 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 21] = [
     ("fanofknives", *b"AEfk", 852_526, Aim::Nothing),
     ("carrionswarm", *b"AUcs", 852_218, Aim::Point),
     ("shadowstrike", *b"AEsh", 852_527, Aim::Enemy),
+    ("earthquake", *b"AOeq", 852_121, Aim::Point),
+    ("whirlwind", *b"AOww", 852_128, Aim::Nothing),
+    ("avatar", *b"AHav", 852_086, Aim::Nothing),
+    ("resurrection", *b"AHre", 852_094, Aim::Nothing),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -623,6 +627,11 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
             .map_or(c.ability, |a| a.code)
             == i32::from_be_bytes(*b"AEfk")
     });
+    // Avatar too, and its order ends with the effect (c-SBV-1: 4.499912).
+    let avatar = u
+        .casting
+        .is_some_and(|c| base_code(state, c.ability) == i32::from_be_bytes(*b"AHav"));
+    let knives = knives || avatar;
     let point = if knives { 0 } else { point };
     // A cast point between ticks lands in the tick that holds it (SPEC-0041:
     // the death knight's 0.452, 90.4 ticks, at `o + 91`).
@@ -650,6 +659,12 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
             .or_else(|| {
                 (&base.to_be_bytes() == b"AHfs")
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
+            })
+            .or_else(|| avatar.then_some(0))
+            // An Earthquake's channel lasts Dur from its effect (c-SBW-1: 25 s).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AOeq")
+                    .then(|| super::attack::ticks(numbers(state, c.ability, c.level).duration))
             })
             // An Impale's at its wave's time (DataB) + 0.1 after its effect
             // (c-SBJ-1: 0.4 s, 7.299809).
@@ -1184,12 +1199,37 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         for h in ending {
             super::table::wind_walk_ended(s, h);
         }
+        // Avatars whose time is up end, in the tick of their queue time.
+        let next = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+        let avatars: Vec<(u32, [u32; 3])> = s
+            .units
+            .iter()
+            .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.avatar).map(|a| (h, a)))
+            .filter(|(_, a)| f32::from_bits(a[0]) < next)
+            .collect();
+        for (h, [end, _, life]) in avatars {
+            s.table_at(end);
+            if let Some((ability, ..)) = ability_for(s, h, "avatar") {
+                super::table::avatar_ended(s, h, ability);
+            }
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                u.avatar = None;
+                u.life.max = sub(u.life.max, life);
+                let now = u.life.value();
+                if f32::from_bits(now) > f32::from_bits(u.life.max) {
+                    let max = u.life.max;
+                    u.life.set(max);
+                }
+            }
+            s.table.now = tick;
+        }
         let casting: Vec<(u32, Casting)> = s
             .units
             .iter()
             .filter_map(|&h| s.unit(Some(h)).and_then(|u| u.casting).map(|c| (h, c)))
             .collect();
         bounces(s, &mut deferred);
+        quakes(s);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1613,6 +1653,46 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             let at = s.timers.time();
             super::table::divine_shield_effect(s, h, at, seconds(hero));
             movement::target_died(s, h);
+        }
+        // Avatar (c-SBV-1): DataB more life, DataC more damage for Dur.
+        // PROVISIONAL: the armor (DataA) and the spell immunity are not
+        // done.
+        b"AHav" => {
+            super::table::avatar_effect(s, h, c.ability, c.effect_q);
+            end_hold(s, h);
+            let end = add(c.effect_q, seconds(true));
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                u.life.max = add(u.life.max, n.data[1]);
+                let life = add(u.life.value(), n.data[1]);
+                u.life.set(life);
+                u.avatar = Some([end, n.data[2], n.data[1]]);
+            }
+        }
+        // Resurrection: its effect event, then the dead it brings back.
+        b"AHre" => {
+            super::table::spell_effect_event(s, h);
+            // Its cost's watch before the dead it brings back (c-SBV-1: 1028,
+            // the old 1057 freed after the effect's).
+            super::table::mana_watches(s, h, n.cost);
+            resurrection(s, h, &n);
+        }
+        // Earthquake: its spell effect event, then its area acts from DataA
+        // after the effect, every 1.0 s, to DataA before the channel's end
+        // (c-SBW-1 at 3.3, hub #10).
+        b"AOeq" => {
+            super::table::spell_effect_event(s, h);
+            if let Some(point) = c.point {
+                s.quakes.push(Quake {
+                    caster: h,
+                    point,
+                    area: n.area,
+                    slow: n.data[2],
+                    next: add(c.effect_q, n.data[0]),
+                    stop: sub(add(c.effect_q, n.duration), n.data[0]),
+                    objects: Vec::new(),
+                    inside: Vec::new(),
+                });
+            }
         }
         // The creep Shockwave (SPEC-0047).
         b"AOsh" => {
@@ -3031,4 +3111,158 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
     all.retain(|b| b.left > 0);
     s.bounces.extend(all);
     s.bounces.extend(more);
+}
+
+/// A Resurrection of `h` (c-SBV-1 at 3.5): up to DataA dead units of its
+/// owner, not heroes nor buildings, within Area of it, the nearest first,
+/// stand up again where they lie with full life and no order.
+///
+/// PROVISIONAL: the order of the units is read from one case (all three
+/// footmen nearest first); a tie, other players' dead and a decayed corpse
+/// are not read.
+fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel) {
+    let Some(u) = s.unit(Some(h)) else {
+        return;
+    };
+    let (owner, x, y) = (u.owner, f32::from_bits(u.x), f32::from_bits(u.y));
+    let area = f32::from_bits(n.area);
+    let mut dead: Vec<(f32, u32)> = s
+        .units
+        .iter()
+        .filter_map(|&o| {
+            let Some(Object::Unit(t)) = s.objects.get(&o) else {
+                return None;
+            };
+            let d = s.data.units.get(&t.type_id)?;
+            let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+            let far = dx * dx + dy * dy;
+            (!t.alive
+                && t.owner == owner
+                && !is_hero(t.type_id)
+                && !d.building
+                && t.entries.dead_corpse.is_some()
+                && far <= area * area)
+                .then_some((far, o))
+        })
+        .collect();
+    dead.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let count = f32::from_bits(n.data[0]) as usize;
+    for (_, t) in dead.into_iter().take(count) {
+        super::table::resurrected(s, t);
+        let Some(Object::Unit(u)) = s.objects.get_mut(&t) else {
+            continue;
+        };
+        u.alive = true;
+        u.died_at = None;
+        u.attack = None;
+        u.movement = None;
+        u.holding = false;
+        let max = u.life.max;
+        u.life.set(max);
+        let type_id = u.type_id;
+        super::widgets::type_record(s, owner, type_id, |q| q[4] += 1);
+    }
+}
+
+/// An Earthquake's area (c-SBW-1, hub #10): its caster and point, Area,
+/// the slow (DataC), the queue time of its next action and of its last,
+/// its own five objects once it acts, and the units in it with their
+/// objects.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Quake {
+    caster: u32,
+    point: [u32; 2],
+    area: u32,
+    slow: u32,
+    next: u32,
+    stop: u32,
+    objects: Vec<u32>,
+    inside: Vec<(u32, u32)>,
+}
+
+/// How often an Earthquake's area acts after its first action.
+const QUAKE_EVERY: f32 = 1.0;
+
+/// The Earthquakes acting in this tick: each takes every living ground
+/// unit in its area, of either side, in the grid order of calls: a unit
+/// coming in is slowed by DataC, its walk made again at the new speed,
+/// and takes an object; a unit gone out is no longer slowed and its object
+/// goes. At its last action's time the area's objects and its units' go
+/// (c-SBW-1: 3.8 to 27.8, hub #10).
+///
+/// PROVISIONAL: a unit counts within Area plus its collision; its speed
+/// back at its leaving is taken as at a slow's end; the damage to
+/// buildings (DataB) is not done.
+fn quakes(s: &mut State) {
+    let tick = s.ticks;
+    let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+    let mut quakes = std::mem::take(&mut s.quakes);
+    quakes.retain_mut(|q| {
+        // Units dead since its last action took their objects with them.
+        q.inside
+            .retain(|&(o, _)| s.unit(Some(o)).is_some_and(|u| u.alive));
+        while f32::from_bits(q.next) < next_clock {
+            s.table_at(q.next);
+            if f32::from_bits(q.next) > f32::from_bits(q.stop) {
+                super::table::quake_ended(s, &q.objects, &q.inside);
+                for &(o, _) in &q.inside {
+                    if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
+                        u.move_slow = None;
+                    }
+                }
+                s.table.now = tick;
+                return false;
+            }
+            if q.objects.is_empty() {
+                q.objects = super::table::quake_area(s);
+            }
+            let area = f32::from_bits(q.area);
+            let (px, py) = (f32::from_bits(q.point[0]), f32::from_bits(q.point[1]));
+            let now: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                        return false;
+                    };
+                    let Some(t) = s.data.units.get(&u.type_id) else {
+                        return false;
+                    };
+                    let (dx, dy) = (f32::from_bits(u.x) - px, f32::from_bits(u.y) - py);
+                    let reach = area + f32::from_bits(t.collision);
+                    u.alive && !u.hidden && !t.flying && dx * dx + dy * dy <= reach * reach
+                })
+                .collect();
+            let gone: Vec<(u32, u32)> = q
+                .inside
+                .iter()
+                .copied()
+                .filter(|(o, _)| !now.contains(o))
+                .collect();
+            for (o, obj) in gone {
+                super::table::quake_left(s, o, obj);
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
+                    u.move_slow = None;
+                }
+                q.inside.retain(|i| i.0 != o);
+            }
+            let fresh: Vec<u32> = now
+                .into_iter()
+                .filter(|o| q.inside.iter().all(|i| i.0 != *o))
+                .collect();
+            for o in movement::call_order(s, fresh) {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
+                    u.move_slow = Some(q.slow);
+                }
+                let obj = super::table::quake_entered(s, o);
+                q.inside.push((o, obj));
+            }
+            q.next = add(q.next, QUAKE_EVERY.to_bits());
+        }
+        s.table.now = tick;
+        let _ = q.caster;
+        true
+    });
+    s.quakes.extend(quakes);
 }

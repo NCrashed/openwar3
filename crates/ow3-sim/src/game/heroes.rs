@@ -296,6 +296,10 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     let aura = [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&data.code.to_be_bytes());
     let count = if aura {
         3 + usize::from([*b"AHab", *b"AUau"].contains(&data.code.to_be_bytes()))
+    // Avatar two more, kept (c-SBV-1: the Mountain King, 1054 and 1055).
+    // PROVISIONAL: what they are is not read.
+    } else if data.code == i32::from_be_bytes(*b"AHav") {
+        4
     } else if cooled {
         2
     } else {

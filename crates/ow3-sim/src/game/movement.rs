@@ -2269,9 +2269,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             else {
                 return Ok(Some(Value::Boolean(false)));
             };
+            // (Whether it had an order before, for the order's record.)
+            let idle = state.borrow().unit(Some(h)).is_some_and(|u| {
+                !u.holding && u.movement.is_none() && u.casting.is_none() && u.attack.is_none()
+            });
             let done = target_order(&mut state.borrow_mut(), h, name, target);
             if done && name == "attack" {
-                super::table::attack_target_ordered(&mut state.borrow_mut(), h);
+                super::table::attack_target_ordered(&mut state.borrow_mut(), h, idle);
             }
             Ok(Some(Value::Boolean(done)))
         }

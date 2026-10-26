@@ -412,6 +412,7 @@ pub(super) fn create_unit(
         aura_learned: None,
         invulnerable_until: None,
         wind_walk: None,
+        avatar: None,
         illusion: None,
         stunner: None,
         zero_hit: None,

@@ -298,6 +298,9 @@ pub struct Unit {
     invulnerable_until: Option<u64>,
     /// Its Wind Walk (SPEC-0040).
     wind_walk: Option<cast::WindWalk>,
+    /// An Avatar on it: the queue time of its end, its attack bonus and its
+    /// life bonus (c-SBV-1).
+    avatar: Option<[u32; 3]>,
     /// Set for an illusion (SPEC-0040, Mirror Image).
     illusion: Option<cast::Illusion>,
     /// Who stunned it last, and the tick of the zero hit that follows the
@@ -985,6 +988,8 @@ pub struct State {
     flame_second: Vec<(u32, u32, u32)>,
     /// Chain Lightnings and Healing Waves on their way (SPEC-0040).
     bounces: Vec<cast::Bounce>,
+    /// The Earthquakes acting (c-SBW-1).
+    quakes: Vec<cast::Quake>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1201,6 +1206,7 @@ impl State {
             impale_ends: Vec::new(),
             flame_second: Vec::new(),
             bounces: Vec::new(),
+            quakes: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,

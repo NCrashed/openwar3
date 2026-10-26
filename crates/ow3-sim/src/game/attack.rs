@@ -356,6 +356,10 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                     // of Attack +6, AIat; the Archmage's kill of the kobold at
                     // 24.25693).
                     let primary = ow3_math::add(primary, item_attack_bonus(s, h));
+                    let primary = ow3_math::add(
+                        primary,
+                        s.unit(Some(h)).and_then(|u| u.avatar).map_or(0, |a| a[1]),
+                    );
                     // A thunder clap slows the attacks (SPEC-0037).
                     let cooldown = slowed(s, h, hero_cooldown(s, h, weapon.cooldown));
                     let backswing = slowed(s, h, hero_cooldown(s, h, weapon.backswing));

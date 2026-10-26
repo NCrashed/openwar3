@@ -6185,8 +6185,11 @@ pub(super) fn next_cooldown_expiry(state: &State) -> Option<u32> {
         .units
         .iter()
         .filter_map(|&h| {
+            // (Not while it casts: a cast stops its attack, c-SBY-1: the Keeper
+            // channelling Tranquility from 9.5 s.)
             let u = state.unit(Some(h)).filter(|u| {
                 u.alive
+                    && u.casting.is_none()
                     && (u.attack.is_none()
                         || u.attack.as_ref().is_some_and(|a| a.renew_at.is_some()))
             })?;
@@ -6221,8 +6224,11 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
         .units
         .iter()
         .filter_map(|&h| {
+            // (Not while it casts: a cast stops its attack, c-SBY-1: the Keeper
+            // channelling Tranquility from 9.5 s.)
             let u = state.unit(Some(h)).filter(|u| {
                 u.alive
+                    && u.casting.is_none()
                     && (u.attack.is_none()
                         || u.attack.as_ref().is_some_and(|a| a.renew_at.is_some()))
             })?;

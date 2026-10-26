@@ -4038,6 +4038,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
         return;
     };
+    super::cast::stream_target_died(state, h);
     // A stunned unit's order comes back first; that object goes 2 ticks
     // on (c-SAK-1: gnoll 13 at 3509, freed at 3511).
     // Also one whose stun came with the hit that kills it (c-SAK-1: gnoll
@@ -4900,12 +4901,32 @@ pub(super) fn decay_area(state: &mut super::State, end: u32) -> u32 {
     objects[7]
 }
 
-/// A Starfall's star streams start (c-SBY-1: 1198 .. 1201 at 3.509961, hub
-/// #11): an object each, kept.
-/// PROVISIONAL: when they go is not read (past the replay's end).
-pub(super) fn star_streams(state: &mut super::State, n: usize) {
+/// A Tranquility heals a unit (c-SBY-1: the Priestess's 1386, 1387, 1388 at
+/// 10.209288, hub #11): its heal's object, a limit watch on its life and
+/// a rate part, all kept to the channel's end.
+pub(super) fn tranquility_heal(state: &mut super::State) -> (u32, u32, u32) {
     let tick = state.table.now;
-    state.table.take_n(tick, n, "Starfall: stream");
+    let object = state.table.take(tick, "Tranquility: heal");
+    let watch = state.table.take(tick, "unit state: limit watch");
+    let rate = state.table.take(tick, "unit state: rate part");
+    (object, watch, rate)
+}
+
+/// A unit's life reached its maximum: its limit watch `old` is made anew
+/// for the other direction, the old freed 0.0001 s later (c-SBY-1: 1487
+/// for 1387 at 38.425983, hub #11). The new watch.
+pub(super) fn life_watch_renewed(state: &mut super::State, old: u32) -> u32 {
+    let tick = state.table.now;
+    let new = state.table.take(tick, "unit state: limit watch");
+    state.table.defer(old, "unit state: limit watch");
+    new
+}
+
+/// A Starfall's star streams start (c-SBY-1: 1198 .. 1201 at 3.509961, hub
+/// #11): an object each, freed at its target's death (`cast::stream_target_died`).
+pub(super) fn star_streams(state: &mut super::State, n: usize) -> Vec<u32> {
+    let tick = state.table.now;
+    state.table.take_n(tick, n, "Starfall: stream")
 }
 
 /// A Death and Decay's step 0.01 s after its effect: an object, freed at

@@ -665,6 +665,11 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
             })
             .or_else(|| avatar.then_some(0))
+            // A Tranquility's Dur (c-SBY-1: 30 s, hub #11).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AEtq")
+                    .then(|| super::attack::ticks(numbers(state, c.ability, c.level).duration))
+            })
             // A Starfall's Dur (c-SBY-1: 45 s, hub #11).
             .or_else(|| {
                 (&base.to_be_bytes() == b"AEsf")
@@ -1268,6 +1273,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         quakes(s);
         decays(s, &mut deferred);
         starfalls(s, &mut deferred);
+        tranquilities(s);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1524,6 +1530,21 @@ fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
     }
     // A Death and Decay's area ends with its channel, its last object first
     // (c-SBX-1: 1287 at 39.996334, then the order's).
+    // A Tranquility's heals end with its channel, the last unit's first:
+    // its rate part, its watch, its heal; then the area's last object
+    // (c-SBY-1 at 40.196224, hub #11).
+    if let Some(k) = s.tranquilities.iter().position(|d| d.caster == h) {
+        let d = s.tranquilities.remove(k);
+        for healed in d.healed.iter().rev() {
+            if let Some(Object::Unit(u)) = s.objects.get_mut(&healed.unit) {
+                u.life.change_rate(0, d.heal);
+            }
+            s.table.defer(healed.rate, "unit state: rate part");
+            s.table.defer(healed.watch, "unit state: limit watch");
+            s.table.defer(healed.object, "Tranquility: heal");
+        }
+        s.table.defer(d.last, "Tranquility: area");
+    }
     if let Some(k) = s.starfalls.iter().position(|d| d.caster == h) {
         let d = s.starfalls.remove(k);
         s.table.defer(d.last, "Starfall: area");
@@ -1766,6 +1787,21 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     spawn: add(c.effect_q, delay),
                 });
             }
+        }
+        // Tranquility: its effect event and its area's objects, as Death and
+        // Decay's; its heals start 0.01 s on (c-SBY-1 at 10.2, hub #11).
+        b"AEtq" => {
+            super::table::spell_effect_event(s, h);
+            let end = add(add(c.effect_q, n.duration), 0.1f32.to_bits());
+            let last = super::table::decay_area(s, end);
+            s.tranquilities.push(Tranquility {
+                caster: h,
+                area: n.area,
+                heal: n.data[0],
+                step: add(c.effect_q, 0.01f32.to_bits()),
+                last,
+                healed: Vec::new(),
+            });
         }
         // Starfall: its effect event and its area's objects, as Death and
         // Decay's; its star streams start 0.01 s on, its channel ends Dur
@@ -3552,6 +3588,127 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
     s.decays.extend(decays);
 }
 
+/// A Tranquility's area (c-SBY-1, hub #11): its caster, Area, the heal
+/// per second (DataA), the queue time of its step 0.01 s after the effect
+/// (0 once taken), its last object and the units it heals.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tranquility {
+    caster: u32,
+    area: u32,
+    heal: u32,
+    step: u32,
+    last: u32,
+    healed: Vec<Healed>,
+}
+
+/// A unit a Tranquility heals: its heal's object, its life's limit watch
+/// (renewed once the life is full) and its rate part.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Healed {
+    unit: u32,
+    object: u32,
+    watch: u32,
+    rate: u32,
+    full: bool,
+}
+
+/// The Tranquilities acting in this tick (c-SBY-1, hub #11): at the step
+/// 0.01 s after the effect each friendly unit within Area of the caster
+/// gets its heal, DataA per second added to its life rate (SPEC-0013), with
+/// a heal object, a limit watch on its life and a rate part; the watch is
+/// made anew when the life reaches its maximum (the Priestess at
+/// 38.425983, the Keeper at 40.030567).
+///
+/// PROVISIONAL: the units in Area are taken as for Death and Decay (the
+/// call grid's cells); units entering or leaving the area later are not
+/// read; the heal's object of the second pool is not made.
+fn tranquilities(s: &mut State) {
+    let tick = s.ticks;
+    let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+    let mut list = std::mem::take(&mut s.tranquilities);
+    for d in &mut list {
+        if d.step != 0 && f32::from_bits(d.step) < next_clock {
+            s.table_at(d.step);
+            let caster = d.caster;
+            let at = s.unit(Some(caster)).map(|u| [u.x, u.y]);
+            let area = f32::from_bits(d.area);
+            let friends: Vec<u32> = match at {
+                Some([x, y]) => {
+                    let [x0, y0] = [s.world_bounds[0], s.world_bounds[1]].map(f32::from_bits);
+                    let (px, py) = (f32::from_bits(x) - x0, f32::from_bits(y) - y0);
+                    let cell = |v: f32| (v / movement::CALL_CELL).floor() as i64;
+                    let (cx, cy) = (
+                        cell(px - area)..=cell(px + area),
+                        cell(py - area)..=cell(py + area),
+                    );
+                    let inside: Vec<u32> = s
+                        .units
+                        .iter()
+                        .copied()
+                        .filter(|&o| {
+                            let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                                return false;
+                            };
+                            u.alive
+                                && !u.hidden
+                                && u.footprint.is_none()
+                                && !movement::hostile(s, caster, o)
+                                && u.call_cells
+                                    .iter()
+                                    .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
+                        })
+                        .collect();
+                    movement::call_order(s, inside)
+                }
+                None => Vec::new(),
+            };
+            for unit in friends {
+                let (object, watch, rate) = super::table::tranquility_heal(s);
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&unit) {
+                    u.life.change_rate(d.heal, 0);
+                }
+                d.healed.push(Healed {
+                    unit,
+                    object,
+                    watch,
+                    rate,
+                    full: false,
+                });
+            }
+            d.step = 0;
+            s.table.now = tick;
+        }
+        for healed in &mut d.healed {
+            let full = s
+                .unit(Some(healed.unit))
+                .is_some_and(|u| u.alive && u.life.value() == u.life.max);
+            if full && !healed.full {
+                healed.watch = super::table::life_watch_renewed(s, healed.watch);
+                healed.full = true;
+            }
+        }
+    }
+    s.tranquilities.extend(list);
+}
+
+/// Unit `h` died: the objects of the Starfall streams at it go first among
+/// its death's (c-SBY-1: 1199 with kobold 5 at 11.963993, hub #11).
+pub(super) fn stream_target_died(s: &mut State, h: u32) {
+    let mut freed = Vec::new();
+    for d in &mut s.starfalls {
+        for st in &mut d.streams {
+            if st.target == h
+                && let Some(o) = st.object.take()
+            {
+                freed.push(o);
+            }
+        }
+    }
+    for o in freed {
+        s.table.defer(o, "Starfall: stream");
+    }
+}
+
 /// Game generator 18, which draws a Starfall's star delays (hub #11).
 const STAR_GENERATOR: usize = 18;
 
@@ -3576,6 +3733,9 @@ pub struct Starfall {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Stream {
     target: u32,
+    /// Its object, freed with its target's death (c-SBY-1: 1199 with
+    /// kobold 5 at 11.963993).
+    object: Option<u32>,
     next: u32,
     phase: StreamPhase,
 }
@@ -3638,11 +3798,12 @@ fn starfalls(s: &mut State, deferred: &mut Vec<Deferred>) {
                 }
                 None => Vec::new(),
             };
-            super::table::star_streams(s, targets.len());
-            for target in targets {
+            let objects = super::table::star_streams(s, targets.len());
+            for (target, object) in targets.into_iter().zip(objects) {
                 let x = s.game_random[STAR_GENERATOR].fraction();
                 d.streams.push(Stream {
                     target,
+                    object: Some(object),
                     next: add(d.step, x),
                     phase: StreamPhase::First,
                 });

@@ -49,9 +49,6 @@ pub const ORDER_SMART: i32 = 851_971;
 pub const ORDER_ATTACK: i32 = 851_983;
 pub const ORDER_MOVE: i32 = 851_986;
 pub const ORDER_PATROL: i32 = 851_991;
-/// A unit acts on an order by a script no earlier than this many ticks
-/// after it (SPEC-0019, "When it starts").
-const ORDER_FIRST_ACT: u64 = 2;
 /// Ticks between updates of a unit.
 const UPDATE: u64 = 6;
 /// The ticks of the update cycle, the same for all units, are those equal
@@ -1725,31 +1722,27 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
             );
-            // A reaction timer already running (an acquisition's) is started again
-            // with the order's delay, and the order is carried out at its end
+            // The order starts the reaction timer, on the timer queue from
+            // the order, and is carried out at its end: a chase walk is made
+            // there (c-SBL-1: the hero at 8.5, its walk at 8.675406). A
+            // timer already running (an acquisition's) is started again
             // (c-SBL-1: the Mountain King at 2.0, its walk at 2.062619).
             let timer = state
                 .unit(Some(h))
                 .and_then(|u| u.movement)
                 .is_some_and(|m| m.reaction_end.is_some());
-            let tick = state.ticks;
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
-                // It acts at its first update at or after the order plus
-                // the delay, not before the order plus 2 ticks; an order
-                // of `main` counts as given in tick 1. It swings one update
-                // later at the earliest (SPEC-0019, "When it starts").
-                let given = tick.max(1);
-                if timer {
-                    let now = state.event_time.unwrap_or_else(|| state.timers.time());
-                    react_until(state, h, add(now, delay));
-                } else {
-                    react(state, h, given, delay, given + ORDER_FIRST_ACT);
-                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-                        && let Some(m) = u.movement.as_mut()
-                    {
-                        m.swing_waits = true;
-                    }
+                let now = state.event_time.unwrap_or_else(|| state.timers.time());
+                react_until(state, h, add(now, delay));
+                // Without a timer running before, it swings one update after
+                // its first update past the end at the earliest (SPEC-0019,
+                // "When it starts").
+                if !timer
+                    && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                    && let Some(m) = u.movement.as_mut()
+                {
+                    m.swing_waits = true;
                 }
             }
             done

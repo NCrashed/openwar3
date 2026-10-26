@@ -191,6 +191,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     ("c-SBY-1.w3g", "Starfall and Tranquility: not matched yet"),
     (
+        "c-SCA-1.w3g",
+        "the turtle test (lure by a building, pull below a cliff): not matched yet",
+    ),
+    (
+        "c-SCB-1.w3g",
+        "the turtle test with a long tree row: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

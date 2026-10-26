@@ -3413,8 +3413,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 } else {
                     let squared_speed = follow::squared_speed(m.velocity);
                     // A walk to a building ends touching it (SPEC-0029).
+                    // So does a walk to help on a building (c-SBZ-1: peasant 5 at the
+                    // barracks, the search ending at its first touch, hub #13).
                     let building = match m.order {
-                        Order::Gather { target } | Order::Return { building: target } => state
+                        Order::Gather { target }
+                        | Order::Return { building: target }
+                        | Order::Resume { building: target } => state
                             .unit(Some(target))
                             .filter(|b| b.footprint.is_some())
                             .map(|_| target),

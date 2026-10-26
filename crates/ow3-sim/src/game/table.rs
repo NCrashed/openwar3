@@ -3897,6 +3897,18 @@ pub(super) fn native_objects(name: &str) -> usize {
 /// PROVISIONAL: an unpause is not read.
 pub(super) fn paused(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    // Its mana watches go after them: a paused unit casts nothing (c-SBL-1: the
+    // ogre lord's Shockwave watch, 1038).
+    let watches = entries(state, h)
+        .map(|e| {
+            let w: Vec<u32> = std::mem::take(&mut e.mana_watches)
+                .into_iter()
+                .map(|(_, o, _)| o)
+                .collect();
+            e.death_late.retain(|o| !w.contains(o));
+            w
+        })
+        .unwrap_or_default();
     let order = state.table.take(tick, "pause: order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
@@ -3909,6 +3921,9 @@ pub(super) fn paused(state: &mut super::State, h: u32) {
         kept.push(order);
         kept.append(&mut e.order);
         e.order = kept;
+    }
+    for o in watches {
+        state.table.defer(o, "mana watch");
     }
 }
 

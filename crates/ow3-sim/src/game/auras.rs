@@ -21,7 +21,7 @@ use super::{Object, State};
 use crate::data::is_hero;
 
 /// The auras by their base codes.
-const AURAS: [[u8; 4]; 3] = [*b"AHad", *b"AOae", *b"AUau"];
+const AURAS: [[u8; 4]; 4] = [*b"AHad", *b"AOae", *b"AUau", *b"AOac"];
 /// Ticks between the checks that give the buffs, and between those that
 /// take them away (c-RYR: script ticks 402, 802, 1202, ...).
 const PERIOD: u64 = 100;

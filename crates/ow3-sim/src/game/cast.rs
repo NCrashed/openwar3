@@ -3446,8 +3446,21 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
             if f32::from_bits(d.next) > f32::from_bits(d.end) {
                 break;
             }
+            // The units listed in the cells of the call grid its box covers,
+            // with no distance test (c-SBX-1: the ogre 376 from the point, hit
+            // at 5.234375, hub #12).
+            // PROVISIONAL: read once.
             let area = f32::from_bits(d.area);
-            let (px, py) = (f32::from_bits(d.point[0]), f32::from_bits(d.point[1]));
+            let [x0, y0] = [s.world_bounds[0], s.world_bounds[1]].map(f32::from_bits);
+            let (px, py) = (
+                f32::from_bits(d.point[0]) - x0,
+                f32::from_bits(d.point[1]) - y0,
+            );
+            let cell = |v: f32| (v / movement::CALL_CELL).floor() as i64;
+            let (cx, cy) = (
+                cell(px - area)..=cell(px + area),
+                cell(py - area)..=cell(py + area),
+            );
             let hit: Vec<u32> = s
                 .units
                 .iter()
@@ -3456,12 +3469,12 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
                     let Some(Object::Unit(u)) = s.objects.get(&o) else {
                         return false;
                     };
-                    let (dx, dy) = (f32::from_bits(u.x) - px, f32::from_bits(u.y) - py);
                     u.alive
                         && !u.hidden
-                        && !u.script_invulnerable
                         && !invulnerable(s, o)
-                        && dx * dx + dy * dy <= area * area
+                        && u.call_cells
+                            .iter()
+                            .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
                 })
                 .collect();
             for o in movement::call_order(s, hit) {

@@ -1396,7 +1396,7 @@ pub(super) fn join_fight(state: &mut State, h: u32, target: u32, from: Option<u3
 }
 
 /// The side of a cell of the grid a call for help walks (SPEC-0019).
-const CALL_CELL: f32 = 256.0;
+pub(super) const CALL_CELL: f32 = 256.0;
 
 /// `units` in the order a call for help visits them (SPEC-0019, "Order of
 /// the responders"): by cells of 256 from the map's lower left corner,

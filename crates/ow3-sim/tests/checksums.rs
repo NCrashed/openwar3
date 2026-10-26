@@ -170,8 +170,17 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBU-1.w3g",
-        "the revive place test (the default place by the altar taken): not matched yet",
+        "the revive place test (the default place by the altar taken): every turn \
+         checksum to its end matches with the object table started as the game has it \
+         (tests/objects.rs, revive_place_checksums); this test runs without it",
     ),
+    ("c-SBV-1.w3g", "Avatar and Resurrection: not matched yet"),
+    ("c-SBW-1.w3g", "Bladestorm and Earthquake: not matched yet"),
+    (
+        "c-SBX-1.w3g",
+        "Animate Dead and Death and Decay: not matched yet",
+    ),
+    ("c-SBY-1.w3g", "Starfall and Tranquility: not matched yet"),
     (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \

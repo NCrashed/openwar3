@@ -95,21 +95,30 @@ pub(super) fn cancel_timer(state: &mut State, timer: EngineTimer) {
 /// engine").
 pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     loop {
+        // A revive ends on the world clock (c-SBQ-1, c-SBU-1: its start's
+        // time plus the revive time, to the bit).
         let (clock, due) = {
             let s = state.borrow();
+            let world = f32::from_bits(s.timers.time());
+            let moved = f32::from_bits(s.move_clock);
             (
                 s.move_clock,
-                s.engine_timers.first_key_value().map(|(k, t)| (*k, *t)),
+                s.engine_timers
+                    .iter()
+                    .find(|(k, t)| match t {
+                        EngineTimer::Revive(_) => world >= f32::from_bits(k.0),
+                        _ => moved >= f32::from_bits(k.0),
+                    })
+                    .map(|(k, t)| (*k, *t)),
             )
         };
         let Some((key, timer)) = due else {
             break;
         };
-        if f32::from_bits(clock) < f32::from_bits(key.0) {
-            break;
-        }
         state.borrow_mut().engine_timers.remove(&key);
-        state.borrow_mut().move_clock = key.0;
+        if !matches!(timer, EngineTimer::Revive(_)) {
+            state.borrow_mut().move_clock = key.0;
+        }
         match timer {
             EngineTimer::Construction(h) => super::finish_construction(vm, state, h),
             EngineTimer::Training(h) => end_training(vm, state, h),

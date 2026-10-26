@@ -255,7 +255,7 @@ pub(super) fn create_unit_by_script(
 
 /// Where a new unit of `type_id` at the snapped point `at` stands
 /// (`create_unit_by_script`).
-fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32, u32) {
+pub(super) fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32, u32) {
     use crate::path::{occupied_cells, size_class};
     let Some(t) = state.data.units.get(&type_id).filter(|t| !t.building) else {
         return (at[0], at[1]);
@@ -1951,6 +1951,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 apply(&mut unit, args, &s);
                 if let Some(u) = unit_mut(&mut s, Some(h)) {
                     *u = *unit;
+                }
+                if declaration.starts_with("native SetUnitPosition ") {
+                    super::table::position_set(&mut s);
                 }
                 if moves {
                     super::regions::test_unit(&mut s, h);

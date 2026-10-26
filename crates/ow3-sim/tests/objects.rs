@@ -555,3 +555,20 @@ fn buildings_objects() {
         assert_eq!(first, None, "the object tables part at row {first:?}");
     }
 }
+
+/// `c-SBU-1`: a hero revived twice with its default place by the altar
+/// taken: every turn checksum.
+#[test]
+fn revive_place_checksums() {
+    if let Some(first) = turn_parts("c-SBU-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBU-1`'s object table.
+#[test]
+fn revive_place_objects() {
+    if let Some(first) = compare_objects("c-SBU-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}

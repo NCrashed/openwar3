@@ -2,8 +2,8 @@
 //! order on the dead hero, its cost at once, the hero standing up again by
 //! the altar at the end of its revive time.
 //!
-//! PROVISIONAL: read from one revive at level 1; the place by the altar,
-//! the rule of the revive time and the gold factor are read once.
+//! PROVISIONAL: the revive cost's rounding is read at levels 1 to 3; the
+//! search for a free place when the default one is taken is read once.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,9 +32,11 @@ const LEVEL_FACTOR: f32 = 0.10;
 /// to whole seconds, times its level (c-SBQ-1: 55 x 0.65 = 35.75, revived
 /// 35.000759 s later; c-SBR-1 at level 2: 70 s; hub #4).
 const TIME_FACTOR: f32 = 0.65;
-/// Where the revived hero stands from the altar's centre (c-SBQ-1: the
-/// Paladin at (-1264, 176), the altar at (-1120, 352)).
-const PLACE: [f32; 2] = [-144.0, -176.0];
+/// Where the revived hero stands from the lower left corner of the altar's
+/// footprint: half a cell in from its left edge, half a cell below it
+/// (c-SBQ-1: the Paladin at (-1264, 176), the altar of 10 x 10 cells at
+/// (-1120, 352); hub #7).
+const PLACE: [f32; 2] = [16.0, -16.0];
 
 /// The player states of gold and food used (`PLAYER_STATE_RESOURCE_*`).
 const GOLD: i32 = 1;
@@ -67,7 +69,7 @@ pub(super) fn start(vm: &mut Vm, state: &Rc<RefCell<State>>, altar: u32, hero: u
         *s.setup.player_states.entry((owner, GOLD)).or_default() -= cost;
         *s.setup.player_states.entry((owner, FOOD_USED)).or_default() += food;
         let seconds = (build * TIME_FACTOR).floor() * level.max(1) as f32;
-        let end = add(s.move_clock, seconds.to_bits());
+        let end = add(s.timers.time(), seconds.to_bits());
         // An object freed after the start event, then a rate part and a limit
         // watch kept to the end (c-SBQ-1: 1497, 1498, 1499).
         let tick = s.table.now;
@@ -107,7 +109,7 @@ pub(super) fn finish(vm: &mut Vm, state: &Rc<RefCell<State>>, hero: u32) {
         let tick = s.table.now;
         // A limit watch and four rate parts, as at a unit's making, then
         // its start order's five objects (c-SBQ-1: 1502 .. 1511).
-        s.table.take_n(tick, 5, "revive: unit state");
+        let unit_state = s.table.take_n(tick, 5, "revive: unit state");
         let order = s.table.take_n(tick, 5, "revive: start order");
         for o in kept {
             s.table.defer(o, "revive");
@@ -115,7 +117,7 @@ pub(super) fn finish(vm: &mut Vm, state: &Rc<RefCell<State>>, hero: u32) {
         for &o in order.iter().rev() {
             s.table.defer(o, "revive: start order");
         }
-        let at = s.unit(Some(altar)).map(|a| [a.x, a.y]);
+        let at = place(&s, altar, hero);
         let start_mana = s
             .unit(Some(hero))
             .and_then(|u| s.data.units.get(&u.type_id))
@@ -136,11 +138,14 @@ pub(super) fn finish(vm: &mut Vm, state: &Rc<RefCell<State>>, hero: u32) {
             let max = u.life.max;
             u.life.set(max);
             u.mana.set(start_mana);
-            if let Some([x, y]) = at {
-                u.x = (f32::from_bits(x) + PLACE[0]).to_bits();
-                u.y = (f32::from_bits(y) + PLACE[1]).to_bits();
+            if let Some((x, y)) = at {
+                u.x = x;
+                u.y = y;
             }
             u.entries.dead_listed = None;
+            // Freed at its next death, as its level's parts (c-SBU-1: 1226,
+            // 1227, 1224, 1225, 1223 at 52.749).
+            u.entries.level = [3, 4, 1, 2, 0].map(|k| unit_state[k]).to_vec();
         }
         owner
     };
@@ -184,4 +189,27 @@ fn fire(vm: &mut Vm, state: &Rc<RefCell<State>>, event: i32, owner: i32, hero: u
         }
     }
     super::end_event(state);
+}
+
+/// Where `hero` stands when revived at `altar`: its default place by the
+/// altar's footprint (`PLACE`) or, when a unit stands there, the nearest
+/// free place as a unit made by a script finds it (c-SBU-1: 64 to the east
+/// with a footman on the default place; hub #7).
+///
+/// PROVISIONAL: the search's order is read from one case; another altar
+/// type is not tested.
+fn place(s: &State, altar: u32, hero: u32) -> Option<(u32, u32)> {
+    let a = s.unit(Some(altar))?;
+    let type_id = s.unit(Some(hero))?.type_id;
+    let [w, h] = s
+        .data
+        .units
+        .get(&a.type_id)
+        .and_then(|t| t.path_texture.as_ref())
+        .and_then(|name| s.data.path_textures.get(name))
+        .map_or([10, 10], |t| [t.width, t.height]);
+    let corner = |c: u32, cells: i32| f32::from_bits(c) - cells as f32 * 16.0;
+    let x = (corner(a.x, w) + PLACE[0]).to_bits();
+    let y = (corner(a.y, h) + PLACE[1]).to_bits();
+    Some(super::widgets::off_other_units(s, type_id, [x, y]))
 }

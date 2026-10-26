@@ -4459,6 +4459,25 @@ pub(super) fn paused(state: &mut super::State, h: u32) {
     for &e in parts[5..].iter().rev() {
         state.table.defer(e, "pause: order objects");
     }
+    // A unit not of the creeps with Defend takes one more, kept, as at its
+    // death (c-SBU-1: the footman paused at the map start, 1049).
+    // PROVISIONAL: when it goes is not read.
+    let defends = state
+        .unit(Some(h))
+        .filter(|u| u.owner != super::creeps::CREEPS)
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| {
+            t.abilities.iter().any(|&a| {
+                state
+                    .data
+                    .abilities
+                    .get(&a)
+                    .is_some_and(|d| d.code == i32::from_be_bytes(*b"Adef"))
+            })
+        });
+    if defends {
+        state.table.take(tick, "pause: Defend's order");
+    }
     if let Some(e) = entries(state, h) {
         let mut kept: Vec<u32> = parts[..5].iter().rev().copied().collect();
         kept.push(order);
@@ -4551,6 +4570,24 @@ fn hero_dead(state: &mut super::State, h: u32, queue: &[u32], end: u32) {
         state.table.rest_q.push((later, e));
     }
 }
+/// A unit is put somewhere by `SetUnitPosition`: an object, an order's
+/// record and five order objects, freed 0.0001 s later, the record first,
+/// the five from the last, the object last (c-SBU-1: the revived Paladin
+/// at 51.75, 1010, 906, 844 .. 932).
+///
+/// PROVISIONAL: read once, on a hero standing without an order.
+pub(super) fn position_set(state: &mut super::State) {
+    let tick = state.table.now;
+    let first = state.table.take(tick, "position: order");
+    let record = state.table.take(tick, "order record");
+    let parts = state.table.take_n(tick, 5, "position: order objects");
+    state.table.defer(record, "order record");
+    for &o in parts.iter().rev() {
+        state.table.defer(o, "position: order objects");
+    }
+    state.table.defer(first, "position: order");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5963,7 +5963,7 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 .unit(Some(h))
                 .is_some_and(|u| u.attack_move.is_none() && u.entries.script_attack)
         {
-            let rest = super::table::script_attack_lost(state, h);
+            let rest = super::table::script_attack_lost(state, h, now);
             super::table::attack_ended(state, h, false);
             for o in rest {
                 state.table.defer(o, "attack: order end");

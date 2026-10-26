@@ -284,11 +284,12 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
     let cooled = data.per_level.first().is_some_and(|l| l.cost > 0);
     // An aura takes its ability object, the aura's object and the aura's
     // buff on the hero, and Brilliance a rate part for that buff's mana
-    // regeneration (c-RZJ-1: the Archmage's Brilliance 4, the Paladin's
-    // Devotion 3). PROVISIONAL: a second level is not read.
+    // regeneration, Unholy Aura one for its life's (c-RZJ-1: the Archmage's
+    // Brilliance 4, the Paladin's Devotion 3; c-SBN-1: the Death Knight's
+    // Unholy Aura 4). PROVISIONAL: a second level is not read.
     let aura = [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&data.code.to_be_bytes());
     let count = if aura {
-        3 + usize::from(data.code == i32::from_be_bytes(*b"AHab"))
+        3 + usize::from([*b"AHab", *b"AUau"].contains(&data.code.to_be_bytes()))
     } else if cooled {
         2
     } else {

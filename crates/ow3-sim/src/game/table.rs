@@ -2585,13 +2585,12 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
 /// Unit `h`'s script attack order lost its target: the sixth of its start
 /// objects goes, 0.0001 s later (c-SBL-1: 1275 at kobold 3's death).
 /// Returned, for 0.0001 s later after the attack's end, the rest of a unit
-/// that never swung (c-SBM-1: the footman's at the Far Seer's kill of
-/// 7.144721, 1384, then 1405, 1383 .. 1379, 1377).
-///
-/// PROVISIONAL: "never swung" is read for one unit.
-pub(super) fn script_attack_lost(state: &mut super::State, h: u32) -> Vec<u32> {
+/// not in a backswing at queue time `now` (c-SBM-1: the footman's at the
+/// Far Seer's kill of 7.144721, 1384, then 1405, 1383 .. 1379, 1377;
+/// c-SBL-1: the Mountain King's at the footman's kill of 11.569).
+pub(super) fn script_attack_lost(state: &mut super::State, h: u32, now: u32) -> Vec<u32> {
     let end = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
-    let swinging = end != 0;
+    let swinging = f32::from_bits(end) > f32::from_bits(now);
     let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
     if let Some(o) = first {
         state.table.defer(o, "attack: order start");
@@ -3706,6 +3705,26 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             .unit(Some(h))
             .is_some_and(|u| crate::data::is_hero(u.type_id));
     let hero_order = hero.then(|| state.table.take_n(tick, 3, "hero death order"));
+    // A paused unit, not a hero, with a costed ability, whose watches the
+    // pause freed: a watch on its mana, freed with its own (c-SBL-1,
+    // c-SBN-1: the ogre lord with Shockwave, 1503 at 11.569, 1502 at
+    // 11.689; none for c-RZJ-1's Ogre Lord, not paused, at 37.137806).
+    // PROVISIONAL: what the watch is.
+    let costed = state
+        .unit(Some(h))
+        .filter(|u| u.paused && !crate::data::is_hero(u.type_id))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| {
+            t.abilities.iter().any(|a| {
+                state
+                    .data
+                    .abilities
+                    .get(a)
+                    .and_then(|d| d.per_level.first())
+                    .is_some_and(|l| l.cost > 0)
+            })
+        });
+    let watch = costed.then(|| state.table.take(tick, "death mana watch"));
     let record = state.table.take(tick, "death order record");
     let queue = state.table.take_n(tick, 9, "death order queue");
     // (Defend's order at the death: only a unit with Defend; c-RXR-1:
@@ -3743,6 +3762,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         }
         if let Some(m) = e.death_mana.take() {
             core.insert(core.len().min(1), m);
+        }
+        if let Some(w) = watch {
+            core.insert(core.len().min(1), w);
         }
         // The objects of an order of the game and a stun's buff end go
         // before its stun's order, the rest of its own after the record

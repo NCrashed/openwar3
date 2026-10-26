@@ -767,6 +767,7 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
         }
     }
     super::end_event(state);
+    super::table::death_after(&mut state.borrow_mut());
     // Queues waiting for food go on (SPEC-0027).
     if let Some((owner, _)) = owner {
         super::training::food_freed(vm, state, owner);

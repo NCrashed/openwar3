@@ -66,6 +66,9 @@ pub struct ObjectTable {
     /// The last frees of a death, after the experience it gives
     /// (`death_rest`): deferred ones and those at a queue time.
     rest: Vec<(u32, &'static str)>,
+    /// The death queue object that goes after the death's events
+    /// (`death_after`).
+    rest_after: Vec<u32>,
     /// Units whose order of the game ended at its point in the updates
     /// (`game_order_arrived`).
     pub homes: Vec<u32>,
@@ -120,6 +123,7 @@ impl ObjectTable {
             group_walks: Vec::new(),
             mine_queues: std::collections::BTreeMap::new(),
             rest: Vec::new(),
+            rest_after: Vec::new(),
             rest_q: Vec::new(),
             rest_w: Vec::new(),
             homes: Vec::new(),
@@ -2585,6 +2589,18 @@ pub(super) fn script_attack_lost(state: &mut super::State, h: u32) {
     if let Some(o) = first {
         state.table.defer(o, "attack: order start");
     }
+    // The rest, with the order, at the end of the backswing of the kill: the
+    // order ends there (c-SBL-1: 1274 .. 1270, 1268 at 2.884976).
+    let end = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
+    let rest = entries(state, h)
+        .map(|e| {
+            e.script_attack = false;
+            std::mem::take(&mut e.order)
+        })
+        .unwrap_or_default();
+    for o in rest {
+        state.table.free_at_q(end, o, "attack: order end");
+    }
 }
 
 /// Attacker `h` of unit `dead` is handled at the death: the object of its
@@ -3806,8 +3822,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
         state.table.shock_buffs.retain(|b| b.2 != o);
         state.table.rest.push((o, "Shockwave: hit buff"));
     }
+    // The newest first (c-SBL-1: kobold 3's two, 1253 then 1250).
     let auras = entries(state, h).map(|e| std::mem::take(&mut e.aura_buffs));
-    for (_, b) in auras.unwrap_or_default() {
+    for (_, b) in auras.unwrap_or_default().into_iter().rev() {
         state.table.rest.push((b, "aura buff"));
     }
     for e in late {
@@ -3832,8 +3849,9 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for e in core {
         state.table.rest.push((e, "unit death"));
     }
-    // The fourth from the last after them (c-SAK-1: 2851 at 2753).
-    state.table.rest.push((queue[5], "death order queue"));
+    // The fourth from the last after them (c-SAK-1: 2851 at 2753), and after
+    // the death's events (c-SBL-1: 1295 after 1306, 1305 at 2.354989).
+    state.table.rest_after.push(queue[5]);
     // Of the first 5 queue objects 2 go at the end of the unit's death
     // time (`death` of its type, from the death), 1 2.0 s after that, 2
     // stay (c-SAK-1: 2753 -> 3353, 3353, 3753; footman 7's death time
@@ -3897,6 +3915,13 @@ const CORPSE_DECAY: f32 = 90.0;
 
 /// The last frees of a death (`unit_died`), after the levels its
 /// experience gave.
+/// The death queue objects left for after the death's events.
+pub(super) fn death_after(state: &mut super::State) {
+    for e in std::mem::take(&mut state.table.rest_after) {
+        state.table.defer(e, "death order queue");
+    }
+}
+
 pub(super) fn death_rest(state: &mut super::State) {
     for (e, tag) in std::mem::take(&mut state.table.rest) {
         state.table.defer(e, tag);

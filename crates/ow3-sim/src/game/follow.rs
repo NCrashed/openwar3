@@ -83,8 +83,6 @@ pub struct Follow {
     next: Next,
     /// The first tick at which the unit may search again.
     hold_until: u64,
-    /// The tick of its last search.
-    last_search: u64,
     /// The order point in cells the waypoints were searched to.
     order: [u32; 2],
     /// Updates the unit still stands waiting for another unit.
@@ -640,7 +638,6 @@ fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: b
             target: 0,
             next: Next::Search,
             hold_until: held.unwrap_or(0),
-            last_search: 0,
             wait: 0,
             made: false,
             patience: 0,
@@ -886,7 +883,6 @@ fn decide(
         if shared.budget.used >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }
-        follow.last_search = tick;
         follow.local = found.points;
         follow.partial = !found.reached;
         // A search that met nothing in the way walks straight to the end.
@@ -1086,10 +1082,6 @@ fn decide(
             if walker.flee && !super::movement::in_range(walker.here, walker.order, 0) {
                 follow.local.clear();
                 follow.next = Next::Search;
-                // Not before 10 passes from its last search (c-SBJ-1: searched
-                // at 13.649911, refused at 13.86 .. 13.92, run at 13.949908;
-                // analyst 11-14 23:55).
-                follow.hold_until = follow.hold_until.max(follow.last_search + HOLD);
                 return Steer::Stand(walker.order);
             }
             // A chase at the end of its path: the member step reports it
@@ -1299,15 +1291,17 @@ fn move_kind(state: &State, h: u32) -> u8 {
         "foot" => 0,
         "horse" => 1,
         "fly" => 2,
-        "hover" => 3,
+        // A hovering unit counts as one on foot (c-SBJ-1: the Lich, slower,
+        // made to wait by the Death Knight at 13.619911, the Death Knight
+        // blocked; analyst 11-15 01:20).
+        // PROVISIONAL: the field itself is not read.
+        "hover" => 0,
         "float" => 4,
         "amph" => 5,
         _ => 6,
     }
 }
 
-/// Whether a unit of `class` at `at` (cells) touches `cells`: one of its
-/// cells on one of them or next to it, also diagonally.
 /// The contact test of an attack start (SPEC-0019): a cell round unit `h`'s
 /// footprint holds `target`'s footprint (c-SBJ-1: the ogre swinging at the
 /// Crypt Lord out of reach at 3.209999).
@@ -1333,6 +1327,8 @@ pub(super) fn contact(state: &State, h: u32, target: u32) -> bool {
     )
 }
 
+/// Whether a unit of `class` at `at` (cells) touches `cells`: one of its
+/// cells on one of them or next to it, also diagonally.
 pub(super) fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
     path::occupied_cells(at, class).iter().any(|&(x, y)| {
         cells

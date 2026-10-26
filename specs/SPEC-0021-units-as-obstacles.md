@@ -86,7 +86,7 @@ waiting for another unit at that moment. For a moving unit `B`:
   is open (it was clear in all cases measured);
 - if `B`'s squared speed is at least `A`'s (both as
   `add(mul(vy, vy), mul(vx, vx))` of the velocities at the start of the
-  update, SPEC-0004), or `B`'s movement kind differs from `A`'s (below), then **`A`
+  update, SPEC-0004), or `B`'s owner field differs from `A`'s (below), then **`A`
   waits**: it stands still at this update and the next 4 updates
   (5 updates in all), keeping its path, and then goes on;
 - otherwise (`B` is slower and of the same class) **`B` is made to
@@ -243,19 +243,24 @@ tested: the check is free and nobody waits.
 - A faster unit that catches up with a slower one of the same class
   walking in front makes the slower one stand for 20 updates and walks
   round it (footman behind a peasant).
-- A unit of another movement kind is never made to wait; the unit that
-  detects it waits instead (footman meeting a knight head-on waited
-  twice for 5 updates, the knight walked round it). The kind compared
-  is a 4-bit field of each unit's path state, NOT the size class of
-  SPEC-0020. In `c-RZH-1` it was the same for all the units
+- A unit with another value of the field below is never made to wait;
+  the unit that detects it waits instead (footman meeting a knight
+  head-on waited twice for 5 updates, the knight walked round it). The
+  value compared is a 4-bit field of each unit's path state, NOT the
+  size class of SPEC-0020. In `c-RZH-1` it was the same for all the units
   read, foot units of size classes 1 and 2 alike. At tick 343 of
   `c-RZH-1`, footman 4 (collision 31, class 1) caught up with the
   Mountain King (collision 32, class 2), which walked in front, slower
   by one unit of the last place in squared speed. The field was equal
   for both, so the hero was made to wait 20 updates and footman 4 was
-  blocked. That the field is the unit's movement type (`movetp`:
-  footman, Mountain King and peasant `foot`, knight `horse`) is
-  inferred from these cases, not read.
+  blocked. The field reads as the unit's owning player. In `c-SBJ-1` it
+  was 0 for all four heroes of player 0 (death knight `foot`, lich
+  `hover`, crypt lord, dreadlord) and 0xC for the ogre and all
+  kobolds, which belong to Neutral Hostile (player 12), whatever
+  their size. So `foot` and `hover` are not told apart. That the knight of
+  the head-on case had another owner than the footman was not
+  checked, and no replay yet has units of two players blocking each
+  other.
 - A unit that dies stops occupying its cells in the tick of its death:
   from that moment no check counts it, and its cells leave the grid in
   the next tick (replay `c-RXR-1`, footman 4 killed by a troll's hit in

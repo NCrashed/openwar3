@@ -28,6 +28,9 @@ pub struct ObjectTable {
     /// The next entry and creation number before the first object counted
     /// in the next tick (`Game::table_next`).
     pub boundary: Option<(u32, u32)>,
+    /// Attack orders of units let go from a pause, carried out at that tick
+    /// (`unpause_starts`).
+    pub unpause_starts: Vec<(u64, u32)>,
     /// Objects made by a queue timer (`take_at_q`) and freed later, by key.
     made: std::collections::BTreeMap<u32, u32>,
     /// The next key of such an object.
@@ -115,6 +118,7 @@ impl ObjectTable {
             free,
             next,
             boundary: None,
+            unpause_starts: Vec::new(),
             made: Default::default(),
             made_next: 0,
             live: Default::default(),
@@ -650,6 +654,34 @@ const TOWN_HALL: Making = Making {
     level: &[],
     corpse: &[],
 };
+// An Altar of Kings (c-SBQ-1, 26 in the table and one of the second pool):
+// its Blight Dispel (Abds, 16), an object of its set-up (17) and three
+// path-side objects (18 .. 20), freed together when the dispel has
+// finished (`BUILDING_PARTS`), its start order's two (24, 25, freed 0.0001 s
+// later), the rest kept.
+// PROVISIONAL: the dispel's end is taken as 0.88 s, read once; its step
+// rule (Dur 0.08, DataA 64, Area 768) is not read.
+const ALTAR: Making = Making {
+    count: 26,
+    deferred: &[25, 24],
+    death: &[],
+    level: &[],
+    corpse: &[],
+};
+// A castle (c-SBQ-1, 28 in the table and one of the second pool): as the
+// altar with its larger Blight Dispel (Abdl, its end 1.2 s, as the town
+// hall's) and two more abilities (Amic, Argl, 21 and 22); its start
+// order's two (26, 27). PROVISIONAL: as the altar.
+const CASTLE: Making = Making {
+    count: 28,
+    deferred: &[27, 26],
+    death: &[],
+    level: &[],
+    corpse: &[],
+};
+/// The five parts of an altar or a castle in the order they go
+/// (c-SBQ-1: 19, 20, 18, 17, 16 at 1.880098 and 2.200093).
+const BUILDING_PARTS: [usize; 5] = [19, 20, 18, 17, 16];
 /// The town hall's parts freed 1.2 s after its making, in this order
 /// (c-RXI-1: 855, 856, 854, 853, 852 at 2.200093).
 /// PROVISIONAL: what ends them is not read.
@@ -764,6 +796,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         &GOLD_MINE
     } else if type_id == i32::from_be_bytes(*b"htow") {
         &TOWN_HALL
+    } else if type_id == i32::from_be_bytes(*b"halt") {
+        &ALTAR
+    } else if type_id == i32::from_be_bytes(*b"hcas") {
+        &CASTLE
     } else if own_abilities(state, type_id) == 0 {
         &UNIT_PLAIN
     } else {
@@ -843,6 +879,19 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         let end = ow3_math::add(state.timers.time(), 1.2f32.to_bits());
         for k in HALL_PARTS {
             state.table.free_at_q(end, entries[k], "town hall: parts");
+        }
+    }
+    let building_parts = if std::ptr::eq(making, &ALTAR) {
+        Some(0.88f32)
+    } else if std::ptr::eq(making, &CASTLE) {
+        Some(1.2f32)
+    } else {
+        None
+    };
+    if let Some(after) = building_parts {
+        let end = ow3_math::add(state.timers.time(), after.to_bits());
+        for k in BUILDING_PARTS {
+            state.table.free_at_q(end, entries[k], "building: parts");
         }
     }
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
@@ -1238,6 +1287,21 @@ fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {
 pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
+    // A unit let go from its pause in this tick takes the order alone now;
+    // the rest comes 0.01 s later, without a record (c-SBQ-1: the ogre at
+    // 2.0, its pause's objects and the order's start at 2.009998).
+    // PROVISIONAL: read once.
+    if state
+        .unit(Some(h))
+        .is_some_and(|u| u.unpaused_at == Some(state.ticks))
+    {
+        if let Some(e) = entries(state, h) {
+            e.order = vec![order];
+            e.script_attack = true;
+        }
+        state.table.unpause_starts.push((state.ticks + 2, h));
+        return;
+    }
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
     order_ended(state, h);
@@ -1253,6 +1317,41 @@ pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
         e.order = kept;
         e.reaction.push(parts[6]);
         e.script_attack = true;
+    }
+}
+
+/// The attack orders taken in a pause's last tick are carried out 0.01 s
+/// later: the pause's objects go, then the start's 13 parts as at
+/// `attack_target_ordered` (c-SBQ-1: the ogre at 2.009998).
+pub(super) fn unpause_starts(state: &mut super::State) {
+    let now = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.table.unpause_starts)
+        .into_iter()
+        .partition(|&(t, _)| t <= now);
+    state.table.unpause_starts = later;
+    for (_, h) in due {
+        let tick = state.table.now;
+        let (order, paused) = entries(state, h)
+            .map(|e| {
+                (
+                    std::mem::take(&mut e.order),
+                    std::mem::take(&mut e.game_objects),
+                )
+            })
+            .unwrap_or_default();
+        for o in paused {
+            state.table.defer(o, "pause: order objects");
+        }
+        let parts = state.table.take_n(tick, 13, "attack: order start");
+        for &e in parts[7..].iter().rev() {
+            state.table.defer(e, "attack: order start");
+        }
+        let mut kept: Vec<u32> = parts[..6].iter().rev().copied().collect();
+        kept.extend(order);
+        if let Some(e) = entries(state, h) {
+            e.order = kept;
+            e.reaction.push(parts[6]);
+        }
     }
 }
 

@@ -381,6 +381,7 @@ pub(super) fn create_unit(
         call_until: 0,
         remembered: None,
         paused: false,
+        unpaused_at: None,
         script_invulnerable: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,
@@ -1679,8 +1680,12 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(None);
             };
             let was = s.unit(Some(h)).is_some_and(|u| u.paused);
+            let tick = s.ticks;
             if let Some(u) = unit_mut(&mut s, Some(h)) {
                 u.paused = on;
+                if was && !on {
+                    u.unpaused_at = Some(tick);
+                }
             }
             if on && !was {
                 super::table::paused(&mut s, h);
@@ -2072,6 +2077,12 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 life,
             }));
             state.items.push(h);
+            // Its four objects of the engine's table: the item and three
+            // path-side objects (c-SBQ-1: the claws' and the potion's at the map
+            // start).
+            // PROVISIONAL: kept; a used-up item's go at its use, not built.
+            let tick = state.table.now;
+            state.table.take_n(tick, 4, "item");
             Ok(Some(Value::Handle(Some(h))))
         }
     );

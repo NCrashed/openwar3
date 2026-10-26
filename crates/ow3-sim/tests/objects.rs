@@ -285,6 +285,14 @@ fn levelling_objects() {
     }
 }
 
+/// `c-SBQ-1`: a hero revived at an altar, items picked up and used
+/// (report only).
+#[test]
+fn altar_items_report() {
+    compare_objects("c-SBQ-1");
+    turn_parts("c-SBQ-1");
+}
+
 /// `c-SBP-1`: auras of units and heroes killed while they run: every turn
 /// checksum.
 #[test]

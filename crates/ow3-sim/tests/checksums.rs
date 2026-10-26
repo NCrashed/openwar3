@@ -144,6 +144,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, dead_auras_checksums); this test runs without it",
     ),
     (
+        "c-SBQ-1.w3g",
+        "the altar and items test (a Paladin revived, an Archmage picking up and using \
+         items): in progress (tests/objects.rs, altar_items_report)",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

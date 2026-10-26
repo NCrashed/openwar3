@@ -231,6 +231,8 @@ pub struct Unit {
     remembered: Option<u32>,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
+    /// The tick `PauseUnit` let it act again in.
+    unpaused_at: Option<u64>,
     /// Made invulnerable by `SetUnitInvulnerable`.
     script_invulnerable: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0
@@ -1761,6 +1763,7 @@ impl<'a> Game<'a> {
             if let Some(c) = state.table.clocks.as_mut() {
                 c.push((tick, clock));
             }
+            table::unpause_starts(state);
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
             // PROVISIONAL: past midnight it starts again from the hour less

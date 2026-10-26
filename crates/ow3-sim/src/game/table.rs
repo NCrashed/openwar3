@@ -25,6 +25,9 @@ pub struct ObjectTable {
     free: Vec<u32>,
     /// The next creation number.
     next: u32,
+    /// The next entry and creation number before the first object counted
+    /// in the next tick (`Game::table_next`).
+    pub boundary: Option<(u32, u32)>,
     /// Objects made by a queue timer (`take_at_q`) and freed later, by key.
     made: std::collections::BTreeMap<u32, u32>,
     /// The next key of such an object.
@@ -111,6 +114,7 @@ impl ObjectTable {
             size,
             free,
             next,
+            boundary: None,
             made: Default::default(),
             made_next: 0,
             live: Default::default(),

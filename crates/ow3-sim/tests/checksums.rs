@@ -115,13 +115,15 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBL-1.w3g",
-        "the Human levelling test (Mountain King, footman, creeps): in progress \
-         (tests/objects.rs, levelling_report)",
+        "the Human levelling test (Mountain King, footman, creeps): every turn checksum \
+         to its end matches with the object table started as the game has it \
+         (tests/objects.rs, levelling_checksums); this test runs without it",
     ),
     (
         "c-SBM-1.w3g",
-        "the Orc levelling test (Far Seer, footman, creeps): in progress \
-         (tests/objects.rs, levelling_report)",
+        "the Orc levelling test (Far Seer, footman, creeps): every turn checksum to its \
+         end matches with the object table started as the game has it \
+         (tests/objects.rs, levelling_checksums); this test runs without it",
     ),
     (
         "c-SBN-1.w3g",
@@ -135,8 +137,8 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBP-1.w3g",
-        "the aura test (taskmasters and paladins killed while their auras run): just \
-         recorded, not looked at yet",
+        "the aura test (taskmasters and paladins killed while their auras run): in \
+         progress (tests/objects.rs, levelling_report)",
     ),
     (
         "c-SBH-1.w3g",

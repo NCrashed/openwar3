@@ -254,11 +254,34 @@ fn night_elf_spells_objects() {
     }
 }
 
-/// `c-SBL-1`, `c-SBM-1`, `c-SBN-1`, `c-SBO-1`: heroes levelling from creep
-/// kills, one per race (report only).
+/// `c-SBL-1` and `c-SBM-1`: the Human and Orc heroes levelling from creep
+/// kills: every turn checksum and the object table.
+#[test]
+fn levelling_checksums() {
+    for name in ["c-SBL-1", "c-SBM-1"] {
+        if let Some(first) = turn_parts(name) {
+            assert_eq!(first, None, "{name}: the turns part at turn {first:?}");
+        }
+    }
+}
+
+#[test]
+fn levelling_objects() {
+    for name in ["c-SBL-1", "c-SBM-1"] {
+        if let Some(first) = compare_objects(name) {
+            assert_eq!(
+                first, None,
+                "{name}: the object tables part at row {first:?}"
+            );
+        }
+    }
+}
+
+/// `c-SBN-1`, `c-SBO-1`: the Undead and Night Elf heroes levelling; `c-SBP-1`:
+/// auras of units killed (report only).
 #[test]
 fn levelling_report() {
-    for name in ["c-SBL-1", "c-SBM-1", "c-SBN-1", "c-SBO-1", "c-SBP-1"] {
+    for name in ["c-SBN-1", "c-SBO-1", "c-SBP-1"] {
         eprintln!("{name}");
         compare_objects(name);
         turn_parts(name);

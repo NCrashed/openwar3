@@ -20,7 +20,7 @@ What is checked against the game:
 
 - file formats, the JASS language and VM, the number arithmetic and the
   random numbers match the game bit for bit;
-- 26 of 31 replays of our test maps (one mechanic each) match the game turn
+- 28 of 32 replays of our test maps (one mechanic each) match the game turn
   by turn, including the turn checksum the game uses to detect desyncs;
 - in the three hero tests (Mountain King, Blademaster, Archmage, Paladin,
   footmen, water elementals, creeps), the battle test (footmen, riflemen,

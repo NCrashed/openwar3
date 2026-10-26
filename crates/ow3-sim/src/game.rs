@@ -1282,6 +1282,13 @@ impl State {
             // The 0.0001 s timers of this tick expire before it (c-SAK-1:
             // the frees of 2615 before the bolt's impact at 13.073807).
             self.table.flush(self.ticks);
+            // One past the tick's end comes after the next turn's checksum,
+            // one at its very end before (c-SBL-1: the Storm Bolt's effect at
+            // 4.5999947, after turn 47's; c-SAK-1: its impact at 3.699956, in
+            // turn 38's).
+            if q > next && self.table.boundary.is_none() {
+                self.table.boundary = Some((self.table.next_entry(), self.table.next_creation()));
+            }
             self.ticks + 1
         } else if q < now {
             self.ticks - 1
@@ -1744,6 +1751,7 @@ impl<'a> Game<'a> {
             let state = &mut *state;
             state.ticks += 1;
             state.in_tick = true;
+            state.table.boundary = None;
             let tick = state.ticks;
             state.table.now = tick;
             // The world clock of this tick, for the lists of the game.
@@ -2767,6 +2775,9 @@ impl<'a> Game<'a> {
     /// The next entry and the next creation number of the object table.
     pub fn table_next(&self) -> (u32, u32) {
         let s = self.state.borrow();
+        if let Some(b) = s.table.boundary {
+            return b;
+        }
         (s.table.next_entry(), s.table.next_creation())
     }
 

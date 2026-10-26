@@ -405,6 +405,10 @@ pub struct ObjectData {
     pub items: BTreeMap<i32, u32>,
     pub destructable_armor: BTreeMap<i32, Option<usize>>,
     pub item_armor: BTreeMap<i32, Option<usize>>,
+    /// The charges an item type starts with (`uses`) and its abilities
+    /// (`abilList`).
+    pub item_uses: BTreeMap<i32, i32>,
+    pub item_abilities: BTreeMap<i32, Vec<i32>>,
     /// The pathing of destructable types and the textures that buildings
     /// and destructables use, by lower-case archive path (SPEC-0022).
     pub destructable_paths: BTreeMap<i32, DestructablePath>,
@@ -926,9 +930,24 @@ impl ObjectData {
             melee,
             "Units\\ItemData.slk",
             "itemID",
-            &["HP", "armor"],
+            &["HP", "armor", "uses", "abilList"],
         )? {
             data.items.insert(id, real(values[0].as_ref()));
+            let uses = values[2]
+                .as_deref()
+                .and_then(|v| v.trim().parse::<i32>().ok())
+                .unwrap_or(0);
+            data.item_uses.insert(id, uses);
+            let abilities: Vec<i32> = values[3]
+                .as_deref()
+                .unwrap_or("")
+                .split(',')
+                .filter_map(|a| {
+                    let a = a.trim().trim_matches('"');
+                    (a.len() == 4).then(|| i32::from_be_bytes(a.as_bytes().try_into().unwrap()))
+                })
+                .collect();
+            data.item_abilities.insert(id, abilities);
             data.item_armor
                 .insert(id, armor_type(values[1].as_deref().unwrap_or("")));
         }

@@ -183,6 +183,9 @@ pub enum Order {
     /// Walk into the range of an ability on the order point to cast it
     /// (SPEC-0043).
     CastAt,
+    /// Turn to an item on the ground, walking into its reach first, and
+    /// pick it up (c-SBQ-1).
+    PickUp { item: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -495,7 +498,8 @@ pub(super) fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
     match state.objects.get(&widget)? {
         Object::Unit(u) => Some([u.x, u.y]),
         Object::Destructable(d) => Some([d.x, d.y]),
-        Object::Item(i) => Some([i.x, i.y]),
+        Object::Item(i) if i.carried_by.is_none() => Some([i.x, i.y]),
+        Object::Item(_) => None,
         _ => None,
     }
 }
@@ -1704,6 +1708,10 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
     if name == "smart" && super::harvest::can_deliver(state, h, target) {
         return super::harvest::order_deliver(state, h, target);
     }
+    // A hero on an item on the ground picks it up (c-SBQ-1).
+    if name == "smart" && can_pick_up(state, h, target) {
+        return pick_up_order(state, h, target);
+    }
     if name == "smart" {
         // On an enemy an attack, on anything else following it.
         if hostile(state, h, target) {
@@ -2747,6 +2755,40 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             cast_turn = true;
                             // Turning in place it has no goal (c-RZJ-1: the
                             // Paladin's Holy Light from 7808).
+                            m.aim = [0, 0];
+                        }
+                    } else {
+                        m.target = at;
+                    }
+                }
+                None => m.arrived = true,
+            }
+        }
+        // A pick-up: in reach of the item it turns to it, and picks it up at
+        // the update that starts within 0.2 of it, as an arrival (c-SBQ-1:
+        // the Archmage turning 0.5 an update, the claws picked up at
+        // 3.119970 with 0.1476 left).
+        if let Order::PickUp { item } = m.order
+            && !waiting
+            && !m.arrived
+        {
+            match position_of(state, item) {
+                Some(at) => {
+                    let own = state
+                        .unit(Some(h))
+                        .and_then(|u| state.data.units.get(&u.type_id))
+                        .map_or(0.0, |t| real_of(t.collision));
+                    let reach = (PICKUP_RANGE + own).to_bits();
+                    if in_range(here, relative(at, min), reach) {
+                        let place = relative(m.target, min);
+                        if real_of(heading_and_turn(&m, place).1).abs() < ATTACK_ANGLE {
+                            m.arrived = true;
+                            m.walking = false;
+                            m.velocity = [0, 0];
+                            state.picked_up.push((h, item));
+                        } else {
+                            motion(&mut m, place, false, speed, limit, turn_rate, window);
+                            cast_turn = true;
                             m.aim = [0, 0];
                         }
                     } else {
@@ -6374,6 +6416,33 @@ pub(super) fn attacks(state: &State, h: u32) -> bool {
         .unit(Some(h))
         .and_then(|u| u.movement)
         .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+}
+
+/// PickupItemRange of the game's constants, plus the hero's collision
+/// size (c-SBQ-1: the Archmage, collision 32, picked up the potion 156.2
+/// away without a step).
+/// PROVISIONAL: the collision added is read from that one case.
+const PICKUP_RANGE: f32 = 150.0;
+
+/// Whether hero `h` can pick up `item`: an item on the ground.
+fn can_pick_up(state: &State, h: u32, item: u32) -> bool {
+    matches!(state.objects.get(&item), Some(Object::Item(i)) if i.carried_by.is_none())
+        && state
+            .unit(Some(h))
+            .is_some_and(|u| u.alive && crate::data::is_hero(u.type_id))
+}
+
+/// Hero `h` takes a smart order on `item` (c-SBQ-1 at 2.999973): the order
+/// and its objects, a walk made as for a move.
+fn pick_up_order(state: &mut State, h: u32, item: u32) -> bool {
+    let Some(at) = position_of(state, item) else {
+        return false;
+    };
+    if !order(state, h, Order::PickUp { item }, ORDER_SMART, at) {
+        return false;
+    }
+    super::table::item_ordered(state, h);
+    true
 }
 
 /// How far a unit that cannot attack runs from its attacker (c-SBJ-1).

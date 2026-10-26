@@ -1027,6 +1027,53 @@ pub(super) fn acquired(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
     acquired_with(vm, state, units, true);
 }
 
+/// `EVENT_UNIT_PICKUP_ITEM`.
+const EVENT_UNIT_PICKUP_ITEM: i32 = 86;
+
+/// The heroes that picked up an item at their updates of this tick: the
+/// item goes into the hero's inventory, its ability object comes, then the
+/// hero's pick-up event, the order's end and its walk given up; its
+/// acquisition check comes 0.01 s later (c-SBQ-1: the claws at 3.119970,
+/// the check at 3.129970).
+pub(super) fn items_picked(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let picked = std::mem::take(&mut state.borrow_mut().picked_up);
+    let registrations = state.borrow().events.clone();
+    for (h, item) in picked {
+        {
+            let mut s = state.borrow_mut();
+            if let Some(Object::Item(i)) = s.objects.get_mut(&item) {
+                i.carried_by = Some(h);
+            }
+            super::table::item_picked(&mut s, h, item);
+        }
+        super::begin_event(state);
+        for registration in &registrations {
+            if let Registration::Unit {
+                trigger,
+                unit,
+                event: EVENT_UNIT_PICKUP_ITEM,
+            } = *registration
+                && unit == h
+            {
+                let context = Context {
+                    event_id: Some(EVENT_UNIT_PICKUP_ITEM),
+                    triggering_unit: Some(h),
+                    triggering_widget: Some(h),
+                    ..Context::default()
+                };
+                fire_trigger(vm, state, trigger, context);
+            }
+        }
+        super::end_event(state);
+        let mut s = state.borrow_mut();
+        super::table::item_picked_end(&mut s, h);
+        let at = add(s.update_time, super::movement::AFTER_DEATH);
+        if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+            u.next_acquire = at;
+        }
+    }
+}
+
 /// `acquired` for the units that took a target at a call: their objects
 /// were taken at the call (`table::call_answered`).
 pub(super) fn acquired_at_call(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32]) {
@@ -2075,6 +2122,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 x: real(&args[1]),
                 y: real(&args[2]),
                 life,
+                carried_by: None,
             }));
             state.items.push(h);
             // Its four objects of the engine's table: the item and three

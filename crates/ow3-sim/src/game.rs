@@ -175,6 +175,8 @@ pub struct Item {
     y: u32,
     /// Hit points as a bit pattern (SPEC-0015).
     life: u32,
+    /// The hero carrying it, if one picked it up.
+    carried_by: Option<u32>,
 }
 
 /// PROVISIONAL: a placeholder unit with what the enumerations need, until
@@ -955,6 +957,9 @@ pub struct State {
     /// Units that took a target at a call in this tick, for their
     /// `EVENT_UNIT_ACQUIRED_TARGET` (SPEC-0019).
     call_acquired: Vec<u32>,
+    /// Heroes that picked up an item at their updates of this tick: (hero,
+    /// item), for `widgets::items_picked`.
+    picked_up: Vec<(u32, u32)>,
     /// Creep spells decided in this tick, ordered after its checks
     /// (SPEC-0047): caster, ability, target.
     creep_casts: Vec<(u32, i32, u32, u32)>,
@@ -1175,6 +1180,7 @@ impl State {
             quiet_paths: std::collections::BTreeSet::new(),
             mirrors: Vec::new(),
             call_acquired: Vec::new(),
+            picked_up: Vec::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
             impale_ends: Vec::new(),
@@ -1924,6 +1930,7 @@ impl<'a> Game<'a> {
             cast::effects_before(&mut self.vm, &self.state, at);
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        widgets::items_picked(&mut self.vm, &self.state);
         movement::attack_moves_arrived(&mut self.state.borrow_mut());
         harvest::deliveries(&mut self.state.borrow_mut());
         table::walks_freed(&mut self.state.borrow_mut());

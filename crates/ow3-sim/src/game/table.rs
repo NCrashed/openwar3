@@ -464,6 +464,8 @@ pub struct UnitEntries {
     /// A stun of Impale: at its end a 0.00 hit from the caster comes before
     /// the stun's objects go, and there is no buff end (`impale_ends`).
     pub impale: bool,
+    /// The objects of the abilities of the items it carries (`item_picked`).
+    pub item_abilities: Vec<u32>,
     /// Its order is a script's attack order on a unit (`attack_target_ordered`).
     pub script_attack: bool,
     /// The objects of such an order lost with its target, due at the end of
@@ -1353,6 +1355,70 @@ pub(super) fn unpause_starts(state: &mut super::State) {
             e.reaction.push(parts[6]);
         }
     }
+}
+
+/// Hero `h` takes a smart order on an item (c-SBQ-1 at 2.999973): the order
+/// and its record, the old order ends, ten parts of the order's start, the
+/// last five freed 0.0001 s later, and a walk as for a move. The first five
+/// and the order are kept to the pick-up (`item_picked`).
+pub(super) fn item_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    let parts = state.table.take_n(tick, 10, "item order: start");
+    walk_made_at_order(state, h);
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    for &e in parts[5..].iter().rev() {
+        state.table.defer(e, "item order: start");
+    }
+    let mut kept: Vec<u32> = parts[..5].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+}
+
+/// Hero `h` picks up an item (c-SBQ-1 at 3.119970): the item's ability on
+/// the hero, kept; the last of the order's kept parts goes before the
+/// pick-up event (`item_picked_end` the rest).
+pub(super) fn item_picked(state: &mut super::State, h: u32, item: u32) {
+    let tick = state.table.now;
+    let ability = state.table.take(tick, "item ability");
+    // An item with charges a limit watch on them, kept (c-SBQ-1: the
+    // potion's 1242).
+    // PROVISIONAL: read for one item with one charge.
+    let charged = match state.objects.get(&item) {
+        Some(super::Object::Item(i)) => {
+            state.data.item_uses.get(&i.type_id).is_some_and(|&u| u > 0)
+        }
+        _ => false,
+    };
+    if charged {
+        let watch = state.table.take(tick, "item: limit watch");
+        if let Some(e) = entries(state, h) {
+            e.item_abilities.push(watch);
+        }
+    }
+    let first = entries(state, h).and_then(|e| {
+        e.item_abilities.push(ability);
+        (!e.order.is_empty()).then(|| e.order.remove(0))
+    });
+    if let Some(o) = first {
+        state.table.defer(o, "item order: start");
+    }
+}
+
+/// After the pick-up event: the order's other kept parts and the order go,
+/// and its walk is given up.
+pub(super) fn item_picked_end(state: &mut super::State, h: u32) {
+    let rest = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for o in rest {
+        state.table.defer(o, "item order: start");
+    }
+    walk_dropped(state, h);
 }
 
 /// Worker `h` takes a harvest order on a gold mine (c-RXI-1 at 1.5 s): the

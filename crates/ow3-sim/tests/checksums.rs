@@ -114,6 +114,26 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, heroes_two_checksums); this test runs without it",
     ),
     (
+        "c-SBL-1.w3g",
+        "the Human levelling test (Mountain King, footman, creeps): just recorded, not \
+         looked at yet",
+    ),
+    (
+        "c-SBM-1.w3g",
+        "the Orc levelling test (Far Seer, footman, creeps): just recorded, not looked at \
+         yet",
+    ),
+    (
+        "c-SBN-1.w3g",
+        "the Undead levelling test (Death Knight, footman, creeps): just recorded, not \
+         looked at yet",
+    ),
+    (
+        "c-SBO-1.w3g",
+        "the Night Elf levelling test (Warden, footman, creeps): just recorded, not \
+         looked at yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

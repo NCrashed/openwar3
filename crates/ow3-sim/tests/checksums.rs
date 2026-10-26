@@ -180,6 +180,10 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          the object table started as the game has it (tests/objects.rs, \
          avatar_resurrection_checksums); this test runs without it",
     ),
+    (
+        "c-SBZ-1.w3g",
+        "power building (helpers on a farm and a barracks): not matched yet",
+    ),
     ("c-SBW-1.w3g", "Bladestorm and Earthquake: not matched yet"),
     (
         "c-SBX-1.w3g",

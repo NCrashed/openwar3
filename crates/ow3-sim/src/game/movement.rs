@@ -3215,6 +3215,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 // a new chase walk to the target at once
                                 // (c-SBX-1: raised kobold 5 at 5.339851, hub #12).
                                 m.target = at;
+                                // Its goal is taken at the next update, its renewals
+                                // counted from there (hub #12: 5.369849).
+                                m.goal_taken = true;
+                                m.chase = None;
                                 super::table::walk_made_at_order(state, unit);
                                 state.orders_given += 1;
                                 m.given = state.orders_given;

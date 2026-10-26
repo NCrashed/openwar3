@@ -2626,6 +2626,44 @@ fn wave_step(s: &mut State, b: &mut Bounce) {
     b.at = tick_of(s, next);
 }
 
+/// The next unit bounce `b` jumps to from `[x, y]`: for the lightning the
+/// nearest enemy not hit yet, for the wave the most wounded friend not
+/// healed yet, within its area; not an invulnerable one (c-SBM-1: the
+/// paused creeps).
+fn next_bounce(s: &State, b: &Bounce, [x, y]: [f32; 2]) -> Option<(u32, f32)> {
+    let mut best: Option<(u32, f32)> = None;
+    for &o in &s.units {
+        let Some(t) = s.unit(Some(o)) else {
+            continue;
+        };
+        if b.hit.contains(&o) || o == b.target || !t.alive || t.hidden || invulnerable(s, o) {
+            continue;
+        }
+        let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
+        let d2 = dx * dx + dy * dy;
+        if d2 > b.area * b.area {
+            continue;
+        }
+        let enemy = movement::enemies(s, b.owner, t.owner);
+        let key = if b.kind == BounceKind::Heal {
+            let missing = f32::from_bits(t.life.max) - f32::from_bits(t.life.value());
+            if enemy || missing <= 0.0 {
+                continue;
+            }
+            -missing
+        } else {
+            if !enemy {
+                continue;
+            }
+            d2
+        };
+        if best.is_none_or(|(_, k)| key < k) {
+            best = Some((o, key));
+        }
+    }
+    best
+}
+
 /// The time between two jumps, 0.25 s.
 const BOUNCE_TICKS: u64 = 50;
 
@@ -2915,7 +2953,12 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
             // made before the hit or heal; none at the last (c-SBI-1: the
             // lightning at 627, 677 and 727, not 777; the wave at 1431 and
             // 1481). PROVISIONAL: a jump taken as due while units are left.
-            if (b.kind == BounceKind::Lightning || b.kind == BounceKind::Heal) && b.left > 1 {
+            let from = s
+                .unit(Some(b.target))
+                .map(|u| [f32::from_bits(u.x), f32::from_bits(u.y)]);
+            let next = from.is_some_and(|p| next_bounce(s, b, p).is_some());
+            if (b.kind == BounceKind::Lightning || b.kind == BounceKind::Heal) && b.left > 1 && next
+            {
                 let now = s.table.now;
                 let o = s.table.take(now, "bounce: jump");
                 let q = s.event_time.unwrap_or_else(|| s.timers.time());
@@ -2975,36 +3018,7 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
             b.left = 0;
             continue;
         };
-        let mut best: Option<(u32, f32)> = None;
-        for &o in &s.units {
-            let Some(t) = s.unit(Some(o)) else {
-                continue;
-            };
-            if b.hit.contains(&o) || !t.alive || t.hidden {
-                continue;
-            }
-            let (dx, dy) = (f32::from_bits(t.x) - x, f32::from_bits(t.y) - y);
-            let d2 = dx * dx + dy * dy;
-            if d2 > b.area * b.area {
-                continue;
-            }
-            let enemy = movement::enemies(s, b.owner, t.owner);
-            let key = if b.kind == BounceKind::Heal {
-                let missing = f32::from_bits(t.life.max) - f32::from_bits(t.life.value());
-                if enemy || missing <= 0.0 {
-                    continue;
-                }
-                -missing
-            } else {
-                if !enemy {
-                    continue;
-                }
-                d2
-            };
-            if best.is_none_or(|(_, k)| key < k) {
-                best = Some((o, key));
-            }
-        }
+        let best = next_bounce(s, b, [x, y]);
         match best {
             Some((o, _)) if b.left > 0 => {
                 b.target = o;

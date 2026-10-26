@@ -285,6 +285,14 @@ fn levelling_objects() {
     }
 }
 
+/// `c-SBR-1`: a level-2 hero revived, a salve of three charges used, dropped
+/// and picked up again (report only).
+#[test]
+fn salve_revive_report() {
+    compare_objects("c-SBR-1");
+    turn_parts("c-SBR-1");
+}
+
 /// `c-SBQ-1`: a hero revived at an altar, items picked up and used: every
 /// turn checksum.
 #[test]

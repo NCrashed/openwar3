@@ -26,9 +26,9 @@ const EVENT_PLAYER_HERO_REVIVE_FINISH: i32 = 46;
 /// The share of a hero's gold cost a revive costs at level 1 (c-SBQ-1:
 /// 170 of the Paladin's 425).
 const GOLD_FACTOR: f32 = 0.40;
-/// ReviveTimeFactor: the revive takes the hero's build time times its
-/// level times this, cut to whole seconds (c-SBQ-1: 55 x 0.65 = 35.75,
-/// revived 35.000759 s later).
+/// ReviveTimeFactor: the revive takes the hero's build time times this, cut
+/// to whole seconds, times its level (c-SBQ-1: 55 x 0.65 = 35.75, revived
+/// 35.000759 s later; c-SBR-1 at level 2: 70 s; hub #4).
 const TIME_FACTOR: f32 = 0.65;
 /// Where the revived hero stands from the altar's centre (c-SBQ-1: the
 /// Paladin at (-1264, 176), the altar at (-1120, 352)).
@@ -59,7 +59,7 @@ pub(super) fn start(vm: &mut Vm, state: &Rc<RefCell<State>>, altar: u32, hero: u
         let cost = (gold as f32 * GOLD_FACTOR) as i32;
         *s.setup.player_states.entry((owner, GOLD)).or_default() -= cost;
         *s.setup.player_states.entry((owner, FOOD_USED)).or_default() += food;
-        let seconds = (build * level.max(1) as f32 * TIME_FACTOR).floor();
+        let seconds = (build * TIME_FACTOR).floor() * level.max(1) as f32;
         let end = add(s.move_clock, seconds.to_bits());
         // An object freed after the start event, then a rate part and a limit
         // watch kept to the end (c-SBQ-1: 1497, 1498, 1499).

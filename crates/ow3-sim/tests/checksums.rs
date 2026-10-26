@@ -193,7 +193,12 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          matches with the object table started as the game has it (tests/objects.rs, \
          animate_dead_decay_checksums); this test runs without it",
     ),
-    ("c-SBY-1.w3g", "Starfall and Tranquility: not matched yet"),
+    (
+        "c-SBY-1.w3g",
+        "the Starfall and Tranquility test: every turn checksum to its end matches with \
+         the object table started as the game has it (tests/objects.rs, \
+         starfall_tranquility_checksums); this test runs without it",
+    ),
     (
         "c-SCA-1.w3g",
         "the turtle test (lure by a building, pull below a cliff): not matched yet",

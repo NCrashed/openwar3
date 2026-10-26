@@ -3658,7 +3658,11 @@ fn tranquilities(s: &mut State) {
                                     .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
                         })
                         .collect();
-                    movement::call_order(s, inside)
+                    // As Starfall's, in the reverse of the call grid's order
+                    // (c-SBY-1: the Priestess, then the Keeper, hub #11).
+                    let mut order = movement::call_order(s, inside);
+                    order.reverse();
+                    order
                 }
                 None => Vec::new(),
             };
@@ -3757,8 +3761,9 @@ enum StreamPhase {
 /// after `T - x`.
 ///
 /// PROVISIONAL: the units in Area are taken as for Death and Decay (the
-/// call grid's cells); units entering later get no stream; the star's
-/// object of the second pool is not made.
+/// call grid's cells); units entering later get no stream (not seen; they
+/// would by the same notice); the star's object of the second pool is not
+/// made.
 fn starfalls(s: &mut State, deferred: &mut Vec<Deferred>) {
     let tick = s.ticks;
     let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
@@ -3794,7 +3799,12 @@ fn starfalls(s: &mut State, deferred: &mut Vec<Deferred>) {
                                     .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
                         })
                         .collect();
-                    movement::call_order(s, inside)
+                    // In the reverse of the call grid's order, each told it is in
+                    // the area (c-SBY-1: kobold 3, kobold 5, the ogre, kobold 4,
+                    // hub #11).
+                    let mut order = movement::call_order(s, inside);
+                    order.reverse();
+                    order
                 }
                 None => Vec::new(),
             };
@@ -3811,6 +3821,9 @@ fn starfalls(s: &mut State, deferred: &mut Vec<Deferred>) {
             d.step = 0;
             s.table.now = tick;
         }
+        // A stream ends with its target's death, its object gone: no more
+        // draws (c-SBY-1: turn 131's random part).
+        d.streams.retain(|st| st.object.is_some());
         // The steps due, in the order of their times.
         while let Some(k) = (0..d.streams.len())
             .filter(|&k| {

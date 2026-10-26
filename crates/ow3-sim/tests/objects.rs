@@ -629,7 +629,6 @@ fn animate_dead_decay_objects() {
 /// `c-SBY-1`: the Priestess of the Moon's Starfall and the Keeper of the
 /// Grove's Tranquility at level 6: every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn starfall_tranquility_checksums() {
     if let Some(first) = turn_parts("c-SBY-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
@@ -638,7 +637,6 @@ fn starfall_tranquility_checksums() {
 
 /// `c-SBY-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn starfall_tranquility_objects() {
     if let Some(first) = compare_objects("c-SBY-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

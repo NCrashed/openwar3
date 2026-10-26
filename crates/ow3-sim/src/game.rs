@@ -2733,7 +2733,23 @@ impl<'a> Game<'a> {
                 let r = (((x ^ y).rotate_left(3) ^ z).rotate_left(3) ^ q[6]).rotate_left(3);
                 t = fold(t, r);
             }
-            let h = fold(fold(t, one), one);
+            let mut h = fold(fold(t, one), one);
+            // Its list of dead heroes, in the order they joined it (c-SBP-1:
+            // paladin 12 at the end of its death time, 7.69968).
+            // PROVISIONAL: a revival is not read.
+            let now = state.timers.time();
+            let mut dead: Vec<(u32, [u32; 2])> = state
+                .units
+                .iter()
+                .filter_map(|&o| state.unit(Some(o)))
+                .filter(|u| u.owner == player)
+                .filter_map(|u| Some((u.entries.dead_listed?, u.entries.id?)))
+                .filter(|(q, _)| f32::from_bits(*q) <= f32::from_bits(now))
+                .collect();
+            dead.sort_by(|a, b| f32::from_bits(a.0).total_cmp(&f32::from_bits(b.0)));
+            for (_, id) in dead {
+                h = fold(h, (id[0] ^ id[1]).rotate_left(3));
+            }
             let y = ys[player as usize];
             g = fold(g, fold(y, h));
         }

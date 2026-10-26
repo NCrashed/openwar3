@@ -277,11 +277,21 @@ fn levelling_objects() {
     }
 }
 
-/// `c-SBP-1`: auras of units killed (report only).
+/// `c-SBP-1`: auras of units and heroes killed while they run: every turn
+/// checksum.
 #[test]
-fn dead_auras_report() {
-    compare_objects("c-SBP-1");
-    turn_parts("c-SBP-1");
+fn dead_auras_checksums() {
+    if let Some(first) = turn_parts("c-SBP-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBP-1`'s object table.
+#[test]
+fn dead_auras_objects() {
+    if let Some(first) = compare_objects("c-SBP-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// The rows of replay `name`'s object list against the simulation's: the

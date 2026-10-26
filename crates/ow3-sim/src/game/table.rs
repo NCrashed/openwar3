@@ -385,6 +385,11 @@ impl ObjectTable {
 pub struct UnitEntries {
     /// Freed at its death, in this order.
     pub death: Vec<u32>,
+    /// Its id: the entry and creation number of the first object of its
+    /// making (SPEC-0024, `idsum`).
+    pub id: Option<[u32; 2]>,
+    /// A dead hero: the queue time it joins its player's list of dead heroes.
+    pub dead_listed: Option<u32>,
     /// A creep's ability parts freed at its death: before all its other
     /// objects (an aura's first), and with its buffs after the experience
     /// (an aura's buff, a costed ability's); its mana's part, in its core
@@ -855,8 +860,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             watches.push((c, e, true));
         }
     }
+    let id = [entries[0], state.table.creation_of(entries[0])];
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
+            id: Some(id),
             death,
             death_first,
             death_late,
@@ -4030,7 +4037,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     let three = ow3_math::add(at, death);
     let five = ow3_math::add(three, 2.0f32.to_bits());
     if hero {
-        hero_dead(state, &queue, three);
+        hero_dead(state, h, &queue, three);
         return;
     }
     state.table.rest_q.push((three, queue[4]));
@@ -4189,7 +4196,12 @@ pub(super) fn invulnerable_set(state: &mut super::State, h: u32, on: bool) {
 /// .. 1654 at 7.699680, 1654 at 8.19978, the rest at 10.6997).
 ///
 /// PROVISIONAL: what the 3.0 s is, and what a revival does with them.
-fn hero_dead(state: &mut super::State, queue: &[u32], end: u32) {
+fn hero_dead(state: &mut super::State, h: u32, queue: &[u32], end: u32) {
+    // It joins its player's list of dead heroes then (c-SBP-1: G changed
+    // at 7.69968).
+    if let Some(e) = entries(state, h) {
+        e.dead_listed = Some(end);
+    }
     let made: Vec<u32> = (0..5)
         .map(|_| state.table.take_at_q(end, "dead hero state"))
         .collect();

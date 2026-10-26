@@ -139,8 +139,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBP-1.w3g",
-        "the aura test (taskmasters and paladins killed while their auras run): in \
-         progress (tests/objects.rs, dead_auras_report)",
+        "the aura test (taskmasters and paladins killed while their auras run): every \
+         turn checksum to its end matches with the object table started as the game \
+         has it (tests/objects.rs, dead_auras_checksums); this test runs without it",
     ),
     (
         "c-SBH-1.w3g",

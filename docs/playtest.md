@@ -68,3 +68,12 @@ be read by the analyst) and its state.
 13. The human shop renders its spinning runes wrong: they should be
     billboards facing the camera. Done: billboarded nodes now face the
     camera (checked on the wisps of the fountain of health).
+
+## Echo Isles, 2026-11-16
+
+1. Power building (from Icecrown 3) and the construction animations of
+   buildings (from Icecrown 8) are next in the queue. Open.
+2. The minimap of a map that is not square (Echo Isles) does not match
+   its points: the units and buildings drawn on it do not sit where the
+   terrain image shows them. Most likely the image or the points are
+   scaled as if the map were square. Open.

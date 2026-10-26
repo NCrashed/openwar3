@@ -35,7 +35,7 @@ const WAKE_RADIUS: f32 = 832.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Creep {
     /// The queue time of its next guard check, while they go on.
-    checks_next: Option<u32>,
+    pub(super) checks_next: Option<u32>,
     /// The queue time its return timer expires.
     pub(super) return_time: Option<u32>,
     /// The order in which the creeps' timers were started: timers with
@@ -332,11 +332,15 @@ pub(super) fn restart_return(state: &mut State, h: u32, at: u32) {
             f32::from_bits(u.y) - f32::from_bits(u.home[1]),
         );
         if u.alive
-            && u.owner == CREEPS
             && (u.creep.homebound || u.creep.return_time.is_some())
             && hx * hx + hy * hy <= far * far
         {
             u.creep.return_time = Some(add(at, back));
+            // Started anew: equal expiries fire in the order of the starts
+            // (c-SBV-1: footmen 6 and 7, restarted at 24.019953, sent home
+            // in that order at 29.019953).
+            state.creep_timers += 1;
+            u.creep.started = state.creep_timers;
         }
     }
 }
@@ -391,10 +395,15 @@ pub(super) fn tick(state: &mut State) {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;
         };
-        if !u.alive || u.owner != CREEPS {
+        let creep = u.creep;
+        // A player's unit only while it guards (`guard_start`).
+        let guarding = creep.checks_next.is_some()
+            || creep.return_time.is_some()
+            || creep.returning
+            || creep.homebound;
+        if !u.alive || (u.owner != CREEPS && !guarding) {
             continue;
         }
-        let creep = u.creep;
         let ordered = u.movement.is_some_and(|m| m.ordered());
         // The move order home ends when the creep stands idle again.
         let idle = !ordered && u.attack.is_none();
@@ -705,4 +714,23 @@ pub(super) fn may_answer(state: &State, u: &super::Unit) -> bool {
     let weak =
         u.creep.returning && f32::from_bits(u.life.value()) <= 0.6 * f32::from_bits(u.life.max);
     !weak && hx * hx + hy * hy < far * far
+}
+
+/// Player's unit `h` took a target from idle at queue time `at` (by a
+/// call or a check): it guards the place it stood like a creep, its guard
+/// check 2.0 s later, its walk home at the end of the return timer (hub
+/// #9, SPEC-0030 "give up"; c-SBV-1: footman 6 answering at 6.799975,
+/// out of his zone at 20.649929, sent home at 29.019953).
+///
+/// PROVISIONAL: read for footmen answering calls.
+pub(super) fn guard_start(state: &mut State, h: u32, at: u32) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && u.owner != CREEPS
+        && u.creep.return_time.is_none()
+        && !u.creep.returning
+    {
+        u.creep.checks_next = Some(add(at, CHECK_PERIOD));
+        state.creep_timers += 1;
+        u.creep.started = state.creep_timers;
+    }
 }

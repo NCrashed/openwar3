@@ -174,7 +174,12 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          checksum to its end matches with the object table started as the game has it \
          (tests/objects.rs, revive_place_checksums); this test runs without it",
     ),
-    ("c-SBV-1.w3g", "Avatar and Resurrection: not matched yet"),
+    (
+        "c-SBV-1.w3g",
+        "the Avatar and Resurrection test: every turn checksum to its end matches with \
+         the object table started as the game has it (tests/objects.rs, \
+         avatar_resurrection_checksums); this test runs without it",
+    ),
     ("c-SBW-1.w3g", "Bladestorm and Earthquake: not matched yet"),
     (
         "c-SBX-1.w3g",

@@ -1143,7 +1143,14 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
     if let Some(&k) = old.first() {
         state.table.defer(k, "game order");
     }
-    let ability = state.table.take_n(tick, 13, "move ability: order start");
+    // A player's unit sent home takes one fewer (c-SBV-1: footmen 6 and 7 at
+    // 29.016130, 12; hub #9).
+    // PROVISIONAL: which one it lacks is not read.
+    let creep = state
+        .unit(Some(h))
+        .is_some_and(|u| u.owner == super::creeps::CREEPS);
+    let n = if creep { 13 } else { 12 };
+    let ability = state.table.take_n(tick, n, "move ability: order start");
     for &e in ability[6..].iter().rev() {
         state.table.defer(e, "move ability: order start");
     }
@@ -4687,7 +4694,12 @@ pub(super) fn avatar_effect(state: &mut super::State, h: u32, ability: i32, q: u
 /// PROVISIONAL: what the first watch is and when it goes is not read.
 pub(super) fn avatar_ended(state: &mut super::State, h: u32, ability: i32) {
     let tick = state.table.now;
-    state.table.take(tick, "Avatar end: rate part");
+    // Its rate part goes 1.0 s later, as at the start (c-SBV-1: 2095 at
+    // 65.49786).
+    let rate = state.table.take(tick, "Avatar end: rate part");
+    // (By the world clock: 1.0001 s after the clock of the tick.)
+    let at = ow3_math::add(state.move_clock, 1.0001f32.to_bits());
+    state.table.free_at_clock(at, rate, "Avatar end: rate part");
     state.table.take(tick, "Avatar end: limit watch");
     let watch = state.table.take(tick, "unit state: limit watch");
     let cost = state

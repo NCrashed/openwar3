@@ -4806,6 +4806,15 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
                     u.home = [u.x, u.y];
                 }
             }
+            // A player's unit already guarding starts its guard check again
+            // (hub #9; c-SBV-1: footman 6 taking kobold 3 at 18.649929).
+            if let Some(e) = expiry
+                && state.unit(Some(h)).is_some_and(|u| {
+                    u.owner != super::creeps::CREEPS && u.creep.checks_next.is_some()
+                })
+            {
+                super::creeps::guard_start(state, h, e);
+            }
             let delay = mul(
                 state.game_random[REACTION].fraction(),
                 state.combat.reaction_delay,
@@ -5777,8 +5786,24 @@ pub(super) fn retaliate(
             }
             freeze(state, h);
         }
+        let standing = state
+            .unit(Some(h))
+            .is_some_and(|u| u.movement.is_none_or(|m| !m.ordered()));
         let id = if walker { ORDER_ATTACK } else { 0 };
         if order(state, h, Order::Attack { target: attacker }, id, at) {
+            // A player's unit answering from idle guards its place (hub #9;
+            // c-SBV-1: footman 6 at 6.799975).
+            if !walker
+                && standing
+                && state
+                    .unit(Some(h))
+                    .is_some_and(|u| u.owner != super::creeps::CREEPS)
+            {
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.home = [u.x, u.y];
+                }
+                super::creeps::guard_start(state, h, now.to_bits());
+            }
             state.call_acquired.push(h);
             super::table::call_answered(state, h);
             let delay = mul(
@@ -6216,7 +6241,9 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         let start = state.creep_timers + 1;
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             let queued = std::mem::take(&mut u.creep.queued_home);
-            if queued || u.creep.return_time.is_some() {
+            // A creep's only: a player's unit keeps its timer (c-SBV-1: footman
+            // 6, kobold 5 dead at log 5360, hub #9).
+            if queued || (u.creep.return_time.is_some() && u.owner == super::creeps::CREEPS) {
                 u.creep.return_time = Some(add(now, back));
                 // Started anew: equal expiries fire in the order of the
                 // starts.

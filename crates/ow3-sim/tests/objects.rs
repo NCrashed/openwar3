@@ -576,7 +576,6 @@ fn revive_place_objects() {
 /// `c-SBV-1`: the Mountain King's Avatar and the Paladin's Resurrection at
 /// level 6: every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn avatar_resurrection_checksums() {
     if let Some(first) = turn_parts("c-SBV-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
@@ -585,7 +584,6 @@ fn avatar_resurrection_checksums() {
 
 /// `c-SBV-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn avatar_resurrection_objects() {
     if let Some(first) = compare_objects("c-SBV-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

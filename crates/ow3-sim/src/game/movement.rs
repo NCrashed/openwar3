@@ -2101,7 +2101,7 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
                         && !u.paused
                         && !u.checks_off
                         && u.attack.is_none()
-                        && u.movement.is_none()
+                        && u.movement.is_none_or(|m| !m.ordered())
                         && enemies(state, u.owner, t_owner)
                         && dx * dx + dy * dy <= acquire * acquire
                 })

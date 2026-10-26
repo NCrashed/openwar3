@@ -28,6 +28,8 @@ const PERIOD: u64 = 100;
 const REMOVAL: u64 = 400;
 /// Script tick 402 of the tests (3.0 s) is game tick 602.
 const REMOVAL_PHASE: u64 = 202;
+/// Ticks after its death a unit's aura still gives its buffs.
+const DEAD_PASSES: u64 = 100;
 
 /// The base code of `ability`.
 fn base(state: &State, ability: i32) -> i32 {
@@ -45,7 +47,14 @@ fn base_of(data: &crate::data::ObjectData, ability: i32) -> i32 {
 
 /// The aura of hero `h` with its level, if it learned one.
 fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
-    let u = state.unit(Some(h)).filter(|u| u.alive)?;
+    // A dead unit's aura still passes for a while (c-SBL-1: the kobold
+    // taskmaster, dead at 7.1, kept the ogre lord's buff past the check
+    // of 9.0).
+    //
+    // PROVISIONAL: for DEAD_PASSES ticks after the death.
+    let u = state
+        .unit(Some(h))
+        .filter(|u| u.alive || u.died_at.is_some_and(|d| state.ticks < d + DEAD_PASSES))?;
     let is_aura = |a: i32| {
         AURAS
             .iter()

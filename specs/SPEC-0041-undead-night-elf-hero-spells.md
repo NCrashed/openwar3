@@ -144,6 +144,27 @@ order's tick, start 4.499912):
   impact; each impact takes two (the hit), freed 0.0001 s later. The
   cast's own objects are freed at the cast's end (effect + 0.83).
 
+### Shadow strike (`AEsh`, unit; warden, `castpt` 0.5)
+
+Read in the game, `c-SBO-1` (warden at level 2, order at q 4.0 on an
+ogre warrior 702 away):
+- the order makes a walk; the warden walks to (-536.28, 337.24) and its
+  walk arrives at q 5.129987 (372.4 from the ogre's centre, within the
+  cast range plus both collision sizes); the cast point timer (0.5)
+  starts there; effect at 5.629987, with the cooldown (8.0 s) and the
+  cast's end timer (`castbsw` 0.83);
+- at the effect a missile is launched (speed 1200, 37.5 cells per
+  second) from the warden's launch point (SPEC-0016: `launchX` 25 at
+  her facing 79.3 degrees, floored to quarters: (-511.75, 332.5)) to
+  the ogre's position (-450, 700), `L` 11.645 cells; one timer of
+  0x3E9EFFF5 (0.310546547), expiry 5.940533, impact at the end of the
+  tick ending 5.944808;
+- at the impact the target takes a damage event of 0.00, then the
+  initial damage 75.00 (the ogre died of it, so the damage over time
+  was not seen). The impact starts two 0.334 s timers and three 0.1 s
+  timers of the buff's objects, and the missile's objects' 5.0 s
+  timer.
+
 ### Entangling roots (`AEer`, unit; keeper of the grove, `castpt` 0.7)
 
 The target takes a damage event of 0.00 30 ticks after the cast point

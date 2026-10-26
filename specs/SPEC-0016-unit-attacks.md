@@ -126,8 +126,10 @@ launches a missile whose speed is `Missilespeed` of the unit's entry in
   point (-436, -16), `L` 207.2 to the warden's centre, timer 0x3E6BC03A
   at 900, expiry 0x3FF33DCF, impact at the end of the tick ending
   1.9049982. The warden and the death knight (collision 32, class 2)
-  launch from their positions plus the table offsets. Whether a flagged
-  unit's target point is offset too was not read.
+  launch from their positions plus the table offsets. The target point
+  is the target's game position, not offset: `c-SBO-1`, shadow strike
+  on an ogre warrior (collision 48, class 3) aimed at its exact
+  (-450, 700).
 - When `L` is below 90 there is no flight: the damage comes in the tick
   of the launch.
 - The damage dice (`dice1` outputs of game generator 2, above) are drawn

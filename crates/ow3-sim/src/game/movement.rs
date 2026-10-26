@@ -1731,6 +1731,12 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
                 .unit(Some(h))
                 .and_then(|u| u.movement)
                 .is_some_and(|m| m.reaction_end.is_some());
+            // A script's order takes its target anew, after those that
+            // acquired it since (c-SBM-1: at kobold 5's death the Far Seer,
+            // which acquired it after the footman, is handled first).
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.target_taken = None;
+            }
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
                 let now = state.event_time.unwrap_or_else(|| state.timers.time());
@@ -5957,8 +5963,11 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
                 .unit(Some(h))
                 .is_some_and(|u| u.attack_move.is_none() && u.entries.script_attack)
         {
-            super::table::script_attack_lost(state, h);
+            let rest = super::table::script_attack_lost(state, h);
             super::table::attack_ended(state, h, false);
+            for o in rest {
+                state.table.defer(o, "attack: order end");
+            }
             // Its attack on it ends (c-SBO-1: the footman after its kill of
             // kobold 5 at 7.28, idle when kobold 6 turns vulnerable at 8.5).
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h)

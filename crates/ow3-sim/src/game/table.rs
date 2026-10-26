@@ -2584,23 +2584,33 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
 
 /// Unit `h`'s script attack order lost its target: the sixth of its start
 /// objects goes, 0.0001 s later (c-SBL-1: 1275 at kobold 3's death).
-pub(super) fn script_attack_lost(state: &mut super::State, h: u32) {
+/// Returned, for 0.0001 s later after the attack's end, the rest of a unit
+/// that never swung (c-SBM-1: the footman's at the Far Seer's kill of
+/// 7.144721, 1384, then 1405, 1383 .. 1379, 1377).
+///
+/// PROVISIONAL: "never swung" is read for one unit.
+pub(super) fn script_attack_lost(state: &mut super::State, h: u32) -> Vec<u32> {
+    let end = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
+    let swinging = end != 0;
     let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
     if let Some(o) = first {
         state.table.defer(o, "attack: order start");
     }
     // The rest, with the order, at the end of the backswing of the kill: the
     // order ends there (c-SBL-1: 1274 .. 1270, 1268 at 2.884976).
-    let end = state.unit(Some(h)).map_or(0, |u| u.backswing_end);
     let rest = entries(state, h)
         .map(|e| {
             e.script_attack = false;
             std::mem::take(&mut e.order)
         })
         .unwrap_or_default();
+    if !swinging {
+        return rest;
+    }
     for o in rest {
         state.table.free_at_q(end, o, "attack: order end");
     }
+    Vec::new()
 }
 
 /// Attacker `h` of unit `dead` is handled at the death: the object of its

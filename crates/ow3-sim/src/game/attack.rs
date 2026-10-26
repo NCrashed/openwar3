@@ -246,6 +246,27 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                 super::movement::no_renewal(s, h);
                 continue;
             }
+            // So does an attack started standing in reach, its swing waiting
+            // for that cooldown, when neither the range test nor the contact
+            // test passes (SPEC-0019; c-SBJ-1: kobold 5, in reach of the
+            // fleeing Dreadlord at 13.709910, out of reach at its cooldown end
+            // 14.039919, its chase walk there).
+            let waiting = s.unit(Some(h)).and_then(|u| u.attack).filter(|a| {
+                a.resume.is_none() && a.swing_q == s.unit(Some(h)).map_or(0, |u| u.cooldown_end)
+            });
+            if let Some(a) = waiting
+                && expiring
+                && standing(s, a.target)
+                && !super::movement::reaches_at(s, h, a.target, a.swing_q)
+                && !super::follow::contact(s, h, a.target)
+            {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                    u.attack = None;
+                }
+                super::movement::chase(s, h, a.target, a.order_id, None, false);
+                super::movement::no_renewal(s, h);
+                continue;
+            }
             // A target out of reach when the next swing would start, or at
             // the new goal after the swing: chased from the new goal on,
             // the attacker standing until then (SPEC-0019).

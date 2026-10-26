@@ -1289,6 +1289,31 @@ fn move_kind(state: &State, h: u32) -> u8 {
 
 /// Whether a unit of `class` at `at` (cells) touches `cells`: one of its
 /// cells on one of them or next to it, also diagonally.
+/// The contact test of an attack start (SPEC-0019): a cell round unit `h`'s
+/// footprint holds `target`'s footprint (c-SBJ-1: the ogre swinging at the
+/// Crypt Lord out of reach at 3.209999).
+///
+/// PROVISIONAL: positions at the units' last updates; the cells a unit
+/// that moved still holds from its last footprint are not counted.
+pub(super) fn contact(state: &State, h: u32, target: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let (Some(u), Some(t)) = (state.unit(Some(h)), state.unit(Some(target))) else {
+        return false;
+    };
+    let class_of = |u: &super::Unit| {
+        path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision))
+    };
+    let cells = path::occupied_cells(
+        to_cells(super::movement::relative([t.x, t.y], min)),
+        class_of(t),
+    );
+    touches(
+        &cells,
+        to_cells(super::movement::relative([u.x, u.y], min)),
+        class_of(u),
+    )
+}
+
 pub(super) fn touches(cells: &[(i32, i32)], at: [u32; 2], class: u8) -> bool {
     path::occupied_cells(at, class).iter().any(|&(x, y)| {
         cells

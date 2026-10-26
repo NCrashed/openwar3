@@ -3678,6 +3678,35 @@ pub(super) fn reaches(state: &State, h: u32, target: u32) -> bool {
 /// 1.499999, range 100 tested as 200).
 const AFTER_MOVEMENT: u32 = 0x42C8_0000;
 
+/// [`reaches`] with both units where they are at movement clock `clock`:
+/// a moving one at its last update moved on by its velocity (SPEC-0019,
+/// "Range test"; c-SBJ-1: the fleeing Dreadlord at kobold 5's cooldown
+/// end, 14.039919).
+pub(super) fn reaches_at(state: &State, h: u32, target: u32, clock: u32) -> bool {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let at = |o: u32| {
+        state.unit(Some(o)).map(|u| match u.movement {
+            Some(m) => m.position(clock),
+            None => relative([u.x, u.y], min),
+        })
+    };
+    let collision = |o: u32| {
+        state
+            .unit(Some(o))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .map_or(0, |t| t.collision)
+    };
+    let (Some(u), Some(a), Some(b)) = (state.unit(Some(h)), at(h), at(target)) else {
+        return false;
+    };
+    let range = super::attack::weapon_for(state, u.type_id, Some(target)).map_or(0, |w| w.range);
+    let reach = add(
+        add(mul(range, CELL), mul(collision(h), CELL)),
+        mul(collision(target), CELL),
+    );
+    in_range(a, b, reach)
+}
+
 /// [`reaches`] with `extra` added to the weapon's range.
 pub(super) fn reaches_with(state: &State, h: u32, target: u32, extra: u32) -> bool {
     let min = [state.world_bounds[0], state.world_bounds[1]];

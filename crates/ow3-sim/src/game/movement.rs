@@ -283,9 +283,8 @@ pub struct Moving {
     /// A helper in reach of the building it turns to, its help to start
     /// when it faces it (hub #13).
     help: Option<u32>,
-    /// Its walk was made again (an Earthquake's slow): after its next update
-    /// its goal is the target's place then and its path is searched at the
-    /// update after (hub #10).
+    /// Its walk was made again (an Earthquake's slow): at the end of its next
+    /// update its path is searched to the target's place then (hub #10).
     remade: bool,
     /// A drop order stood within DropItemRange at its last update: it
     /// drops at this one (c-SBR-1: stopped at 9.599, dropped at 9.629385).
@@ -2172,9 +2171,8 @@ pub(super) fn slowed_now(state: &mut State, h: u32) {
 /// Chasing unit `h`'s walk was made again (an Earthquake's slow): its goal
 /// follows its target by the 64 grid rule at once (c-SBW-1: the ogre's
 /// taken as the Blademaster at 3.799953, in reach at its update of 3.81,
-/// walk freed at 3.839952). At its next update it steers on, its goal set
-/// after it to the target's place then, and its path is searched at the
-/// update after that (kobold 5 at 3.81 and 3.84, hub #10).
+/// walk freed at 3.839952). At its next update it steers on, then searches
+/// its path to the target's place then (kobold 5 at 3.809953, hub #10).
 ///
 /// PROVISIONAL: a standing unit's remade walk (kobold 4) is not done.
 pub(super) fn chase_renewed(state: &mut State, h: u32) {
@@ -2197,6 +2195,11 @@ pub(super) fn chase_renewed(state: &mut State, h: u32) {
             m.chase = Some(countdown(here, relative(at, min)));
         }
         m.remade = true;
+        // A new goal, first among the units handled from the next tick
+        // (SPEC-0021; c-SBW-1: kobold 5, remade last, searched before the
+        // ogre and kobold 3 stopped, hub #10).
+        m.given = state.orders_given + 1;
+        state.orders_given += 1;
     }
 }
 
@@ -2645,8 +2648,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let mut attacks_after = Vec::new();
     let mut faced_ends = Vec::new();
     let mut help_starts: Vec<(u32, u32)> = Vec::new();
-    // Units whose remade walk is searched at their next update.
-    let mut remade: Vec<(u32, [u32; 2])> = Vec::new();
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
@@ -3089,6 +3090,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // when the goal was last renewed, and is in reach when the
             // goal is.
             let mut in_reach = false;
+            // A remade walk's new goal, searched at the end of this update.
+            let mut remade_at = None;
             // The goal of R after a swing (SPEC-0019).
             let mut after_swing = false;
             // That renewal falls on this update: it comes after the step
@@ -3204,11 +3207,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // Or by the mark of touching its target at a block.
                         in_reach = in_reach || follow::touching(state, h);
                         in_reach = in_reach || m.unlimited;
-                        // A remade walk: after this update the goal is the target
-                        // where it is now, searched at the next update (c-SBW-1:
-                        // kobold 5 at 3.81 and 3.84, hub #10).
+                        // A remade walk: searched at the end of this update.
                         if std::mem::take(&mut m.remade) {
-                            remade.push((h, at));
+                            remade_at = Some(at);
                             m.chase = None;
                         }
                     }
@@ -3570,6 +3571,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 }
                             }
                         }
+                        // A remade walk: its path searched anew after the steps of
+                        // this update, to the target where it is now (c-SBW-1: kobold
+                        // 5 at 3.809953, to the Blademaster's place then, hub #10).
+                        if let Some(at) = remade_at {
+                            state.paths.remove(&h);
+                            m.target = at;
+                            let again = follow::Walker {
+                                order: relative(at, min),
+                                ..walker
+                            };
+                            let _ = follow::steer(state, &again, tick);
+                        }
                     } else {
                         motion(&mut m, goal, true, speed, limit, turn_rate, window);
                     }
@@ -3874,16 +3887,6 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
-    // Its goal the target where it was at that update (c-SBW-1: kobold 5
-    // searching at 3.84 to the Blademaster's place at 3.81).
-    for (h, at) in remade {
-        state.paths.remove(&h);
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
-            && let Some(m) = u.movement.as_mut()
-        {
-            m.target = at;
-        }
-    }
     // Helpers whose help starts: their walks end, and their objects (hub #13).
     for (h, building) in help_starts {
         super::table::chase_walk_ended(state, h);

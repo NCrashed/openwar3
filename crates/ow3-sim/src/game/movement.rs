@@ -2833,6 +2833,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 m.renew_stands = false;
                                 exact_swing = Some(at);
                             }
+                            // A goal taken anew by a switch just before: the
+                            // update walks on, the renewal is the cooldown end's
+                            // timer after the updates (`cooldown_expiries`;
+                            // c-SBJ-1: ogre 4, switched at 12.918833, walking at
+                            // 12.929917 before its cooldown end at 12.929940).
+                            _ if renew_now && renew_exact && m.goal_taken => {
+                                m.renew_at = None;
+                                m.renew_stands = false;
+                            }
                             _ if renew_now => {
                                 m.renew_at = None;
                                 after_swing = true;

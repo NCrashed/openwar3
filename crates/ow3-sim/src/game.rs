@@ -376,6 +376,10 @@ pub struct Construction {
     base_rate: u32,
     factor: u32,
     pub(crate) builder: u32,
+    /// The helpers paying for it, and the queue times its gold and lumber
+    /// timers expire (hub #13).
+    paying: usize,
+    pay: [Option<u32>; 2],
     max: u32,
     build_time: u32,
     begin: u64,
@@ -395,6 +399,8 @@ impl Construction {
             base_rate: rate,
             factor: 0x3F80_0000,
             builder: 0,
+            paying: 0,
+            pay: [None, None],
             max,
             build_time,
             begin,
@@ -4109,6 +4115,7 @@ fn power_building(state: &mut State) {
         .get(&i32::from_be_bytes(*b"Ahrp"))
         .and_then(|a| a.per_level.first())
         .map_or(0, |l| l.data_d);
+    let mut changed = Vec::new();
     let mut retimed = Vec::new();
     for &h in &state.units.clone() {
         let workers = movement::workers_of(state, h);
@@ -4124,6 +4131,10 @@ fn power_building(state: &mut State) {
             0
         };
         let factor = add(0x3F80_0000, mul(bonus, ow3_math::i2r(helpers as i32)));
+        if helpers != c.paying && c.tb.is_some() {
+            c.paying = helpers;
+            changed.push(h);
+        }
         if factor == c.factor || c.tb.is_none() {
             continue;
         }
@@ -4137,6 +4148,77 @@ fn power_building(state: &mut State) {
     for (h, end) in retimed {
         training::cancel_timer(state, training::EngineTimer::Construction(h));
         training::start_timer(state, end, training::EngineTimer::Construction(h));
+    }
+    helpers_pay(state, &changed);
+}
+
+/// The helpers' payments (c-SBZ-1, hub #13): a building under construction
+/// has a gold and a lumber timer, each taking 1 unit of its owner when it
+/// fires and starting again at `T / (P x DataC) / (f x h)` (`T` its build
+/// time, `P` its price of that resource, `f` its speed, `h` the helpers).
+/// At a change of the helpers (`changed`) a resource whose timer is not
+/// running or has more than 1.0 s left is paid at once and its timer
+/// started again; one with 1.0 s or less runs out first. Without helpers
+/// the timers stop.
+///
+/// PROVISIONAL: the timers are counted on the clock of the tick.
+fn helpers_pay(state: &mut State, changed: &[u32]) {
+    let now = state.timers.time();
+    let next = f32::from_bits(add(state.move_clock, crate::timers::TICK));
+    let share = state
+        .data
+        .abilities
+        .get(&i32::from_be_bytes(*b"Ahrp"))
+        .and_then(|a| a.per_level.first())
+        .map_or(0, |l| l.data[2]);
+    let mut paid: Vec<(i32, usize)> = Vec::new();
+    for &h in &state.units.clone() {
+        let Some(Object::Unit(u)) = state.objects.get(&h) else {
+            continue;
+        };
+        let Some(c) = u.construction.as_ref() else {
+            continue;
+        };
+        let owner = u.owner;
+        let (time, price) = state.data.units.get(&u.type_id).map_or((0, [0, 0]), |t| {
+            (t.build_time, [t.gold_cost, t.lumber_cost])
+        });
+        let (paying, factor, mut pay) = (c.paying, c.factor, c.pay);
+        let interval = |k: usize| {
+            let per = mul(ow3_math::i2r(price[k]), share);
+            let speed = mul(factor, ow3_math::i2r(paying as i32));
+            div(div(time, per), speed)
+        };
+        let change = changed.contains(&h);
+        for k in 0..2 {
+            if paying == 0 || price[k] == 0 {
+                pay[k] = None;
+                continue;
+            }
+            if change && pay[k].is_none_or(|e| f32::from_bits(sub(e, now)) > 1.0) {
+                paid.push((owner, k));
+                pay[k] = Some(add(now, interval(k)));
+            }
+            while let Some(e) = pay[k]
+                && f32::from_bits(e) < next
+            {
+                paid.push((owner, k));
+                pay[k] = Some(add(e, interval(k)));
+            }
+        }
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(c) = u.construction.as_mut()
+        {
+            c.pay = pay;
+        }
+    }
+    // Only while the player has it.
+    for (owner, k) in paid {
+        let key = (owner, if k == 0 { 1 } else { 2 });
+        let have = state.setup.player_states.entry(key).or_default();
+        if *have >= 1 {
+            *have -= 1;
+        }
     }
 }
 

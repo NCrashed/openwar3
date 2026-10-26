@@ -5053,6 +5053,12 @@ pub(super) fn repair_ordered(state: &mut super::State, h: u32) {
 pub(super) fn helper_started(state: &mut super::State, h: u32, building: u32) {
     let tick = state.table.now;
     let rate = state.table.take(tick, "unit state: rate part");
+    // It replaces the row of the last change, freed then (c-SBZ-1: 1163
+    // by 1213 at 14.758524).
+    let old = entries(state, building).and_then(|e| e.construction_rates.pop());
+    if let Some(o) = old {
+        state.table.defer(o, "unit state: rate part");
+    }
     if let Some(e) = entries(state, building) {
         e.construction_rates.push(rate);
     }

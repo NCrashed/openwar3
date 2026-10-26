@@ -280,6 +280,9 @@ pub struct Moving {
     /// A creep's move to where its target died arrived: it stands and
     /// turns to this point (relative), then the order ends (SPEC-0030).
     face_point: Option<[u32; 2]>,
+    /// A helper in reach of the building it turns to, its help to start
+    /// when it faces it (hub #13).
+    help: Option<u32>,
     /// A drop order stood within DropItemRange at its last update: it
     /// drops at this one (c-SBR-1: stopped at 9.599, dropped at 9.629385).
     drop_ready: bool,
@@ -559,6 +562,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             unlimited: false,
             then_attack: None,
             face_point: None,
+            help: None,
             drop_ready: false,
             ..m
         },
@@ -599,6 +603,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             unlimited: false,
             then_attack: None,
             face_point: None,
+            help: None,
             drop_ready: false,
         },
     };
@@ -1271,6 +1276,11 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
     let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
+    // Its type record counts it alive (`q4`) only from its completion
+    // (c-SBZ-1: G at turns 29 and 258).
+    // PROVISIONAL: `q2` up by one here, down at the completion, gives the
+    // same sums; a building lost under construction would tell them apart.
+    super::widgets::type_record(state, owner, type_id, |q| q[4] -= 1);
     super::table::construction_started(state, h, building);
     // It enters its regions where it stands (SPEC-0049).
     super::regions::test_unit(state, building);
@@ -1284,7 +1294,11 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let rate = div(mul(max, NINE_TENTHS), build_time);
     // Work begins at once, or later with the worker moved; `Tb` is the
     // clock of that tick plus 0.0001 (`game::construction`).
-    let delay = if moved { WORK_DELAY_MOVED } else { 0 };
+    let delay = if moved {
+        moved_delay(state, h, building)
+    } else {
+        0
+    };
     let begin = state.ticks + delay;
     let mut construction = super::Construction::new(base, rate, max, build_time, begin);
     construction.builder = h;
@@ -1304,6 +1318,39 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     }
     state.constructions.push((false, building));
     Some(building)
+}
+
+/// The ticks from the start of a building to the update at which worker
+/// `h`, moved off its footprint, starts working: as a helper starts
+/// (hub #13), at the update that finds its heading within 0.2 of the
+/// building's centre, turning by its turn rate at each update after the
+/// first (c-SBZ-1: peasant 4 moved to (720, -528), 6 degrees off the
+/// barracks' centre, at once; SPEC-0026: one 41 degrees away, 12 ticks).
+///
+/// PROVISIONAL: SPEC-0026's 18-tick cases are not checked against it.
+fn moved_delay(state: &State, h: u32, building: u32) -> u64 {
+    let (Some(u), Some(b)) = (state.unit(Some(h)), state.unit(Some(building))) else {
+        return WORK_DELAY_MOVED;
+    };
+    let heading = u.movement.map_or(u.facing, |m| normal(m.heading));
+    let to = angle(sub(b.x, u.x), sub(b.y, u.y));
+    let rate = state.data.units.get(&u.type_id).map_or(PI, |t| t.turn_rate);
+    let mut d = real_of(super::facing::angle_difference(to, heading)).abs();
+    if d < ATTACK_ANGLE {
+        return 0;
+    }
+    let mut ticks = 0;
+    loop {
+        ticks += 6;
+        if d < ATTACK_ANGLE {
+            return ticks;
+        }
+        d = if d <= real_of(rate) {
+            0.0
+        } else {
+            real_of(sub(d.to_bits(), rate))
+        };
+    }
 }
 
 /// 0.1 and 0.9.
@@ -1858,6 +1905,23 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
             let done = halt(state, h);
             if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.holding = name == "holdposition";
+            }
+            // Its building's growth stops at the order (c-SBZ-1: the farm
+            // at 422.45 from 19.4977 s, hub #13).
+            let (now, clock) = (state.timers.time(), state.move_clock);
+            if done
+                && let Some(b) = state.building_left
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&b)
+                && let Some(c) = u.construction.as_mut()
+                && c.builder == h
+                && c.gone.is_none()
+            {
+                c.gone = Some(now);
+                c.base = c.grown(clock);
+                c.tb = Some(clock);
+                c.factor = 0;
+                c.rate = 0;
+                super::training::cancel_timer(state, super::training::EngineTimer::Construction(b));
             }
             // `stop` takes the same objects (c-RTW-3: a player's stop at
             // 5.024874).
@@ -2543,6 +2607,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let mut still = Vec::with_capacity(moving.len());
     let mut attacks_after = Vec::new();
     let mut faced_ends = Vec::new();
+    let mut help_starts: Vec<(u32, u32)> = Vec::new();
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
@@ -2665,6 +2730,37 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 }
             }
         }
+        // A helper in reach turning to its building: its help starts at the
+        // update that finds its heading within 0.2 of the building's centre,
+        // else it turns on by its turn rate (c-SBZ-1: peasant 2 at
+        // 14.758524, hub #13).
+        if let Some(building) = m.help {
+            m.walking = false;
+            m.velocity = [0, 0];
+            let min = [state.world_bounds[0], state.world_bounds[1]];
+            if let Some(at) = position_of(state, building) {
+                let (heading, d) = heading_and_turn(&m, relative(at, min));
+                if real_of(d).abs() < ATTACK_ANGLE {
+                    m.help = None;
+                    m.order = Order::Repair { building };
+                    help_starts.push((h, building));
+                } else {
+                    m.heading = wrapped(if real_of(d).abs() <= real_of(turn_rate) {
+                        add(heading, d)
+                    } else if real_of(d) > 0.0 {
+                        add(heading, turn_rate)
+                    } else {
+                        add(heading, turn_rate ^ SIGN)
+                    });
+                }
+            }
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.movement = Some(m);
+            }
+            state.updated.insert(h);
+            still.push(h);
+            continue;
+        }
         // Turning to the point it arrived at, standing, its aim kept; the
         // order ends at the update that finds it facing the point, and its
         // checks start again 0.01 s later (SPEC-0030; c-SAK-1: ogre 18 at
@@ -2774,18 +2870,39 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if !unfinished_of_own(state, h, building) {
                 m.arrived = true;
             } else if repair_reach(state, h, here, building) {
-                m.order = Order::Repair { building };
-                // Its walk ends there, its help starts at once (c-SBZ-1: peasant
-                // 1 at 8.489576, hub #13).
-                super::table::chase_walk_ended(state, h);
-                let others = workers_of(state, building).into_iter().any(|w| w != h);
-                if others {
-                    super::table::helper_started(state, h, building);
-                }
+                // In reach its help starts if its heading is within 0.2 of the
+                // building's centre (c-SBZ-1: peasant 1 at 8.489576), else it
+                // stops and turns first (`help`; peasant 2 from 14.698534, hub
+                // #13).
                 m.arrived = false;
                 m.walking = false;
                 m.velocity = [0, 0];
-                face_target(state, &mut m, building, min);
+                let at = position_of(state, building).map(|p| relative(p, min));
+                let (heading, d) = at.map_or((m.heading, 0), |p| heading_and_turn(&m, p));
+                if real_of(d).abs() < ATTACK_ANGLE {
+                    m.order = Order::Repair { building };
+                    super::table::chase_walk_ended(state, h);
+                    let others = workers_of(state, building).into_iter().any(|w| w != h);
+                    if others {
+                        super::table::helper_started(state, h, building);
+                    }
+                    face_target(state, &mut m, building, min);
+                } else {
+                    // Its update ends with the turn (c-SBZ-1: peasant 3 in
+                    // reach at 2959, started at 2971).
+                    m.help = Some(building);
+                    m.heading = wrapped(if real_of(d) > 0.0 {
+                        add(heading, turn_rate)
+                    } else {
+                        add(heading, turn_rate ^ SIGN)
+                    });
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                        u.movement = Some(m);
+                    }
+                    state.updated.insert(h);
+                    still.push(h);
+                    continue;
+                }
             }
         }
         // A caster walks to its target and starts its cast at the update at
@@ -3538,7 +3655,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.velocity = [0, 0];
                             // A worker at its gold mine keeps its walk to its going
                             // in (`harvest::start_waiting`; c-RXI-1: walks freed at 877).
-                            if matches!(m.order, Order::Gather { target } | Order::Work { target } | Order::Return { building: target } if super::harvest::is_mine(state, target) || state.unit(Some(target)).is_some_and(|b| b.footprint.is_some()))
+                            if matches!(m.order, Order::Gather { target } | Order::Work { target } | Order::Return { building: target } | Order::Resume { building: target } if super::harvest::is_mine(state, target) || state.unit(Some(target)).is_some_and(|b| b.footprint.is_some()))
                             {
                                 state.paths.remove(&h);
                             } else {
@@ -3586,14 +3703,30 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             m.arrived = false;
         }
         // So too a worker sent back to its building under construction.
+        // Its help starts as in reach (above): facing the building, or after
+        // turning to it (`help`).
         if m.arrived
             && let Order::Resume { building } = m.order
             && unfinished_of_own(state, h, building)
         {
-            m.order = Order::Repair { building };
-            state.helpers_started.push((h, building));
             m.arrived = false;
-            face_target(state, &mut m, building, min);
+            m.walking = false;
+            m.velocity = [0, 0];
+            let at = position_of(state, building).map(|p| relative(p, min));
+            let (heading, d) = at.map_or((m.heading, 0), |p| heading_and_turn(&m, p));
+            if real_of(d).abs() < ATTACK_ANGLE {
+                m.order = Order::Repair { building };
+                super::table::chase_walk_ended(state, h);
+                state.helpers_started.push((h, building));
+                face_target(state, &mut m, building, min);
+            } else {
+                m.help = Some(building);
+                m.heading = wrapped(if real_of(d) > 0.0 {
+                    add(heading, turn_rate)
+                } else {
+                    add(heading, turn_rate ^ SIGN)
+                });
+            }
         }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -3695,6 +3828,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    // Helpers whose help starts: their walks end, and their objects (hub #13).
+    for (h, building) in help_starts {
+        super::table::chase_walk_ended(state, h);
+        let others = workers_of(state, building).into_iter().any(|w| w != h);
+        if others {
+            super::table::helper_started(state, h, building);
+        }
+    }
     // A creep's move to its dead target's point ended: its checks start
     // again, and its walk home comes next.
     // PROVISIONAL: the walk home as a walk to its guard point, order id 0.

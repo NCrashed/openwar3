@@ -444,6 +444,12 @@ impl Construction {
         self.tb = Some(tb);
         add(tb, left)
     }
+
+    /// Growing from clock `clock` at its rate, when it will be done; never
+    /// while it stands still.
+    fn end(&self, clock: u32) -> Option<u32> {
+        (self.rate != 0).then(|| add(clock, div(sub(self.max, self.base), self.rate)))
+    }
 }
 
 /// `PLAYER_STATE_RESOURCE_FOOD_CAP`.
@@ -512,25 +518,55 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
         let Some(Object::Unit(u)) = s.objects.get_mut(&h) else {
             return;
         };
-        if !u.alive || u.construction.take().is_none() {
+        if !u.alive {
             return;
         }
+        let Some(c) = u.construction.take() else {
+            return;
+        };
         let (max, regen, food) = s.data.units.get(&u.type_id).map_or((0, 0, 0), |t| {
             (t.hp, widgets::life_rate(t, 0, s.night), t.food_made)
         });
         u.life = Regenerating::full(max, regen);
-        let owner = u.owner;
+        let (owner, type_id) = (u.owner, u.type_id);
+        // Alive in its type record from now (`movement::start_construction`).
+        widgets::type_record(s, owner, type_id, |q| q[4] += 1);
         *s.setup
             .player_states
             .entry((owner, PLAYER_STATE_RESOURCE_FOOD_CAP))
             .or_default() += food;
         let q = s.event_time.unwrap_or_else(|| s.timers.time());
-        table::construction_finished(s, h, q);
-        // The work on it ends one tick later (c-SBZ-1: 44.054104).
-        let tick = s.ticks + 1;
-        s.table
-            .work_ends
-            .push((tick, h, movement::workers_of(s, h)));
+        table::construction_finished(s, h, c.builder, q);
+        // The work on it ends two ticks later (c-SBZ-1: 25.801769 after
+        // 25.791811, 44.054104 after 44.043449), its workers' in the order
+        // they took it up; the building's kept part goes after its first
+        // builder (the barracks) or before a helper that took over (the
+        // farm; hub #13).
+        // PROVISIONAL: read on these two buildings.
+        let workers = movement::workers_of(s, h);
+        let mut order: Vec<u32> = c
+            .helpers
+            .iter()
+            .map(|x| x.0)
+            .filter(|w| workers.contains(w))
+            .collect();
+        let rest: Vec<u32> = workers
+            .iter()
+            .copied()
+            .filter(|&w| w != c.builder && !order.contains(&w))
+            .collect();
+        order.extend(rest);
+        let builder = workers.contains(&c.builder);
+        if c.taking.is_some() {
+            order.push(h);
+            order.extend(builder.then_some(c.builder));
+        } else {
+            let mut first = Vec::from_iter(builder.then_some(c.builder));
+            first.push(h);
+            order.splice(0..0, first);
+        }
+        let tick = s.ticks + 2;
+        s.table.work_ends.push((tick, h, order));
         s.constructions.push((true, h));
         owner
     };
@@ -1996,6 +2032,9 @@ impl<'a> Game<'a> {
             cast::effects_before(&mut self.vm, &self.state, at);
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // A helper that started in its update speeds its building from the
+        // clock of that tick (c-SBZ-1: the barracks at 11.249113, hub #13).
+        power_building(&mut self.state.borrow_mut());
         widgets::items_picked(&mut self.vm, &self.state);
         widgets::items_dropped(&mut self.vm, &self.state);
         movement::attack_moves_arrived(&mut self.state.borrow_mut());
@@ -4106,11 +4145,10 @@ pub(super) fn start_records() -> Vec<(i32, [u32; 7])> {
 /// worker that starts to help makes its objects; a building with its
 /// builder at work grows faster by Repair's DataD for each helper, from
 /// the helper's start: its life goes on from where it stands at the new
-/// rate and its completion is timed again. Without its builder it grows
-/// at its plain rate.
+/// rate and its completion is timed again. When its builder leaves it
+/// stops growing until a helper takes over, then grows at its plain rate.
 ///
-/// PROVISIONAL: the helpers' payments and the rate set again 0.27 s after
-/// the builder leaves are not done.
+/// PROVISIONAL: read on one farm and one barracks.
 fn power_building(state: &mut State) {
     let clock = state.move_clock;
     for (h, building) in std::mem::take(&mut state.helpers_started) {
@@ -4145,7 +4183,7 @@ fn power_building(state: &mut State) {
             }
         }
         c.helpers.retain(|x| workers.contains(&x.0));
-        // Its first builder left: plain speed, no payments until a helper
+        // Its first builder left: no growth and no payments until a helper
         // takes over at its next 1.0 s timer (hub #13).
         if c.gone.is_none() && c.tb.is_some() && !workers.contains(&c.builder) {
             c.gone = Some(now);
@@ -4177,8 +4215,13 @@ fn power_building(state: &mut State) {
         } else {
             0
         };
-        let factor = if c.gone.is_some() {
+        // Its builder gone, it stops growing until a helper takes over
+        // (c-SBZ-1: life 422.45 from 19.4977 s, the plain rate again from
+        // the takeover at 19.757685).
+        let factor = if c.taking.is_some() {
             0x3F80_0000
+        } else if c.gone.is_some() {
+            0
         } else {
             add(0x3F80_0000, mul(bonus, ow3_math::i2r(helpers as i32)))
         };
@@ -4193,12 +4236,7 @@ fn power_building(state: &mut State) {
         c.tb = Some(clock);
         c.factor = factor;
         c.rate = mul(c.base_rate, factor);
-        let end = add(clock, div(sub(c.max, c.base), c.rate));
-        retimed.push((h, end));
-    }
-    for (h, end) in retimed {
-        training::cancel_timer(state, training::EngineTimer::Construction(h));
-        training::start_timer(state, end, training::EngineTimer::Construction(h));
+        retimed.push((h, c.end(clock)));
     }
     // A helper takes over: its new work order now, the rest one update
     // later (c-SBZ-1: 19.757685 and 19.767683).
@@ -4209,6 +4247,17 @@ fn power_building(state: &mut State) {
             && let Some(c) = u.construction.as_mut()
         {
             c.taking = Some((w, tick + 2, order));
+            c.base = c.grown(clock);
+            c.tb = Some(clock);
+            c.factor = 0x3F80_0000;
+            c.rate = c.base_rate;
+            retimed.push((h, c.end(clock)));
+        }
+    }
+    for (h, end) in retimed {
+        training::cancel_timer(state, training::EngineTimer::Construction(h));
+        if let Some(end) = end {
+            training::start_timer(state, end, training::EngineTimer::Construction(h));
         }
     }
     let done: Vec<(u32, u32, u32)> = state
@@ -4242,9 +4291,10 @@ fn power_building(state: &mut State) {
 /// started again; one with 1.0 s or less runs out first. Without helpers
 /// the timers stop.
 ///
-/// PROVISIONAL: the timers are counted on the clock of the tick.
+/// The timers count from the end of the tick, the next tick's clock
+/// (c-SBZ-1: every gold and lumber change of the log matched).
 fn helpers_pay(state: &mut State, changed: &[u32]) {
-    let now = state.timers.time();
+    let now = add(state.move_clock, crate::timers::TICK);
     let next = f32::from_bits(add(state.move_clock, crate::timers::TICK));
     let share = state
         .data

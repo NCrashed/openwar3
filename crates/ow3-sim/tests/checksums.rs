@@ -182,12 +182,16 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBZ-1.w3g",
-        "power building (helpers on a farm and a barracks): not matched yet",
+        "the power building test (helpers on a farm and a barracks): every turn checksum \
+         to its end matches with the object table started as the game has it \
+         (tests/objects.rs, power_building_checksums); this test runs without it",
     ),
     ("c-SBW-1.w3g", "Bladestorm and Earthquake: not matched yet"),
     (
         "c-SBX-1.w3g",
-        "Animate Dead and Death and Decay: not matched yet",
+        "the Animate Dead and Death and Decay test: every turn checksum to its end \
+         matches with the object table started as the game has it (tests/objects.rs, \
+         animate_dead_decay_checksums); this test runs without it",
     ),
     ("c-SBY-1.w3g", "Starfall and Tranquility: not matched yet"),
     (

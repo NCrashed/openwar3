@@ -22,8 +22,8 @@ be read by the analyst) and its state.
      ring at its base;
    - gold mine: a large yellow ring round the mine.
    Open.
-3. Power building (several workers building one structure). Not done.
-   Open.
+3. Power building (several workers building one structure): done, see
+   the Echo Isles notes below.
 4. Placement of a building. We tint the whole building green or red.
    Observed in the game: the ghost building keeps its normal colours,
    and under it the footprint is drawn per cell, green squares where it
@@ -71,10 +71,12 @@ be read by the analyst) and its state.
 
 ## Echo Isles, 2026-11-16
 
-1. Power building (from Icecrown 3): asked the analyst for a test (hub
-   #13). Open. Construction animations (from Icecrown 8): done, a
-   building under construction plays its Birth sequence by the progress
-   of the build.
+1. Power building (from Icecrown 3): done. Helpers speed the building
+   by Repair's DataD each while its builder works and pay for it; a
+   helper takes over when the builder leaves (c-SBZ-1, hub #13, every
+   turn checksum and object matched). Construction animations (from
+   Icecrown 8): done, a building under construction plays its Birth
+   sequence by the progress of the build.
 2. The minimap of a map that is not square (Echo Isles) does not match
    its points: the units and buildings drawn on it do not sit where the
    terrain image shows them. The map's picture keeps the playable

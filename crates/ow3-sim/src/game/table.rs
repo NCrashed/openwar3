@@ -4988,45 +4988,69 @@ pub(super) fn construction_started(state: &mut super::State, h: u32, building: u
 /// barracks at 44.043449, hub #13): an object and the construction-finish
 /// event's, both freed at once after the construction's progress pair;
 /// its dispel runs from 0.01 s after the completion.
-pub(super) fn construction_finished(state: &mut super::State, building: u32, q: u32) {
+pub(super) fn construction_finished(state: &mut super::State, building: u32, builder: u32, q: u32) {
     let tick = state.table.now;
     let type_id = state.unit(Some(building)).map_or(0, |u| u.type_id);
     let after = building_layout(state, type_id).map_or(0, |b| b.2.to_bits());
     let one = state.table.take(tick, "construction: finished");
     let event = state.table.take(tick, "construction: event");
-    let (progress, dispel) = entries(state, building)
+    let (progress, dispel, rates) = entries(state, building)
         .map(|e| {
             (
                 std::mem::take(&mut e.construction),
                 std::mem::take(&mut e.dispel),
+                std::mem::take(&mut e.construction_rates),
             )
         })
         .unwrap_or_default();
+    // The builder's two work timers first (c-SBZ-1: the barracks' 1145,
+    // 1144), its rate rows (1180; a takeover's three as its limit watch,
+    // then its rate parts: the farm's 1234, 1233, 1235), then its progress
+    // pair (hub #13).
+    // PROVISIONAL: the order of the rows read on these two buildings.
+    let timers = entries(state, builder)
+        .filter(|e| e.work.len() == 7)
+        .map(|e| e.work.split_off(5))
+        .unwrap_or_default();
+    for e in timers.into_iter().rev() {
+        state.table.defer(e, "work order: timer");
+    }
+    let rates = match rates[..] {
+        [a, b, c] => vec![b, a, c],
+        _ => rates.into_iter().rev().collect(),
+    };
+    for e in rates {
+        state.table.defer(e, "unit state: rate part");
+    }
     for &e in progress.iter().rev() {
         state.table.defer(e, "construction: progress");
     }
-    state.table.free(tick, event, "construction: event");
-    state.table.free(tick, one, "construction: finished");
-    let end = ow3_math::add(ow3_math::add(q, 0.01f32.to_bits()), after);
+    state.table.defer(event, "construction: event");
+    state.table.defer(one, "construction: finished");
+    let end = ow3_math::add(ow3_math::add(q, crate::timers::TICK), after);
     for e in dispel {
         state.table.free_at_q(end, e, "building: dispel");
     }
 }
 
-/// The work on building `building` ends one tick after its completion
-/// (c-SBZ-1: 44.054104): each worker's work order and kept parts, then the
-/// construction's kept part.
+/// The work on building `building` ends two ticks after its completion
+/// (c-SBZ-1: 44.054104): each worker's work order and kept parts in the
+/// order of `workers`, the construction's kept part where `building`
+/// stands among them.
 pub(super) fn work_ended(state: &mut super::State, workers: &[u32], building: u32) {
     for &w in workers {
+        if w == building {
+            if let Some(o) = entries(state, building).and_then(|e| e.construction_work.take()) {
+                state.table.defer(o, "work order");
+            }
+            continue;
+        }
         let work = entries(state, w)
             .map(|e| std::mem::take(&mut e.work))
             .unwrap_or_default();
         for e in work.into_iter().rev() {
             state.table.defer(e, "work order");
         }
-    }
-    if let Some(o) = entries(state, building).and_then(|e| e.construction_work.take()) {
-        state.table.defer(o, "work order");
     }
 }
 

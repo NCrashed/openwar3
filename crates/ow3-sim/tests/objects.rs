@@ -648,7 +648,6 @@ fn starfall_tranquility_objects() {
 /// `c-SBZ-1`: power building, peasants helping on a farm and a barracks:
 /// every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn power_building_checksums() {
     if let Some(first) = turn_parts("c-SBZ-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
@@ -657,7 +656,6 @@ fn power_building_checksums() {
 
 /// `c-SBZ-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn power_building_objects() {
     if let Some(first) = compare_objects("c-SBZ-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

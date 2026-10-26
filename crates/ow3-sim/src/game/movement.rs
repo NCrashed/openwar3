@@ -2163,6 +2163,35 @@ pub(super) fn slowed_now(state: &mut State, h: u32) {
     }
 }
 
+/// Chasing unit `h`'s walk was made again (an Earthquake's slow): its goal
+/// follows its target by the 64 grid rule at once, and its renewals count
+/// from there (c-SBW-1: the ogre's goal taken as the Blademaster at
+/// 3.799953, in reach at its update of 3.81, walk freed at 3.839952; kobold
+/// 5's goal kept, hub #10).
+///
+/// PROVISIONAL: fitted on one action; a new search of the path is not
+/// done.
+pub(super) fn chase_renewed(state: &mut State, h: u32) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let here = relative([u.x, u.y], min);
+    let Some(Order::Attack { target }) = u.movement.filter(|m| m.walking).map(|m| m.order) else {
+        return;
+    };
+    let Some(at) = position_of(state, target) else {
+        return;
+    };
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+        && grid64(relative(at, min)) != grid64(relative(m.target, min))
+    {
+        m.target = at;
+        m.chase = Some(countdown(here, relative(at, min)));
+    }
+}
+
 /// The earliest timed reaction end in this tick, if any.
 pub(super) fn next_reaction_end(state: &State) -> Option<u32> {
     let limit = add(state.move_clock, crate::timers::TICK);

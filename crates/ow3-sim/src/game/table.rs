@@ -3428,6 +3428,7 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
     if walking {
         walk_made(state, h);
         super::movement::slowed_now(state, h);
+        super::movement::chase_renewed(state, h);
     }
 }
 
@@ -4793,6 +4794,7 @@ pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
     if walking {
         walk_made(state, h);
         super::movement::slowed_now(state, h);
+        super::movement::chase_renewed(state, h);
     }
     if let Some(e) = entries(state, h) {
         e.death.push(o);

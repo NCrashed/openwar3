@@ -3250,6 +3250,15 @@ pub(super) fn bolt_effect(state: &mut super::State, h: u32, cost: i32) -> Vec<u3
 pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, objects: Vec<u32>) {
     let tick = state.table.now;
     let stun = state.table.take(tick, "stun");
+    // A paused unit keeps its pause as its order: the stun object alone
+    // (c-SBL-1: the paused ogre at the bolt of 5.28).
+    if state.unit(Some(target)).is_some_and(|u| u.paused) {
+        if let Some(e) = entries(state, target) {
+            e.stun_end = std::iter::once(stun).chain(objects).collect();
+        }
+        impact_freed(state, caster);
+        return;
+    }
     let order = state.table.take(tick, "stun: order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
@@ -3285,8 +3294,16 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     for &e in parts[6..].iter().rev() {
         state.table.defer(e, "stun: order objects");
     }
-    // The caster's object kept to the impact: freed now if its order ended,
-    // else with the order (c-SAK-1: the bolts of 741 and 2616).
+    impact_freed(state, caster);
+    if let Some(e) = entries(state, target) {
+        e.stun_end = std::iter::once(stun).chain(objects).collect();
+        e.stun_order = parts[..6].iter().rev().copied().chain([order]).collect();
+    }
+}
+
+/// The caster's object kept to the impact: freed now if its order ended,
+/// else with the order (c-SAK-1: the bolts of 741 and 2616).
+fn impact_freed(state: &mut super::State, caster: u32) {
     let impact = entries(state, caster).map(|e| {
         let impact = std::mem::take(&mut e.impact);
         if e.order.is_empty() {
@@ -3298,10 +3315,6 @@ pub(super) fn stun_objects(state: &mut super::State, caster: u32, target: u32, o
     });
     for e in impact.unwrap_or_default() {
         state.table.defer(e, "spell ability: order start");
-    }
-    if let Some(e) = entries(state, target) {
-        e.stun_end = std::iter::once(stun).chain(objects).collect();
-        e.stun_order = parts[..6].iter().rev().copied().chain([order]).collect();
     }
 }
 
@@ -3582,9 +3595,12 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     // on (c-SAK-1: gnoll 13 at 3509, freed at 3511).
     // Also one whose stun came with the hit that kills it (c-SAK-1: gnoll
     // 17 at the bolt of 7981).
+    // Not a paused one: its order is the pause (c-SBL-1: the ogre killed by
+    // Storm Bolt at 5.28).
+    let paused = state.unit(Some(h)).is_some_and(|u| u.paused);
     let stunned =
         entries(state, h).is_some_and(|e| e.stun_ticks.is_some() || !e.stun_order.is_empty());
-    if stunned {
+    if stunned && !paused {
         let back = state.table.take(tick, "order back after a stun");
         state
             .table
@@ -3750,7 +3766,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             end_tick,
         )
     });
-    let Some((game, pair, own, core, stun_order, stun_end, missile, end_tick)) = held else {
+    let Some((game, pair, own, core, stun_order, mut stun_end, missile, end_tick)) = held else {
         return;
     };
     match end_tick {
@@ -3787,6 +3803,13 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     }
     for &e in queue[6..].iter().rev() {
         state.table.defer(e, "death order queue");
+    }
+    // A paused unit's stun object goes with them (c-SBL-1: the ogre killed
+    // by Storm Bolt, 1333 at 5.279955).
+    if paused {
+        for e in std::mem::take(&mut stun_end) {
+            state.table.defer(e, "unit death");
+        }
     }
     // Its buffs, then the Defend order, with the rest after the levels its
     // death gives (c-RZJ-1: footman 5 at 15.70, its Blizzard buff 2877,

@@ -112,6 +112,8 @@ struct Animated {
     work: Option<usize>,
     /// Stand Hit, played by a tree when it is hit, if any.
     hit: Option<usize>,
+    /// Birth, the construction of a building, if any.
+    birth: Option<usize>,
     /// Walk Gold and Walk Lumber, if any (SPEC-0029).
     walk_gold: Option<usize>,
     walk_lumber: Option<usize>,
@@ -203,6 +205,9 @@ pub enum UnitPose {
     /// Milliseconds into its Stand sequence played once, for effects such
     /// as the confirmation of an order.
     Once(i32),
+    /// A building under construction: its Birth sequence at this share of
+    /// the way, in thousandths of the build (0 just started, 1000 done).
+    Build(i32),
 }
 
 /// The animated models of a scene, posed each frame.
@@ -266,6 +271,7 @@ impl Animation {
                 let (stand_gold, stand_lumber) = (named("stand gold"), named("stand lumber"));
                 let (attack_gold, attack_lumber) = (named("attack gold"), named("attack lumber"));
                 let hit = named("stand hit");
+                let birth = named("birth");
                 let top = stand_top(&model, sequence);
                 let palette: Vec<u32> = Pose::new(&model, Moment::start(&model, sequence))
                     .matrices
@@ -283,6 +289,7 @@ impl Animation {
                     work,
                     portrait,
                     hit,
+                    birth,
                     walk_gold,
                     walk_lumber,
                     stand_gold,
@@ -337,6 +344,10 @@ impl Animation {
                 None => stand(),
             },
             UnitPose::Once(elapsed) => held(animated.sequence, elapsed),
+            UnitPose::Build(done) => match animated.birth {
+                Some(birth) => held(birth, Self::birth_frame(model, birth, done)),
+                None => stand(),
+            },
             UnitPose::LoadAttack(elapsed, load) => match animated.load_attack(load) {
                 Some(attack) => held(attack, elapsed),
                 None => stand(),
@@ -376,6 +387,14 @@ impl Animation {
                 }
             }
         }
+    }
+
+    /// How far into sequence `birth` of `model` a build `done` thousandths
+    /// of the way is, in milliseconds.
+    fn birth_frame(model: &Model, birth: usize, done: i32) -> i32 {
+        let start = Moment::start(model, birth);
+        let length = (start.interval[1] - start.interval[0]).max(0);
+        (i64::from(length) * i64::from(done.clamp(0, 1000)) / 1000) as i32
     }
 
     /// The index of the model at `path` if it was read.
@@ -429,6 +448,10 @@ impl Animation {
             UnitPose::LoadStand(elapsed, load) => (animated.load_stand(load)?, elapsed),
             UnitPose::Halt { walked, .. } => (animated.walk?, walked),
             UnitPose::Once(elapsed) => (animated.sequence, elapsed),
+            UnitPose::Build(done) => {
+                let birth = animated.birth?;
+                (birth, Self::birth_frame(&animated.model, birth, done))
+            }
         };
         let start = Moment::start(&animated.model, sequence);
         let length = (start.interval[1] - start.interval[0]).max(0);
@@ -461,7 +484,12 @@ impl Animation {
                 },
             )
         };
-        if let UnitPose::Once(elapsed) = pose {
+        if let UnitPose::Once(elapsed) | UnitPose::Build(elapsed) = pose {
+            let elapsed = if matches!(pose, UnitPose::Build(_)) {
+                Self::birth_frame(&animated.model, sequence, elapsed)
+            } else {
+                elapsed
+            };
             return Some(at(elapsed));
         }
         if let UnitPose::Halt { walked, since } = pose {
@@ -678,6 +706,11 @@ impl Animation {
                 self.sequence_alphas(index, animated.load_stand(load)?, elapsed, true)
             }
             UnitPose::Work(elapsed) => self.sequence_alphas(index, animated.work?, elapsed, true),
+            UnitPose::Build(done) => {
+                let birth = animated.birth?;
+                let elapsed = Self::birth_frame(&animated.model, birth, done);
+                self.sequence_alphas(index, birth, elapsed, false)
+            }
             UnitPose::Portrait(elapsed) => {
                 self.sequence_alphas(index, animated.portrait?, elapsed, true)
             }

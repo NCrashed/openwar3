@@ -71,11 +71,16 @@ be read by the analyst) and its state.
 
 ## Echo Isles, 2026-11-16
 
-1. Power building (from Icecrown 3) and the construction animations of
-   buildings (from Icecrown 8) are next in the queue. Open.
+1. Power building (from Icecrown 3): asked the analyst for a test (hub
+   #13). Open. Construction animations (from Icecrown 8): done, a
+   building under construction plays its Birth sequence by the progress
+   of the build.
 2. The minimap of a map that is not square (Echo Isles) does not match
    its points: the units and buildings drawn on it do not sit where the
    terrain image shows them. The map's picture keeps the playable
    area's proportions, its longer side across and black bands on the
    other; we stretched the area over the whole picture. Done: the points
    take the picture's square.
+3. The finished Human farm draws only its ring of stone walls: the barn
+   inside, which its Birth sequence shows, is missing from our Stand.
+   Seen on c-RTI's farms. Open.

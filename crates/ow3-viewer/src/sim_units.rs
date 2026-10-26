@@ -1161,6 +1161,12 @@ impl Sim {
     /// What unit `u` is doing at tick `now`: dead, swinging, walking or
     /// standing. The start and end of walks are kept from frame to frame.
     fn pose(&mut self, u: &UnitView, now: u64) -> UnitPose {
+        // A building under construction plays its Birth by the progress of
+        // the build.
+        if u.constructing {
+            let done = self.game.construction_progress(u.handle).unwrap_or(0.0);
+            return UnitPose::Build((done * 1000.0) as i32);
+        }
         if u.walking {
             self.halts.remove(&u.handle);
             let since = *self.walks.entry(u.handle).or_insert(now);

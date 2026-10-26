@@ -1333,21 +1333,27 @@ fn move_off_footprint(state: &mut State, h: u32) -> bool {
         return false;
     }
     let (cx, cy) = crate::path::cell_of(here);
-    let mut best: Option<([u32; 2], u32)> = None;
-    for dy in -8..=8 {
-        for dx in -8..=8 {
-            let p = [cx + dx, cy + dy].map(|c| add(i2r(c), 0x3F00_0000));
-            if !free(p) {
-                continue;
-            }
-            let (ex, ey) = (sub(p[0], here[0]), sub(p[1], here[1]));
-            let d = add(mul(ex, ex), mul(ey, ey));
-            if best.is_none_or(|(_, b)| real_of(d) < real_of(b)) {
-                best = Some((p, d));
+    // The ring search of a unit made on occupied ground (SPEC-0013): rings
+    // round its cell, each from the bottom side's second cell, the first
+    // free place (c-SBZ-1: peasant 4 to (720, -528) at the barracks, hub
+    // #13).
+    let mut found = None;
+    'rings: for n in 1..=8 {
+        let (l, r, b, t) = (cx - n, cx + n, cy - n, cy + n);
+        let ring = ((l + 1)..=r)
+            .map(|i| (i, b))
+            .chain(((b + 1)..=t).map(|j| (r, j)))
+            .chain((l..r).rev().map(|i| (i, t)))
+            .chain((b..t).rev().map(|j| (l, j)));
+        for (i, j) in ring {
+            let p = [i, j].map(|c| add(i2r(c), 0x3F00_0000));
+            if free(p) {
+                found = Some(p);
+                break 'rings;
             }
         }
     }
-    let Some((p, _)) = best else {
+    let Some(p) = found else {
         return false;
     };
     let [x, y] = absolute(mul_both(p, CELLS_TO_WORLD), min);

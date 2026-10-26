@@ -3706,7 +3706,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             .is_some_and(|u| crate::data::is_hero(u.type_id));
     let hero_order = hero.then(|| state.table.take_n(tick, 3, "hero death order"));
     // A paused unit, not a hero, with a costed ability, whose watches the
-    // pause freed: a watch on its mana, freed with its own (c-SBL-1,
+    // pause freed: a watch on its mana, freed first of its own (c-SBL-1,
     // c-SBN-1: the ogre lord with Shockwave, 1503 at 11.569, 1502 at
     // 11.689; none for c-RZJ-1's Ogre Lord, not paused, at 37.137806).
     // PROVISIONAL: what the watch is.
@@ -3764,7 +3764,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
             core.insert(core.len().min(1), m);
         }
         if let Some(w) = watch {
-            core.insert(core.len().min(1), w);
+            core.insert(0, w);
         }
         // The objects of an order of the game and a stun's buff end go
         // before its stun's order, the rest of its own after the record

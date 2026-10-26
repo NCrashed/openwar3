@@ -285,6 +285,14 @@ fn levelling_objects() {
     }
 }
 
+/// `c-SBS-1`: a level-3 revive and six heroes picking up items at different
+/// distances (report only).
+#[test]
+fn pickups_report() {
+    compare_objects("c-SBS-1");
+    turn_parts("c-SBS-1");
+}
+
 /// `c-SBR-1`: a level-2 hero revived, a salve of three charges used, dropped
 /// and picked up again: every turn checksum.
 #[test]

@@ -157,6 +157,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          salve_revive_checksums); this test runs without it",
     ),
     (
+        "c-SBS-1.w3g",
+        "the level-3 revive and pick-ups test: in progress (tests/objects.rs, \
+         pickups_report)",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

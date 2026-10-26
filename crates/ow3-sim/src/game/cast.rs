@@ -1362,12 +1362,6 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                     let was = s.event_time.replace(at);
                     let acquired = super::movement::acquire_vulnerable(&mut s, hero);
                     s.event_time = was;
-                    // The notice reaches the hero too and starts his check again
-                    // (c-SBV-1: no check of the Mountain King at 17.0, hub #9).
-                    // PROVISIONAL: 0.01 s and 1.0 s on both fit.
-                    if let Some(Object::Unit(u)) = s.objects.get_mut(&hero) {
-                        u.next_acquire = add(at, 0.01f32.to_bits());
-                    }
                     acquired
                 };
                 super::widgets::acquired_with(vm, state, &acquired, true);

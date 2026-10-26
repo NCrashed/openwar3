@@ -1174,11 +1174,9 @@ fn a_creep_turns_home_after_its_guard_check() {
         (check - entered) % 400 <= 1 && check + 1 >= *passed && check <= passed + 401,
         "entered {entered}, out {passed}, check {check}"
     );
+    // Home within the arrival radius of a point move (0.49 cells, 15.68).
     let end = kobold(&path.last().unwrap().1);
-    assert!(
-        (end.x + 2000.0).abs() < 13.0 && (end.y + 2000.0).abs() < 13.0,
-        "{end:?}"
-    );
+    assert!((end.x + 2000.0).hypot(end.y + 2000.0) < 15.68, "{end:?}");
     assert_eq!(end.order, 0);
 }
 

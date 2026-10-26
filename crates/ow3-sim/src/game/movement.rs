@@ -3207,6 +3207,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 super::table::walk_made_at_order(state, unit);
                                 state.orders_given += 1;
                                 m.given = state.orders_given;
+                            } else if gate_open
+                                && !reaches_with(state, unit, target, AFTER_MOVEMENT)
+                                && let Some(at) = position_of(state, target)
+                            {
+                                // The arrival's range test (range + 100) fails:
+                                // a new chase walk to the target at once
+                                // (c-SBX-1: raised kobold 5 at 5.339851, hub #12).
+                                m.target = at;
+                                super::table::walk_made_at_order(state, unit);
+                                state.orders_given += 1;
+                                m.given = state.orders_given;
                             } else if gate_open {
                                 m.arrived = true;
                                 m.swing_gate = None;
@@ -6152,6 +6163,11 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         // Its objects kept to the target's death go with its handling, the
         // current target's first (SPEC-0024; c-SAK-1: 4764).
         super::table::attacker_lost(state, h, dead);
+        // (Whether a script's attack order on it ends here.)
+        let scripted = !own
+            && state
+                .unit(Some(h))
+                .is_some_and(|u| u.attack_move.is_none() && u.entries.script_attack);
         // A script's attack order on it ends with an object, freed 0.0001 s
         // later (c-SBL-1: the Mountain King's at kobold 3's death, 2.354989).
         if !own
@@ -6240,8 +6256,12 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
             // Without an attack-move, its own periodic check due in the
             // backswing goes on there and only records (c-SAK-1: the image
             // 20, ogre 18 dead at 54.398029, its check of 54.553837).
+            // Under a script's attack order it ran no checks: only the one
+            // at the order's end (c-SBV-1: the Mountain King, the ogre dead
+            // at log 3154, his check at 17.259380, hub #9).
             let restart = add(from, AFTER_DEATH);
             if u.attack_move.is_none()
+                && !scripted
                 && f32::from_bits(u.backswing_end) > f32::from_bits(now)
                 && real_of(u.next_acquire) < real_of(restart)
                 && real_of(u.next_acquire) > real_of(now)

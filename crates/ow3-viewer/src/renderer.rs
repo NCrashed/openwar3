@@ -1479,7 +1479,8 @@ pub async fn headless_device() -> Result<(wgpu::Device, wgpu::Queue), String> {
     let mut adapter = None;
     for fallback in [false, true] {
         let options = wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference: wgpu::PowerPreference::from_env()
+                .unwrap_or(wgpu::PowerPreference::LowPower),
             force_fallback_adapter: fallback,
             compatible_surface: None,
         };
@@ -1489,6 +1490,11 @@ pub async fn headless_device() -> Result<(wgpu::Device, wgpu::Queue), String> {
         }
     }
     let adapter = adapter.ok_or("no graphics adapter (Vulkan, Metal, DX12 or GL) found")?;
+    let info = adapter.get_info();
+    eprintln!(
+        "graphics: {} ({:?}, {})",
+        info.name, info.backend, info.driver
+    );
     adapter
         .request_device(&wgpu::DeviceDescriptor::default())
         .await

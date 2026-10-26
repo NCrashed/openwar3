@@ -23,7 +23,10 @@
 //! units placed in the editor instead). With `--screenshot` the view
 //! `--time` seconds in is drawn into a PNG file without a window, on a GPU
 //! or the software Vulkan driver. Game archives come from `game-data/1.27b`
-//! or the directory in `OW3_GAME_DATA`.
+//! or the directory in `OW3_GAME_DATA`. The graphics adapter is the
+//! low-power one (an integrated GPU) unless `WGPU_POWER_PREF=high` asks
+//! for the other: the nouveau driver of a laptop's NVIDIA card is far too
+//! slow for it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -338,11 +341,17 @@ impl App {
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference:
+                wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }))
         .map_err(|e| e.to_string())?;
+        let info = adapter.get_info();
+        eprintln!(
+            "graphics: {} ({:?}, {})",
+            info.name, info.backend, info.driver
+        );
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .map_err(|e| e.to_string())?;

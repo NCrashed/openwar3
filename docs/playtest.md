@@ -85,4 +85,8 @@ be read by the analyst) and its state.
    take the picture's square.
 3. The finished Human farm draws only its ring of stone walls: the barn
    inside, which its Birth sequence shows, is missing from our Stand.
-   Seen on c-RTI's farms. Open.
+   Seen on c-RTI's farms. Open. 2026-10-27: the offline renderer
+   (ow3-render, render_model) draws the farm's Stand whole, barn and
+   chimney, so the model's geoset alphas are read right; to check again
+   in the viewer (its GPU path or its choice of pose for a finished
+   building).

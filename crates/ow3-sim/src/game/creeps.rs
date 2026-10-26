@@ -489,15 +489,28 @@ fn go_home(state: &mut State, h: u32) {
     });
 }
 
-/// A creep idle after a stun at queue time `now`: its return timer starts
-/// and its guard checks start again (SPEC-0037; c-RZH-1: creep 8 at
+/// A creep idle after a stun at queue time `now`: its guard checks start
+/// again, and outside its zone its return timer starts (SPEC-0037; c-RZH-1: creep 8 at
 /// 1946).
 pub(super) fn after_stun(state: &mut State, h: u32, now: u32) {
     let back = state.combat.guard_return_time;
+    let guard = f32::from_bits(state.combat.guard_distance);
+    let collision = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(0.0, |t| f32::from_bits(t.collision));
+    let zone = guard + collision;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && u.owner == CREEPS
     {
-        u.creep.return_time = Some(add(now, back));
+        let (dx, dy) = (sub(u.x, u.home[0]), sub(u.y, u.home[1]));
+        let away = f32::from_bits(add(mul(dx, dx), mul(dy, dy))) > zone * zone;
+        // Only outside the zone, as at a guard check (c-SBJ-1: kobolds 7
+        // and 8 after Impale at 9.92, inside: no return timer; analyst
+        // 11-15 06:35).
+        if away {
+            u.creep.return_time = Some(add(now, back));
+        }
         u.creep.checks_next = Some(add(now, CHECK_PERIOD));
     }
 }

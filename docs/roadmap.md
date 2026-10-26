@@ -64,9 +64,7 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- 31 of 32 test replays match every turn checksum.
-- The other one is listed with the reason in
-  `crates/ow3-sim/tests/checksums.rs` (`UNSPECIFIED`).
+- All 32 test replays match every turn checksum.
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
   does every one of its 1614 turn checksums (to 161 s).
@@ -110,6 +108,10 @@ the game's order.
 - The aura test c-SBP-1 (kobold taskmasters and paladins killed while
   their auras run): its object table (1263 changes) and all turn
   checksums match the game.
+- The Undead spells test c-SBJ-1 (Death Coil, Frost Nova, Impale and
+  Carrion Swarm on a creep camp, with heroes that cannot attack running
+  from their attackers): its object table (1830 changes) and all 161
+  turn checksums match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

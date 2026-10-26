@@ -212,12 +212,20 @@ fn orc_spells_objects() {
 }
 
 /// `c-SBJ-1`: Undead spells (Death Coil, Frost Nova, Impale, Carrion
-/// Swarm) (report only).
+/// Swarm): every turn checksum.
 #[test]
-fn undead_spells_report() {
-    eprintln!("c-SBJ-1");
-    compare_objects("c-SBJ-1");
-    turn_parts("c-SBJ-1");
+fn undead_spells_checksums() {
+    if let Some(first) = turn_parts("c-SBJ-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBJ-1`'s object table.
+#[test]
+fn undead_spells_objects() {
+    if let Some(first) = compare_objects("c-SBJ-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBH-1`: Flame Strike (its point mover, the area's two phases and

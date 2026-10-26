@@ -157,8 +157,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBJ-1.w3g",
-        "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): in \
-         progress (tests/objects.rs, undead_spells_report)",
+        "the Undead spells test (Death Coil, Frost Nova, Impale, Carrion Swarm): every \
+         turn checksum to its end matches with the object table started as the game \
+         has it (tests/objects.rs, undead_spells_checksums); this test runs without it",
     ),
     (
         "c-SBI-1.w3g",

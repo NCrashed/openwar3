@@ -5075,15 +5075,15 @@ pub(super) fn helper_started(state: &mut super::State, h: u32, building: u32) {
     let rate = state.table.take(tick, "unit state: rate part");
     // It replaces the row of the last change, freed then (c-SBZ-1: 1163
     // by 1213 at 14.758524).
+    if let Some(o) = entries(state, h).and_then(|e| e.repair_part.take()) {
+        state.table.defer(o, "repair order: order start");
+    }
     let old = entries(state, building).and_then(|e| e.construction_rates.pop());
     if let Some(o) = old {
         state.table.defer(o, "unit state: rate part");
     }
     if let Some(e) = entries(state, building) {
         e.construction_rates.push(rate);
-    }
-    if let Some(o) = entries(state, h).and_then(|e| e.repair_part.take()) {
-        state.table.defer(o, "repair order: order start");
     }
     if let Some(o) = entries(state, building).and_then(|e| e.first_helper.take()) {
         state.table.defer(o, "work order: timer");

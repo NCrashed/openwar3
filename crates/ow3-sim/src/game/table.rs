@@ -415,6 +415,8 @@ pub struct UnitEntries {
     /// A stun of Impale: at its end a 0.00 hit from the caster comes before
     /// the stun's objects go, and there is no buff end (`impale_ends`).
     pub impale: bool,
+    /// Its order is a script's attack order on a unit (`attack_target_ordered`).
+    pub script_attack: bool,
     /// The object of a script's invulnerability (`invulnerable_set`).
     pub invulnerable: Option<u32>,
     pub buff_end: Option<u32>,
@@ -882,6 +884,7 @@ fn entries(state: &mut super::State, h: u32) -> Option<&mut UnitEntries> {
 /// The order of unit `h` ends: its objects are freed 0.0001 s later.
 pub(super) fn order_ended(state: &mut super::State, h: u32) {
     let old = entries(state, h).map(|e| {
+        e.script_attack = false;
         // The objects of its attack on a target go first, then those of
         // its acquisition and of the order (c-SAK-1: the Mountain King's
         // new order at 2501).
@@ -1181,6 +1184,7 @@ pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.order = kept;
         e.reaction.push(parts[6]);
+        e.script_attack = true;
     }
 }
 
@@ -2574,6 +2578,15 @@ pub(super) fn attack_ended(state: &mut super::State, h: u32, kept: bool) {
     }
 }
 
+/// Unit `h`'s script attack order lost its target: the sixth of its start
+/// objects goes, 0.0001 s later (c-SBL-1: 1275 at kobold 3's death).
+pub(super) fn script_attack_lost(state: &mut super::State, h: u32) {
+    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(o) = first {
+        state.table.defer(o, "attack: order start");
+    }
+}
+
 /// Attacker `h` of unit `dead` is handled at the death: the object of its
 /// current target is freed 0.0001 s later now, the others it kept to the
 /// death at the end of its handling (`attacker_done`), after its attack's
@@ -3946,8 +3959,10 @@ pub(super) fn paused(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         let mut kept: Vec<u32> = parts[..5].iter().rev().copied().collect();
         kept.push(order);
-        kept.append(&mut e.order);
-        e.order = kept;
+        // Kept as an order of the game's: at the death before the record
+        // (c-SBL-1: kobold 3 at 2.354989).
+        kept.append(&mut e.game_objects);
+        e.game_objects = kept;
     }
     for o in watches {
         state.table.defer(o, "mana watch");

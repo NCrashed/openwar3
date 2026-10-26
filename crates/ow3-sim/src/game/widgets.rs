@@ -748,6 +748,9 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
             }
         }
     }
+    // A unit event, with its own object (SPEC-0024, "Event objects"; c-SBL-1:
+    // 1305 at kobold 3's death).
+    super::begin_event(state);
     for registration in &registrations {
         if let Registration::Unit {
             trigger,
@@ -763,6 +766,7 @@ fn died(vm: &mut Vm, state: &Rc<RefCell<State>>, widget: u32, killer: Option<u32
             fire_trigger(vm, state, trigger, context);
         }
     }
+    super::end_event(state);
     // Queues waiting for food go on (SPEC-0027).
     if let Some((owner, _)) = owner {
         super::training::food_freed(vm, state, owner);

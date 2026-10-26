@@ -5940,6 +5940,16 @@ pub(super) fn target_died(state: &mut State, dead: u32) {
         // Its objects kept to the target's death go with its handling, the
         // current target's first (SPEC-0024; c-SAK-1: 4764).
         super::table::attacker_lost(state, h, dead);
+        // A script's attack order on it ends with an object, freed 0.0001 s
+        // later (c-SBL-1: the Mountain King's at kobold 3's death, 2.354989).
+        if !own
+            && state
+                .unit(Some(h))
+                .is_some_and(|u| u.attack_move.is_none() && u.entries.script_attack)
+        {
+            super::table::script_attack_lost(state, h);
+            super::table::attack_ended(state, h, false);
+        }
         super::attack::swing_cut(state, h, now);
         // A creep that took a target on its way home goes on to the next
         // entry of its queue: a move to where the target stood, without

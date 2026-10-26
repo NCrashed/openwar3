@@ -985,6 +985,14 @@ fn entries(state: &mut super::State, h: u32) -> Option<&mut UnitEntries> {
 
 /// The order of unit `h` ends: its objects are freed 0.0001 s later.
 pub(super) fn order_ended(state: &mut super::State, h: u32) {
+    order_ended_with(state, h, None);
+}
+
+/// `order_ended`; with `swing_end`, an attack whose swing is past its damage
+/// point: the target's object goes now, the swing's at the end of its
+/// backswing (c-SBS-1: the Archmage's 1406 at the ogre's invulnerability of
+/// 7.97976, 1400 .. 1405 at 8.033432; hub #6).
+pub(super) fn order_ended_with(state: &mut super::State, h: u32, swing_end: Option<u32>) {
     let old = entries(state, h).map(|e| {
         e.script_attack = false;
         // The objects of its attack on a target go first, then those of
@@ -1025,8 +1033,19 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
             }
         }
     }
-    for e in old.unwrap_or_default() {
-        state.table.defer(e, "order end");
+    let old = old.unwrap_or_default();
+    match (swing_end, old.split_first()) {
+        (Some(q), Some((&first, rest))) => {
+            state.table.defer(first, "order end");
+            for &e in rest {
+                state.table.free_at_q(q, e, "order end: swing");
+            }
+        }
+        _ => {
+            for e in old {
+                state.table.defer(e, "order end");
+            }
+        }
     }
     // The last member of a group to end its order gives up the group's walk.
     if let Some(i) = state
@@ -4474,11 +4493,22 @@ pub(super) fn invulnerable_set(state: &mut super::State, h: u32, on: bool) {
                     })
             })
             .collect();
+        // One past its swing's damage point keeps the swing to the end of its
+        // backswing, its acquisition check 0.01 s after (hub #6).
+        let now = state.event_time.unwrap_or_else(|| state.timers.time());
         for a in attackers {
-            order_ended(state, a);
+            // (In its backswing: past the damage point.)
+            let swing_end = state
+                .unit(Some(a))
+                .filter(|u| f32::from_bits(u.backswing_end) > f32::from_bits(now))
+                .map(|u| u.backswing_end);
+            order_ended_with(state, a, swing_end);
             if let Some(super::Object::Unit(u)) = state.objects.get_mut(&a) {
                 u.attack = None;
                 u.movement = None;
+                if let Some(end) = swing_end {
+                    u.next_acquire = ow3_math::add(end, super::movement::AFTER_DEATH);
+                }
             }
         }
     } else if let Some(o) = entries(state, h).and_then(|e| e.invulnerable.take()) {

@@ -1309,9 +1309,15 @@ fn damage_unit(
         let (Some(_), Some(unit)) = (state.unit(source), state.unit(target)) else {
             return false;
         };
-        if !unit.alive || target.is_some_and(|t| super::cast::invulnerable(&state, t)) {
+        // Made invulnerable by the script: the hit is made, for no damage
+        // (c-SBS-1 at 8.084644, the damage event shows 0).
+        let scripted = unit.script_invulnerable && unit.invulnerable_until.is_none();
+        if !unit.alive
+            || (!scripted && target.is_some_and(|t| super::cast::invulnerable(&state, t)))
+        {
             return false;
         }
+        let amount = if scripted { 0 } else { amount };
         let data = state
             .data
             .units

@@ -158,8 +158,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBS-1.w3g",
-        "the level-3 revive and pick-ups test: in progress (tests/objects.rs, \
-         pickups_report)",
+        "the level-3 revive and pick-ups test: every turn checksum to its end matches \
+         with the object table started as the game has it (tests/objects.rs, \
+         pickups_checksums); this test runs without it",
     ),
     (
         "c-SBH-1.w3g",

@@ -1102,7 +1102,13 @@ pub(super) fn held_impacts(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     // stops makes this tick's step and stands from the next.
     state.borrow_mut().impact_now = !held.is_empty();
     for (m, at) in held {
-        if !standing(&state.borrow(), m.target) {
+        // A unit made invulnerable by the script is still hit, for no damage
+        // (c-SBS-1: the Archmage's missile on the ogre at 8.084644; hub #6).
+        let scripted = state
+            .borrow()
+            .unit(Some(m.target))
+            .is_some_and(|u| u.alive && u.script_invulnerable && u.invulnerable_until.is_none());
+        if !scripted && !standing(&state.borrow(), m.target) {
             super::table::missile_hit(&mut state.borrow_mut(), &m.objects, at);
             continue;
         }

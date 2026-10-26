@@ -286,11 +286,20 @@ fn levelling_objects() {
 }
 
 /// `c-SBS-1`: a level-3 revive and six heroes picking up items at different
-/// distances (report only).
+/// distances: every turn checksum.
 #[test]
-fn pickups_report() {
-    compare_objects("c-SBS-1");
-    turn_parts("c-SBS-1");
+fn pickups_checksums() {
+    if let Some(first) = turn_parts("c-SBS-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBS-1`'s object table.
+#[test]
+fn pickups_objects() {
+    if let Some(first) = compare_objects("c-SBS-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBR-1`: a level-2 hero revived, a salve of three charges used, dropped

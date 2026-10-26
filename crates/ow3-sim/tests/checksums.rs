@@ -152,8 +152,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBR-1.w3g",
-        "the level-2 revive and salve test: in progress (tests/objects.rs, \
-         salve_revive_report)",
+        "the level-2 revive and salve test: every turn checksum to its end matches \
+         with the object table started as the game has it (tests/objects.rs, \
+         salve_revive_checksums); this test runs without it",
     ),
     (
         "c-SBH-1.w3g",

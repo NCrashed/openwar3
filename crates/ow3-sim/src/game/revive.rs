@@ -26,6 +26,8 @@ const EVENT_PLAYER_HERO_REVIVE_FINISH: i32 = 46;
 /// The share of a hero's gold cost a revive costs at level 1 (c-SBQ-1:
 /// 170 of the Paladin's 425).
 const GOLD_FACTOR: f32 = 0.40;
+/// The share more a level above the first.
+const LEVEL_FACTOR: f32 = 0.10;
 /// ReviveTimeFactor: the revive takes the hero's build time times this, cut
 /// to whole seconds, times its level (c-SBQ-1: 55 x 0.65 = 35.75, revived
 /// 35.000759 s later; c-SBR-1 at level 2: 70 s; hub #4).
@@ -56,7 +58,11 @@ pub(super) fn start(vm: &mut Vm, state: &Rc<RefCell<State>>, altar: u32, hero: u
         let (gold, food, build) = s.data.units.get(&type_id).map_or((0, 0, 0.0), |t| {
             (t.gold_cost, t.food_used, f32::from_bits(t.build_time))
         });
-        let cost = (gold as f32 * GOLD_FACTOR) as i32;
+        // 0.40 of the gold cost and 0.10 more a level above the first, cut
+        // to whole tens (c-SBQ-1: 170 at level 1; c-SBR-1: 210 at level 2).
+        // PROVISIONAL: two points; the cut to tens is a guess that fits them.
+        let share = GOLD_FACTOR + LEVEL_FACTOR * (level.max(1) - 1) as f32;
+        let cost = ((gold as f32 * share) as i32 / 10) * 10;
         *s.setup.player_states.entry((owner, GOLD)).or_default() -= cost;
         *s.setup.player_states.entry((owner, FOOD_USED)).or_default() += food;
         let seconds = (build * TIME_FACTOR).floor() * level.max(1) as f32;

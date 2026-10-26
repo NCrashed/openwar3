@@ -469,6 +469,9 @@ pub struct UnitEntries {
     /// The objects of such an order lost with its target, due at the end of
     /// the backswing (`script_attack_lost`), with that queue time.
     pub order_ending: Vec<(u32, u32)>,
+    /// A lasting item effect on it: its object and the queue time it ends
+    /// (`item_effect`).
+    pub item_effect: Option<(u32, u32)>,
     /// The object of a script's invulnerability (`invulnerable_set`).
     pub invulnerable: Option<u32>,
     pub buff_end: Option<u32>,
@@ -1402,6 +1405,15 @@ pub(super) fn item_picked(state: &mut super::State, h: u32, item: u32) {
     }
 }
 
+/// Hero `h` drops an item: the first of its order's kept parts goes before
+/// the drop event (`item_picked_end` the rest after it).
+pub(super) fn item_drop_first(state: &mut super::State, h: u32) {
+    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(o) = first {
+        state.table.defer(o, "item order: start");
+    }
+}
+
 /// After the pick-up event: the order's other kept parts and the order go,
 /// and its walk is given up.
 pub(super) fn item_picked_end(state: &mut super::State, h: u32) {
@@ -1418,11 +1430,13 @@ pub(super) fn item_picked_end(state: &mut super::State, h: u32) {
 /// order ends, nine parts, the last five freed 0.0001 s later now; the
 /// first four and the order are returned, freed after the use's events
 /// (`item_used_end`).
-pub(super) fn item_used(state: &mut super::State, h: u32) -> Vec<u32> {
+pub(super) fn item_used(state: &mut super::State, h: u32, parts: usize) -> Vec<u32> {
     let tick = state.table.now;
-    let order = state.table.take(tick, "script immediate order");
+    let order = state.table.take(tick, "script item order");
     let record = state.table.take(tick, "order record");
-    let parts = state.table.take_n(tick, 9, "item use: order start");
+    // (Nine for a use without a target, eleven with one: c-SBR-1, the salve
+    // at 5.5.)
+    let parts = state.table.take_n(tick, parts, "item use: order start");
     state.table.defer(record, "order record");
     order_ended(state, h);
     for &e in parts[4..].iter().rev() {
@@ -1431,6 +1445,35 @@ pub(super) fn item_used(state: &mut super::State, h: u32) -> Vec<u32> {
     let mut rest: Vec<u32> = parts[..4].iter().rev().copied().collect();
     rest.push(order);
     rest
+}
+
+/// A lasting item effect (Healing Salve's AIrl) on unit `h` for `duration`
+/// seconds from now: its object, kept to the effect's end; a use while it
+/// runs makes none and starts the effect's time again (c-SBR-1: 1191 made
+/// at the first use, freed 45 s after the third, at 60.510059).
+/// PROVISIONAL: the end is taken 0.01 s after the duration; the heal over
+/// time itself is not applied.
+pub(super) fn item_effect(state: &mut super::State, h: u32, _item: u32, duration: u32) {
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
+    let end = ow3_math::add(ow3_math::add(now, duration), super::movement::AFTER_DEATH);
+    // (One that has ended no more.)
+    let old = entries(state, h)
+        .and_then(|e| e.item_effect.take())
+        .filter(|&(_, q)| f32::from_bits(q) > f32::from_bits(now));
+    let o = match old {
+        Some((o, q)) => {
+            state.table.timed_q.retain(|t| *t != (q, o, "item effect"));
+            o
+        }
+        None => {
+            let tick = state.table.now;
+            state.table.take(tick, "item effect")
+        }
+    };
+    state.table.free_at_q(end, o, "item effect");
+    if let Some(e) = entries(state, h) {
+        e.item_effect = Some((o, end));
+    }
 }
 
 /// After the use's events: a used-up item's ability and watch on the hero

@@ -1062,14 +1062,32 @@ fn unit_event(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, event: i32) {
     super::end_event(state);
 }
 
+/// What a used item does.
+#[derive(Clone, Copy)]
+enum ItemEffect {
+    /// Heals its user at once by this much (AIhe).
+    Heal(u32),
+    /// A lasting effect on its target for this many seconds (base AIrg, as
+    /// Healing Salve's AIrl).
+    Lasting(u32),
+}
+
 /// `UnitUseItem` of a hero carrying a potion (c-SBQ-1 at 9.0, hub #2): the
 /// use order's objects, the heal at once (`DataA` of its ability), the use
 /// event, and for the last charge the drop event and the item gone with
 /// its objects; the hero's attack ends, its acquisition check 0.01 s later.
 /// PROVISIONAL: only an item whose ability heals (base AIhe, as AIh1); the
 /// cooldown timers have no objects and are not kept.
-fn use_item(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, item: u32) -> bool {
-    let heal = {
+fn use_item(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    h: u32,
+    item: u32,
+    target: Option<u32>,
+) -> bool {
+    // (What the item does: a heal at once, or a lasting effect, Healing
+    // Salve's AIrl, on the target for its duration.)
+    let effect = {
         let s = state.borrow();
         let Some(Object::Item(i)) = s.objects.get(&item) else {
             return false;
@@ -1084,19 +1102,36 @@ fn use_item(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, item: u32) -> bool 
             .flatten()
             .find_map(|a| {
                 let d = s.data.abilities.get(a)?;
-                (d.code == i32::from_be_bytes(*b"AIhe"))
-                    .then(|| d.per_level.first().map_or(0, |l| l.data[0]))
+                let level = d.per_level.first();
+                if d.code == i32::from_be_bytes(*b"AIhe") {
+                    Some(ItemEffect::Heal(level.map_or(0, |l| l.data[0])))
+                } else if d.code == i32::from_be_bytes(*b"AIrg") {
+                    Some(ItemEffect::Lasting(level.map_or(0, |l| l.duration)))
+                } else {
+                    None
+                }
             })
     };
-    let Some(heal) = heal else {
+    let Some(effect) = effect else {
         return false;
     };
+    let on = target.unwrap_or(h);
     let rest = {
         let mut s = state.borrow_mut();
-        let rest = super::table::item_used(&mut s, h);
+        let parts = if target.is_some() { 11 } else { 9 };
+        let rest = super::table::item_used(&mut s, h, parts);
+        match effect {
+            ItemEffect::Heal(heal) => {
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&on) {
+                    let life = add(u.life.value(), heal);
+                    u.life.set(life);
+                }
+            }
+            ItemEffect::Lasting(duration) => {
+                super::table::item_effect(&mut s, on, item, duration);
+            }
+        }
         if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
-            let life = add(u.life.value(), heal);
-            u.life.set(life);
             // Its attack ends with its order.
             u.attack = None;
             u.movement = None;
@@ -1128,6 +1163,35 @@ fn use_item(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u32, item: u32) -> bool 
         u.next_acquire = at;
     }
     true
+}
+
+/// The heroes that dropped an item at their updates of this tick: the item
+/// lies at the point, the first of the order's kept parts goes, the drop
+/// event, then the item's objects on the hero, the order's rest, and its
+/// walk is given up (c-SBR-1 at 9.629385).
+pub(super) fn items_dropped(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    let dropped = std::mem::take(&mut state.borrow_mut().dropped);
+    for (h, item, point) in dropped {
+        let held = {
+            let mut s = state.borrow_mut();
+            let held = match s.objects.get_mut(&item) {
+                Some(Object::Item(i)) => {
+                    i.carried_by = None;
+                    [i.x, i.y] = point;
+                    std::mem::take(&mut i.held)
+                }
+                _ => Vec::new(),
+            };
+            super::table::item_drop_first(&mut s, h);
+            held
+        };
+        unit_event(vm, state, h, EVENT_UNIT_DROP_ITEM);
+        let mut s = state.borrow_mut();
+        for o in held.into_iter().rev() {
+            s.table.defer(o, "item ability");
+        }
+        super::table::item_picked_end(&mut s, h);
+    }
 }
 
 /// `EVENT_UNIT_PICKUP_ITEM`.
@@ -2248,7 +2312,40 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let (Some(h), Some(item)) = (handle(&args[0]), handle(&args[1])) else {
                 return Ok(Some(Value::Boolean(false)));
             };
-            Ok(Some(Value::Boolean(use_item(vm, state, h, item))))
+            Ok(Some(Value::Boolean(use_item(vm, state, h, item, None))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native UnitUseItemTarget takes unit whichUnit, item whichItem, widget target returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some(item)) = (handle(&args[0]), handle(&args[1])) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let target = handle(&args[2]).unwrap_or(h);
+            Ok(Some(Value::Boolean(use_item(
+                vm,
+                state,
+                h,
+                item,
+                Some(target),
+            ))))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native UnitDropItemPoint takes unit whichUnit, item whichItem, real x, real y returns boolean",
+        |vm, state, args| {
+            let (Some(h), Some(item)) = (handle(&args[0]), handle(&args[1])) else {
+                return Ok(Some(Value::Boolean(false)));
+            };
+            let point = [real(&args[2]), real(&args[3])];
+            let mut s = state.borrow_mut();
+            Ok(Some(Value::Boolean(super::movement::drop_order(
+                &mut s, h, item, point,
+            ))))
         }
     );
     native!(

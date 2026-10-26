@@ -286,11 +286,20 @@ fn levelling_objects() {
 }
 
 /// `c-SBR-1`: a level-2 hero revived, a salve of three charges used, dropped
-/// and picked up again (report only).
+/// and picked up again: every turn checksum.
 #[test]
-fn salve_revive_report() {
-    compare_objects("c-SBR-1");
-    turn_parts("c-SBR-1");
+fn salve_revive_checksums() {
+    if let Some(first) = turn_parts("c-SBR-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBR-1`'s object table.
+#[test]
+fn salve_revive_objects() {
+    if let Some(first) = compare_objects("c-SBR-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBQ-1`: a hero revived at an altar, items picked up and used: every

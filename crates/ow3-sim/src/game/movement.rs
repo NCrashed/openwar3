@@ -186,6 +186,9 @@ pub enum Order {
     /// Turn to an item on the ground, walking into its reach first, and
     /// pick it up (c-SBQ-1).
     PickUp { item: u32 },
+    /// Walk within DropItemRange of the order point and drop the carried
+    /// `item` there (c-SBR-1).
+    Drop { item: u32 },
 }
 
 /// The order id of a worker building (`repair`, SPEC-0026).
@@ -277,6 +280,9 @@ pub struct Moving {
     /// A creep's move to where its target died arrived: it stands and
     /// turns to this point (relative), then the order ends (SPEC-0030).
     face_point: Option<[u32; 2]>,
+    /// A drop order stood within DropItemRange at its last update: it
+    /// drops at this one (c-SBR-1: stopped at 9.599, dropped at 9.629385).
+    drop_ready: bool,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
     pub(super) given: u64,
@@ -553,6 +559,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             unlimited: false,
             then_attack: None,
             face_point: None,
+            drop_ready: false,
             ..m
         },
         None => Moving {
@@ -592,6 +599,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             unlimited: false,
             then_attack: None,
             face_point: None,
+            drop_ready: false,
         },
     };
     state.orders_given = given;
@@ -2778,7 +2786,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         .unit(Some(h))
                         .and_then(|u| state.data.units.get(&u.type_id))
                         .map_or(0.0, |t| real_of(t.collision));
-                    let reach = (PICKUP_RANGE + own).to_bits();
+                    let reach = ((PICKUP_RANGE + own) / 32.0).to_bits();
                     if in_range(here, relative(at, min), reach) {
                         let place = relative(m.target, min);
                         if real_of(heading_and_turn(&m, place).1).abs() < ATTACK_ANGLE {
@@ -2796,6 +2804,33 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                 }
                 None => m.arrived = true,
+            }
+        }
+        // A drop: within DropItemRange of its point the item is dropped there
+        // (c-SBR-1: 91.2 away at 9.629385).
+        // Strictly within it: the order's point exactly 100 away at the order
+        // was not; the hero stops at the update that finds it within, and
+        // drops at the next.
+        if let Order::Drop { item } = m.order
+            && !waiting
+            && !m.arrived
+        {
+            let at = relative(m.target, min);
+            let (dx, dy) = (
+                mul(sub(at[0], here[0]), CELL),
+                mul(sub(at[1], here[1]), CELL),
+            );
+            let r = DROP_RANGE / 32.0;
+            if real_of(add(mul(dx, dx), mul(dy, dy))) < r * r {
+                if std::mem::take(&mut m.drop_ready) {
+                    m.arrived = true;
+                    state.dropped.push((h, item, m.target));
+                } else {
+                    m.drop_ready = true;
+                }
+                m.walking = false;
+                m.velocity = [0, 0];
+                cast_turn = true;
             }
         }
         // The same for a cast on a point: its place is the order point.
@@ -6429,6 +6464,26 @@ pub(super) fn attacks(state: &State, h: u32) -> bool {
 /// PROVISIONAL: the collision added is read from that one case.
 const PICKUP_RANGE: f32 = 150.0;
 
+/// DropItemRange of the game's constants (c-SBR-1: the salve dropped 91.2
+/// from its point).
+const DROP_RANGE: f32 = 100.0;
+
+/// The order of an item drop (`UnitDropItemPoint`; c-SBR-1: 852001).
+const ORDER_DROP: i32 = 852_001;
+
+/// Hero `h` takes a drop order for the `item` it carries at `point` (c-SBR-1
+/// at 9.5): the order's objects as for a pick-up, a walk.
+pub(super) fn drop_order(state: &mut State, h: u32, item: u32, point: [u32; 2]) -> bool {
+    if !matches!(state.objects.get(&item), Some(Object::Item(i)) if i.carried_by == Some(h)) {
+        return false;
+    }
+    if !order(state, h, Order::Drop { item }, ORDER_DROP, point) {
+        return false;
+    }
+    super::table::item_ordered(state, h);
+    true
+}
+
 /// Whether hero `h` can pick up `item`: an item on the ground.
 fn can_pick_up(state: &State, h: u32, item: u32) -> bool {
     matches!(state.objects.get(&item), Some(Object::Item(i)) if i.carried_by.is_none())
@@ -6443,11 +6498,53 @@ fn pick_up_order(state: &mut State, h: u32, item: u32) -> bool {
     let Some(at) = position_of(state, item) else {
         return false;
     };
+    // Already within 100 of it: picked up 0.01 s later, without a turn or an
+    // update (c-SBR-1: the salve 91.2 away, order 12.498903, picked up
+    // 12.508902; c-SBQ-1: the claws 126.5 away turned to first).
+    // PROVISIONAL: the 100 (DropItemRange) is a guess between the two.
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let ready = state.unit(Some(h)).is_some_and(|u| {
+        let own = state
+            .data
+            .units
+            .get(&u.type_id)
+            .map_or(0.0, |t| real_of(t.collision));
+        let here = relative([u.x, u.y], min);
+        let place = relative(at, min);
+        let _ = own;
+        in_range(here, place, (DROP_RANGE / 32.0).to_bits())
+    });
     if !order(state, h, Order::PickUp { item }, ORDER_SMART, at) {
         return false;
     }
     super::table::item_ordered(state, h);
+    if ready {
+        let due = state.ticks + 2;
+        state.picks_due.push((due, h, item));
+    }
     true
+}
+
+/// The pick-ups of items in reach at their order due in this tick: they
+/// join the tick's pick-ups (`widgets::items_picked`).
+pub(super) fn picks_due(state: &mut State) {
+    let tick = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.picks_due)
+        .into_iter()
+        .partition(|p| p.0 <= tick);
+    state.picks_due = later;
+    for (_, h, item) in due {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+            && matches!(m.order, Order::PickUp { item: i } if i == item)
+            && !m.arrived
+        {
+            m.arrived = true;
+            m.walking = false;
+            m.velocity = [0, 0];
+            state.picked_up.push((h, item));
+        }
+    }
 }
 
 /// How far a unit that cannot attack runs from its attacker (c-SBJ-1).

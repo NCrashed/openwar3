@@ -1677,13 +1677,34 @@ pub(super) fn agility_changed(state: &mut State, h: u32, old: i32, now: u32) {
     let Some(u) = state.unit(Some(h)).filter(|u| is_hero(u.type_id)) else {
         return;
     };
+    let bonus = state.combat.heroes.agi_attack_speed;
+    let factor = |agility: i32| add(1.0f32.to_bits(), mul(bonus, ow3_math::i2r(agility)));
+    let ratio = div(factor(old), factor(u.agility));
+    // So is the rest of its backswing (c-SBL-1: the Mountain King's after
+    // the hit of 2.3568838 that levelled him, 0x3F0864BB -> 0x3F06318C;
+    // c-SBO-1: the Warden's at 11.569, ending 12.004086).
+    let back = u.backswing_end;
+    if f32::from_bits(back) > f32::from_bits(now)
+        && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+    {
+        let end = add(now, mul(sub(back, now), ratio));
+        let later = ticks_between(back, end);
+        u.backswing_end = end;
+        if let Some(a) = u.attack.as_mut()
+            && let Some(r) = a.resume
+        {
+            a.resume = Some(shift(r, later));
+        }
+        // With it what waits for its end (`table::script_attack_lost`).
+        super::table::backswing_moved(state, h, back, end);
+    }
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
     let end = u.cooldown_end;
     if f32::from_bits(end) <= f32::from_bits(now) {
         return;
     }
-    let bonus = state.combat.heroes.agi_attack_speed;
-    let factor = |agility: i32| add(1.0f32.to_bits(), mul(bonus, ow3_math::i2r(agility)));
-    let ratio = div(factor(old), factor(u.agility));
     let new_end = add(now, mul(sub(end, now), ratio));
     let point = u.attack.filter(|a| a.swing_q == end).map(|a| {
         let weapon = weapon_for(state, u.type_id, Some(a.target)).unwrap_or_default();

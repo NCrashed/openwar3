@@ -457,6 +457,9 @@ pub struct UnitEntries {
     pub impale: bool,
     /// Its order is a script's attack order on a unit (`attack_target_ordered`).
     pub script_attack: bool,
+    /// The objects of such an order lost with its target, due at the end of
+    /// the backswing (`script_attack_lost`), with that queue time.
+    pub order_ending: Vec<(u32, u32)>,
     /// The object of a script's invulnerability (`invulnerable_set`).
     pub invulnerable: Option<u32>,
     pub buff_end: Option<u32>,
@@ -945,6 +948,24 @@ pub(super) fn order_ended(state: &mut super::State, h: u32) {
         old.extend(std::mem::take(&mut e.order));
         old
     });
+    // Those of an order lost with its target, still waiting for the
+    // backswing's end, go with it (c-SBO-1: the Warden's 1430 .. 1426, 1424
+    // at his new order of 10.5, in the backswing of his kill of 10.08).
+    let ending = entries(state, h).map(|e| std::mem::take(&mut e.order_ending));
+    let mut old = old;
+    for (q, o) in ending.unwrap_or_default() {
+        if let Some(k) = state
+            .table
+            .timed_q
+            .iter()
+            .position(|t| *t == (q, o, "attack: order end"))
+        {
+            state.table.timed_q.remove(k);
+            if let Some(old) = old.as_mut() {
+                old.push(o);
+            }
+        }
+    }
     for e in old.unwrap_or_default() {
         state.table.defer(e, "order end");
     }
@@ -2651,10 +2672,33 @@ pub(super) fn script_attack_lost(state: &mut super::State, h: u32, now: u32) -> 
     if !swinging {
         return rest;
     }
-    for o in rest {
+    for &o in &rest {
         state.table.free_at_q(end, o, "attack: order end");
     }
+    if let Some(e) = entries(state, h) {
+        e.order_ending = rest.into_iter().map(|o| (end, o)).collect();
+    }
     Vec::new()
+}
+
+/// Unit `h`'s backswing ending at queue time `old` ends at `new` instead:
+/// the objects of its order lost with its target go then.
+pub(super) fn backswing_moved(state: &mut super::State, h: u32, old: u32, new: u32) {
+    let Some(e) = entries(state, h) else {
+        return;
+    };
+    let mut moved = Vec::new();
+    for p in &mut e.order_ending {
+        if p.0 == old {
+            p.0 = new;
+            moved.push(p.1);
+        }
+    }
+    for t in &mut state.table.timed_q {
+        if t.0 == old && t.2 == "attack: order end" && moved.contains(&t.1) {
+            t.0 = new;
+        }
+    }
 }
 
 /// Attacker `h` of unit `dead` is handled at the death: the object of its

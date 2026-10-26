@@ -64,8 +64,8 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- 29 of 32 test replays match every turn checksum.
-- The other 3 are listed with the reason in
+- 30 of 32 test replays match every turn checksum.
+- The other 2 are listed with the reason in
   `crates/ow3-sim/tests/checksums.rs` (`UNSPECIFIED`).
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
@@ -102,11 +102,11 @@ the game's order.
 - The Night Elf spells test c-SBK-1 (Mana Burn, Fan of Knives and Entangling
   Roots on a creep camp): its object table (1276 changes) and all 161
   turn checksums match the game.
-- The levelling tests c-SBL-1 (Mountain King), c-SBM-1 (Far Seer) and
-  c-SBN-1 (Death Knight), a hero and a footman killing paused creeps made
-  vulnerable one by one, with level-ups inside the kills: their object
-  tables (1258, 1334 and 1264 changes) and all 161 turn checksums of each
-  match the game.
+- The levelling tests c-SBL-1 (Mountain King), c-SBM-1 (Far Seer),
+  c-SBN-1 (Death Knight) and c-SBO-1 (Warden), a hero and a footman
+  killing paused creeps made vulnerable one by one, with level-ups inside
+  the kills: their object tables (1258, 1334, 1264 and 1267 changes) and
+  all 161 turn checksums of each match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

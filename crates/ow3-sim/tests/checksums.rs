@@ -133,13 +133,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBO-1.w3g",
-        "the Night Elf levelling test (Warden, footman, creeps): in progress \
-         (tests/objects.rs, levelling_report)",
+        "the Night Elf levelling test (Warden, footman, creeps): every turn checksum to \
+         its end matches with the object table started as the game has it \
+         (tests/objects.rs, levelling_checksums); this test runs without it",
     ),
     (
         "c-SBP-1.w3g",
         "the aura test (taskmasters and paladins killed while their auras run): in \
-         progress (tests/objects.rs, levelling_report)",
+         progress (tests/objects.rs, dead_auras_report)",
     ),
     (
         "c-SBH-1.w3g",

@@ -2083,6 +2083,7 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
         .units
         .get(&t.type_id)
         .map_or(0.0, |d| real_of(d.collision));
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
     let units: Vec<u32> = state
         .units
         .iter()
@@ -2111,6 +2112,9 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
                         && !u.checks_off
                         && u.attack.is_none()
                         && u.movement.is_none_or(|m| !m.ordered())
+                        // Not one in its backswing (c-SBO-1: the Warden after
+                        // his kill of 10.08, at 10.5).
+                        && f32::from_bits(u.backswing_end) <= f32::from_bits(now)
                         && enemies(state, u.owner, t_owner)
                         && dx * dx + dy * dy <= acquire * acquire
                 })

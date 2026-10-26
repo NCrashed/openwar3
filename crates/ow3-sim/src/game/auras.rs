@@ -4,13 +4,13 @@
 //! At checks every 0.5 s each hero with an aura gives its buff to the
 //! friendly ground units within `Area` of it, itself included. Buffs are
 //! taken away only at checks every 2 s, at the second one after the last
-//! check that found the unit in reach.
+//! check that found the unit in reach; a pass in the tick of a check comes
+//! after it. A dead unit's aura passes no more (c-SBP-1).
 //! Devotion adds `DataA` to the armor; endurance and unholy aura add
 //! `DataA` to the movement speed as a share, from the unit's next update.
 //!
 //! PROVISIONAL: the phase of the checks (ticks 1 mod 100 and 202 mod 400)
-//! is that of the test maps (SPEC-0038); a walking hero leaving a
-//! standing unit took one check more in two cases; attack speed and
+//! is that of the test maps (SPEC-0038); attack speed and
 //! regeneration are not done.
 
 use std::collections::BTreeMap;
@@ -28,8 +28,6 @@ const PERIOD: u64 = 100;
 const REMOVAL: u64 = 400;
 /// Script tick 402 of the tests (3.0 s) is game tick 602.
 const REMOVAL_PHASE: u64 = 202;
-/// Ticks after its death a unit's aura still gives its buffs.
-const DEAD_PASSES: u64 = 100;
 
 /// The base code of `ability`.
 fn base(state: &State, ability: i32) -> i32 {
@@ -47,14 +45,7 @@ fn base_of(data: &crate::data::ObjectData, ability: i32) -> i32 {
 
 /// The aura of hero `h` with its level, if it learned one.
 fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
-    // A dead unit's aura still passes for a while (c-SBL-1: the kobold
-    // taskmaster, dead at 7.1, kept the ogre lord's buff past the check
-    // of 9.0).
-    //
-    // PROVISIONAL: for DEAD_PASSES ticks after the death.
-    let u = state
-        .unit(Some(h))
-        .filter(|u| u.alive || u.died_at.is_some_and(|d| state.ticks < d + DEAD_PASSES))?;
+    let u = state.unit(Some(h)).filter(|u| u.alive)?;
     let is_aura = |a: i32| {
         AURAS
             .iter()
@@ -95,12 +86,15 @@ pub(super) fn tick(state: &mut State) {
     // The buffs gained: (the aura's setup order, unit, aura).
     let mut gains = brilliance(state);
     if tick % REMOVAL == REMOVAL_PHASE {
-        // Not found in reach since the removal check before.
+        // Not found in reach since the removal check before. The pass of the
+        // tick before a check (q 7.005) comes after it (q 7.0001), so it
+        // counts for the next one (c-SBL-1: the ogre lord, last found by the
+        // taskmaster's pass of 7.005, lost its buff at 11.0).
         for &o in &state.units.clone() {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&o) {
                 let before: Vec<i32> = u.buffs.iter().map(|b| b.0).collect();
                 u.buffs.retain(|&(a, _, seen)| {
-                    seen + REMOVAL > tick
+                    seen + REMOVAL + 1 >= tick
                         || base_of(&state.data, a) == i32::from_be_bytes(BRILLIANCE)
                 });
                 let lost: Vec<i32> = before

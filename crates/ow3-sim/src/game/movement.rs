@@ -2109,6 +2109,9 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
                 && !holds_off(state, h, target)
         })
         .collect();
+    // In a call's order (SPEC-0019; c-SBM-1 at 6.5: the footman before
+    // the Far Seer).
+    let units = call_order(state, units);
     let now = state.event_time.unwrap_or_else(|| state.timers.time());
     let mut acquired = Vec::new();
     for h in units {

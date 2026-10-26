@@ -115,23 +115,28 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SBL-1.w3g",
-        "the Human levelling test (Mountain King, footman, creeps): just recorded, not \
-         looked at yet",
+        "the Human levelling test (Mountain King, footman, creeps): in progress \
+         (tests/objects.rs, levelling_report)",
     ),
     (
         "c-SBM-1.w3g",
-        "the Orc levelling test (Far Seer, footman, creeps): just recorded, not looked at \
-         yet",
+        "the Orc levelling test (Far Seer, footman, creeps): in progress \
+         (tests/objects.rs, levelling_report)",
     ),
     (
         "c-SBN-1.w3g",
-        "the Undead levelling test (Death Knight, footman, creeps): just recorded, not \
-         looked at yet",
+        "the Undead levelling test (Death Knight, footman, creeps): in progress \
+         (tests/objects.rs, levelling_report)",
     ),
     (
         "c-SBO-1.w3g",
-        "the Night Elf levelling test (Warden, footman, creeps): just recorded, not \
-         looked at yet",
+        "the Night Elf levelling test (Warden, footman, creeps): in progress \
+         (tests/objects.rs, levelling_report)",
+    ),
+    (
+        "c-SBP-1.w3g",
+        "the aura test (taskmasters and paladins killed while their auras run): just \
+         recorded, not looked at yet",
     ),
     (
         "c-SBH-1.w3g",

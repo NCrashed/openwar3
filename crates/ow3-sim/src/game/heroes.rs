@@ -278,9 +278,10 @@ fn select_skill(state: &mut State, h: u32, ability: i32) {
         u.spent += 1;
     }
     // Its objects of the engine's table (SPEC-0024): 2 for an ability
-    // with a cooldown, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
-    // and AOcr 1). PROVISIONAL: read for learning the first level only.
-    let cooled = data.per_level.first().is_some_and(|l| l.cooldown != 0);
+    // with a mana cost, 1 for one without (c-SAK-1: AHtb and AOwk 2, AHbh
+    // and AOcr 1; c-SBM-1: Far Sight, cost 75 and no cooldown, 2).
+    // PROVISIONAL: read for learning the first level only.
+    let cooled = data.per_level.first().is_some_and(|l| l.cost > 0);
     // An aura takes its ability object, the aura's object and the aura's
     // buff on the hero, and Brilliance a rate part for that buff's mana
     // regeneration (c-RZJ-1: the Archmage's Brilliance 4, the Paladin's

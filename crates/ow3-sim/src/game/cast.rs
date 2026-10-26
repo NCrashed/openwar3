@@ -3190,6 +3190,7 @@ fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel, q: u32, an
         .collect();
     dead.sort_by(|a, b| a.0.total_cmp(&b.0));
     let count = f32::from_bits(n.data[0]) as usize;
+    let raised: Vec<u32> = dead.iter().take(count).map(|d| d.1).collect();
     for (_, t) in dead.into_iter().take(count) {
         if animate {
             super::table::animated(s, t);
@@ -3225,6 +3226,16 @@ fn resurrection(s: &mut State, h: u32, n: &crate::data::AbilityLevel, q: u32, an
         u.life.set(max);
         let type_id = u.type_id;
         super::widgets::type_record(s, owner, type_id, |q| q[4] += 1);
+    }
+    // Their check timers are started twice in the tick, the second time
+    // the last first (c-SBV-1: footmen 6 and 8 at 9.009489, hub #9).
+    // PROVISIONAL: the order of the second starts is inferred.
+    for &t in &raised {
+        s.acquire_starts += 1;
+        let seq = s.acquire_starts;
+        if let Some(Object::Unit(u)) = s.objects.get_mut(&t) {
+            u.acquire_seq = seq;
+        }
     }
 }
 

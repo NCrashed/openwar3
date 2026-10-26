@@ -1007,9 +1007,16 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         // Nearer than a step, it flies the rest at its speed
                         // and hits at that flight's end, which may be in a
                         // later tick (c-RZJ-1: the Archmage's missile 4.79
-                        // short at 3421, hit held into 3423).
+                        // short at 3421, hit held into 3423); at a target
+                        // walking it hits at once, 0.0001 s on (c-SBX-1: the
+                        // Lich's, 76.96 short of the ogre at 4.6599, hub #12).
                         let speed = div(step, HOMING_STEP);
-                        m.expiry = add(add(s.move_clock, div(left, speed)), MIN_DELAY);
+                        let moving = s
+                            .unit(Some(m.target))
+                            .and_then(|u| u.movement)
+                            .is_some_and(|t| super::movement::walking_now(&t));
+                        let rest = if moving { 0 } else { div(left, speed) };
+                        m.expiry = add(add(s.move_clock, rest), MIN_DELAY);
                         m.homing = None;
                         if f32::from_bits(m.expiry) <= f32::from_bits(next_clock) {
                             arrived.push(m);

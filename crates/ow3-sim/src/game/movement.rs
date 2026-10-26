@@ -4495,6 +4495,9 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     let mut starts = state.acquire_starts;
     // (expiry, start number, unit, check).
     let mut due: Vec<(u32, u64, u32, Check)> = Vec::new();
+    // The timers restarted here, by their old expiry and start, to number
+    // their new starts in the order they fired.
+    let mut restarted: Vec<(u32, u64, u32)> = Vec::new();
     for i in 0..state.units.len() {
         let h = state.units[i];
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
@@ -4532,8 +4535,7 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             expired = Some(u.next_acquire);
             let period = if target.is_some() { ONE } else { HALF };
             u.next_acquire = add(u.next_acquire, period);
-            starts += 1;
-            u.acquire_seq = starts;
+            restarted.push((u.next_acquire, seq, h));
         }
         // Nor one stunned (c-SAK-1: kobold 10, stunned from 740, made no
         // switch at its check of 978).
@@ -4644,6 +4646,15 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         }
         if let Some(expiry) = expired {
             due.push((expiry, seq, h, Check::Idle { expiry }));
+        }
+    }
+    // (c-SBV-1: footmen 7 and 6, brought back in the order 8, 7, 6, check
+    // in that order at 9.009489.)
+    restarted.sort_by(|a, b| real_of(a.0).total_cmp(&real_of(b.0)).then(a.1.cmp(&b.1)));
+    for (_, _, h) in restarted {
+        starts += 1;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.acquire_seq = starts;
         }
     }
     state.acquire_starts = starts;

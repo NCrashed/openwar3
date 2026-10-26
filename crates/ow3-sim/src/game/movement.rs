@@ -101,6 +101,9 @@ pub(super) fn next_update_after(tick: u64) -> u64 {
 
 /// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).
 pub(super) const CELL: u32 = 0x3D00_0000;
+/// The arrival radius of a walk back to an acquisition's point in cells
+/// (1.5625, 50 world units).
+const BACK_REACH: u32 = 0x3FC8_0000;
 /// The arrival radius of a point move in cells (0.49, 15.68 world units).
 const ARRIVAL: u32 = 0x3EFA_E148;
 /// A unit attacks once its heading is this close to its target (radians).
@@ -3285,6 +3288,17 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // arrives once turned to the point (SPEC-0025).
                         Order::Point if follow::touching(state, h) => {
                             Some((ARRIVAL, m.heading, true))
+                        }
+                        // A player's unit walking back to where it acquired
+                        // arrives within 50 (1.5625 cells; c-SBL-1: footman 2 at
+                        // 12.449922, 48.55 from the point).
+                        Order::Point
+                            if m.going_back()
+                                && state
+                                    .unit(Some(h))
+                                    .is_some_and(|u| u.owner != super::creeps::CREEPS) =>
+                        {
+                            Some((BACK_REACH, m.heading, false))
                         }
                         _ => None,
                     };

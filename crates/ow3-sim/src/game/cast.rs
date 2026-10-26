@@ -1053,6 +1053,7 @@ pub(super) fn invulnerable(state: &State, h: u32) -> bool {
         .unit(Some(h))
         .and_then(|u| u.invulnerable_until)
         .is_some_and(|t| tick < t)
+        || state.unit(Some(h)).is_some_and(|u| u.script_invulnerable)
 }
 
 /// The base code of `ability`.

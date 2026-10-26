@@ -254,6 +254,17 @@ fn night_elf_spells_objects() {
     }
 }
 
+/// `c-SBL-1`, `c-SBM-1`, `c-SBN-1`, `c-SBO-1`: heroes levelling from creep
+/// kills, one per race (report only).
+#[test]
+fn levelling_report() {
+    for name in ["c-SBL-1", "c-SBM-1", "c-SBN-1", "c-SBO-1"] {
+        eprintln!("{name}");
+        compare_objects(name);
+        turn_parts(name);
+    }
+}
+
 /// The rows of replay `name`'s object list against the simulation's: the
 /// first that differs, `None` when all match; nothing without the list.
 fn compare_objects(name: &str) -> Option<Option<usize>> {

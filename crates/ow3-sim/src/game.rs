@@ -231,6 +231,8 @@ pub struct Unit {
     remembered: Option<u32>,
     /// `PauseUnit`: the unit does not act.
     paused: bool,
+    /// Made invulnerable by `SetUnitInvulnerable`.
+    script_invulnerable: bool,
     /// A hero's attributes in points (`SetHeroStr` and the others); 0
     /// for others.
     strength: i32,

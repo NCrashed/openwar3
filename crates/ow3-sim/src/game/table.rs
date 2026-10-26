@@ -415,6 +415,8 @@ pub struct UnitEntries {
     /// A stun of Impale: at its end a 0.00 hit from the caster comes before
     /// the stun's objects go, and there is no buff end (`impale_ends`).
     pub impale: bool,
+    /// The object of a script's invulnerability (`invulnerable_set`).
+    pub invulnerable: Option<u32>,
     pub buff_end: Option<u32>,
     /// The queue time of its stun's end.
     pub stun_end_q: u32,
@@ -721,7 +723,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // creep's ability object (14), and one with mana a rate part at 12
     // (c-RZJ-1: the Ogre Lord, 34: its mana, Devotion Aura's ability,
     // aura and buff, Shockwave's ability and cost watch; c-RZH-1: unit
-    // 10, nkot, the creep Bash's ability).
+    // 10, nkot, the creep Bash's ability; c-SBL-1: the kobold taskmaster's
+    // Command Aura).
     // PROVISIONAL: the aura's buff of Brilliance and a second costed
     // ability are not read on a creep.
     let creep = owner == super::creeps::CREEPS && !crate::data::is_hero(type_id);
@@ -741,7 +744,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             continue;
         };
         let level = d.per_level.first();
-        if [*b"AHab", *b"AHad", *b"AOae", *b"AUau"].contains(&d.code.to_be_bytes()) {
+        if [*b"AHab", *b"AHad", *b"AOae", *b"AUau", *b"AOac"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
         } else if level.is_some_and(|l| l.cost > 0) {
             parts.extend([(0, None), (2, level.map(|l| l.cost))]);
@@ -3882,6 +3885,45 @@ pub(super) fn native_objects(name: &str) -> usize {
         "TriggerAddAction" | "CreateRegion" => 2,
         "CreateTrigger" => 3,
         _ => 0,
+    }
+}
+
+/// Unit `h` is paused by a script (c-SBL-1: the creeps at the map start):
+/// an order of its own, as a stun's order without the stun object. The
+/// order and its record; 9 parts, the last 4 freed 0.0001 s later from the
+/// last, the first 5 kept with the order (freed from the last, then the
+/// order, when the order ends; c-SBL-1: at the creep's death, 2.359989).
+///
+/// PROVISIONAL: an unpause is not read.
+pub(super) fn paused(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "pause: order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    let parts = state.table.take_n(tick, 9, "pause: order objects");
+    for &e in parts[5..].iter().rev() {
+        state.table.defer(e, "pause: order objects");
+    }
+    if let Some(e) = entries(state, h) {
+        let mut kept: Vec<u32> = parts[..5].iter().rev().copied().collect();
+        kept.push(order);
+        kept.append(&mut e.order);
+        e.order = kept;
+    }
+}
+
+/// Unit `h` is made invulnerable by a script, or no longer (`on`): one
+/// object while it lasts, freed 0.0001 s later at its end (c-SBL-1: 1145,
+/// from the map start to 2.0 s).
+pub(super) fn invulnerable_set(state: &mut super::State, h: u32, on: bool) {
+    let tick = state.table.now;
+    if on {
+        let o = state.table.take(tick, "invulnerability");
+        if let Some(e) = entries(state, h) {
+            e.invulnerable = Some(o);
+        }
+    } else if let Some(o) = entries(state, h).and_then(|e| e.invulnerable.take()) {
+        state.table.defer(o, "invulnerability");
     }
 }
 

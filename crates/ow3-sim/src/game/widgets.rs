@@ -381,6 +381,7 @@ pub(super) fn create_unit(
         call_until: 0,
         remembered: None,
         paused: false,
+        script_invulnerable: false,
         strength: data.strength,
         agility: f32::from_bits(data.agility) as i32,
         intelligence: data.intelligence,
@@ -1628,7 +1629,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     );
     type Move = fn(&mut Unit, &[Value], &State);
     // The moves test the regions at once (SPEC-0049).
-    let moves: [(&str, Move, bool); 6] = [
+    let moves: [(&str, Move, bool); 5] = [
         (
             "native SetUnitX takes unit whichUnit, real newX returns nothing",
             |u, args, state| u.x = world_relative(real(&args[1]), state.world_bounds[0]),
@@ -1658,12 +1659,49 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             |u, args, _| u.hidden = args[1] != Value::Boolean(true),
             false,
         ),
-        (
-            "native PauseUnit takes unit whichUnit, boolean flag returns nothing",
-            |u, args, _| u.paused = args[1] == Value::Boolean(true),
-            false,
-        ),
     ];
+    // A pause is an order of its own, with objects as a stun's order (c-SBL-1:
+    // the paused creeps at the map start).
+    native!(
+        add,
+        state,
+        "native PauseUnit takes unit whichUnit, boolean flag returns nothing",
+        |vm, state, args| {
+            let mut s = state.borrow_mut();
+            let on = args[1] == Value::Boolean(true);
+            let Some(h) = handle(&args[0]) else {
+                return Ok(None);
+            };
+            let was = s.unit(Some(h)).is_some_and(|u| u.paused);
+            if let Some(u) = unit_mut(&mut s, Some(h)) {
+                u.paused = on;
+            }
+            if on && !was {
+                super::table::paused(&mut s, h);
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native SetUnitInvulnerable takes unit whichUnit, boolean flag returns nothing",
+        |vm, state, args| {
+            let mut s = state.borrow_mut();
+            let on = args[1] == Value::Boolean(true);
+            let Some(h) = handle(&args[0]) else {
+                return Ok(None);
+            };
+            let was = s.unit(Some(h)).is_some_and(|u| u.script_invulnerable);
+            if let Some(u) = unit_mut(&mut s, Some(h)) {
+                u.script_invulnerable = on;
+            }
+            if on != was {
+                super::table::invulnerable_set(&mut s, h, on);
+            }
+            Ok(None)
+        }
+    );
     for (declaration, apply, moves) in moves {
         native!(add, state, declaration, |vm, state, args| {
             let mut s = state.borrow_mut();

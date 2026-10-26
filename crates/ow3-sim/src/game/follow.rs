@@ -143,7 +143,10 @@ pub enum Steer {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Budget {
     window: u64,
-    used: u32,
+    /// By the field of the searching unit's path (`move_kind`, its owner):
+    /// each has its own table (c-SBJ-1: kobold 5's search of 13.679911
+    /// not held by the heroes' long searches; analyst 11-15 02:05).
+    used: [u32; 16],
     /// The iterations of high-level searches this update cycle.
     high: u32,
 }
@@ -155,7 +158,7 @@ impl Budget {
         self.high = 0;
         if number % 2 == 1 {
             self.window = number;
-            self.used = 0;
+            self.used = [0; 16];
         }
     }
 }
@@ -844,7 +847,7 @@ fn decide(
         if tick < follow.hold_until {
             return Steer::Stand(segment_goal);
         }
-        if shared.budget.used > BUDGET {
+        if shared.budget.used[usize::from(shared.kind & 0xF)] > BUDGET {
             // Queued for a later window, without the hold.
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
@@ -875,12 +878,12 @@ fn decide(
             _ => path::local(&seen, at, follow.goal, class, LOCAL_LIMIT),
         };
         // A search that hits the limit costs one more.
-        shared.budget.used += if found.iterations >= LOCAL_LIMIT {
+        shared.budget.used[usize::from(shared.kind & 0xF)] += if found.iterations >= LOCAL_LIMIT {
             LOCAL_LIMIT + 1
         } else {
             found.iterations
         };
-        if shared.budget.used >= LONG_SEARCH {
+        if shared.budget.used[usize::from(shared.kind & 0xF)] >= LONG_SEARCH {
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;

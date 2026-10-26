@@ -3426,7 +3426,9 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
         !e.walk.is_empty()
     });
     if walking {
-        walk_made(state, h);
+        // Its search comes at its next update but one and takes none
+        // (hub #10).
+        walk_made_at_order(state, h);
         super::movement::slowed_now(state, h);
         super::movement::chase_renewed(state, h);
     }
@@ -4793,7 +4795,9 @@ pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
     let o = state.table.take(tick, "Earthquake: unit");
     let walking = entries(state, h).is_some_and(|e| !e.walk.is_empty());
     if walking {
-        walk_made(state, h);
+        // Its search comes at its next update but one and takes none
+        // (hub #10).
+        walk_made_at_order(state, h);
         super::movement::slowed_now(state, h);
         super::movement::chase_renewed(state, h);
     }

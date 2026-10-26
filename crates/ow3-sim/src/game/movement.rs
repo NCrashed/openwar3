@@ -6377,7 +6377,9 @@ fn flees(state: &State, h: u32) -> bool {
     state.unit(Some(h)).is_some_and(|u| {
         u.alive
             && u.attack_removed
-            && u.movement.is_none()
+            // (Or a finished one: c-SBJ-1, the Crypt Lord hit again at
+            // 14.118631, his flee of 10.49 arrived.)
+            && u.movement.is_none_or(|m| !m.ordered())
             && u.casting.is_none()
             && !u.holding
             && u.attack_move.is_none()

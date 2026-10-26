@@ -531,6 +531,15 @@ impl<'a> Playback<'a> {
                 target,
                 ..
             } => {
+                // A revive at an altar of a dead hero (c-SBQ-1).
+                if *order as i32 == crate::game::ORDER_REVIVE {
+                    if let Some(hero) = (*target != NONE).then(|| self.unit(*target)).flatten() {
+                        for &unit in &selected {
+                            self.game.revive_hero(unit, hero);
+                        }
+                    }
+                    return;
+                }
                 let Some(name) = self.order(*order) else {
                     return;
                 };

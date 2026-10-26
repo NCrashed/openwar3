@@ -63,6 +63,7 @@ mod obstacles;
 pub mod players;
 mod queue;
 mod regions;
+mod revive;
 pub mod table;
 mod training;
 mod widgets;
@@ -966,6 +967,9 @@ pub struct State {
     /// Heroes that picked up an item at their updates of this tick: (hero,
     /// item), for `widgets::items_picked`.
     picked_up: Vec<(u32, u32)>,
+    /// Heroes being revived: their altar, the revive's kept objects and
+    /// its first object (`revive`).
+    reviving: BTreeMap<u32, (u32, Vec<u32>, u32)>,
     /// Creep spells decided in this tick, ordered after its checks
     /// (SPEC-0047): caster, ability, target.
     creep_casts: Vec<(u32, i32, u32, u32)>,
@@ -1187,6 +1191,7 @@ impl State {
             mirrors: Vec::new(),
             call_acquired: Vec::new(),
             picked_up: Vec::new(),
+            reviving: BTreeMap::new(),
             creep_casts: Vec::new(),
             early_effects: Vec::new(),
             impale_ends: Vec::new(),
@@ -2656,6 +2661,11 @@ impl<'a> Game<'a> {
         movement::build_order(&mut self.state.borrow_mut(), unit, type_id, target)
     }
 
+    /// A player's revive order on dead hero `hero` given to `altar`.
+    pub fn revive_hero(&mut self, altar: u32, hero: u32) -> bool {
+        revive::start(&mut self.vm, &self.state, altar, hero)
+    }
+
     pub fn issue_target_order(&mut self, unit: u32, order: &str, target: u32) -> bool {
         let mut state = self.state.borrow_mut();
         let done = movement::target_order(&mut state, unit, order, target);
@@ -4019,6 +4029,8 @@ impl std::fmt::Display for StartError {
 impl std::error::Error for StartError {}
 
 /// The name of an order id, as `OrderId2String` gives it (SPEC-0019).
+pub use revive::ORDER_REVIVE;
+
 pub fn order_name(id: i32) -> Option<&'static str> {
     movement::order_name(id)
 }

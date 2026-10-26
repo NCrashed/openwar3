@@ -569,7 +569,12 @@ pub(super) fn summons(vm: &mut Vm, state: &Rc<RefCell<State>>) {
 /// G"), made at the end of the list if it has none: `q0` 2147483647 (no
 /// limit), `q6` 8, the rest 0. A player's list starts with `hrtt`, `otbk`
 /// and `uske` (25 for `uske`'s `q0`). Players 12 to 15 have none.
-fn type_record(state: &mut State, owner: i32, type_id: i32, change: impl FnOnce(&mut [u32; 7])) {
+pub(super) fn type_record(
+    state: &mut State,
+    owner: i32,
+    type_id: i32,
+    change: impl FnOnce(&mut [u32; 7]),
+) {
     if !(0..12).contains(&owner) {
         return;
     }

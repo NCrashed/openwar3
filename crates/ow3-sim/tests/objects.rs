@@ -285,12 +285,21 @@ fn levelling_objects() {
     }
 }
 
-/// `c-SBQ-1`: a hero revived at an altar, items picked up and used
-/// (report only).
+/// `c-SBQ-1`: a hero revived at an altar, items picked up and used: every
+/// turn checksum.
 #[test]
-fn altar_items_report() {
-    compare_objects("c-SBQ-1");
-    turn_parts("c-SBQ-1");
+fn altar_items_checksums() {
+    if let Some(first) = turn_parts("c-SBQ-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBQ-1`'s object table.
+#[test]
+fn altar_items_objects() {
+    if let Some(first) = compare_objects("c-SBQ-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
 }
 
 /// `c-SBP-1`: auras of units and heroes killed while they run: every turn

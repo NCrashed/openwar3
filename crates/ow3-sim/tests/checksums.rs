@@ -146,7 +146,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     (
         "c-SBQ-1.w3g",
         "the altar and items test (a Paladin revived, an Archmage picking up and using \
-         items): in progress (tests/objects.rs, altar_items_report)",
+         items): every turn checksum to its end \
+         matches with the object table started as the game has it (tests/objects.rs, \
+         altar_items_checksums); this test runs without it",
     ),
     (
         "c-SBH-1.w3g",

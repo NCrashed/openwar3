@@ -64,7 +64,7 @@ checksum must match too. That checksum covers the engine's table of internal
 objects, so every mechanic has to create and free its internal objects in
 the game's order.
 
-- All 32 test replays match every turn checksum.
+- All 33 test replays match every turn checksum.
 - The hero test c-SAK-1 (Mountain King, Blademaster, creeps): its object
   table matches the game entry by entry (11848 changes to 59 s), and so
   does every one of its 1614 turn checksums (to 161 s).
@@ -112,6 +112,10 @@ the game's order.
   Carrion Swarm on a creep camp, with heroes that cannot attack running
   from their attackers): its object table (1830 changes) and all 161
   turn checksums match the game.
+- The altar and items test c-SBQ-1 (a Paladin killed and revived at an
+  Altar of Kings, an Archmage picking up Claws of Attack and a healing
+  potion and drinking it): its object table (1191 changes) and all turn
+  checksums match the game.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.

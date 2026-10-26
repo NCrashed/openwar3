@@ -43,6 +43,8 @@ pub enum EngineTimer {
     Construction(u32),
     /// The training at the head of a building's queue ends.
     Training(u32),
+    /// A dead hero's revive ends (`revive`).
+    Revive(u32),
 }
 
 /// The queue of a building.
@@ -111,6 +113,7 @@ pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         match timer {
             EngineTimer::Construction(h) => super::finish_construction(vm, state, h),
             EngineTimer::Training(h) => end_training(vm, state, h),
+            EngineTimer::Revive(h) => super::revive::finish(vm, state, h),
         }
         state.borrow_mut().move_clock = clock;
     }

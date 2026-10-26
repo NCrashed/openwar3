@@ -665,6 +665,15 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
             })
             .or_else(|| avatar.then_some(0))
+            // A Death and Decay's Dur + 0.1 (c-SBX-1: 35.1 s).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AUdd").then(|| {
+                    super::attack::ticks(add(
+                        numbers(state, c.ability, c.level).duration,
+                        0.1f32.to_bits(),
+                    ))
+                })
+            })
             // An Earthquake's channel lasts Dur from its effect (c-SBW-1: 25 s).
             .or_else(|| {
                 (&base.to_be_bytes() == b"AOeq")
@@ -1252,6 +1261,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .collect();
         bounces(s, &mut deferred);
         quakes(s);
+        decays(s, &mut deferred);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1716,6 +1726,26 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
             // the old 1057 freed after the effect's).
             super::table::mana_watches(s, h, n.cost);
             resurrection(s, h, &n, c.effect_q, false);
+        }
+        // Death and Decay: its effect event and its area's objects; its
+        // first action comes after a draw 0.01 s on, then one every 1.0 s
+        // to its end, Dur + 0.1 after the effect (c-SBX-1 at 4.9, hub #12).
+        b"AUdd" => {
+            super::table::spell_effect_event(s, h);
+            if let Some(point) = c.point {
+                let end = add(add(c.effect_q, n.duration), 0.1f32.to_bits());
+                super::table::decay_area(s, end);
+                s.decays.push(Decay {
+                    point,
+                    area: n.area,
+                    share: n.data[0],
+                    caster: h,
+                    step: add(c.effect_q, 0.01f32.to_bits()),
+                    effect: c.effect_q,
+                    next: 0,
+                    end,
+                });
+            }
         }
         // Earthquake: its spell effect event, then its area acts from DataA
         // after the effect, every 1.0 s, to DataA before the channel's end
@@ -3362,4 +3392,88 @@ fn quakes(s: &mut State) {
         true
     });
     s.quakes.extend(quakes);
+}
+
+/// A Death and Decay's area (c-SBX-1, hub #12): its point, Area, the share
+/// of the maximum life each action takes (DataA), its caster, the queue
+/// times of its first step (0 once taken), of its effect, of its next
+/// action (0 until drawn) and of its end.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decay {
+    point: [u32; 2],
+    area: u32,
+    share: u32,
+    caster: u32,
+    step: u32,
+    effect: u32,
+    next: u32,
+    end: u32,
+}
+
+/// Game generator 22, which draws the delay of a Death and Decay's first
+/// action (hub #12).
+const DECAY_GENERATOR: usize = 22;
+
+/// The Deaths and Decays acting in this tick: 0.01 s after the effect a
+/// draw of generator 22 gives the delay of the first action, and an
+/// object kept 0.5 s from the effect; each action takes DataA of the
+/// maximum life of every unit within Area of the point, of either side
+/// (c-SBX-1: 16.00 of the ogre's 400 at 5.234375).
+///
+/// PROVISIONAL: the art pieces' draws of generator 23 and their objects of
+/// the second pool are not made; the hits' buffs are not done; trees and
+/// buildings are not hit.
+fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
+    let tick = s.ticks;
+    let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+    let mut decays = std::mem::take(&mut s.decays);
+    decays.retain_mut(|d| {
+        if d.step != 0 && f32::from_bits(d.step) < next_clock {
+            s.table_at(d.step);
+            let delay = s.game_random[DECAY_GENERATOR].fraction();
+            d.next = add(d.step, delay);
+            super::table::decay_step(s, add(d.effect, 0.5f32.to_bits()));
+            d.step = 0;
+            s.table.now = tick;
+        }
+        while d.next != 0 && f32::from_bits(d.next) < next_clock {
+            if f32::from_bits(d.next) > f32::from_bits(d.end) {
+                break;
+            }
+            let area = f32::from_bits(d.area);
+            let (px, py) = (f32::from_bits(d.point[0]), f32::from_bits(d.point[1]));
+            let hit: Vec<u32> = s
+                .units
+                .iter()
+                .copied()
+                .filter(|&o| {
+                    let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                        return false;
+                    };
+                    let (dx, dy) = (f32::from_bits(u.x) - px, f32::from_bits(u.y) - py);
+                    u.alive
+                        && !u.hidden
+                        && !u.script_invulnerable
+                        && !invulnerable(s, o)
+                        && dx * dx + dy * dy <= area * area
+                })
+                .collect();
+            for o in movement::call_order(s, hit) {
+                let max = s.unit(Some(o)).map_or(0, |u| u.life.max);
+                deferred.push(Deferred::Damage {
+                    caster: d.caster,
+                    target: o,
+                    amount: mul(max, d.share),
+                    call: None,
+                    slow: None,
+                    at: Some(d.next),
+                    fog: None,
+                    later_calls: false,
+                });
+            }
+            d.next = add(d.next, 1.0f32.to_bits());
+        }
+        f32::from_bits(d.end) >= next_clock
+    });
+    s.decays.extend(decays);
 }

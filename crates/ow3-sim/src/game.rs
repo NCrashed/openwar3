@@ -991,6 +991,8 @@ pub struct State {
     bounces: Vec<cast::Bounce>,
     /// The Earthquakes acting (c-SBW-1).
     quakes: Vec<cast::Quake>,
+    /// The Deaths and Decays acting (c-SBX-1).
+    decays: Vec<cast::Decay>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1208,6 +1210,7 @@ impl State {
             flame_second: Vec::new(),
             bounces: Vec::new(),
             quakes: Vec::new(),
+            decays: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,

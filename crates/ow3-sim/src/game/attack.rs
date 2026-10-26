@@ -1010,6 +1010,9 @@ fn fly(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                         // short at 3421, hit held into 3423); at a target
                         // walking it hits at once, 0.0001 s on (c-SBX-1: the
                         // Lich's, 76.96 short of the ogre at 4.6599, hub #12).
+                        // PROVISIONAL: the analyst knows no such split; the
+                        // hit is a 0.0001 s timer from the step's end, which
+                        // we do not place yet (hub #12).
                         let speed = div(step, HOMING_STEP);
                         let moving = s
                             .unit(Some(m.target))

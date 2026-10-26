@@ -4805,6 +4805,29 @@ pub(super) fn quake_occupied(state: &mut super::State) -> u32 {
     let tick = state.table.now;
     state.table.take(tick, "Earthquake: occupied")
 }
+
+/// A Death and Decay takes effect (c-SBX-1 at 4.9, hub #12): its area's
+/// eight objects, the last freed at its end, the others 5.0 s after it.
+pub(super) fn decay_area(state: &mut super::State, end: u32) {
+    let tick = state.table.now;
+    let objects = state.table.take_n(tick, 8, "Death and Decay: area");
+    let later = ow3_math::add(end, 5.0f32.to_bits());
+    for &o in &objects[..7] {
+        state.table.free_at_q(later, o, "Death and Decay: area");
+    }
+    state
+        .table
+        .free_at_q(end, objects[7], "Death and Decay: area");
+}
+
+/// A Death and Decay's step 0.01 s after its effect: an object, freed at
+/// `end` (c-SBX-1: 1288, 4.909883 to 5.399983).
+/// PROVISIONAL: what it is is not read.
+pub(super) fn decay_step(state: &mut super::State, end: u32) {
+    let tick = state.table.now;
+    let o = state.table.take(tick, "Death and Decay: step");
+    state.table.free_at_q(end, o, "Death and Decay: step");
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -298,9 +298,10 @@ pub struct Unit {
     invulnerable_until: Option<u64>,
     /// Its Wind Walk (SPEC-0040).
     wind_walk: Option<cast::WindWalk>,
-    /// An Avatar on it: the queue time of its end, its attack bonus and its
-    /// life bonus (c-SBV-1).
-    avatar: Option<[u32; 3]>,
+    /// An Avatar on it: the queue time of its end, its attack bonus, its life
+    /// bonus and the queue time its first second ends, 0 once passed
+    /// (c-SBV-1).
+    avatar: Option<[u32; 4]>,
     /// Set for an illusion (SPEC-0040, Mirror Image).
     illusion: Option<cast::Illusion>,
     /// Who stunned it last, and the tick of the zero hit that follows the

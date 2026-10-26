@@ -4616,15 +4616,7 @@ pub(super) fn position_set(state: &mut super::State) {
 /// is not read.
 pub(super) fn resurrected(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    let (queue, corpse) = entries(state, h)
-        .map(|e| (std::mem::take(&mut e.dead_queue), e.dead_corpse.take()))
-        .unwrap_or_default();
-    state.table.timed_q.retain(|t| !queue.contains(&t.1));
-    if let Some((gone, list)) = &corpse {
-        state.table.timed_w.retain(|t| {
-            !(t.0 == *gone && (t.1 == TAKE_AT || list.contains(&t.1) || queue.contains(&t.1)))
-        });
-    }
+    let (queue, corpse) = held_dead(state, h);
     state.table.take_n(tick, 2, "resurrection: unit state");
     let defends = state
         .unit(Some(h))
@@ -4726,17 +4718,17 @@ pub(super) fn quake_area(state: &mut super::State) -> Vec<u32> {
     state.table.take_n(tick, 5, "Earthquake: area")
 }
 
-/// Unit `h` comes into an Earthquake: walking, its walk is made again at the
-/// slowed speed, then its object, kept while it stays (c-SBW-1 at 3.8 and
+/// Unit `h` comes into an Earthquake: its object, kept while it stays, then,
+/// walking, its walk made again at the slowed speed (c-SBW-1 at 3.8 and
 /// 4.8). It goes with the unit at its death.
 pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
     let tick = state.table.now;
+    let o = state.table.take(tick, "Earthquake: unit");
     let walking = entries(state, h).is_some_and(|e| !e.walk.is_empty());
     if walking {
         walk_made(state, h);
         super::movement::slowed_now(state, h);
     }
-    let o = state.table.take(tick, "Earthquake: unit");
     if let Some(e) = entries(state, h) {
         e.death.push(o);
     }
@@ -4762,6 +4754,56 @@ pub(super) fn quake_ended(state: &mut super::State, objects: &[u32], inside: &[(
     for &(h, o) in inside {
         quake_left(state, h, o);
     }
+}
+
+/// Dead unit `h` is raised by Animate Dead (c-SBX-1 at 3.449962): two rate
+/// parts and a limit watch of its state, its start order's five, and one
+/// object kept while it lives; then, 0.0001 s later, the five of its
+/// death order's queue still held (the last first) and the start order's
+/// (the last first). Its corpse no longer decays.
+///
+/// PROVISIONAL: what the state's three and the kept object are is not
+/// read; the kept one is taken to go at its death.
+pub(super) fn animated(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let (queue, corpse) = held_dead(state, h);
+    state.table.take_n(tick, 3, "Animate Dead: unit state");
+    let order = state.table.take_n(tick, 5, "Animate Dead: start order");
+    let kept = state.table.take(tick, "Animate Dead: unit");
+    for &o in queue.iter().rev() {
+        state.table.defer(o, "death order queue");
+    }
+    for &o in order.iter().rev() {
+        state.table.defer(o, "Animate Dead: start order");
+    }
+    if let Some(e) = entries(state, h) {
+        if let Some((_, list)) = corpse {
+            e.corpse = list;
+        }
+        e.death.push(kept);
+    }
+}
+
+/// The death-queue objects dead unit `h` still holds and its corpse's,
+/// their timers cancelled, for a unit brought back.
+fn held_dead(state: &mut super::State, h: u32) -> (Vec<u32>, Option<(u32, Vec<u32>)>) {
+    let (queue, corpse) = entries(state, h)
+        .map(|e| (std::mem::take(&mut e.dead_queue), e.dead_corpse.take()))
+        .unwrap_or_default();
+    state.table.timed_q.retain(|t| !queue.contains(&t.1));
+    if let Some((gone, list)) = &corpse {
+        state.table.timed_w.retain(|t| {
+            !(t.0 == *gone && (t.1 == TAKE_AT || list.contains(&t.1) || queue.contains(&t.1)))
+        });
+    }
+    (queue, corpse)
+}
+
+/// An Earthquake has units in it again: an object it holds while they are
+/// (c-SBW-1: 1215 at 3.8).
+pub(super) fn quake_occupied(state: &mut super::State) -> u32 {
+    let tick = state.table.now;
+    state.table.take(tick, "Earthquake: occupied")
 }
 #[cfg(test)]
 mod tests {

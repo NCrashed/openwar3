@@ -2120,6 +2120,14 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
                         .units
                         .get(&u.type_id)
                         .map_or(0.0, |d| real_of(d.acquire));
+                    // A creep takes the notice as a call: within CreepCallForHelp
+                    // (c-SBV-1: kobold 4, 570.6 from the Mountain King, at the
+                    // end of his Avatar's first second, hub #9).
+                    let acquire = if u.owner == super::creeps::CREEPS {
+                        real_of(state.combat.creep_call_for_help)
+                    } else {
+                        acquire
+                    };
                     // Its acquisition range and both collision sizes (c-SBO-1: the
                     // Warden, 650, took the ogre 716 away; c-SBL-1: the Mountain
                     // King, 500, did not).
@@ -2152,6 +2160,10 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
     let now = state.event_time.unwrap_or_else(|| state.timers.time());
     let mut acquired = Vec::new();
     for h in units {
+        // Not one a creep's call took already.
+        if acquired.contains(&h) {
+            continue;
+        }
         freeze(state, h);
         if order(state, h, Order::Attack { target }, 0, at) {
             if reaches_at_commit(state, h, target)
@@ -2166,6 +2178,11 @@ pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
             );
             react_until(state, h, add(now, delay));
             acquired.push(h);
+            // A creep calls its camp (c-SBV-1: kobold 4 at the end of the Mountain
+            // King's first Avatar second, then the others, hub #9).
+            if !acquired[..acquired.len() - 1].contains(&h) {
+                acquired.extend(super::creeps::call_for_help(state, h, target, Some(now)));
+            }
         }
     }
     acquired
@@ -5345,6 +5362,15 @@ pub(super) fn retaliate(
     };
     let (owner, x, y, at) = (v.owner, real_of(v.x), real_of(v.y), [a.x, a.y]);
     if !enemies(state, owner, a.owner) {
+        return;
+    }
+    // An attacker that cannot be hurt is no target: no answer, no call
+    // (c-SBX-1: the ogre hit by a raised kobold at 3.91995).
+    // PROVISIONAL: read for a script invulnerability.
+    if state
+        .unit(Some(attacker))
+        .is_some_and(|a| a.script_invulnerable)
+    {
         return;
     }
     // A sleeping creep wakes in this tick with the sleeping creeps near it,

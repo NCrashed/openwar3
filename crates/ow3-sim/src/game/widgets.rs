@@ -1250,7 +1250,7 @@ pub(super) fn acquired_at_call(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &
     state.borrow_mut().quiet_events = false;
 }
 
-fn acquired_with(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32], objects: bool) {
+pub(super) fn acquired_with(vm: &mut Vm, state: &Rc<RefCell<State>>, units: &[u32], objects: bool) {
     if units.is_empty() {
         return;
     }

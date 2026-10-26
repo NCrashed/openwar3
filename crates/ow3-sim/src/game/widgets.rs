@@ -1696,6 +1696,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if let Some(u) = unit_mut(&mut s, Some(h)) {
                 u.script_invulnerable = on;
             }
+            // At its end the units in range take it first, then its object
+            // goes (c-SBL-1 at 2.0 s).
+            if !on && was {
+                let acquired = super::movement::acquire_vulnerable(&mut s, h);
+                drop(s);
+                acquired_with(vm, state, &acquired, true);
+                s = state.borrow_mut();
+            }
             if on != was {
                 super::table::invulnerable_set(&mut s, h, on);
             }

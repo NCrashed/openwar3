@@ -1157,6 +1157,30 @@ fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {
     walk_made_at_order(state, h);
 }
 
+/// Unit `h` takes a script's attack order on a unit (c-SBL-1 at 2.0 s): the
+/// order and its record, the old order ends (an acquisition's objects of
+/// that moment go), then 13 objects of the order's start; the record and
+/// the last 6 (from the last) are freed 0.0001 s later, the first 7 and the
+/// order kept with it.
+///
+/// PROVISIONAL: when the kept ones go is not read.
+pub(super) fn attack_target_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let parts = state.table.take_n(tick, 13, "attack: order start");
+    for &e in parts[7..].iter().rev() {
+        state.table.defer(e, "attack: order start");
+    }
+    let mut kept: Vec<u32> = parts[..7].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+}
+
 /// Worker `h` takes a harvest order on a gold mine (c-RXI-1 at 1.5 s): the
 /// order and its record, the old order ends, then 14 parts of the order's
 /// start and the walk; the record and parts 13 .. 10 (from the last) go

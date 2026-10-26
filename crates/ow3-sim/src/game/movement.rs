@@ -2052,6 +2052,66 @@ pub(super) fn on_move(state: &State, h: u32) -> bool {
         .is_some_and(|m| m.ordered() && m.order == Order::Point)
 }
 
+/// Unit `target` became a target again (its script invulnerability ended):
+/// the idle enemies that would take it take it at once, as at a check
+/// (c-SBL-1: the Mountain King on hold position, the kobold 150 away in
+/// his reach, at 2.0 s, before the script's attack order). The units that
+/// acquired, for their events and objects (`widgets::acquired`).
+///
+/// PROVISIONAL: read for one unit on hold position.
+pub(super) fn acquire_vulnerable(state: &mut State, target: u32) -> Vec<u32> {
+    let Some(t) = state.unit(Some(target)) else {
+        return Vec::new();
+    };
+    let (t_owner, at) = (t.owner, [t.x, t.y]);
+    let units: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            h != target
+                && state.unit(Some(h)).is_some_and(|u| {
+                    let acquire = state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .map_or(0.0, |d| real_of(d.acquire));
+                    let (dx, dy) = (real_of(u.x) - real_of(at[0]), real_of(u.y) - real_of(at[1]));
+                    u.alive
+                        && !u.attack_removed
+                        && !u.paused
+                        && !u.checks_off
+                        && u.attack.is_none()
+                        && u.movement.is_none()
+                        && enemies(state, u.owner, t_owner)
+                        && dx * dx + dy * dy <= acquire * acquire
+                })
+                && !super::cast::stunned(state, h)
+                && !holds_off(state, h, target)
+        })
+        .collect();
+    let now = state.event_time.unwrap_or_else(|| state.timers.time());
+    let mut acquired = Vec::new();
+    for h in units {
+        freeze(state, h);
+        if order(state, h, Order::Attack { target }, 0, at) {
+            if reaches_at_commit(state, h, target)
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+            {
+                m.unlimited = true;
+            }
+            let delay = mul(
+                state.game_random[REACTION].fraction(),
+                state.combat.reaction_delay,
+            );
+            react_until(state, h, add(now, delay));
+            acquired.push(h);
+        }
+    }
+    acquired
+}
+
 /// Whether unit `h` holds its position with `target` out of its reach
 /// (SPEC-0019): it takes no such target, at a check or at a call (c-SBG-1).
 fn holds_off(state: &State, h: u32, target: u32) -> bool {
@@ -2151,6 +2211,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Boolean(false)));
             };
             let done = target_order(&mut state.borrow_mut(), h, name, target);
+            if done && name == "attack" {
+                super::table::attack_target_ordered(&mut state.borrow_mut(), h);
+            }
             Ok(Some(Value::Boolean(done)))
         }
     );

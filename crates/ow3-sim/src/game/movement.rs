@@ -1743,11 +1743,19 @@ fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> boo
             let done = order(state, h, Order::Attack { target }, ORDER_ATTACK, at);
             if done {
                 let now = state.event_time.unwrap_or_else(|| state.timers.time());
+                // For a unit let go from its pause in this tick the order starts
+                // 0.01 s later, and its delay with it (c-SBQ-1: the ogre at 2.0,
+                // its reaction part freed at 2.254992; `table::unpause_starts`).
+                let unpaused = state
+                    .unit(Some(h))
+                    .is_some_and(|u| u.unpaused_at == Some(state.ticks));
+                let now = if unpaused { add(now, AFTER_DEATH) } else { now };
                 react_until(state, h, add(now, delay));
                 // Without a timer running before, it swings one update after
                 // its first update past the end at the earliest (SPEC-0019,
                 // "When it starts").
                 if !timer
+                    && !unpaused
                     && let Some(Object::Unit(u)) = state.objects.get_mut(&h)
                     && let Some(m) = u.movement.as_mut()
                 {

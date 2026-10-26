@@ -1,7 +1,8 @@
 //! The minimap in its rectangle of the console (SPEC-0028 "Minimap",
 //! SPEC-0032 "The minimap").
 //!
-//! It shows the map's `war3mapMap.blp` stretched over the playable area,
+//! It shows the map's `war3mapMap.blp` over the playable area, its longer
+//! side across the picture and the other centred (`Minimap::square`),
 //! and the fog of the local player over it: fogged cells at 0.74 of the
 //! picture, cells never seen at 0.40 when the map's flag `0x0010` leaves
 //! them partly visible, else black. Own units are white squares, the
@@ -396,11 +397,28 @@ impl Minimap {
         if p[0] < x0 || p[0] > x1 || p[1] < y0 || p[1] > y1 {
             return None;
         }
-        let [a0, b0, a1, b1] = self.area;
+        let [a0, b0, a1, b1] = self.square();
+        let [c0, d0, c1, d1] = self.area;
         Some([
-            a0 + (p[0] - x0) / (x1 - x0) * (a1 - a0),
-            b0 + (p[1] - y0) / (y1 - y0) * (b1 - b0),
+            (a0 + (p[0] - x0) / (x1 - x0) * (a1 - a0)).clamp(c0, c1),
+            (b0 + (p[1] - y0) / (y1 - y0) * (b1 - b0)).clamp(d0, d1),
         ])
+    }
+
+    /// The square the picture shows: the playable area, its longer side
+    /// across the whole picture and the other centred, as the map's
+    /// `war3mapMap.blp` draws a map that is not square (Echo Isles: 14848 x
+    /// 10752, black bands above and below).
+    fn square(&self) -> [f32; 4] {
+        let [a0, b0, a1, b1] = self.area;
+        let side = (a1 - a0).max(b1 - b0);
+        let (cx, cy) = ((a0 + a1) / 2.0, (b0 + b1) / 2.0);
+        [
+            cx - side / 2.0,
+            cy - side / 2.0,
+            cx + side / 2.0,
+            cy + side / 2.0,
+        ]
     }
 
     /// The interface point of world point `w`, if it is in the area.
@@ -410,6 +428,7 @@ impl Minimap {
             return None;
         }
         let [x0, y0, x1, y1] = PICTURE;
+        let [a0, b0, a1, b1] = self.square();
         Some([
             x0 + (w[0] - a0) / (a1 - a0) * (x1 - x0),
             y0 + (w[1] - b0) / (b1 - b0) * (y1 - y0),

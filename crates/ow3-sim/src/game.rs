@@ -1067,6 +1067,7 @@ pub struct State {
     building_left: Option<u32>,
     /// The Deaths and Decays acting (c-SBX-1).
     decays: Vec<cast::Decay>,
+    starfalls: Vec<cast::Starfall>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1287,6 +1288,7 @@ impl State {
             helpers_started: Vec::new(),
             building_left: None,
             decays: Vec::new(),
+            starfalls: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,

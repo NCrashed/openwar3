@@ -661,3 +661,22 @@ fn power_building_objects() {
         assert_eq!(first, None, "the object tables part at row {first:?}");
     }
 }
+
+/// `c-SCA-1`: a Giant Sea Turtle lured by a build and its cancel at night,
+/// then shot from high ground (hub #14): every turn checksum.
+#[test]
+#[ignore = "not matched yet"]
+fn turtle_checksums() {
+    if let Some(first) = turn_parts("c-SCA-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SCA-1`'s object table.
+#[test]
+#[ignore = "not matched yet"]
+fn turtle_objects() {
+    if let Some(first) = compare_objects("c-SCA-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}

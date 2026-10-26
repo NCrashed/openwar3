@@ -665,6 +665,11 @@ pub(super) fn start(state: &mut State, h: u32, tick: u64) {
                     .then(|| super::attack::ticks(numbers(state, c.ability, c.level).cast))
             })
             .or_else(|| avatar.then_some(0))
+            // A Starfall's Dur (c-SBY-1: 45 s, hub #11).
+            .or_else(|| {
+                (&base.to_be_bytes() == b"AEsf")
+                    .then(|| super::attack::ticks(numbers(state, c.ability, c.level).duration))
+            })
             // A Death and Decay's Dur + 0.1 (c-SBX-1: 35.1 s).
             .or_else(|| {
                 (&base.to_be_bytes() == b"AUdd").then(|| {
@@ -1262,6 +1267,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         bounces(s, &mut deferred);
         quakes(s);
         decays(s, &mut deferred);
+        starfalls(s, &mut deferred);
         let early = std::mem::take(&mut s.early_effects);
         let early_ends = std::mem::take(&mut s.early_ends);
         for (h, c) in casting {
@@ -1518,6 +1524,10 @@ fn cast_ended(s: &mut State, h: u32, c: &Casting, tick: u64) {
     }
     // A Death and Decay's area ends with its channel, its last object first
     // (c-SBX-1: 1287 at 39.996334, then the order's).
+    if let Some(k) = s.starfalls.iter().position(|d| d.caster == h) {
+        let d = s.starfalls.remove(k);
+        s.table.defer(d.last, "Starfall: area");
+    }
     if let Some(k) = s.decays.iter().position(|d| d.caster == h) {
         let d = s.decays.remove(k);
         s.table.defer(d.last, "Death and Decay: area");
@@ -1756,6 +1766,24 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     spawn: add(c.effect_q, delay),
                 });
             }
+        }
+        // Starfall: its effect event and its area's objects, as Death and
+        // Decay's; its star streams start 0.01 s on, its channel ends Dur
+        // + 0.1 after the effect (c-SBY-1 at 3.5, hub #11).
+        b"AEsf" => {
+            super::table::spell_effect_event(s, h);
+            let end = add(add(c.effect_q, n.duration), 0.1f32.to_bits());
+            let last = super::table::decay_area(s, end);
+            s.starfalls.push(Starfall {
+                caster: h,
+                area: n.area,
+                damage: n.data[0],
+                interval: n.data[1],
+                step: add(c.effect_q, 0.01f32.to_bits()),
+                end,
+                last,
+                streams: Vec::new(),
+            });
         }
         // Earthquake: its spell effect event, then its area acts from DataA
         // after the effect, every 1.0 s, to DataA before the channel's end
@@ -3522,6 +3550,162 @@ fn decays(s: &mut State, deferred: &mut Vec<Deferred>) {
         true
     });
     s.decays.extend(decays);
+}
+
+/// Game generator 18, which draws a Starfall's star delays (hub #11).
+const STAR_GENERATOR: usize = 18;
+
+/// A Starfall's area (c-SBY-1, hub #11): its caster, Area, the damage of a
+/// star (DataA), the interval of its streams (DataB), the queue time of
+/// its step 0.01 s after the effect (0 once taken), its end and its last
+/// object, and its star streams.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Starfall {
+    caster: u32,
+    area: u32,
+    damage: u32,
+    interval: u32,
+    step: u32,
+    end: u32,
+    last: u32,
+    streams: Vec<Stream>,
+}
+
+/// A star stream: its target, the queue time of its next step and what
+/// that step is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stream {
+    target: u32,
+    next: u32,
+    phase: StreamPhase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum StreamPhase {
+    First,
+    Launch,
+    Hit,
+}
+
+/// The Starfalls acting in this tick (c-SBY-1, hub #11). At the step 0.01 s
+/// after the effect a stream starts for each enemy unit within Area of the
+/// caster, each with its object and a draw `x` of generator 18, its first
+/// step after `x`. Every step draws a new `x`: the first sets the next
+/// after `T - x` (`T` the interval); a launch, its target still a living
+/// enemy, sends a star that hits after `x + 0.1`, else waits `T - x` again;
+/// a hit does DataA to the target from the caster and sets the next launch
+/// after `T - x`.
+///
+/// PROVISIONAL: the units in Area are taken as for Death and Decay (the
+/// call grid's cells); units entering later get no stream; the star's
+/// object of the second pool is not made.
+fn starfalls(s: &mut State, deferred: &mut Vec<Deferred>) {
+    let tick = s.ticks;
+    let next_clock = f32::from_bits(add(s.move_clock, crate::timers::TICK));
+    let mut starfalls = std::mem::take(&mut s.starfalls);
+    starfalls.retain_mut(|d| {
+        if d.step != 0 && f32::from_bits(d.step) < next_clock {
+            s.table_at(d.step);
+            let caster = d.caster;
+            let at = s.unit(Some(caster)).map(|u| [u.x, u.y]);
+            let area = f32::from_bits(d.area);
+            let targets: Vec<u32> = match at {
+                Some([x, y]) => {
+                    let [x0, y0] = [s.world_bounds[0], s.world_bounds[1]].map(f32::from_bits);
+                    let (px, py) = (f32::from_bits(x) - x0, f32::from_bits(y) - y0);
+                    let cell = |v: f32| (v / movement::CALL_CELL).floor() as i64;
+                    let (cx, cy) = (
+                        cell(px - area)..=cell(px + area),
+                        cell(py - area)..=cell(py + area),
+                    );
+                    let inside: Vec<u32> = s
+                        .units
+                        .iter()
+                        .copied()
+                        .filter(|&o| {
+                            let Some(Object::Unit(u)) = s.objects.get(&o) else {
+                                return false;
+                            };
+                            u.alive
+                                && !u.hidden
+                                && movement::hostile(s, caster, o)
+                                && u.call_cells
+                                    .iter()
+                                    .any(|((x, y), _)| cx.contains(x) && cy.contains(y))
+                        })
+                        .collect();
+                    movement::call_order(s, inside)
+                }
+                None => Vec::new(),
+            };
+            super::table::star_streams(s, targets.len());
+            for target in targets {
+                let x = s.game_random[STAR_GENERATOR].fraction();
+                d.streams.push(Stream {
+                    target,
+                    next: add(d.step, x),
+                    phase: StreamPhase::First,
+                });
+            }
+            d.step = 0;
+            s.table.now = tick;
+        }
+        // The steps due, in the order of their times.
+        while let Some(k) = (0..d.streams.len())
+            .filter(|&k| {
+                let e = f32::from_bits(d.streams[k].next);
+                e < next_clock && e <= f32::from_bits(d.end)
+            })
+            .min_by(|&a, &b| {
+                f32::from_bits(d.streams[a].next).total_cmp(&f32::from_bits(d.streams[b].next))
+            })
+        {
+            let x = s.game_random[STAR_GENERATOR].fraction();
+            let wait = sub(d.interval, x);
+            let st = &mut d.streams[k];
+            match st.phase {
+                StreamPhase::First => {
+                    st.next = add(st.next, wait);
+                    st.phase = StreamPhase::Launch;
+                }
+                StreamPhase::Launch => {
+                    let valid = s
+                        .unit(Some(st.target))
+                        .is_some_and(|u| u.alive && !u.hidden)
+                        && movement::hostile(s, d.caster, st.target);
+                    if valid {
+                        st.next = add(st.next, add(x, 0.1f32.to_bits()));
+                        st.phase = StreamPhase::Hit;
+                    } else {
+                        st.next = add(st.next, wait);
+                    }
+                }
+                StreamPhase::Hit => {
+                    if s.unit(Some(st.target)).is_some_and(|u| u.alive) {
+                        deferred.push(Deferred::Damage {
+                            caster: d.caster,
+                            target: st.target,
+                            amount: d.damage,
+                            call: None,
+                            slow: None,
+                            at: Some(st.next),
+                            fog: None,
+                            later_calls: false,
+                        });
+                    }
+                    st.next = add(st.next, wait);
+                    st.phase = StreamPhase::Launch;
+                }
+            }
+        }
+        if f32::from_bits(d.end) < next_clock {
+            s.table_at(d.end);
+            s.table.now = tick;
+            return false;
+        }
+        true
+    });
+    s.starfalls.extend(starfalls);
 }
 
 /// Game generator 23, which draws a Death and Decay's art (hub #12).

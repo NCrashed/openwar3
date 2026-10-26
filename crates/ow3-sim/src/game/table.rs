@@ -4900,6 +4900,14 @@ pub(super) fn decay_area(state: &mut super::State, end: u32) -> u32 {
     objects[7]
 }
 
+/// A Starfall's star streams start (c-SBY-1: 1198 .. 1201 at 3.509961, hub
+/// #11): an object each, kept.
+/// PROVISIONAL: when they go is not read (past the replay's end).
+pub(super) fn star_streams(state: &mut super::State, n: usize) {
+    let tick = state.table.now;
+    state.table.take_n(tick, n, "Starfall: stream");
+}
+
 /// A Death and Decay's step 0.01 s after its effect: an object, freed at
 /// `end` (c-SBX-1: 1288, 4.909883 to 5.399983).
 /// PROVISIONAL: what it is is not read.

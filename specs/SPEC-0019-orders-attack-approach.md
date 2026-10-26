@@ -164,6 +164,18 @@ When an enemy damages a unit that has no order (idle):
   the tick of the damage; the damaged unit draws first) and attack the
   attacker by the approach rule.
 
+**The attacked unit is called at the swing start.** When an attacker
+starts a swing at a unit, the attack start calls that unit's
+acquisition with the attacker (a unit in its backswing only records
+it: the `EVENT_UNIT_ACQUIRED_TARGET` event fires, no target is taken).
+`c-SBI-1`, grunt 4 (a player's unit on hold position) in its backswing
+after its hit killed kobold 5 at 13.439995: kobolds 6 and 7 swinging at
+it at 13.969956 and 14.029956 gave the two events, while the ogre's
+hit on it at 13.739958 (its swing had started at 13.439959, while grunt
+4 still held kobold 5) gave none. A creep in that state is also
+reached by its camp mates' calls (SPEC-0030), each one recorded the
+same way (`c-SAK-1` gnoll 17 at 23.829884, six times).
+
 **Call cooldown.** A damaged unit calls for help whether it is idle or
 busy (attacking or chasing), but at most once in 3.0 s: when it calls,
 a 3.0 s timer of that unit starts, and while it runs, damage to the
@@ -771,6 +783,22 @@ time to time:
   | 270 | never caught | 213.9 |
   | 300 | never caught | 234.2 |
 
+### Units that cannot attack: fleeing
+
+A unit without an attack, with no order, that is hit by an enemy flees:
+it takes order 851983 with a point 300 from its own position, straight
+away from the attacker (the direction from the attacker's path agent to
+its own), and walks there (turning first). No generator draw is made.
+The flight ends when the walk arrives (the 0.49 cell limit of a point
+walk); hits during the flight make no new flight, the next hit after it
+makes a new one. `c-SBJ-1`, crypt lord (attack removed, order 0 since
+its cast ended) hit by kobold 7 at 10.489942: agents kobold 7 (366.8252,
+380.5143), crypt lord (362.1250, 379.3125) in cells, direction
+-2.89126, goal (-990.65, -224.32), 300.0003 away; order 0 again at
+log 2141, 11.9 short of the goal. Again at log 2625 (hit by kobold 8),
+until 2843. Whether hold position or the unit's owner matters was not
+read.
+
 ### Following an allied unit
 
 `smart` on a unit of the same player (a right click on it) and `move`
@@ -1039,6 +1067,16 @@ An idle unit with a weapon attacks an enemy unit on its own:
   - between enemies equal by these rules the strictly nearer one is
     better, measured from the unit's centre (a tie keeps the one found
     first, the current target before the others).
+  The distance compared is the squared plane distance in path cells
+  (world / 32) between the two units' path agents (their positions at
+  their last commits, not their drawn positions). `c-SBJ-1`, ogre 4's
+  check at 12.918833: the dreadlord (current), the lich and the death
+  knight had equal ratings; squared distances 68.3196, 76.6892 and
+  66.1897; the death knight, nearer by 2.1, was taken. A target given
+  by a call whose reaction delay is still running counts as held for
+  the next check's delay: `c-SBJ-1` ogre 4, given the crypt lord by
+  kobold 8's call at 9.919998, set its next check 1.0 s on at its own
+  check of the same moment.
   If the best is another enemy, the unit attacks it at once:
   `EVENT_UNIT_ACQUIRED_TARGET` fires, there is no reaction delay and no
   call for help, and the unit takes the new target as its goal in that
@@ -1228,6 +1266,24 @@ An idle unit with a weapon attacks an enemy unit on its own:
   100), 2.33 rad off its heading: failed, walk 1871 .. 1873. The same
   test is used with 0.2 rad elsewhere (the member's arrival turned to
   its place).
+- **The walk of an acquisition's order.** An acquisition (also a
+  switch at a check) gives the unit an attack order, and that order's
+  start makes the walk with the same choice: target out of reach, a
+  chase walk with the attack range (arrival limit `max(0.49, (range +
+  c_a + c_t) / 32)` cells, with a path); target in reach, a face
+  movement with an unlimited range (the walk has no path and arrives
+  only by its angle, within 0.2 rad, after turning in place). The new
+  walk starts from the unit's current heading. `c-RXD-1` creep 10,
+  switched at 34.829250 to a peasant 1.04 cells away: heading 3.8197
+  against the direction 6.1235, five turns of 0.5 (34.86 .. 34.98),
+  arrived at 35.009117 (attack start, no swing: cooldown running).
+  Whether a unit already facing the target gets no walk was not read.
+- **An after-swing event survives a switch.** The after-swing event of a
+  swing made before a switch still fires and starts a chase on
+  the current target; with that target in reach it makes a face
+  movement. `c-RXD-1` taskmaster (log unit 11): switched at 22.176710,
+  its face walk arrived at 22.259636, and the after-swing event of its
+  swing on the old target at 22.279673 made a second face walk.
 
 ## Edge cases
 

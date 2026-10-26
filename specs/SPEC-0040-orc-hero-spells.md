@@ -33,6 +33,14 @@ order (tick `o`). Targets were footmen of `Player(15)` (not paused).
   `HeroDur` 2 s): order 851973 from that tick, back to 0 603 ticks
   later (as the stuns of SPEC-0037). When the stun ended, each unit had
   a damage event of 0.00 from the caster.
+- Read in the game (`c-SBI-1`, effect at q 4.970000): the stun buffs
+  end at 7.970000 (`E + Dur`), and the orders come back 0.01 s later
+  with the 0.00 hits 0.02 s after the end (SPEC-0037, "The end of a
+  stun, step by step"). The chieftain's own order ends at the effect +
+  0.8 (`castbsw`), long before; war stomp's own object has a 3.0 s timer
+  from the effect and is freed after the four stun objects. A unit is
+  hit when the area of 250 reaches its edge (kobold 6 at 273 with
+  collision 31 was hit).
 
 ### Mirror image (`AOmi`, order `mirrorimage`, no target)
 
@@ -75,6 +83,11 @@ order (tick `o`). Targets were footmen of `Player(15)` (not paused).
   (not the nearer one with 400), then 200, then 300, then 400, with
   300, 225, 168.75 and the capped 119.55 and 19.49. Lowest life and
   most missing life are the same here (one unit type).
+- `c-SBI-1` (read in the game): order at q 6.5, cast point 0.3 started
+  at 6.599974, effect at 6.899973, cooldown 9.0, and the cast's end
+  timer of 1.07 (the shadow hunter's `castbsw`) ending at 6.899973 +
+  1.07 = 7.969973, where the order ends and its objects are freed (before
+  war stomp's stuns ending at 7.970000).
 
 ## Edge cases
 

@@ -141,6 +141,54 @@ the game): stopped in tick 4337 at (439.3159, 386.1949) cells (speed
 from (439.3159, 386.1949) towards the mine's point (448, 384), local
 path of 5 points; it walked from 4747.
 
+### The end of a stun, step by step
+
+Read in the game (`c-SBI-1`, war stomp at q 4.970000 with `Dur` 3 s;
+`c-SAK-1`, storm bolt and bash; the same steps for all three). With
+`E` the effect's queue time:
+1. `E + Dur`: the stun buff's timer ends. At that moment the unit takes the
+   buff-end object, posts the free of the stun object, and starts a
+   0.01 s timer on the unit (also a 5.0 s timer on a creep's camp AI and
+   a 3.333 s timer on an effect object). Several stuns ending at the
+   same expiry run in the order the stuns were made.
+2. `E + Dur + 0.01`: the unit's timer ends and its order comes back:
+   the order the unit had before the stun, with its target (an attack
+   order on a unit comes back as that attack order; no order gives
+   order 0). It makes the order-back object, starts the AI's 2.0 s
+   timer and 0.01 s check timer (SPEC-0019), and a 0.01 s timer of the
+   stun object.
+3. `E + Dur + 0.02`: both 0.01 s timers end, in the order they were
+   started. The AI check runs its acquisition (calls for help
+   included). The stun object's timer makes a damage event of 0.00 from
+   the caster on the unit, then posts the free of the order-back
+   object (so that free comes right after the 0.00 hit's frees). When
+   the restored order starts the check timer again (an attack order
+   coming back), the check is started a second time after the stun
+   object's timer and so runs after it.
+A unit that dies while stunned: the buff goes at the death, the
+order-back object is made, and the stun object's 0.01 s timer frees it
+0.01 s later with no 0.00 hit (`c-SAK-1` creeps 11, 14, 16).
+This explains the 2 or 3 ticks of "Stun timing": the order comes back
+0.01 s after `E + Dur`.
+
+### A stun and the unit's attack
+
+Read in `c-SBI-1` (four creeps under war stomp, in different states of
+their attacks) and `c-SAK-1`:
+- the attack loses its target at the stun: from then on it holds no
+  target;
+- a swing not yet past its damage point is dropped whole: its hit never
+  comes and its cooldown timer is cancelled (a kobold that swung 0.02 s
+  before the stun);
+- the timers of a finished swing run on (after-swing event, cooldown
+  end); each finds no target and does nothing;
+- the AI's check timer is cancelled: no acquisition is made for the
+  stunned unit until the 0.01 s check after the order comes back;
+- the unit's order is put aside and comes back with its target (step 2
+  above); a creep with an attack order on its stunner (`c-SAK-1`, ogre
+  18 bashed while attacking the mountain king) attacks him again
+  through that order, while its attack's own target is gone.
+
 ## Edge cases
 
 - Storm bolt and bash damage ignore the armor value; storm bolt against
@@ -151,7 +199,8 @@ path of 5 points; it walked from 4747.
 1. The launch point of storm bolt (the caster's centre in both tests).
 2. The exact attack interval of thunder clap's slow while a
    slow starts or ends during a cooldown.
-3. The tick in which a stun ends (the 2 or 3 ticks above).
+3. (Settled: the order comes back 0.01 s after the buff's end, see
+   "The end of a stun, step by step".)
 4. Avatar (`AHav`) and the abilities of the other heroes.
 
 ## Sources

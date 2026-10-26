@@ -49,10 +49,24 @@ With the order given in tick `o` (script order, SPEC-0019):
    collisions 32 and 31: stopped 860.7 from the footman); the effect
    came 99 ticks after its last position change.
 3. After the effect the order stays for `castbsw` (334 ticks for
-   1.67 s; order 852092 until `o + 100 + 334`), then it is 0.
+   1.67 s; order 852092 until `o + 100 + 334`), then it is 0. This is a
+   timer started at the effect with a delay the ability holds, set to
+   the caster's `castbsw` when the cast starts (`c-SBI-1`: shadow hunter
+   1.07, tauren chieftain 0.8; `c-SBJ-1` death knight 1.008; `c-SBK-1`
+   warden 0.83, keeper 0.8). A spell can overwrite it at its effect
+   (impale: wave time + 0.1, SPEC-0041). At its end the order ends and
+   the cast's objects are posted for freeing; casts ending in the same
+   tick end in the order of their expiries.
 4. The cooldown (`Cool1`, 5 s) starts at the effect; an order given
    while it runs does nothing (no effect, no mana; the order given 400
    ticks after the effect).
+   The cast point timer itself (`castpt`) starts in an update of the
+   order's walk, the one at which the walk arrives (in range and
+   within 0.2 rad, SPEC-0019): `c-SBK-1`, keeper of the grove, order at
+   q 6.5, walk updates at 6.509974 (turn of 0.440) and 6.539974
+   (arrived), cast point timer from 6.5399742. A caster already in
+   range and turned starts at its first update, not in the order's
+   tick (not traced).
 5. **In range but not facing:** the order gives a movement towards the
    target as for an attack (SPEC-0019): a stop commit at the order and a
    cluster whose place is the target's per-tick position then. At its

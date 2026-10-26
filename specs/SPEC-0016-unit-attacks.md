@@ -114,6 +114,20 @@ launches a missile whose speed is `Missilespeed` of the unit's entry in
   for a target straight ahead at centre distance `d` the damage tick is
   the launch tick (the swing start + `dmgpt1`, 144 or 145 ticks for the archer's 0.72 s) + about
   `200 * (d - 62) / 900` ticks.
+- The `(x, y)` of the launch point is the position the unit reports for
+  drawing, which is its game position for most units but not all. At
+  its creation a unit's footprint is classed by its path agent's radius
+  `r` (collision / 32, cells): class 0 for `r < 0.5`, 1 for `r < 1.0`,
+  2 for `r < 1.5`, 3 otherwise. A unit of an odd class (collision 16 to
+  31, or 48 and more) reports `(x - 16, y - 16)` (the height
+  unchanged). Its game position (`GetUnitX/Y`, the path agent) is not
+  changed. `c-SBK-1` (read in the game), kobold geomancer (collision 31,
+  class 1, `launchX`/`launchY` 0) at (-420, 0) facing 2.322: launch
+  point (-436, -16), `L` 207.2 to the warden's centre, timer 0x3E6BC03A
+  at 900, expiry 0x3FF33DCF, impact at the end of the tick ending
+  1.9049982. The warden and the death knight (collision 32, class 2)
+  launch from their positions plus the table offsets. Whether a flagged
+  unit's target point is offset too was not read.
 - When `L` is below 90 there is no flight: the damage comes in the tick
   of the launch.
 - The damage dice (`dice1` outputs of game generator 2, above) are drawn

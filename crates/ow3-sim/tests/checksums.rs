@@ -163,6 +163,16 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          pickups_checksums); this test runs without it",
     ),
     (
+        "c-SBT-1.w3g",
+        "the buildings test (ten Human buildings and their Blight Dispels): every turn \
+         checksum to its end matches with the object table started as the game has it \
+         (tests/objects.rs, buildings_checksums); this test runs without it",
+    ),
+    (
+        "c-SBU-1.w3g",
+        "the revive place test (the default place by the altar taken): not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

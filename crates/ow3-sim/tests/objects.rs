@@ -538,3 +538,20 @@ fn turn_parts(name: &str) -> Option<Option<usize>> {
     eprintln!("{name}: all turns match");
     Some(None)
 }
+
+/// `c-SBT-1`: ten Human buildings made by the script, their Blight Dispels
+/// ending at 0.88 s and 1.2 s: every turn checksum.
+#[test]
+fn buildings_checksums() {
+    if let Some(first) = turn_parts("c-SBT-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SBT-1`'s object table.
+#[test]
+fn buildings_objects() {
+    if let Some(first) = compare_objects("c-SBT-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}

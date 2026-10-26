@@ -132,6 +132,13 @@ pub struct UnitType {
     pub missile_speed: u32,
     /// `MissileHoming` of that entry: its missiles follow the target.
     pub missile_homing: bool,
+    /// What a building makes (that entry's `Trains`, `Researches`,
+    /// `Makeitems`, `Revive`, `Upgrade`): it has a queue, a rally point
+    /// (it trains or revives), items to sell, an upgrade.
+    pub queue: bool,
+    pub rally: bool,
+    pub sells_items: bool,
+    pub upgrades: bool,
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
     /// SPEC-0022), as a key of [`ObjectData::path_textures`].
     pub path_texture: Option<String>,
@@ -1155,6 +1162,15 @@ impl ObjectData {
             unit.missile_homing = functions
                 .get(&section, "MissileHoming")
                 .is_some_and(|v| v.split(',').next().is_some_and(|v| v.trim() == "1"));
+            let listed = |key: &str| {
+                functions
+                    .get(&section, key)
+                    .is_some_and(|v| !v.trim().is_empty() && v.trim() != "0")
+            };
+            unit.rally = listed("Trains") || listed("Revive");
+            unit.sells_items = listed("Makeitems");
+            unit.upgrades = listed("Upgrade");
+            unit.queue = unit.rally || unit.sells_items || listed("Researches");
         }
         for (&id, unit) in &data.units {
             if let Some(name) = &unit.name {

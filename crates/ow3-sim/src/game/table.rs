@@ -644,51 +644,69 @@ const GOLD_MINE: Making = Making {
     level: &[],
     corpse: &[],
 };
-// A town hall (c-RXI-1, 30 in the table): the mine's 0 .. 13, Train and Upgrade with
-// their second parts (14 .. 17), an ability object and its four data
-// parts (18 .. 22, freed at 2.2 s, `HALL_PARTS`), Call to Arms (23),
-// Return resources (24), Rally (25; its point is an object of the second
-// pool, not here), on fire and alarm (26, 27), the start order's two (28,
-// 29, freed 0.0001 s later).
-const TOWN_HALL: Making = Making {
-    count: 30,
-    deferred: &[29, 28],
+/// A building with a Blight Dispel (c-SBT-1, hub #8: ten Human buildings;
+/// c-RXI-1: the town hall; c-SBQ-1: the altar and the castle), laid out by
+/// [`building_layout`]: none of its own objects go at its death here.
+const BUILDING: Making = Making {
+    count: 0,
+    deferred: &[],
     death: &[],
     level: &[],
     corpse: &[],
 };
-// An Altar of Kings (c-SBQ-1, 26 in the table and one of the second pool):
-// its Blight Dispel (Abds, 16), an object of its set-up (17) and three
-// path-side objects (18 .. 20), freed together when the dispel has
-// finished (`BUILDING_PARTS`), its start order's two (24, 25, freed 0.0001 s
-// later), the rest kept.
-// PROVISIONAL: the dispel's end is taken as 0.88 s, read once; its step
-// rule (Dur 0.08, DataA 64, Area 768) is not read.
-const ALTAR: Making = Making {
-    count: 26,
-    deferred: &[25, 24],
-    death: &[],
-    level: &[],
-    corpse: &[],
-};
-// A castle (c-SBQ-1, 28 in the table and one of the second pool): as the
-// altar with its larger Blight Dispel (Abdl, its end 1.2 s, as the town
-// hall's) and two more abilities (Amic, Argl, 21 and 22); its start
-// order's two (26, 27). PROVISIONAL: as the altar.
-const CASTLE: Making = Making {
-    count: 28,
-    deferred: &[27, 26],
-    death: &[],
-    level: &[],
-    corpse: &[],
-};
-/// The five parts of an altar or a castle in the order they go
-/// (c-SBQ-1: 19, 20, 18, 17, 16 at 1.880098 and 2.200093).
-const BUILDING_PARTS: [usize; 5] = [19, 20, 18, 17, 16];
-/// The town hall's parts freed 1.2 s after its making, in this order
-/// (c-RXI-1: 855, 856, 854, 853, 852 at 2.200093).
-/// PROVISIONAL: what ends them is not read.
-const HALL_PARTS: [usize; 5] = [21, 22, 20, 19, 18];
+
+/// The table objects of a building of type `type_id` with a Blight Dispel
+/// (Abds or Abdl), if it has one: their count, where the dispel's five
+/// start and how long after the making they go (c-SBT-1, hub #8).
+///
+/// - 14 as a unit's first, its attack (1), a queue with its second part
+///   (2: it trains, researches, revives or sells), an upgrade with its
+///   second part (2);
+/// - the dispel's ability and four more (5), freed together when the
+///   dispel has finished (`DISPEL_PARTS`);
+/// - two more, then one for each of its other abilities, a rally (1: it
+///   trains or revives; its point is an object of the second pool, not
+///   here), three for selling items;
+/// - its start order's two, freed 0.0001 s later.
+///
+/// The dispel's radius starts at DataA and grows by DataA every Dur, up
+/// to the Area rounded up to whole 128s, so `2 x ceil(Area / 128) - 1`
+/// steps when DataA is 64 (c-SBT-1: 11 steps of 0.08 s for Abds, Area
+/// 768; 15 for Abdl, Area 960).
+///
+/// PROVISIONAL: the step rule fits two Areas, not read as a value; blight
+/// on the map is not tested. The three of selling items are read on the
+/// arcane vault only.
+fn building_layout(state: &super::State, type_id: i32) -> Option<(usize, usize, f32)> {
+    let t = state.data.units.get(&type_id)?;
+    let (&id, dispel) = t.abilities.iter().find_map(|a| {
+        [*b"Abds", *b"Abdl"]
+            .contains(&a.to_be_bytes())
+            .then(|| Some((a, state.data.abilities.get(a)?)))
+            .flatten()
+    })?;
+    let step = f32::from_bits(dispel.duration);
+    let grow = f32::from_bits(dispel.data[0]);
+    let area = f32::from_bits(dispel.area);
+    let reach = (area / 128.0).ceil() * 128.0;
+    let steps = if grow > 0.0 {
+        (reach / grow) as usize - 1
+    } else {
+        0
+    };
+    let after = step * steps as f32;
+    let head = 14
+        + usize::from(t.weapon.is_some() || t.weapon2.is_some())
+        + 2 * usize::from(t.queue)
+        + 2 * usize::from(t.upgrades);
+    let others = t.abilities.iter().filter(|&&a| a != id).count();
+    let tail = 2 + others + usize::from(t.rally) + 3 * usize::from(t.sells_items);
+    Some((head + 5 + tail + 2, head, after))
+}
+
+/// The five of a building's dispel, from its first, in the order they go
+/// (c-SBT-1, c-SBQ-1: 19, 20, 18, 17, 16 of the altar at 1.880098).
+const DISPEL_PARTS: [usize; 5] = [3, 4, 2, 1, 0];
 const CREEP: Making = Making {
     count: 28,
     deferred: &[16, 15, 20, 25, 24, 23, 22, 21, 19, 27, 26],
@@ -780,6 +798,9 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         return;
     };
     let (owner, type_id) = (u.owner, u.type_id);
+    let building = (owner != super::creeps::CREEPS)
+        .then(|| building_layout(state, type_id))
+        .flatten();
     let making = if crate::data::is_hero(type_id) {
         if owner == super::creeps::CREEPS {
             &CREEP_HERO
@@ -797,12 +818,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         &PEASANT
     } else if type_id == i32::from_be_bytes(*b"ngol") {
         &GOLD_MINE
-    } else if type_id == i32::from_be_bytes(*b"htow") {
-        &TOWN_HALL
-    } else if type_id == i32::from_be_bytes(*b"halt") {
-        &ALTAR
-    } else if type_id == i32::from_be_bytes(*b"hcas") {
-        &CASTLE
+    } else if building.is_some() {
+        &BUILDING
     } else if own_abilities(state, type_id) == 0 {
         &UNIT_PLAIN
     } else {
@@ -866,7 +883,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         let k = if hero >= 12 { hero + shift } else { hero };
         if k >= 14 + shift { k + parts.len() } else { k }
     };
-    let count = making.count + shift + parts.len() + extra - fewer;
+    let count = building.map_or(making.count, |b| b.0) + shift + parts.len() + extra - fewer;
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
     // (The autocast's first: c-SBK-1, 928.)
@@ -878,23 +895,14 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
-    if std::ptr::eq(making, &TOWN_HALL) {
-        let end = ow3_math::add(state.timers.time(), 1.2f32.to_bits());
-        for k in HALL_PARTS {
-            state.table.free_at_q(end, entries[k], "town hall: parts");
-        }
-    }
-    let building_parts = if std::ptr::eq(making, &ALTAR) {
-        Some(0.88f32)
-    } else if std::ptr::eq(making, &CASTLE) {
-        Some(1.2f32)
-    } else {
-        None
-    };
-    if let Some(after) = building_parts {
+    if let Some((count, at, after)) = building {
+        state.table.defer(entries[count - 1], "map start: unit");
+        state.table.defer(entries[count - 2], "map start: unit");
         let end = ow3_math::add(state.timers.time(), after.to_bits());
-        for k in BUILDING_PARTS {
-            state.table.free_at_q(end, entries[k], "building: parts");
+        for k in DISPEL_PARTS {
+            state
+                .table
+                .free_at_q(end, entries[at + k], "building: dispel");
         }
     }
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
@@ -926,7 +934,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             camp: std::ptr::eq(making, &CAMP_CREEP),
             attack_ability: if std::ptr::eq(making, &PEASANT) {
                 Some(entries[15])
-            } else if std::ptr::eq(making, &GOLD_MINE) || std::ptr::eq(making, &TOWN_HALL) {
+            } else if std::ptr::eq(making, &GOLD_MINE) || type_id == i32::from_be_bytes(*b"htow") {
                 None
             } else {
                 Some(entries[at(13)])

@@ -43,7 +43,7 @@ enum Aim {
 
 /// The abilities that can be cast, by their order string: the base
 /// ability, the order id and what it is cast on.
-const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 20] = [
+const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 21] = [
     ("blizzard", *b"AHbz", 852_089, Aim::Point),
     ("waterelemental", *b"AHwe", 852_097, Aim::Nothing),
     ("divineshield", *b"AHds", 852_090, Aim::Nothing),
@@ -64,6 +64,7 @@ const ABILITY_ORDERS: [(&str, [u8; 4], i32, Aim); 20] = [
     ("impale", *b"AUim", 852_555, Aim::Point),
     ("fanofknives", *b"AEfk", 852_526, Aim::Nothing),
     ("carrionswarm", *b"AUcs", 852_218, Aim::Point),
+    ("shadowstrike", *b"AEsh", 852_527, Aim::Enemy),
 ];
 
 /// The time from the end of a stun to its order coming back (0.01 s).
@@ -1745,6 +1746,35 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
         // A homing missile launched at the cast point; an enemy takes DataA / 2
         // (SPEC-0041). PROVISIONAL: the heal of an undead friend is not
         // built.
+        // A missile as Death Coil's (one timer from the launch point), its hit
+        // 0.00 then DataE (SPEC-0041; c-SBO-1: 75 at 5.944808).
+        // PROVISIONAL: the damage over time and the slow are not built.
+        b"AEsh" => {
+            if let Some(target) = c.target {
+                let speed = s
+                    .data
+                    .abilities
+                    .get(&c.ability)
+                    .map_or(0, |a| a.missile_speed);
+                let amount = n.data_e;
+                let objects = super::table::bolt_effect(s, h, n.cost);
+                match super::attack::launch_spell_missile(
+                    s, h, target, amount, speed, c.effect_q, false,
+                ) {
+                    Some(mut missile) => {
+                        missile.objects = objects;
+                        s.missiles.push(missile);
+                    }
+                    None => deferred.push(Deferred::SpellHit {
+                        caster: h,
+                        target,
+                        amount,
+                        stun: (0, 0),
+                        objects,
+                    }),
+                }
+            }
+        }
         b"AUdc" => {
             if let Some(target) = c.target {
                 let speed = s

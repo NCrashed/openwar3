@@ -843,9 +843,12 @@ pub(super) fn launch_spell_missile(
     };
     let [bx, by] = drawn_position(state, h);
     let (fx, fy) = (cos(u.facing), sin(u.facing));
+    // Floored to quarters, as a unit's missile (SPEC-0041; c-SBO-1: the
+    // Warden's shadow strike from (-511.75, 332.5)).
+    let quarter = |v: u32| mul(floor(mul(v, 4.0f32.to_bits())), 0.25f32.to_bits());
     let at = [
-        add(bx, add(mul(fx, ahead), mul(fy, side))),
-        add(by, sub(mul(fy, ahead), mul(fx, side))),
+        quarter(add(bx, add(mul(fx, ahead), mul(fy, side)))),
+        quarter(add(by, sub(mul(fy, ahead), mul(fx, side)))),
     ];
     let to = super::movement::position_of(state, target)?;
     let flight = distance(at, to);

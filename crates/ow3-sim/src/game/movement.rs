@@ -6455,6 +6455,15 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
 }
 
 /// Whether a unit's movement walks now (a non-zero velocity).
+/// The velocity of unit `h` walking now, world units per second.
+pub(super) fn walking_velocity(state: &State, h: u32) -> Option<[u32; 2]> {
+    state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .filter(walking_now)
+        .map(|m| m.velocity)
+}
+
 pub(super) fn walking_now(m: &Moving) -> bool {
     m.walking && m.velocity != [0, 0]
 }

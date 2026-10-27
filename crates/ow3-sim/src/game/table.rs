@@ -60,6 +60,8 @@ pub struct ObjectTable {
     early: Vec<u32>,
     /// The spell order being taken starts its cast at once.
     pub cast_at_once: bool,
+    /// An acquisition answering a call or a hit is being made (`acquired`).
+    pub answering: bool,
     /// A Wind Walk's fade is being handled (`walk_dropped`).
     pub at_fade: bool,
     /// The unit whose death is being handled, and the objects of its
@@ -137,6 +139,7 @@ impl ObjectTable {
             early: Vec::new(),
             cast_at_once: false,
             at_fade: false,
+            answering: false,
             dying: None,
             expiring: None,
             constructing: false,
@@ -2698,9 +2701,23 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
         walk_made_at_order(state, h);
         return;
     }
-    let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
-    for e in old.unwrap_or_default() {
-        state.table.defer(e, "acquisition: attack object");
+    // An engaged unit's answer to a hit lets go only the first of its last
+    // acquisition's (c-SCA-1: the turtle's 1147 at 9.35943, its 1145 and
+    // 1146 kept).
+    // PROVISIONAL: when the kept two go is not read.
+    if state.table.answering && entries(state, h).is_some_and(|e| e.engaged) {
+        let first = entries(state, h)
+            .and_then(|e| (!e.acquisition.is_empty()).then(|| e.acquisition.remove(0)));
+        if let Some(o) = first {
+            state.table.defer(o, "acquisition: attack object");
+        }
+    }
+    let answering = state.table.answering && entries(state, h).is_some_and(|e| e.engaged);
+    if !answering {
+        let old = entries(state, h).map(|e| std::mem::take(&mut e.acquisition));
+        for e in old.unwrap_or_default() {
+            state.table.defer(e, "acquisition: attack object");
+        }
     }
     // A unit without any order makes an attack order of its own; one on
     // attack-move or with an order of the game (a creep going home) not
@@ -2720,6 +2737,20 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     // (c-SCA-1: the turtle at 7.009730, hub #14).
     // PROVISIONAL: only a wake marks a unit engaged; when it goes back to
     // idle is not read.
+    // Its answer to a hit: two and its walk (c-SCA-1: the turtle answering
+    // the archer at 9.35943, hub #14).
+    if !own && state.table.answering && entries(state, h).is_some_and(|e| e.engaged) {
+        let a = state.table.take_n(tick, 2, "acquisition: extra object");
+        state.table.defer(a[1], "acquisition: extra object");
+        if let Some(e) = entries(state, h) {
+            e.acquisition.push(a[0]);
+        }
+        walk_made_at_order(state, h);
+        if let Some(e) = entries(state, h) {
+            e.walk_at_acquire = true;
+        }
+        return;
+    }
     if !own && entries(state, h).is_some_and(|e| e.engaged) {
         let a = state.table.take_n(tick, 4, "acquisition: attack object");
         state.table.defer(a[3], "acquisition: attack object");
@@ -2857,7 +2888,9 @@ pub(super) fn call_answered(state: &mut super::State, h: u32) {
     if recording {
         return;
     }
+    state.table.answering = true;
     acquired(state, h);
+    state.table.answering = false;
     if let Some(e) = entries(state, h) {
         e.by_call = true;
     }

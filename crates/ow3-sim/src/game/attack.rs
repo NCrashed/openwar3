@@ -809,7 +809,28 @@ fn launch(
         quarter(add(bx, add(mul(fx, ahead), mul(fy, side)))),
         quarter(add(by, sub(mul(fy, ahead), mul(fx, side)))),
     ];
-    let flight = distance(at, to);
+    // A target walking is led: the flight is the time to where it will be,
+    // |to + v t - at| = speed t (c-SCA-1: the archer's arrow at the walking
+    // turtle, 0.509774 s for 378 at the launch, hub #14).
+    // PROVISIONAL: the solution's arithmetic and the velocity read are not
+    // given; read once.
+    let flight = match super::movement::walking_velocity(state, target) {
+        Some(v) if !artillery => {
+            let (dx, dy) = (sub(to[0], at[0]), sub(to[1], at[1]));
+            let a = sub(add(mul(v[0], v[0]), mul(v[1], v[1])), mul(speed, speed));
+            let b = add(mul(dx, v[0]), mul(dy, v[1]));
+            let c = add(mul(dx, dx), mul(dy, dy));
+            // a t^2 + 2 b t + c = 0, a < 0: t = (-b - sqrt(b^2 - a c)) / a.
+            let disc = sub(mul(b, b), mul(a, c));
+            if f32::from_bits(a) < 0.0 && f32::from_bits(disc) >= 0.0 {
+                let t = div(sub(b ^ 0x8000_0000, sqrt(disc)), a);
+                mul(t, speed)
+            } else {
+                distance(at, to)
+            }
+        }
+        _ => distance(at, to),
+    };
     let step = mul(speed, HOMING_STEP);
     if f32::from_bits(flight) < f32::from_bits(step) {
         return None;

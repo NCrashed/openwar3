@@ -286,6 +286,9 @@ pub struct Moving {
     /// Its walk was made again (an Earthquake's slow): at the end of its next
     /// update its path is searched to the target's place then (hub #10).
     remade: bool,
+    /// Whether that remade walk searches its path anew; a slow renewed at a
+    /// later action keeps its path (c-SBW-1: kobold 5 at 4.80, hub #10).
+    remade_search: bool,
     /// A drop order stood within DropItemRange at its last update: it
     /// drops at this one (c-SBR-1: stopped at 9.599, dropped at 9.629385).
     drop_ready: bool,
@@ -567,6 +570,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             face_point: None,
             help: None,
             remade: false,
+            remade_search: false,
             drop_ready: false,
             ..m
         },
@@ -609,6 +613,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             face_point: None,
             help: None,
             remade: false,
+            remade_search: false,
             drop_ready: false,
         },
     };
@@ -2186,7 +2191,7 @@ pub(super) fn slowed_now(state: &mut State, h: u32) {
 /// walk freed at 3.839952). At its next update it steers on, then searches
 /// its path to the target's place then (kobold 5 at 3.809953, hub #10).
 /// So too a unit standing in a wait (kobold 4).
-pub(super) fn chase_renewed(state: &mut State, h: u32) {
+pub(super) fn chase_renewed(state: &mut State, h: u32, search: bool) {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let Some(u) = state.unit(Some(h)) else {
         return;
@@ -2201,11 +2206,12 @@ pub(super) fn chase_renewed(state: &mut State, h: u32) {
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(m) = u.movement.as_mut()
     {
-        if grid64(relative(at, min)) != grid64(relative(m.target, min)) {
+        if search && grid64(relative(at, min)) != grid64(relative(m.target, min)) {
             m.target = at;
             m.chase = Some(countdown(here, relative(at, min)));
         }
         m.remade = true;
+        m.remade_search = search;
         // A new goal, first among the units handled from the next tick
         // (SPEC-0021; c-SBW-1: kobold 5, remade last, searched before the
         // ogre and kobold 3 stopped, hub #10).
@@ -3220,7 +3226,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         in_reach = in_reach || m.unlimited;
                         // A remade walk: searched at the end of this update.
                         if std::mem::take(&mut m.remade) {
-                            remade_at = Some(at);
+                            remade_at = Some((at, m.remade_search));
                             // Its countdown set here, to the target's place (c-SBW-1:
                             // 16 for all four at 3.809953, hub #10).
                             m.chase = Some(countdown(here, relative(at, min)));
@@ -3587,7 +3593,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // A remade walk: its path searched anew after the steps of
                         // this update, to the target where it is now (c-SBW-1: kobold
                         // 5 at 3.809953, to the Blademaster's place then, hub #10).
-                        if let Some(at) = remade_at {
+                        if let Some((at, false)) = remade_at {
+                            m.target = at;
+                        } else if let Some((at, true)) = remade_at {
                             state.paths.remove(&h);
                             m.target = at;
                             let again = follow::Walker {
@@ -4216,8 +4224,13 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
             m.chase = None;
             m.goal_taken = true;
         }
-        // The chase's walk is made at the end of the delay (SPEC-0024).
-        if timed {
+        // The chase's walk is made at the end of the delay (SPEC-0024), unless
+        // its acquisition made it (hub #14).
+        let made = match state.objects.get_mut(&h) {
+            Some(Object::Unit(u)) => std::mem::take(&mut u.entries.walk_at_acquire),
+            _ => false,
+        };
+        if timed && !made {
             super::table::walk_made_at_order(state, h);
         }
     }

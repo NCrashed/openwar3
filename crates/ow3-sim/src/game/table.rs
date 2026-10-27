@@ -422,6 +422,11 @@ pub struct UnitEntries {
     /// A builder turning to its building: the fifth part of its work order,
     /// let go when it faces it (`turned_to_work`).
     pub turn_part: Option<u32>,
+    /// Engaged in a fight since it was last idle (hub #14): its acquisitions
+    /// take the short layout.
+    pub engaged: bool,
+    /// Its acquisition made its chase walk: none at its reaction's end.
+    pub walk_at_acquire: bool,
     /// A helper's order part freed when its help starts.
     pub repair_part: Option<u32>,
     /// The rate parts of a building's life set anew by its helpers.
@@ -2703,6 +2708,25 @@ pub(super) fn acquired(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.guard_walk = false;
     }
+    // One already engaged (a wake's attack-move): four, the fourth freed
+    // 0.0001 s later, and a chase walk when its target is out of reach
+    // (c-SCA-1: the turtle at 7.009730, hub #14).
+    // PROVISIONAL: only a wake marks a unit engaged; when it goes back to
+    // idle is not read.
+    if !own && entries(state, h).is_some_and(|e| e.engaged) {
+        let a = state.table.take_n(tick, 4, "acquisition: attack object");
+        state.table.defer(a[3], "acquisition: attack object");
+        if let Some(e) = entries(state, h) {
+            e.acquisition = vec![a[2], a[1], a[0]];
+        }
+        if target.is_some_and(|t| !super::movement::reaches(state, h, t)) {
+            walk_made_at_order(state, h);
+            if let Some(e) = entries(state, h) {
+                e.walk_at_acquire = true;
+            }
+        }
+        return;
+    }
     let n = if own { 10 } else { 7 };
     let a = state.table.take_n(tick, n, "acquisition: attack object");
     state.table.defer(a[n - 1], "acquisition: attack object");
@@ -3480,7 +3504,7 @@ pub(super) fn clap_slowed(state: &mut super::State, h: u32, end: u32) {
         // (hub #10).
         walk_made_at_order(state, h);
         super::movement::slowed_now(state, h);
-        super::movement::chase_renewed(state, h);
+        super::movement::chase_renewed(state, h, true);
     }
 }
 
@@ -4861,7 +4885,7 @@ pub(super) fn quake_renewed(state: &mut super::State, h: u32, fresh: bool) {
         if fresh {
             super::movement::slowed_now(state, h);
         }
-        super::movement::chase_renewed(state, h);
+        super::movement::chase_renewed(state, h, fresh);
     }
 }
 

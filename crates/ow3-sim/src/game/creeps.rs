@@ -139,6 +139,9 @@ pub(super) fn wake_checks(state: &mut State) {
                 super::table::flee_ordered(state, h);
                 let tick = state.table.now;
                 state.table.take(tick, "creep: woken");
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.engaged = true;
+                }
             }
             state.table.now = state.ticks;
         }

@@ -370,6 +370,15 @@ pub(super) fn hits_before(vm: &mut Vm, state: &Rc<RefCell<State>>, limit: Option
                         s.game_random[ATTACK_DICE].fraction();
                     }
                     let (amount, bash) = proc_effect(s, h, amount);
+                    // A hero in Bladestorm hits for nothing; the dice roll as
+                    // usual (c-SBW-1: the Blademaster on kobold 3 at 6.344779,
+                    // 0.00, log 1069).
+                    // PROVISIONAL: read from one hit.
+                    let amount = if s.bladestorms.iter().any(|b| b.hero() == h) {
+                        0
+                    } else {
+                        amount
+                    };
                     let point = slowed(s, h, hero_cooldown(s, h, weapon.damage_point));
                     s.cooldown_starts += 1;
                     let seq = s.cooldown_starts;

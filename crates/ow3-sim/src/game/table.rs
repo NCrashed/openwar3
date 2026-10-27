@@ -470,6 +470,9 @@ pub struct UnitEntries {
     pub pool_group: Option<usize>,
     /// The object a creep's flight keeps until it goes home.
     pub flight_part: Option<u32>,
+    /// Its current order has a target or a point (a wake's attack-move, a
+    /// flight's move); a guard give-up makes a walk then (hub #14).
+    pub targeted_order: bool,
     /// A building's objects of its making, all of them (for a cancel).
     pub made: Vec<u32>,
     /// A helper's order part freed when its help starts.
@@ -950,7 +953,7 @@ const POOL_GROUP: u32 = 12;
 /// PROVISIONAL: the limit lies between those two.
 const POOL_REACH: f32 = 840.0;
 
-/// Unit `h` takes its place in a group of the second pool: the nearest
+/// Creep `h` takes its place in a group of the second pool: the nearest
 /// group with room within `POOL_REACH` of its place (the older on a tie),
 /// else a new group at its place. Whether it made a new group (and so the
 /// entry and its object) (c-SCQ-1, c-SCR-1, hub #15).
@@ -1011,11 +1014,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     let neutral = (building.is_none() && owner == NEUTRAL_PASSIVE)
         .then(|| neutral_building_count(state, type_id))
         .flatten();
-    // Every unit but a building takes its place in a group of the second
-    // pool; a creep that makes a new one holds its entry's object (17;
-    // c-SAK-1, c-SCR-1, hub #15).
-    // PROVISIONAL: read for creeps only; with the players' units in the
-    // groups too, replays we match part (c-SBL-1, c-RZJ-1 and others).
+    // Every unit of Neutral Hostile but a building takes its place in a
+    // group of the second pool; one that makes a new group holds its
+    // entry's object (17; c-SAK-1, c-SCR-1, c-SCS-1: the players' units
+    // take none, hub #15).
     let new_pool_group = owner == super::creeps::CREEPS
         && building.is_none()
         && neutral.is_none()
@@ -1633,6 +1635,7 @@ pub(super) fn creep_flight_ordered(state: &mut super::State, h: u32) {
     let part = state.table.take(tick, "creep flight: kept");
     if let Some(e) = entries(state, h) {
         e.flight_part = Some(part);
+        e.targeted_order = true;
     }
 }
 

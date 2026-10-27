@@ -149,6 +149,7 @@ pub(super) fn wake_checks(state: &mut State) {
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                     u.entries.engaged = true;
                     u.entries.wake_part = Some(part);
+                    u.entries.targeted_order = true;
                 }
             }
             state.table.now = state.ticks;

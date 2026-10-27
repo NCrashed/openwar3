@@ -3660,6 +3660,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // 5 at 3.809953, to the Blademaster's place then, hub #10).
                         if let Some((at, false)) = remade_at {
                             m.target = at;
+                            follow::keep_path(state, h, relative(at, min));
                         } else if let Some((at, true)) = remade_at {
                             state.paths.remove(&h);
                             m.target = at;
@@ -3974,7 +3975,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
     for h in given_up {
-        let moving_order = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some());
+        // The check tests the creep's current order: one with a target or a
+        // point gets the walk (c-SCA-1: the wake's attack at 10.649214, the
+        // flight's move at 40.525944; the stand order at 11.549063, hub #14).
+        let moving_order = match state.objects.get_mut(&h) {
+            Some(Object::Unit(u)) => std::mem::take(&mut u.entries.targeted_order),
+            _ => false,
+        };
         // The queue's timers up to its 0.0001 s frees free first (c-SCA-1:
         // a missile's 5.0 s objects at 17.038240, before the give-up's).
         state.table.queue_through(add(state.update_time, NO_TIME));

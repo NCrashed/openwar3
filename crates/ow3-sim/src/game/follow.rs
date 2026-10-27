@@ -1433,6 +1433,14 @@ pub(super) fn quiet(state: &mut State, h: u32) {
     state.quiet_paths.insert(h);
 }
 
+/// Unit `h`'s walk keeps its path to its new goal `order` (world): a slow
+/// renewed at a later action changes the goal, not the lists (c-SBW-1:
+/// kobold 5 from 4.83, hub #10).
+pub(super) fn keep_path(state: &mut State, h: u32, order: [u32; 2]) {
+    if let Some(f) = state.paths.get_mut(&h) {
+        f.order = to_cells(order);
+    }
+}
 /// Whether unit `h`'s last search found no point nearer to its goal than
 /// where it stands: a partial path of its own place alone (c-SCA-1: the
 /// turtle's chase of the archer above the cliff at 10.629217, hub #14).

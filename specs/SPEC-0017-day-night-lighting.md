@@ -56,17 +56,24 @@ The time of day `h` (hours, `GAME_STATE_TIME_OF_DAY`, 0 <= h < 24) is
 the animation time `t = 333 + 2500 * h` ms of the sequence, so the
 24-hour day spans the whole sequence.
 
-A game starts at 8:00 and the clock advances one hour per 20 s of game
-time. It changes at every tick and is computed from a base hour and the
-game time elapsed since that base was set, in the engine arithmetic of
-SPEC-0004:
+A map starts at 0:00, and the clock advances one hour per 20 s of game
+time from the first tick. A melee map starts at 8:00 because its
+melee start (`MeleeStartingVisibility`, run from `main`) sets the hour
+to 8.0 with `SetFloatGameState` before the first tick. Logged in a
+map's `main` (`c-SCK-1`): 0.0 at the start of `main` and after
+`InitBlizzard`, 8.0 after the melee start. On a map without the melee
+start (`c-SCM-1`): 0.0 to the end of `main`, 0.05 at 1.0 s and 0.10 at
+2.0 s. The clock changes at every tick and is computed from a base hour
+and the game time elapsed since that base was set, in the engine
+arithmetic of SPEC-0004:
 
     h = add(B, mul(sub(G, G0), 0x3D4CCCCD))      (0x3D4CCCCD = 0.05)
 
 - `G` is the game time, the sum of the tick length `0x3BA3D70A` added
   once per tick from the start of the game (`add`, so it truncates;
   it does not wrap at 300 s like the timer queue of SPEC-0002).
-- At the start `B` = 8.0 and `G0` = 0.
+- At the start `B` = 0.0 and `G0` = 0; on a melee map the melee start
+  makes it `B` = 8.0, `G0` = 0 (the call below, at `G` = 0).
 - `SetFloatGameState(GAME_STATE_TIME_OF_DAY, x)` sets `B` = `x` and
   `G0` = the current `G`.
 - When `h` reaches 24 it starts again from 0. Taking `B = sub(h, 24.0)`
@@ -74,14 +81,60 @@ SPEC-0004:
   midnight to within 2e-6 hours, not bit for bit; the exact arithmetic
   of the wrap is open.
 
-Measured: 1200 of 1200 consecutive ticks after 1 s of game time bit for
-bit (8.050249 at the first, `0x4100CDD2`); after setting 12.0, the 12
+Measured on maps with the melee start: 1200 of 1200 consecutive ticks
+after 1 s of game time bit for bit (8.050249 at the first,
+`0x4100CDD2`); after setting 12.0, the 12
 ticks right after the call bit for bit and samples up to 230 s later
 bit for bit up to one tick of the test's own counter (its 0.005 s
 timer slipped by a tick now and then). There was no jump at 300 s of
 game time. The truncation in `G` makes the clock
 run a little slow: 2000 ticks after a reset to 12.0 the formula gives
 12.499916, not 12.5.
+
+**Time-of-day events.** A trigger registered with
+`TriggerRegisterGameStateEvent(t, GAME_STATE_TIME_OF_DAY, op, v)` fires
+when its condition `h op v` goes from false to true:
+
+- inside a `SetFloatGameState(GAME_STATE_TIME_OF_DAY, x)` call (the
+  trigger runs before the call returns), comparing the hour before the
+  call with `x`;
+- in the tick in which the running clock passes `v` by itself.
+
+A condition that stays true does not fire again, and nothing fires when
+it turns false. `EQUAL` fires when the running clock passes the value,
+also when no tick falls on it exactly. Several triggers that fire in
+the same step run in the reverse of the order in which their events
+were registered. Inside the action of a trigger fired by the running
+clock, `GetFloatGameState(GAME_STATE_TIME_OF_DAY)` returns the event's
+value `v` exactly; the clock itself is not changed by it and goes on
+from its base.
+
+Measured (`c-SCM-1`, `c-SCN-1`: events `= 6`, `>= 6`, `< 6`, `= 18`,
+`>= 18`, `< 18`, `> 6`, `<= 6`, `!= 6`, registered in that order):
+
+| Step | Fired, in order |
+| ---- | --------------- |
+| clock set to 5.9333 at 2.0 s, passes 6.0 in tick 46 (3.3 s) | `> 6`, `>= 6`, `= 6` (each reads 6.000000) |
+| clock set to 17.9333 at 6.0 s, passes 18.0 at 7.3 s | `>= 18`, `= 18` |
+| `SetFloatGameState` 18.13 -> 8.0 | `< 18` |
+| `SetFloatGameState` 8.15 -> 20.0 | `>= 18` (not `= 18`) |
+
+At 6.0 s `c-SCN-1` reads 6.133290 = 5.9333 + 4.0 s * 0.05: the passing
+did not reset the clock. With the melee start's jump 0 -> 8, of the
+triggers of Blizzard.j's `InitDNCSounds` only the day trigger (`>= 6`
+and `< 18`) fires, inside the melee start's `SetFloatGameState`; the
+dawn trigger (`= 6`) does not.
+
+Objects (SPEC-0024): each firing takes one event object, freed 0.0001 s
+later. A passing of the running clock takes one or two unit-state limit
+watches (2 at 6.0, 1 at 18.0), freed at the next `SetFloatGameState`.
+A `SetFloatGameState` of the hour (in either direction) takes, after
+the triggers, a unit-state rate part for every unit on the map (also
+gold mines and sleeping creeps) and for some units one or two more
+objects; they are freed by the next such call, which makes new ones.
+At the melee start of `(12)IceCrown` (303 units) that is 327 rate
+parts, 217 limit watches and 52 objects of one more kind (`c-SCC-1`).
+Which units take the second rate part and the watches is open.
 
 At 8:00 the Lordaeron light is already
 the constant day value, almost neutral white `(246, 246, 253)`: a strong
@@ -299,6 +352,11 @@ no effect, and a style 1 or 2 density of 0.5 hides everything.
   down, profiles across the screenshots calibrated with a grid texture;
   a copy with the map corner moved by one tile to check where the blocks
   start.
+- Test replays of 2026-10-27 (`game-data/1.27b/replays`): `c-SCK-1` (the
+  hour logged in `main` before and after the melee start), `c-SCM-1` and
+  `c-SCN-1` (no melee start; nine time-of-day events; `SetFloatGameState`
+  at 2, 6, 10 and 13 s, the clock running between), `c-SCC-1` (the melee
+  start's objects).
 
 ## Verification
 
@@ -379,4 +437,10 @@ values are 0 or 1 below the model:
      1.000 (formula: 0.061, 0.221, 0.430, 0.632, 0.895, 0.982, 1.000);
    - style 1 and 2 with density 0.5: full fog from 500 on.
    A unit, a destructable and water were fogged as well.
+10. **Start and events.** `c-SCM-1` / `c-SCN-1`: the hour reads 0.0
+    through `main`, 0.05 at 1.0 s, 0.10 at 2.0 s; the firings and their
+    order as in the table of "Time-of-day events", each logged with the
+    tick and the hour read inside the action. `c-SCK-1`: 0.0 at the start
+    of `main` and after `InitBlizzard`, 8.0 after the melee start, 8.05 at
+    1.0 s.
 

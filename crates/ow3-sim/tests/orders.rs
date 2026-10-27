@@ -844,8 +844,10 @@ fn night_regeneration() {
         let orders = format!(
             "call SetFloatGameState(ConvertFGameState(2), {start})\n    call SetUnitState(a, ConvertUnitState(0), 50)"
         );
+        // The hour of a melee map from its start (SPEC-0017), where this was
+        // measured.
         let Some(mut game) = game(
-            "set a = CreateUnit(Player(0), 'earc', 0, 0, 0)",
+            "call SetFloatGameState(ConvertFGameState(2), 8.0)\n    set a = CreateUnit(Player(0), 'earc', 0, 0, 0)",
             &orders,
             |_| {},
         ) else {

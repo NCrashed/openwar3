@@ -137,15 +137,48 @@ endfunction
     assert!(b.alive && b.died_at.is_none() && b.owner == 1);
 }
 
-/// The clock starts at 8:00 and runs one hour per 20 s (SPEC-0017).
+/// A map without the melee start starts at 0:00 and the clock runs one
+/// hour per 20 s from the first tick (SPEC-0017).
 #[test]
-fn clock_runs() {
+fn clock_starts_at_midnight() {
     let declarations = ow3_jass::parse(DECLARATIONS).unwrap();
     let script =
         ow3_jass::parse("function main takes nothing returns nothing\nendfunction\n").unwrap();
     let refs = [&declarations, &script];
     let program = ow3_jass::check::check(&refs).unwrap();
     let mut game = Game::load(&program, &refs).unwrap();
+    game.run("main");
+    assert_eq!(game.time_of_day(), 0.0);
+    while game.ticks() < 200 {
+        game.step();
+    }
+    assert_eq!(format!("{:.4}", game.time_of_day()), "0.0500");
+    while game.ticks() < 400 {
+        game.step();
+    }
+    assert_eq!(format!("{:.4}", game.time_of_day()), "0.1000");
+}
+
+/// The clock set to 8:00 in `main` (as the melee start does) runs one hour
+/// per 20 s (SPEC-0017).
+#[test]
+fn clock_runs() {
+    let script = ow3_jass::parse(
+        r#"
+type agent extends handle
+type fgamestate extends handle
+native ConvertFGameState takes integer i returns fgamestate
+native SetFloatGameState takes fgamestate whichFloatGameState, real value returns nothing
+function main takes nothing returns nothing
+    call SetFloatGameState(ConvertFGameState(2), 8.0)
+endfunction
+"#,
+    )
+    .unwrap();
+    let refs = [&script];
+    let program = ow3_jass::check::check(&refs).unwrap();
+    let mut game = Game::load(&program, &refs).unwrap();
+    game.run("main");
     assert_eq!(game.time_of_day(), 8.0);
     while game.ticks() < 200 {
         game.step();
@@ -161,7 +194,8 @@ fn clock_runs() {
     assert_eq!(format!("{:.5}", game.time_of_day()), "9.04987");
 }
 
-/// The exact values of SPEC-0017: 0x4100CDD2 at the first tick after 1 s,
+/// The exact values of SPEC-0017 (8:00 set in `main`): 0x4100CDD2 at the
+/// first tick after 1 s,
 /// and 12.499916 2000 ticks after the clock is set to 12.
 #[test]
 fn clock_bits() {
@@ -178,6 +212,7 @@ function Noon takes nothing returns nothing
     call SetFloatGameState(ConvertFGameState(2), 12.0)
 endfunction
 function main takes nothing returns nothing
+    call SetFloatGameState(ConvertFGameState(2), 8.0)
     call TimerStart(CreateTimer(), 10.0, false, function Noon)
 endfunction
 "#,

@@ -198,10 +198,11 @@ impl Setup {
             tech_max: BTreeMap::new(),
             tech_levels: BTreeMap::new(),
             player_states,
-            // A game starts at 8:00 (SPEC-0017).
-            float_game_states: BTreeMap::from([(2, 8.0f32.to_bits())]),
+            // A map starts at 0:00; a melee map's 8:00 is its melee start's
+            // (SPEC-0017).
+            float_game_states: BTreeMap::from([(2, 0.0f32.to_bits())]),
             integer_game_states: BTreeMap::new(),
-            clock_base: 8.0f32.to_bits(),
+            clock_base: 0.0f32.to_bits(),
             clock_time: 0,
             clock_start: 0,
             clock_set: false,

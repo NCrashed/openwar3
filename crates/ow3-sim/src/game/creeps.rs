@@ -54,6 +54,9 @@ pub struct Creep {
     pub(super) guard: Option<[u32; 2]>,
     /// It sleeps.
     pub(super) sleeping: bool,
+    /// The world clock of its next wake check (every 2.0 s from its
+    /// creation; hub #14).
+    pub(super) wake_check: Option<u32>,
 }
 
 /// Whether unit `h` is a creep.
@@ -74,7 +77,74 @@ pub(super) fn born(state: &State, owner: i32, type_id: i32) -> Creep {
         && state.data.units.get(&type_id).is_some_and(|t| t.can_sleep);
     Creep {
         sleeping: sleeps,
+        wake_check: (owner == CREEPS).then(|| {
+            add(
+                add(state.move_clock, crate::timers::MIN_TIMEOUT),
+                WAKE_EVERY,
+            )
+        }),
         ..Creep::default()
+    }
+}
+
+/// 2.0 s, the step of a creep's wake check.
+const WAKE_EVERY: u32 = 0x4000_0000;
+/// How far a wake check looks for enemy structures (hub #14).
+const WAKE_RANGE: f32 = 1500.0;
+
+/// The creeps' wake checks due by the end of this tick (c-SCA-1, hub #14):
+/// every 2.0 s from its creation a sleeping creep looks for an enemy
+/// structure within 1500; the first found wakes it, and it is given an
+/// attack-move to its place (851983: its order, record, ten parts, a walk and one
+/// more object; the turtle at 6.999731 on the farm under construction).
+///
+/// PROVISIONAL: the sight or path test each candidate passes, the call for
+/// help to its camp and when the last object goes are not done.
+pub(super) fn wake_checks(state: &mut State) {
+    let end = f32::from_bits(add(state.move_clock, crate::timers::TICK));
+    for i in 0..state.units.len() {
+        let h = state.units[i];
+        loop {
+            let Some(u) = state.unit(Some(h)).filter(|u| u.alive) else {
+                break;
+            };
+            let Some(at) = u.creep.wake_check.filter(|&t| f32::from_bits(t) < end) else {
+                break;
+            };
+            let (sleeping, x, y) = (u.creep.sleeping, f32::from_bits(u.x), f32::from_bits(u.y));
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.creep.wake_check = Some(add(at, WAKE_EVERY));
+            }
+            if !sleeping {
+                continue;
+            }
+            let found = state.units.iter().copied().find(|&o| {
+                state.unit(Some(o)).is_some_and(|b| {
+                    let (dx, dy) = (f32::from_bits(b.x) - x, f32::from_bits(b.y) - y);
+                    b.alive
+                        && b.footprint.is_some()
+                        && movement::hostile(state, h, o)
+                        && dx * dx + dy * dy <= WAKE_RANGE * WAKE_RANGE
+                })
+            });
+            let Some(building) = found else {
+                continue;
+            };
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.creep.sleeping = false;
+                // Its acquisition check 0.01 s later takes the nearest enemy
+                // (the peasant at 7.009730).
+                u.next_acquire = add(at, 0.01f32.to_bits());
+            }
+            state.table_at(at);
+            let place = state.unit(Some(building)).map_or([0, 0], |b| [b.x, b.y]);
+            if movement::point_order(state, h, "attack", place) {
+                super::table::flee_ordered(state, h);
+                let tick = state.table.now;
+                state.table.take(tick, "creep: woken");
+            }
+            state.table.now = state.ticks;
+        }
     }
 }
 
@@ -378,6 +448,7 @@ fn restart_returns(state: &mut State, caller: u32, at: u32) {
 
 /// The creeps of this tick: guard checks, return timers, creeps home.
 pub(super) fn tick(state: &mut State) {
+    wake_checks(state);
     let guard = f32::from_bits(state.combat.guard_distance);
     // Timers of the queue: they fire in the tick whose interval holds
     // their expiry (c-RXD-1: the return of tick 4557), equal ones in the

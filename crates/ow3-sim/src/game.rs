@@ -1897,6 +1897,10 @@ impl<'a> Game<'a> {
             // 24, which matches the game to 2e-6 hours but not bit for bit.
             let setup = &mut state.setup;
             setup.clock_time = ow3_math::add(setup.clock_time, crate::timers::TICK);
+            // A suspended clock stands (`SuspendTimeOfDay`).
+            if setup.clock_suspended {
+                setup.clock_start = setup.clock_time;
+            }
             let mut hours = ow3_math::add(
                 setup.clock_base,
                 mul(sub(setup.clock_time, setup.clock_start), HOURS_PER_SECOND),

@@ -4843,18 +4843,23 @@ pub(super) fn quake_area(state: &mut super::State) -> Vec<u32> {
 pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
     let tick = state.table.now;
     let o = state.table.take(tick, "Earthquake: unit");
-    let walking = entries(state, h).is_some_and(|e| !e.walk.is_empty());
-    if walking {
-        // Its search comes at its next update but one and takes none
-        // (hub #10).
-        walk_made_at_order(state, h);
-        super::movement::slowed_now(state, h);
-        super::movement::chase_renewed(state, h);
-    }
+    quake_renewed(state, h);
     if let Some(e) = entries(state, h) {
         e.death.push(o);
     }
     o
+}
+
+/// An Earthquake's action finds unit `h` in it: its slow is set anew and,
+/// walking, its walk is made again (c-SBW-1: kobold 5 at 4.799891, 1269 ..
+/// 1271, hub #10). Its search comes at its next update and takes none.
+pub(super) fn quake_renewed(state: &mut super::State, h: u32) {
+    let walking = entries(state, h).is_some_and(|e| !e.walk.is_empty());
+    if walking {
+        walk_made_at_order(state, h);
+        super::movement::slowed_now(state, h);
+        super::movement::chase_renewed(state, h);
+    }
 }
 
 /// Unit `h` left an Earthquake: its object goes (c-SBW-1: 1215 at 10.8).

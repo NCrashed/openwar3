@@ -105,6 +105,8 @@ pub struct Setup {
     pub clock_start: u32,
     /// Whether a script set the time of day (`SetFloatGameState`).
     pub clock_set: bool,
+    /// The clock stands (`SuspendTimeOfDay`).
+    pub clock_suspended: bool,
 }
 
 /// A slot as a lobby set it (for a replay).
@@ -195,6 +197,7 @@ impl Setup {
             clock_time: 0,
             clock_start: 0,
             clock_set: false,
+            clock_suspended: false,
         }
     }
 
@@ -787,6 +790,28 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 _ => None,
             };
             Ok(Some(Value::Integer(value.unwrap_or(0))))
+        }
+    );
+    // The clock stands while suspended and goes on from its hour after
+    // (SPEC-0017; c-SBS-1: noon all game long).
+    native!(
+        add,
+        state,
+        "native SuspendTimeOfDay takes boolean b returns nothing",
+        |vm, state, args| {
+            let b = matches!(args[0], Value::Boolean(true));
+            let mut state = state.borrow_mut();
+            let setup = &mut state.setup;
+            if b != setup.clock_suspended {
+                setup.clock_base = setup
+                    .float_game_states
+                    .get(&2)
+                    .copied()
+                    .unwrap_or(setup.clock_base);
+                setup.clock_start = setup.clock_time;
+            }
+            setup.clock_suspended = b;
+            Ok(None)
         }
     );
     native!(

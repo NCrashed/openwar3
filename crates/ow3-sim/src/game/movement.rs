@@ -3221,7 +3221,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         // A remade walk: searched at the end of this update.
                         if std::mem::take(&mut m.remade) {
                             remade_at = Some(at);
-                            m.chase = None;
+                            // Its countdown set here, to the target's place (c-SBW-1:
+                            // 16 for all four at 3.809953, hub #10).
+                            m.chase = Some(countdown(here, relative(at, min)));
                         }
                     }
                     _ => {
@@ -5678,6 +5680,21 @@ pub(super) fn retaliate(
             if point_order(state, victim, "attack", point) {
                 super::table::flee_ordered(state, victim);
             }
+        }
+        return;
+    }
+    // A hero in Bladestorm, its own checks off and with no order, is
+    // given an attack order to its attacker's place (c-SBW-1: the
+    // Blademaster hit by kobold 4 at 4.729896, 11 parts and a walk, hub
+    // #10).
+    // PROVISIONAL: the point read from the order's objects, not its value.
+    if state.bladestorms.iter().any(|b| b.hero() == victim)
+        && state
+            .unit(Some(victim))
+            .is_some_and(|u| u.checks_off && u.movement.is_none() && u.attack.is_none())
+    {
+        if point_order(state, victim, "attack", at) {
+            super::table::attack_point_ordered(state, victim);
         }
         return;
     }

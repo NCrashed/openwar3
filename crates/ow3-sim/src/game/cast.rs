@@ -3458,7 +3458,8 @@ fn quakes(s: &mut State) {
                 s.table.now = tick;
                 return false;
             }
-            if q.objects.is_empty() {
+            let first = q.objects.is_empty();
+            if first {
                 q.objects = super::table::quake_area(s);
             }
             let area = f32::from_bits(q.area);
@@ -3474,8 +3475,11 @@ fn quakes(s: &mut State) {
                     let Some(t) = s.data.units.get(&u.type_id) else {
                         return false;
                     };
+                    // Area plus the unit's collision size (c-SBW-1: the Blademaster
+                    // 255.1 from the centre of 250, in at 4.799891, hub #10).
                     let (dx, dy) = (f32::from_bits(u.x) - px, f32::from_bits(u.y) - py);
-                    u.alive && !u.hidden && !t.flying && dx * dx + dy * dy <= area * area
+                    let r = area + f32::from_bits(t.collision);
+                    u.alive && !u.hidden && !t.flying && dx * dx + dy * dy <= r * r
                 })
                 .collect();
             let gone: Vec<(u32, u32)> = q
@@ -3490,6 +3494,14 @@ fn quakes(s: &mut State) {
                     u.move_slow = None;
                 }
                 q.inside.retain(|i| i.0 != o);
+            }
+            // The units already in it first, their slows renewed (c-SBW-1:
+            // kobold 5's walk at 4.799891 before the Blademaster's object).
+            if !first {
+                let staying: Vec<u32> = q.inside.iter().map(|i| i.0).collect();
+                for o in movement::call_order(s, staying) {
+                    super::table::quake_renewed(s, o);
+                }
             }
             let fresh: Vec<u32> = now
                 .into_iter()
@@ -3657,6 +3669,13 @@ pub struct Bladestorm {
     /// Whether a step has hit yet (the first makes one more object).
     hit: bool,
     end: u32,
+}
+
+impl Bladestorm {
+    /// Its hero.
+    pub(super) fn hero(&self) -> u32 {
+        self.caster
+    }
 }
 
 /// The Bladestorms acting in this tick (c-SBW-1, hub #10): at each step

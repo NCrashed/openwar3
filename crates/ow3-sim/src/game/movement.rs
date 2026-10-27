@@ -5085,16 +5085,26 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
             {
                 super::creeps::guard_start(state, h, e);
             }
-            let delay = mul(
-                state.game_random[REACTION].fraction(),
-                state.combat.reaction_delay,
-            );
+            // An engaged unit draws no delay (c-SCA-1: the turtle at 7.009730;
+            // the archer's draw at 7.304709 is the one ours made there, hub #14).
+            // PROVISIONAL: with no delay at all.
+            let engaged = state.unit(Some(h)).is_some_and(|u| u.entries.engaged);
+            let delay = if engaged {
+                0
+            } else {
+                mul(
+                    state.game_random[REACTION].fraction(),
+                    state.combat.reaction_delay,
+                )
+            };
             // The delay counts from the expiry of the check, an idle
             // unit's or an attack-move's, on the timer queue (SPEC-0019).
             // PROVISIONAL: an attack-move's check is taken to expire at the
             // end of its tick.
             let from = expiry.unwrap_or(add(state.move_clock, crate::timers::TICK));
-            react_until(state, h, add(from, delay));
+            if !engaged {
+                react_until(state, h, add(from, delay));
+            }
             acquired.push(h);
             // A creep calls its camp (SPEC-0030), in the order of
             // SPEC-0019.

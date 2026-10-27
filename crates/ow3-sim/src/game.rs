@@ -1138,6 +1138,8 @@ pub struct State {
     record_only: Vec<u32>,
     /// The functions used as trigger actions so far (`TriggerAddAction`).
     pub(super) action_codes: BTreeSet<usize>,
+    /// The groups of the second pool: the first unit's place and the members.
+    pub(super) pool_groups: Vec<(f32, f32, u32)>,
     /// The expiries of the checks that made the last batch's
     /// acquisitions, by unit.
     check_times: Vec<(u32, u32)>,
@@ -1339,6 +1341,7 @@ impl State {
             quiet_events: false,
             record_only: Vec::new(),
             action_codes: BTreeSet::new(),
+            pool_groups: Vec::new(),
             check_times: Vec::new(),
             timed_life: Vec::new(),
             timed_life_q: Vec::new(),

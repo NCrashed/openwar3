@@ -466,6 +466,8 @@ pub struct UnitEntries {
     pub skip_check: bool,
     /// The target its last guard check gave up: one it cannot act against.
     pub given_up_on: Option<u32>,
+    /// Its group of the second pool (`second_pool_joined`).
+    pub pool_group: Option<usize>,
     /// The object a creep's flight keeps until it goes home.
     pub flight_part: Option<u32>,
     /// A building's objects of its making, all of them (for a cancel).
@@ -941,6 +943,58 @@ fn ability_code(state: &super::State, ability: i32) -> [u8; 4] {
         .to_be_bytes()
 }
 
+/// The members a group of the second pool holds (c-SCR-1: 12).
+const POOL_GROUP: u32 = 12;
+/// How far from a group's first unit a unit joins it (c-SCR-1: 824.6 joined;
+/// c-SAK-1: 854.4 did not).
+/// PROVISIONAL: the limit lies between those two.
+const POOL_REACH: f32 = 840.0;
+
+/// Unit `h` takes its place in a group of the second pool: the nearest
+/// group with room within `POOL_REACH` of its place (the older on a tie),
+/// else a new group at its place. Whether it made a new group (and so the
+/// entry and its object) (c-SCQ-1, c-SCR-1, hub #15).
+fn second_pool_joined(state: &mut super::State, h: u32) -> bool {
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let (x, y) = (f32::from_bits(u.x), f32::from_bits(u.y));
+    let mut best: Option<(usize, f32)> = None;
+    for (i, g) in state.pool_groups.iter().enumerate() {
+        if g.2 >= POOL_GROUP {
+            continue;
+        }
+        let (dx, dy) = (g.0 - x, g.1 - y);
+        let d = dx * dx + dy * dy;
+        if d <= POOL_REACH * POOL_REACH && best.is_none_or(|(_, b)| d < b) {
+            best = Some((i, d));
+        }
+    }
+    let (group, made) = match best {
+        Some((i, _)) => {
+            state.pool_groups[i].2 += 1;
+            (i, false)
+        }
+        None => {
+            state.pool_groups.push((x, y, 1));
+            (state.pool_groups.len() - 1, true)
+        }
+    };
+    if let Some(e) = entries(state, h) {
+        e.pool_group = Some(group);
+    }
+    made
+}
+
+/// Unit `h` leaves the game: its place in its group of the second pool is
+/// free again (c-SCQ-1: a removal; a death keeps it).
+fn second_pool_left(state: &mut super::State, h: u32) {
+    let group = entries(state, h).and_then(|e| e.pool_group.take());
+    if let Some(g) = group.and_then(|g| state.pool_groups.get_mut(g)) {
+        g.2 = g.2.saturating_sub(1);
+    }
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -957,6 +1011,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     let neutral = (building.is_none() && owner == NEUTRAL_PASSIVE)
         .then(|| neutral_building_count(state, type_id))
         .flatten();
+    // Every unit but a building takes its place in a group of the second
+    // pool; a creep that makes a new one holds its entry's object (17;
+    // c-SAK-1, c-SCR-1, hub #15).
+    // PROVISIONAL: read for creeps only; with the players' units in the
+    // groups too, replays we match part (c-SBL-1, c-RZJ-1 and others).
+    let new_pool_group = owner == super::creeps::CREEPS
+        && building.is_none()
+        && neutral.is_none()
+        && state.data.units.get(&type_id).is_some_and(|t| !t.building)
+        && second_pool_joined(state, h);
     let making = if crate::data::is_hero(type_id) {
         if owner == super::creeps::CREEPS {
             &CREEP_HERO
@@ -964,11 +1028,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             &HERO
         }
     } else if owner == super::creeps::CREEPS {
-        if super::creeps::group_of(state, h) == [h] {
-            &CAMP_CREEP
-        } else {
-            &CREEP
-        }
+        if new_pool_group { &CAMP_CREEP } else { &CREEP }
     // The peon too (c-SBI-1: 22, the start order's two deferred).
     } else if type_id == i32::from_be_bytes(*b"hpea") || type_id == i32::from_be_bytes(*b"opeo") {
         &PEASANT
@@ -4798,6 +4858,7 @@ pub(super) fn death_rest(state: &mut super::State) {
 /// yet, nor a hero's two extra ones.
 pub(super) fn unit_removed(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    second_pool_left(state, h);
     let made = entries(state, h)
         .map(|e| e.made.clone())
         .unwrap_or_default();

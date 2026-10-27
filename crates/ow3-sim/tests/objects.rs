@@ -697,3 +697,57 @@ fn melee_start_objects() {
         assert_eq!(first, None, "the object tables part at row {first:?}");
     }
 }
+
+/// `c-SCC-1`'s object table from the map's loading to 1.0 s: the load's
+/// 640 entries, then IceCrown's script (its units, InitBlizzard, the melee
+/// start) and the first ticks, against the game's (main table only).
+#[test]
+#[ignore = "not matched yet"]
+fn melee_init_objects() {
+    if let Some(first) = compare_init("c-SCC-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}
+
+/// The rows of replay `name`'s table from the map's loading (its
+/// `.objects-init.tsv`) against ours, the load's part as the table
+/// starts: the first that differs, `None` when all match; nothing
+/// without the list.
+fn compare_init(name: &str) -> Option<Option<usize>> {
+    let dir = game_data().join("replays");
+    let text = std::fs::read_to_string(dir.join(format!("{name}.objects-init.tsv"))).ok()?;
+    // (kind, entry, creation) of the main table's rows after the load.
+    let game: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').collect::<Vec<_>>())
+        .filter(|w| w[7] != "load" && !w[4].starts_with("p2:"))
+        .map(|w| (w[1] == "new", w[4].parse().unwrap(), w[5].parse().unwrap()))
+        .collect();
+    let replay = Replay::parse(&std::fs::read(dir.join(format!("{name}.w3g"))).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    // The load takes 640 entries, in order, before the script (hub #15).
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    while playback.game.ticks() < 200 && playback.step_tick() {}
+    let ours: Vec<(bool, u32, u32)> = playback
+        .game
+        .table_log()
+        .into_iter()
+        .map(|o| (o.new, o.entry, o.creation))
+        .collect();
+    let first = game.iter().zip(&ours).position(|(g, o)| g != o);
+    Some(first.or((game.len() != ours.len()).then(|| game.len().min(ours.len()))))
+}
+
+/// `c-SCD-1`: the end of a melee game on (12)IceCrown (the players'
+/// buildings killed, the victory): every turn checksum.
+#[test]
+#[ignore = "not matched yet"]
+fn melee_end_checksums() {
+    if let Some(first) = turn_parts("c-SCD-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}

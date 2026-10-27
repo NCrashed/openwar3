@@ -15,6 +15,8 @@ pub struct TableEvent {
     pub creation: u32,
     /// The mechanic, as the analyst's lists label it.
     pub tag: &'static str,
+    /// The number of the script's native calls made before it.
+    pub call: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -115,6 +117,8 @@ pub struct ObjectTable {
     pub log: Option<Vec<TableEvent>>,
     /// The world clock at the start of each tick, kept with the log.
     pub clocks: Option<Vec<(u64, u32)>>,
+    /// The number of the script's native calls made so far.
+    pub call: u32,
 }
 
 impl ObjectTable {
@@ -163,6 +167,7 @@ impl ObjectTable {
             ends_late: Vec::new(),
             log: None,
             clocks: None,
+            call: 0,
         }
     }
 
@@ -198,6 +203,7 @@ impl ObjectTable {
                 entry,
                 creation,
                 tag,
+                call: self.call,
             });
         }
         entry
@@ -214,6 +220,7 @@ impl ObjectTable {
                 entry,
                 creation,
                 tag,
+                call: self.call,
             });
         }
     }

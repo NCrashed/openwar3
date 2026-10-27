@@ -212,6 +212,10 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "the melee start of four races on a ladder map: not matched yet",
     ),
     (
+        "c-SCD-1.w3g",
+        "the end of a melee game (MeleeInitVictoryDefeat) on a ladder map: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

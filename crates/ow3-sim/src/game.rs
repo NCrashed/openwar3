@@ -3300,6 +3300,12 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         } else {
             f
         };
+        // Each call is counted, for the table's log.
+        let counted = shared.clone();
+        let f: NativeFn = Rc::new(move |vm: &mut Vm, args: &[Value]| {
+            counted.borrow_mut().table.call += 1;
+            f(vm, args)
+        });
         natives.register(declaration, f);
     };
 

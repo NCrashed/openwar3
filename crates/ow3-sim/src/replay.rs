@@ -120,7 +120,21 @@ impl<'a> Playback<'a> {
         map: &'a Map,
         replay: &Replay,
     ) -> Result<Playback<'a>, String> {
+        Self::with_table(program, map, replay, None)
+    }
+
+    /// Starts `map` as [`Playback::new`], with the object table set to
+    /// `table` (its log kept) before the map's script runs.
+    pub fn with_table(
+        program: &'a Program,
+        map: &'a Map,
+        replay: &Replay,
+        table: Option<crate::game::table::ObjectTable>,
+    ) -> Result<Playback<'a>, String> {
         let mut game = Game::load_map(program, map).map_err(|e| e.to_string())?;
+        if let Some(table) = table {
+            game.set_table(table, true);
+        }
         let name = |id: u8| {
             replay
                 .players

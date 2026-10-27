@@ -3958,6 +3958,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // Its acquisition's 0.01 s step starts here.
             u.next_acquire = at;
             u.entries.skip_check = true;
+            // It is no longer engaged: its next acquisition is one from
+            // idle, with its reaction delay (c-SCA-1: 11.159128, hub #14).
+            u.entries.engaged = false;
+            u.entries.walk_at_acquire = false;
         }
         state.moving.retain(|&o| o != h);
     }

@@ -604,6 +604,52 @@ const BOUNTY: usize = 0;
 
 pub(super) const EVENT_PLAYER_UNIT_CONSTRUCT_START: i32 = 26;
 const EVENT_PLAYER_UNIT_CONSTRUCT_FINISH: i32 = 28;
+/// `EVENT_PLAYER_UNIT_CONSTRUCT_CANCEL`.
+const EVENT_PLAYER_UNIT_CONSTRUCT_CANCEL: i32 = 27;
+
+/// The construction-cancel event of `building` (c-SCA-1, hub #14): its
+/// owner's player unit triggers, their objects taken with the cancel's.
+pub(super) fn construction_cancelled(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) {
+    let (registrations, owner) = {
+        let mut state = state.borrow_mut();
+        let Some(owner) = state.unit(Some(building)).map(|u| u.owner) else {
+            return;
+        };
+        let owner_handle = state.player_handle(owner);
+        (state.events.clone(), (owner, owner_handle))
+    };
+    let event = EVENT_PLAYER_UNIT_CONSTRUCT_CANCEL;
+    for registration in &registrations {
+        if let Registration::PlayerUnit {
+            trigger,
+            player,
+            event: e,
+            filter,
+        } = *registration
+            && e == event
+            && player == owner.0
+        {
+            let filter_context = Context {
+                filter_unit: Some(building),
+                triggering_player: Some(owner.1),
+                event_id: Some(event),
+                ..Context::default()
+            };
+            if test_boolexpr(vm, state, filter, filter_context) {
+                let context = Context {
+                    event_id: Some(event),
+                    triggering_player: Some(owner.1),
+                    triggering_unit: Some(building),
+                    triggering_widget: Some(building),
+                    ..Context::default()
+                };
+                let was = std::mem::replace(&mut state.borrow_mut().quiet_events, true);
+                fire_trigger(vm, state, trigger, context);
+                state.borrow_mut().quiet_events = was;
+            }
+        }
+    }
+}
 
 /// Runs the triggers of the player unit events of buildings started and
 /// finished in this tick (SPEC-0026), queued as `(finished, building)`.
@@ -2494,6 +2540,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "constant native GetLevelingUnit takes nothing returns unit",
         "constant native GetConstructingStructure takes nothing returns unit",
         "constant native GetConstructedStructure takes nothing returns unit",
+        "constant native GetCancelledStructure takes nothing returns unit",
     ] {
         native!(add, state, declaration, |vm, state, args| {
             Ok(Some(Value::Handle(state.borrow().context.triggering_unit)))

@@ -427,6 +427,8 @@ pub struct UnitEntries {
     pub engaged: bool,
     /// Its acquisition made its chase walk: none at its reaction's end.
     pub walk_at_acquire: bool,
+    /// A building's objects of its making, all of them (for a cancel).
+    pub made: Vec<u32>,
     /// A helper's order part freed when its help starts.
     pub repair_part: Option<u32>,
     /// The rate parts of a building's life set anew by its helpers.
@@ -1010,6 +1012,11 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
             dispel: pending_dispel,
+            made: if std::ptr::eq(making, &BUILDING) {
+                entries.clone()
+            } else {
+                Vec::new()
+            },
             attack_ability: if std::ptr::eq(making, &PEASANT) {
                 Some(entries[15])
             } else if std::ptr::eq(making, &GOLD_MINE) || type_id == i32::from_be_bytes(*b"htow") {
@@ -5149,6 +5156,100 @@ pub(super) fn turned_to_work(state: &mut super::State, h: u32, building: u32) {
         e.first_helper = Some(more[2]);
     }
     walk_dropped_at_update(state, h);
+}
+
+/// Building `building` under construction is cancelled (c-SCA-1 at
+/// 7.399702, hub #14): the cancel order's eight objects, three of the
+/// building's freed at once, the cancel event's two; then, 0.0001 s later
+/// in this order, the cancel's record, the worker's life rate rows and
+/// the first helper's part, the progress pair, the cancel order's own,
+/// the building's watch, the event's, the work's part kept by the
+/// building, the building's dispel and the rest of its making; the
+/// worker's kept parts go with its next order. The event's two, for the
+/// triggers between.
+pub(super) fn construction_cancelled(
+    state: &mut super::State,
+    worker: u32,
+    building: u32,
+) -> [u32; 2] {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "cancel order");
+    let record = state.table.take(tick, "order record");
+    let record2 = state.table.take(tick, "order record");
+    let parts = state.table.take_n(tick, 5, "cancel order: parts");
+    let made = entries(state, building)
+        .map(|e| std::mem::take(&mut e.made))
+        .unwrap_or_default();
+    for k in [11, 12, 13] {
+        if let Some(&e) = made.get(k) {
+            state.table.free(tick, e, "construction: cancelled");
+        }
+    }
+    let one = state.table.take(tick, "construction: cancel");
+    let event = state.table.take(tick, "construction: event");
+    state.table.defer(record, "order record");
+    // The worker's life rate rows (two with its work, one kept for the
+    // first helper) and the progress pair.
+    let rows = entries(state, worker).map_or(Vec::new(), |e| {
+        if e.work.len() == 7 {
+            e.work.split_off(5)
+        } else {
+            Vec::new()
+        }
+    });
+    for &e in rows.iter().rev() {
+        state.table.defer(e, "unit state: rate part");
+    }
+    let (progress, first, kept, dispel) =
+        entries(state, building).map_or((Vec::new(), None, None, Vec::new()), |e| {
+            (
+                std::mem::take(&mut e.construction),
+                e.first_helper.take(),
+                e.construction_work.take(),
+                std::mem::take(&mut e.dispel),
+            )
+        });
+    if let Some(f) = first {
+        state.table.defer(f, "unit state: rate part");
+    }
+    for &e in progress.iter().rev() {
+        state.table.defer(e, "construction: progress");
+    }
+    state.table.defer(record2, "order record");
+    state.table.defer(order, "cancel order");
+    state.table.defer(parts[4], "cancel order: parts");
+    state.table.defer(parts[3], "cancel order: parts");
+    if let Some(&e) = made.get(10) {
+        state.table.defer(e, "construction: cancelled");
+    }
+    state.table.defer(event, "construction: event");
+    state.table.defer(one, "construction: cancel");
+    state.table.defer(parts[2], "cancel order: parts");
+    state.table.defer(parts[1], "cancel order: parts");
+    if let Some(k) = kept {
+        state.table.defer(k, "work order");
+    }
+    for k in [20, 19] {
+        if let Some(&e) = made.get(k) {
+            state.table.defer(e, "construction: cancelled");
+        }
+    }
+    for e in dispel {
+        state.table.defer(e, "construction: cancelled");
+    }
+    for k in [8, 7, 6, 5, 4, 9, 2, 3, 1, 0] {
+        if let Some(&e) = made.get(k) {
+            state.table.defer(e, "construction: cancelled");
+        }
+    }
+    state.table.defer(parts[0], "cancel order: parts");
+    // The worker's kept parts of its work go with its next order, the
+    // last first (1112 .. 1108).
+    if let Some(e) = entries(state, worker) {
+        let work = std::mem::take(&mut e.work);
+        e.order = work.into_iter().rev().collect();
+    }
+    [one, event]
 }
 
 /// Building `building` is finished at queue time `q` (c-SBZ-1: the

@@ -402,6 +402,13 @@ fn end_training(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) {
 /// the building's current order (SPEC-0027, "Cancelling"). Whether there
 /// was one.
 pub(super) fn cancel(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) -> bool {
+    if state
+        .borrow()
+        .unit(Some(building))
+        .is_some_and(|b| b.alive && b.construction.is_some())
+    {
+        return cancel_construction(vm, state, building);
+    }
     let queued = matches!(state.borrow().objects.get(&building),
         Some(Object::Unit(b)) if b.queue.as_ref().is_some_and(|q| !q.types.is_empty()));
     if !queued {
@@ -576,3 +583,43 @@ fn standing_cells(state: &State) -> std::collections::BTreeSet<(i32, i32)> {
 
 /// 1/32.
 const CELL: u32 = 0x3D00_0000;
+
+/// A building under construction is cancelled (c-SCA-1 at 7.399702, hub
+/// #14): its objects (`table::construction_cancelled`), 75 % of its gold
+/// and lumber back, gold first; its type record no more under construction;
+/// the building gone as a dead unit, with no food given; the cancel event.
+///
+/// PROVISIONAL: the worker is let go with its next order; a death event
+/// and a corpse are not read.
+fn cancel_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) -> bool {
+    {
+        let mut s = state.borrow_mut();
+        let s = &mut *s;
+        let Some(b) = s.unit(Some(building)) else {
+            return false;
+        };
+        let (owner, type_id) = (b.owner, b.type_id);
+        let worker = b.construction.as_ref().map_or(0, |c| c.builder);
+        super::table::construction_cancelled(s, worker, building);
+        let (gold, lumber) = s
+            .data
+            .units
+            .get(&type_id)
+            .map_or((0, 0), |t| (t.gold_cost, t.lumber_cost));
+        *s.setup.player_states.entry((owner, GOLD)).or_default() += gold * 3 / 4;
+        *s.setup.player_states.entry((owner, 2)).or_default() += lumber * 3 / 4;
+        // Made and alive never; under construction no more (q1 here, as
+        // `movement::start_construction` counts it).
+        super::widgets::type_record(s, owner, type_id, |q| q[1] -= 1);
+        cancel_timer(s, EngineTimer::Construction(building));
+        super::obstacles::died(s, building);
+        if let Some(Object::Unit(u)) = s.objects.get_mut(&building) {
+            u.construction = None;
+            u.alive = false;
+            u.life.set(0);
+            u.died_at = Some(s.ticks);
+        }
+    }
+    super::widgets::construction_cancelled(vm, state, building);
+    true
+}

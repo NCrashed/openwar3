@@ -104,10 +104,7 @@ pub(super) fn wake_checks(state: &mut State) {
     let end = f32::from_bits(add(state.move_clock, crate::timers::TICK));
     for i in 0..state.units.len() {
         let h = state.units[i];
-        loop {
-            let Some(u) = state.unit(Some(h)).filter(|u| u.alive) else {
-                break;
-            };
+        while let Some(u) = state.unit(Some(h)).filter(|u| u.alive) {
             let Some(at) = u.creep.wake_check.filter(|&t| f32::from_bits(t) < end) else {
                 break;
             };

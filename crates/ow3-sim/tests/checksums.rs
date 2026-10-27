@@ -236,6 +236,18 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "RemoveUnit of creeps, a footman, a barracks and a mine: not matched yet",
     ),
     (
+        "c-SCL-1.w3g",
+        "hold-position archers and turtles at given distances: not matched yet",
+    ),
+    (
+        "c-SCM-1.w3g",
+        "time-of-day events, set and passed by the clock: not matched yet",
+    ),
+    (
+        "c-SCN-1.w3g",
+        "time-of-day events, the clock passing 6.0 between ticks: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

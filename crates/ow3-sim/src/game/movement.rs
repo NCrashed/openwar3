@@ -6591,6 +6591,13 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
             if let Some(end) = end {
                 state.weapon_resets.push((add(end, AFTER_DEATH), h));
             }
+            // Its acquisition steps run from 0.01 s on, every 0.5 s (c-SCA-1:
+            // the archer's of 36.639957 and 37.139957, hub #14).
+            if let (Some(end), Some(Object::Unit(u))) = (end, state.objects.get_mut(&h))
+                && u.acquire_phase != super::NO_PHASE
+            {
+                u.next_acquire = add(end, AFTER_DEATH);
+            }
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.attack = None;
                 u.movement = None;

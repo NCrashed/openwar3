@@ -705,6 +705,16 @@ const PEASANT: Making = Making {
 // more ability object (16), Invulnerable (17), on fire and alarm (18,
 // 19), the start order's two (20, 21, freed 0.0001 s later) and one more
 // kept (22).
+/// A unit of player 15 without a weapon (c-SCI-1: the sea creature nsea,
+/// 16, the last two freed 0.0001 s later; hub #15).
+/// PROVISIONAL: when the rest go is not read.
+const NEUTRAL_UNIT: Making = Making {
+    count: 16,
+    deferred: &[15, 14],
+    death: &[],
+    level: &[],
+    corpse: &[],
+};
 const GOLD_MINE: Making = Making {
     count: 23,
     deferred: &[21, 20],
@@ -856,6 +866,68 @@ fn hero_layout(state: &super::State, type_id: i32) -> (usize, usize) {
     (fewer, extra)
 }
 
+/// Player 15, neutral passive.
+const NEUTRAL_PASSIVE: i32 = 15;
+
+/// Whether another gold mine stands within 1000 of gold mine `h`.
+fn mine_near(state: &super::State, h: u32) -> bool {
+    let mine = i32::from_be_bytes(*b"ngol");
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let (x, y) = (f32::from_bits(u.x), f32::from_bits(u.y));
+    state.units.iter().any(|&o| {
+        o != h
+            && state.unit(Some(o)).is_some_and(|m| {
+                let (dx, dy) = (f32::from_bits(m.x) - x, f32::from_bits(m.y) - y);
+                m.alive && m.type_id == mine && dx * dx + dy * dy <= 1000.0 * 1000.0
+            })
+    })
+}
+
+/// A neutral building without a dispel (player 15's waygates, fountains,
+/// mercenary camps, merchants): its own 14, its abilities' (`ability_objects`),
+/// 2 more for one that sells units or items, and 4, the last two freed
+/// 0.0001 s later (c-SCI-1, hub #15: nwgt 20, nfoh 21, nmr7 23, ngme 26).
+///
+/// PROVISIONAL: the places of the abilities' objects and when they go are
+/// not read.
+fn neutral_building_count(state: &super::State, type_id: i32) -> Option<usize> {
+    let t = state.data.units.get(&type_id)?;
+    if !t.building || type_id == i32::from_be_bytes(*b"ngol") {
+        return None;
+    }
+    let abilities: usize = t.abilities.iter().map(|&a| ability_objects(state, a)).sum();
+    let sells = t.sells_items
+        || t.abilities
+            .iter()
+            .any(|&a| ability_code(state, a) == *b"Aneu");
+    Some(14 + abilities + 2 * usize::from(sells) + 4)
+}
+
+/// The objects an ability of a unit takes at its making, by its code
+/// (c-SCI-1's UnitAddAbility, hub #15).
+fn ability_objects(state: &super::State, ability: i32) -> usize {
+    // (Ane2, of the code Aneu, takes 2.)
+    if ability == i32::from_be_bytes(*b"Ane2") {
+        return 2;
+    }
+    match &ability_code(state, ability) {
+        b"Aneu" | b"Agld" => 3,
+        b"Apit" | b"Aoar" => 2,
+        _ => 1,
+    }
+}
+
+fn ability_code(state: &super::State, ability: i32) -> [u8; 4] {
+    state
+        .data
+        .abilities
+        .get(&ability)
+        .map_or(ability, |d| d.code)
+        .to_be_bytes()
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -868,6 +940,9 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     let (owner, type_id) = (u.owner, u.type_id);
     let building = (owner != super::creeps::CREEPS)
         .then(|| building_layout(state, type_id))
+        .flatten();
+    let neutral = (building.is_none() && owner == NEUTRAL_PASSIVE)
+        .then(|| neutral_building_count(state, type_id))
         .flatten();
     let making = if crate::data::is_hero(type_id) {
         if owner == super::creeps::CREEPS {
@@ -886,8 +961,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         &PEASANT
     } else if type_id == i32::from_be_bytes(*b"ngol") {
         &GOLD_MINE
-    } else if building.is_some() {
+    } else if building.is_some() || neutral.is_some() {
         &BUILDING
+    } else if owner == NEUTRAL_PASSIVE
+        && state
+            .data
+            .units
+            .get(&type_id)
+            .is_some_and(|t| t.weapon.is_none() && !t.building)
+    {
+        &NEUTRAL_UNIT
     } else if own_abilities(state, type_id) == 0 {
         &UNIT_PLAIN
     } else {
@@ -918,8 +1001,23 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             continue;
         };
         let level = d.per_level.first();
-        if [*b"AHab", *b"AHad", *b"AOae", *b"AUau", *b"AOac"].contains(&d.code.to_be_bytes()) {
+        if [*b"AHab", *b"AHad", *b"AOae", *b"AOac"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
+        // Unholy Aura four, Vampiric Aura three: with an object of the second
+        // pool's entry (c-SCI-1, hub #15).
+        // PROVISIONAL: when they go is not read.
+        } else if d.code.to_be_bytes() == *b"AUau" {
+            parts.extend([(0, None), (1, None), (0, None), (2, None)]);
+        } else if d.code.to_be_bytes() == *b"AUav" {
+            parts.extend([(0, None), (1, None), (0, None)]);
+        // Ensnare and Web, of no mana cost, as a spell: its object and a limit
+        // watch (c-SCI-1: nitt, nmrr, nnwl, hub #15).
+        } else if [*b"Aens", *b"Aweb"].contains(&d.code.to_be_bytes()) {
+            parts.extend([(0, None), (2, None)]);
+        // Possession one (c-SCI-1: ngh1, hub #15).
+        // PROVISIONAL: which of its two the game keeps is not read.
+        } else if d.code.to_be_bytes() == *b"Apos" {
+            parts.push((2, level.map(|l| l.cost)));
         // Spiked Carapace (the turtle's Thorns Aura, ANth) two (c-SCA-1,
         // hub #14; PROVISIONAL: when they go is not read).
         } else if d.code.to_be_bytes() == *b"AUts" {
@@ -972,7 +1070,14 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         let k = if hero >= 12 { hero + shift } else { hero };
         if k >= 14 + shift { k + parts.len() } else { k }
     };
-    let count = building.map_or(making.count, |b| b.0) + shift + parts.len() + extra - fewer + more;
+    let count =
+        building.map_or(neutral.unwrap_or(making.count), |b| b.0) + shift + parts.len() + extra
+            - fewer
+            + more;
+    // A gold mine made close to another takes one fewer, its last (c-SCI-1:
+    // 500 away 22, 1100 away 23, hub #15).
+    // PROVISIONAL: the distance limit (here 1000) is not read.
+    let count = count - usize::from(std::ptr::eq(making, &GOLD_MINE) && mine_near(state, h));
     let tick = state.table.now;
     let entries = state.table.take_n(tick, count, "map start: unit");
     // (The autocast's first: c-SBK-1, 928.)
@@ -983,6 +1088,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     }
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
+    }
+    if neutral.is_some() {
+        state.table.defer(entries[count - 1], "map start: unit");
+        state.table.defer(entries[count - 2], "map start: unit");
     }
     let mut pending_dispel = Vec::new();
     if let Some((count, at, after)) = building {

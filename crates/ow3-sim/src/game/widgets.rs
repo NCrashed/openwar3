@@ -1532,6 +1532,25 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     native!(
         add,
         state,
+        "native CreateBlightedGoldmine takes player id, real x, real y, real face returns unit",
+        |vm, state, args| {
+            let mut s = state.borrow_mut();
+            let Some(owner) = s.player_id(handle(&args[0])) else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let at = [real(&args[1]), real(&args[2]), real(&args[3])];
+            let h = create_unit_by_script(&mut s, owner, i32::from_be_bytes(*b"ugol"), at);
+            if let Some(h) = h {
+                super::table::unit_made(&mut s, h);
+            }
+            drop(s);
+            super::regions::dispatch(vm, state);
+            Ok(Some(Value::Handle(h)))
+        }
+    );
+    native!(
+        add,
+        state,
         "native CreateUnitByName takes player whichPlayer, string unitname, real x, real y, real face returns unit",
         |vm, state, args| {
             let mut s = state.borrow_mut();

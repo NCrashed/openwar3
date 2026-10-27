@@ -678,3 +678,22 @@ fn turtle_objects() {
         assert_eq!(first, None, "the object tables part at row {first:?}");
     }
 }
+
+/// `c-SCC-1`: the melee start of four races on (12)IceCrown: every turn
+/// checksum.
+#[test]
+#[ignore = "not matched yet"]
+fn melee_start_checksums() {
+    if let Some(first) = turn_parts("c-SCC-1") {
+        assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SCC-1`'s object table.
+#[test]
+#[ignore = "not matched yet"]
+fn melee_start_objects() {
+    if let Some(first) = compare_objects("c-SCC-1") {
+        assert_eq!(first, None, "the object tables part at row {first:?}");
+    }
+}

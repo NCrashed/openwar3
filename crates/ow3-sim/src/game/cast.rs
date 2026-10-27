@@ -1209,7 +1209,7 @@ enum Deferred {
     ClapArea { at: u32, first: Option<u32> },
     /// An object taken now and freed by a queue timer at `end` (`u32::MAX`:
     /// kept).
-    Kept { end: u32 },
+    Kept { end: u32, target: Option<u32> },
     /// A unit rooted by Entangling Roots (`table::rooted`).
     Rooted { target: u32, until: u64 },
     /// Damage of a thunder clap.
@@ -1471,10 +1471,16 @@ fn run_deferred(vm: &mut Vm, state: &Rc<RefCell<State>>, deferred: Vec<Deferred>
                 }
                 super::table::rooted(&mut state.borrow_mut(), target);
             }
-            Deferred::Kept { end } => {
+            Deferred::Kept { end, target } => {
                 let mut s = state.borrow_mut();
                 let tick = s.table.now;
                 let o = s.table.take(tick, "spell: effect");
+                // One of a target goes with it if it dies first (c-SBW-1: the
+                // Bladestorm step's 1420 with kobold 4 at 6.699852).
+                let creation = s.table.creation_of(o);
+                if let Some(Object::Unit(u)) = target.and_then(|t| s.objects.get_mut(&t)) {
+                    u.entries.step_objects.push((o, creation));
+                }
                 // (`u32::MAX`: kept.)
                 if end != u32::MAX {
                     s.table.free_at_q(end, o, "spell: effect");
@@ -2206,6 +2212,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                 });
                 deferred.push(Deferred::Kept {
                     end: add(c.effect_q, 1.0f32.to_bits()),
+                    target: None,
                 });
             }
             bounce(s, h, c, &n, BounceKind::ManaBurn);
@@ -2748,6 +2755,7 @@ fn carrion_swarm(
     for (target, _) in hit {
         deferred.push(Deferred::Kept {
             end: add(c.effect_q, 0.32f32.to_bits()),
+            target: None,
         });
         deferred.push(Deferred::Damage {
             caster: h,
@@ -3169,7 +3177,10 @@ fn bounces(s: &mut State, deferred: &mut Vec<Deferred>) {
             // step).
             let kept = add(b.q, ow3_math::sub(b.factor, 0.01f32.to_bits()));
             for o in movement::call_order(s, hit) {
-                deferred.push(Deferred::Kept { end: kept });
+                deferred.push(Deferred::Kept {
+                    end: kept,
+                    target: None,
+                });
                 deferred.push(Deferred::Damage {
                     caster: b.caster,
                     target: o,
@@ -3737,7 +3748,10 @@ fn bladestorms(s: &mut State, deferred: &mut Vec<Deferred>) {
             };
             let after = sub(add(d.next, BLADESTORM_STEP), 0.01f32.to_bits());
             for &target in &targets {
-                deferred.push(Deferred::Kept { end: after });
+                deferred.push(Deferred::Kept {
+                    end: after,
+                    target: Some(target),
+                });
                 deferred.push(Deferred::Damage {
                     caster,
                     target,
@@ -3754,6 +3768,7 @@ fn bladestorms(s: &mut State, deferred: &mut Vec<Deferred>) {
             if !targets.is_empty() && !std::mem::replace(&mut d.hit, true) {
                 deferred.push(Deferred::Kept {
                     end: add(d.end, 0.54f32.to_bits()),
+                    target: None,
                 });
             }
             d.next = add(d.next, BLADESTORM_STEP);

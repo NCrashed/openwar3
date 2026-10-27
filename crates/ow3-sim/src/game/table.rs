@@ -473,6 +473,11 @@ pub struct UnitEntries {
     /// Its current order has a target or a point (a wake's attack-move, a
     /// flight's move); a guard give-up makes a walk then (hub #14).
     pub targeted_order: bool,
+    /// Objects of spell steps on it, freed by their timers or with it at
+    /// its death after its order queue's (c-SBW-1: 1420 at 6.699852).
+    pub step_objects: Vec<(u32, u32)>,
+    /// Objects going at its death after those (an Earthquake's, 1203).
+    pub after_queue: Vec<u32>,
     /// A building's objects of its making, all of them (for a cancel).
     pub made: Vec<u32>,
     /// A helper's order part freed when its help starts.
@@ -4686,6 +4691,35 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
     for &e in queue[6..].iter().rev() {
         state.table.defer(e, "death order queue");
     }
+    // Its spell steps' objects still on, then its Earthquake's (c-SBW-1:
+    // kobold 4's 1420 and 1203 at 6.699852).
+    let (steps, after) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.step_objects),
+                std::mem::take(&mut e.after_queue),
+            )
+        })
+        .unwrap_or_default();
+    // (Those whose timers ran are gone; their entries may hold others.)
+    for (o, creation) in steps {
+        if state.table.creation_of(o) == creation
+            && state
+                .table
+                .timed_q
+                .iter()
+                .any(|t| t.1 == o && t.2 == "spell: effect")
+        {
+            state
+                .table
+                .timed_q
+                .retain(|t| !(t.1 == o && t.2 == "spell: effect"));
+            state.table.defer(o, "spell: effect");
+        }
+    }
+    for o in after {
+        state.table.defer(o, "Earthquake: unit");
+    }
     // A paused unit's stun object goes with them (c-SBL-1: the ogre killed
     // by Storm Bolt, 1333 at 5.279955).
     if paused {
@@ -5222,7 +5256,7 @@ pub(super) fn quake_entered(state: &mut super::State, h: u32) -> u32 {
     let o = state.table.take(tick, "Earthquake: unit");
     quake_renewed(state, h, true);
     if let Some(e) = entries(state, h) {
-        e.death.push(o);
+        e.after_queue.push(o);
     }
     o
 }

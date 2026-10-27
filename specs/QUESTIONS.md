@@ -362,8 +362,8 @@ anything yet:
   against `null` behave; every other native on them does nothing.
 - **Units.** `SetUnitX` and the like move a unit anywhere, without the
   limits of the map; `SetUnitOwner` ignores `changeColor`;
-  `GetPlayerUnitCount` counts living units and `GetPlayerStructureCount`
-  living units whose type has `isbldg`.
+  `GetPlayerUnitCount` counts living units whose type lacks `isbldg` (the
+  game log of c-SCD-1) and `GetPlayerStructureCount` those whose type has it.
 - **`VersionGet`** is `VERSION_FROZEN_THRONE`.
 - **Not yet:** events of player and game states, players leaving,
   regions; unit orders and abilities (they wait for the unit spec).

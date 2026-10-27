@@ -2280,8 +2280,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 .iter()
                 .filter_map(|&u| state.unit(Some(u)))
                 .filter(|u| u.alive && Some(u.owner) == owner)
+                // Units are those whose type is not a structure (c-SCD-1: a town
+                // hall and five workers count 5).
                 .filter(|u| {
-                    !buildings || state.data.units.get(&u.type_id).is_some_and(|t| t.building)
+                    state.data.units.get(&u.type_id).is_some_and(|t| t.building) == buildings
                 })
                 .count();
             Ok(Some(Value::Integer(count as i32)))

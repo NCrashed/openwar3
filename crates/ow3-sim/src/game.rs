@@ -1136,6 +1136,8 @@ pub struct State {
     quiet_events: bool,
     /// Units whose acquisition in this tick only recorded a target.
     record_only: Vec<u32>,
+    /// The functions used as trigger actions so far (`TriggerAddAction`).
+    pub(super) action_codes: BTreeSet<usize>,
     /// The expiries of the checks that made the last batch's
     /// acquisitions, by unit.
     check_times: Vec<(u32, u32)>,
@@ -1336,6 +1338,7 @@ impl State {
             event_objects: Vec::new(),
             quiet_events: false,
             record_only: Vec::new(),
+            action_codes: BTreeSet::new(),
             check_times: Vec::new(),
             timed_life: Vec::new(),
             timed_life_q: Vec::new(),
@@ -1918,6 +1921,8 @@ impl<'a> Game<'a> {
     }
 
     fn tick(&mut self) {
+        // The hours before and after the clock's step, for its events.
+        let clock_step;
         {
             let mut state = self.state.borrow_mut();
             let state = &mut *state;
@@ -1951,9 +1956,14 @@ impl<'a> Game<'a> {
                 setup.clock_base = hours;
                 setup.clock_start = setup.clock_time;
             }
+            let before = setup
+                .float_game_states
+                .get(&GAME_STATE_TIME_OF_DAY)
+                .copied();
             setup
                 .float_game_states
                 .insert(GAME_STATE_TIME_OF_DAY, hours);
+            clock_step = before.map(|b| (b, hours));
             // Night for the `night` regeneration type (SPEC-0013): from the
             // first hour above 18.01 to one tick after the hour passes
             // 6.01. PROVISIONAL: jumps of a suspended clock are decided by
@@ -1982,6 +1992,20 @@ impl<'a> Game<'a> {
                     unit.mana.advance(now, next);
                 }
             }
+        }
+        // The time-of-day events the running clock passes in this tick
+        // (SPEC-0017).
+        if let Some((before, after)) = clock_step
+            && f32::from_bits(after) > f32::from_bits(before)
+        {
+            players::game_state_events(
+                &mut self.vm,
+                &self.state,
+                GAME_STATE_TIME_OF_DAY,
+                before,
+                after,
+                true,
+            );
         }
         // The impacts of attacks' missiles that arrived at the end of the
         // tick before, after its frees (c-RZJ-1: the elemental's at
@@ -3281,7 +3305,7 @@ fn real(value: &Value) -> u32 {
     }
 }
 
-fn code(value: &Value) -> Option<usize> {
+pub(super) fn code(value: &Value) -> Option<usize> {
     match value {
         Value::Code(c) => *c,
         _ => None,
@@ -3560,6 +3584,14 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         "native TriggerAddAction takes trigger whichTrigger, code actionFunc returns triggeraction",
         |vm, state, args| {
             let mut state = state.borrow_mut();
+            // Its object, and one more the first time its function is used
+            // as an action (c-SCC-1: MeleeGrantHeroItems' one function for
+            // every player, 2 then 1, hub #15).
+            let first = code(&args[1]).is_some_and(|f| state.action_codes.insert(f));
+            let tick = state.table.now;
+            state
+                .table
+                .take_n(tick, 1 + usize::from(first), "TriggerAddAction");
             if let (Some(trigger), Some(f)) = (state.trigger(handle(&args[0])), code(&args[1])) {
                 trigger.actions.push(f);
             }

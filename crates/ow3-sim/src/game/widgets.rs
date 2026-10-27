@@ -94,6 +94,14 @@ pub enum Registration {
         player: i32,
         event: i32,
     },
+    /// `TriggerRegisterGameStateEvent`: the state, the comparison's
+    /// `limitop` and its value (bits of a real).
+    GameState {
+        trigger: u32,
+        game_state: i32,
+        op: i32,
+        value: u32,
+    },
     /// `TriggerRegisterTimerExpireEvent`.
     TimerExpire { trigger: u32, timer: u32 },
     /// `TriggerRegisterDeathEvent` of a unit, destructable or item.
@@ -1647,6 +1655,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if let Some(h) = unit
                 && matches!(state.objects.get(&h), Some(Object::Unit(_)))
             {
+                super::table::unit_removed(&mut state, h);
                 super::obstacles::died(&mut state, h);
                 state.objects.remove(&h);
                 state.units.retain(|&u| u != h);

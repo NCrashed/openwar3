@@ -115,6 +115,9 @@ pub struct ObjectTable {
     timed_w: Vec<(u32, u32, &'static str)>,
     /// Units whose order ends at the end of the tick.
     pub ends_late: Vec<u32>,
+    /// The tails of the units removed in this tick (`unit_removed`), freed
+    /// after the tick's other 0.0001 s frees.
+    removal_tails: Vec<(u64, Vec<u32>)>,
     /// The takings and freeings, when kept.
     pub log: Option<Vec<TableEvent>>,
     /// The world clock at the start of each tick, kept with the log.
@@ -171,6 +174,7 @@ impl ObjectTable {
             shock_buffs: Vec::new(),
             timed_w: Vec::new(),
             ends_late: Vec::new(),
+            removal_tails: Vec::new(),
             log: None,
             clocks: None,
             call: 0,
@@ -400,6 +404,15 @@ impl ObjectTable {
         self.deferred = later;
         for (_, entry, tag) in due {
             self.free(tick, entry, tag);
+        }
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.removal_tails)
+            .into_iter()
+            .partition(|&(t, _)| t <= tick);
+        self.removal_tails = later;
+        for (_, tail) in due {
+            for entry in tail {
+                self.free(tick, entry, "RemoveUnit");
+            }
         }
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed)
             .into_iter()
@@ -1190,8 +1203,7 @@ pub(super) fn level_changed(state: &mut super::State, h: u32) {
 }
 
 /// The time of day is set from `old` to `new` hours (SPEC-0017): when that
-/// crosses a watched hour, its event takes an object for
-/// 0.0001 s, it gets 3 new watches and its old parts are freed 0.0001 s
+/// crosses 6.0 or 18.0, after its triggers' events it gets 3 new watches and its old parts are freed 0.0001 s
 /// later (c-SAK-1: SetTimeOfDay at the map start, the day standing
 /// still, so no new rate part).
 ///
@@ -1212,8 +1224,7 @@ pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64, old: u32, new:
         }
         return;
     }
-    let event = table.take(tick, "event object");
-    table.defer(event, "event object");
+    // (The event objects are its triggers', taken before.)
     let new = table.take_n(tick, 3, "time of day");
     for e in std::mem::replace(&mut table.day, new) {
         table.defer(e, "time of day");
@@ -4775,6 +4786,42 @@ pub(super) fn death_rest(state: &mut super::State) {
     }
 }
 
+/// Unit `h` is removed by `RemoveUnit` (c-SCK-1, c-SCO-1, hub #15): a
+/// building frees 3 of its own at once (its 12th to 14th), then the call
+/// takes 7 objects (a hero 9). 0.0001 s later its 1st, 7th, 6th and 5th go
+/// with the tick's other frees, call after call; after those its tail: its
+/// 4th, 3rd and 2nd.
+///
+/// PROVISIONAL: the unit's own objects in its tail (two groups between the
+/// 4th and 3rd and between the 3rd and 2nd, by their roles) are not built
+/// yet, nor a hero's two extra ones.
+pub(super) fn unit_removed(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let made = entries(state, h)
+        .map(|e| e.made.clone())
+        .unwrap_or_default();
+    if made.len() >= 14 {
+        for &e in &made[11..14] {
+            if state.table.live.contains_key(&e) {
+                state.table.free(tick, e, "RemoveUnit: building");
+            }
+        }
+    }
+    let hero = state
+        .unit(Some(h))
+        .is_some_and(|u| crate::data::is_hero(u.type_id));
+    let r = state
+        .table
+        .take_n(tick, if hero { 9 } else { 7 }, "RemoveUnit");
+    for k in [0, 6, 5, 4] {
+        state.table.defer(r[k], "RemoveUnit");
+    }
+    let mut tail = vec![r[3], r[2], r[1]];
+    if hero {
+        tail.extend([r[7], r[8]]);
+    }
+    state.table.removal_tails.push((tick, tail));
+}
 /// The number of objects a native of the script takes when called
 /// (SPEC-0024, the analyst's reading of c-SAK-1's map start), for the
 /// natives whose objects do not depend on their arguments.
@@ -4792,14 +4839,13 @@ pub(super) fn native_objects(name: &str) -> usize {
         | "TriggerRegisterTimerExpireEvent"
         | "TriggerExecute"
         | "CreateGroup"
-        | "ForGroup"
         | "Rect"
         | "Location"
         | "GetUnitLoc"
         | "GetStartLocationLoc"
         | "CreateSoundFromLabel"
         | "CreateMIDISound" => 1,
-        "TriggerAddAction" | "CreateRegion" | "Filter" | "TriggerRegisterGameStateEvent" => 2,
+        "CreateRegion" | "Filter" | "TriggerRegisterGameStateEvent" => 2,
         "CreateTrigger" | "CreateForce" => 3,
         _ => 0,
     }

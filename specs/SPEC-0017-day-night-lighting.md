@@ -128,13 +128,22 @@ dawn trigger (`= 6`) does not.
 Objects (SPEC-0024): each firing takes one event object, freed 0.0001 s
 later. A passing of the running clock takes one or two unit-state limit
 watches (2 at 6.0, 1 at 18.0), freed at the next `SetFloatGameState`.
-A `SetFloatGameState` of the hour (in either direction) takes, after
-the triggers, a unit-state rate part for every unit on the map (also
-gold mines and sleeping creeps) and for some units one or two more
-objects; they are freed by the next such call, which makes new ones.
-At the melee start of `(12)IceCrown` (303 units) that is 327 rate
-parts, 217 limit watches and 52 objects of one more kind (`c-SCC-1`).
-Which units take the second rate part and the watches is open.
+A `SetFloatGameState` of the hour that does not cross 6.0 or 18.0
+takes no object at all (`c-SCP-1`: 0.1 -> 3, 3 -> 5, 12 -> 14,
+22 -> 23; `c-SCA-1`: 0.05 -> 0). One that crosses 6.0 or 18.0 (in
+either direction) takes the event objects of the triggers it fires
+and then, after them, a unit-state rate part for every unit on the
+map (also gold mines and sleeping creeps) and for some units one or two
+more objects; they are freed by a later call, which makes new ones. At
+the melee start of `(12)IceCrown` (0 -> 8, 303 units) that is the day
+trigger's event object, then 327 rate parts, 217 limit watches and 52
+objects of the kind `r` (`c-SCC-1`). The 52 equal the number of the
+map's units of the two types that have Ensnare (36 `nitt`, 16 `nmrr`),
+whose ability takes an `r` (`c-SCI-1`). Which units take the second
+rate part and the watches is open. Whether the units' objects follow
+the crossing of 6.0 / 18.0 or the firing of a trigger was not separated:
+in every test both happened together (Blizzard.j's day and night
+triggers watch these values on every map with `InitBlizzard`).
 
 At 8:00 the Lordaeron light is already
 the constant day value, almost neutral white `(246, 246, 253)`: a strong
@@ -356,7 +365,9 @@ no effect, and a style 1 or 2 density of 0.5 hides everything.
   hour logged in `main` before and after the melee start), `c-SCM-1` and
   `c-SCN-1` (no melee start; nine time-of-day events; `SetFloatGameState`
   at 2, 6, 10 and 13 s, the clock running between), `c-SCC-1` (the melee
-  start's objects).
+  start's objects), `c-SCP-1` (`SetFloatGameState` of the hour at 2 .. 7 s
+  to 3, 5, 12, 14, 22, 23: the objects with and without a crossing of 6
+  or 18).
 
 ## Verification
 

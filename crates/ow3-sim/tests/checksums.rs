@@ -248,6 +248,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "time-of-day events, the clock passing 6.0 between ticks: not matched yet",
     ),
     (
+        "c-SCO-1.w3g",
+        "RemoveUnit of creeps with abilities, a hero and a camp: not matched yet",
+    ),
+    (
+        "c-SCP-1.w3g",
+        "SetFloatGameState of the hour with and without a crossing: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

@@ -445,6 +445,16 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native ForGroup takes group whichGroup, code callback returns nothing",
         |vm, state, args| {
+            // An object the first time its function is used as a callback
+            // (c-SCC-1: MeleeClearExcessUnits' ForGroup, 1 then none, hub #15).
+            // PROVISIONAL: shared with the actions' set of functions.
+            {
+                let mut s = state.borrow_mut();
+                if super::code(&args[1]).is_some_and(|f| s.action_codes.insert(f)) {
+                    let tick = s.table.now;
+                    s.table.take(tick, "ForGroup");
+                }
+            }
             // PROVISIONAL: the group as it is when ForGroup starts, without
             // handles that no longer refer to units.
             let units: Vec<u32> = {

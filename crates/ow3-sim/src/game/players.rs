@@ -44,6 +44,7 @@ const GAME_RESULT_VICTORY: i32 = 0;
 const GAME_RESULT_DEFEAT: i32 = 1;
 const EVENT_PLAYER_DEFEAT: i32 = 13;
 const EVENT_PLAYER_VICTORY: i32 = 14;
+const EVENT_GAME_STATE_LIMIT: i32 = 3;
 const ALLIANCE_PASSIVE: i32 = 0;
 const ALLIANCE_HELP_REQUEST: i32 = 1;
 const ALLIANCE_HELP_RESPONSE: i32 = 2;
@@ -417,6 +418,84 @@ pub(super) fn resolving(f: NativeFn, state: Rc<RefCell<State>>) -> NativeFn {
         };
         f(vm, &resolved)
     })
+}
+
+/// The events of game state `game_state` whose condition goes from false
+/// with `old` to true with `new` run, the last registered first (SPEC-0017,
+/// "Time-of-day events"); when the running clock `passing` makes it, the
+/// state reads each event's value inside its actions.
+pub(super) fn game_state_events(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    game_state: i32,
+    old: u32,
+    new: u32,
+    passing: bool,
+) {
+    let holds = |op: i32, h: f32, v: f32| match op {
+        0 => h < v,
+        1 => h <= v,
+        2 => h == v,
+        3 => h >= v,
+        4 => h > v,
+        5 => h != v,
+        _ => false,
+    };
+    let (old, new) = (f32::from_bits(old), f32::from_bits(new));
+    let firing: Vec<(u32, u32)> = state
+        .borrow()
+        .events
+        .iter()
+        .rev()
+        .filter_map(|r| match *r {
+            super::widgets::Registration::GameState {
+                trigger,
+                game_state: g,
+                op,
+                value,
+            } if g == game_state => {
+                let v = f32::from_bits(value);
+                // "=" fires when the running clock passes its value.
+                let turned = if op == 2 && passing {
+                    old < v && v <= new
+                } else {
+                    !holds(op, old, v) && holds(op, new, v)
+                };
+                turned.then_some((trigger, value))
+            }
+            _ => None,
+        })
+        .collect();
+    for (trigger, value) in firing {
+        let kept = state
+            .borrow()
+            .setup
+            .float_game_states
+            .get(&game_state)
+            .copied();
+        if passing {
+            state
+                .borrow_mut()
+                .setup
+                .float_game_states
+                .insert(game_state, value);
+        }
+        // Its one event object (the trigger's), no event's own (SPEC-0017).
+        state.borrow_mut().event_objects.push(Some(u32::MAX));
+        let context = super::Context {
+            event_id: Some(EVENT_GAME_STATE_LIMIT),
+            ..super::Context::default()
+        };
+        super::fire_trigger(vm, state, trigger, context);
+        state.borrow_mut().event_objects.pop();
+        if passing && let Some(k) = kept {
+            state
+                .borrow_mut()
+                .setup
+                .float_game_states
+                .insert(game_state, k);
+        }
+    }
 }
 
 /// Runs the triggers of player event `event` of player `id`.
@@ -916,10 +995,30 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
     native!(
         add,
         state,
+        "native TriggerRegisterGameStateEvent takes trigger whichTrigger, gamestate whichState, limitop opcode, real limitval returns event",
+        |vm, state, args| {
+            let (Some(trigger), Some(game_state), Some(op)) =
+                (handle(&args[0]), handle(&args[1]), handle(&args[2]))
+            else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let registration = super::widgets::Registration::GameState {
+                trigger,
+                game_state: game_state as i32,
+                op: op as i32,
+                value: real(&args[3]),
+            };
+            Ok(Some(super::widgets::register_event(state, registration)))
+        }
+    );
+    native!(
+        add,
+        state,
         "native SetFloatGameState takes fgamestate whichFloatGameState, real value returns nothing",
         |vm, state, args| {
             if let Some(s) = handle(&args[0]) {
                 let value = real(&args[1]);
+                let state_rc = state;
                 let mut state = state.borrow_mut();
                 let setup = &mut state.setup;
                 // The time of day before the call: as set, or 0.05 an hour
@@ -934,6 +1033,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     setup.clock_set = true;
                     setup.clock_base = value;
                     setup.clock_start = setup.clock_time;
+                }
+                drop(state);
+                // Its events whose condition turns true, inside the call, then
+                // the units' parts (SPEC-0017, "Time-of-day events").
+                game_state_events(vm, state_rc, s as i32, old, value, false);
+                if s == 2 {
+                    let mut state = state_rc.borrow_mut();
                     let tick = state.table.now;
                     super::table::time_of_day_set(&mut state.table, tick, old, value);
                 }

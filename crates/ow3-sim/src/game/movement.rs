@@ -109,6 +109,8 @@ const ARRIVAL: u32 = 0x3EFA_E148;
 /// The step at which a walk that makes no progress ends (hub #14: the
 /// first about 0.02 s after it is made, then 11 more 0.03 s apart).
 const WALK_GIVES_UP: u32 = 12;
+/// The weapon step that makes a countdown after a dropped target (0.5 s).
+const WEAPON_STEP: u32 = 0x3F00_0000;
 /// A unit attacks once its heading is this close to its target (radians).
 const ATTACK_ANGLE: f32 = 0.2;
 /// AttackHalfAngle: a target further off the facing than this is faced
@@ -1955,7 +1957,7 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
                     && u.acquire_phase != super::NO_PHASE
                 {
                     u.next_acquire = q;
-                    state.weapon_steps.push((q, h));
+                    state.weapon_steps.push((q, h, false));
                 }
             }
             // Its building's growth stops at the order (c-SBZ-1: the farm
@@ -3981,6 +3983,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         set_attack_move(state, h, None);
         let at = add(state.update_time, AFTER_DEATH);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.given_up_on =
+                u.attack
+                    .as_ref()
+                    .map(|a| a.target)
+                    .or(match u.movement.map(|m| m.order) {
+                        Some(Order::Attack { target }) => Some(target),
+                        _ => None,
+                    });
             u.attack = None;
             u.movement = None;
             // Its acquisition's 0.01 s step starts here.
@@ -4852,18 +4862,37 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     let tick = state.ticks;
     // Below `bound`, as the bits of a positive float grow with it.
     let next_clock = bound.map_or(add(state.move_clock, crate::timers::TICK), |b| b - 1);
-    // Weapon steps due: a cooldown countdown (a rate part and its watch),
-    // let go at the next step 0.01 s on (c-SCA-1: 1236, 1237 of the archer).
-    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.weapon_steps)
+    // Weapon steps that start a countdown's step 0.5 s on (c-SCA-1: the
+    // archer's of 24.636866, its countdown at 25.136782, hub #14).
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.weapon_resets)
         .into_iter()
         .partition(|&(q, _)| real_of(q) <= real_of(next_clock));
+    state.weapon_resets = later;
+    for (q, h) in due {
+        state.weapon_steps.push((add(q, WEAPON_STEP), h, true));
+    }
+    // Weapon steps due: a cooldown countdown (a rate part and its watch),
+    // let go at the next step 0.01 s on (c-SCA-1: 1236, 1237 of the archer),
+    // or run out over the cooldown (1654, 1655 at 25.136782 .. 26.635380).
+    // PROVISIONAL: the countdown's end read as the step plus the cooldown.
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.weapon_steps)
+        .into_iter()
+        .partition(|&(q, _, _)| real_of(q) <= real_of(next_clock));
     state.weapon_steps = later;
-    for (q, _) in due {
+    for (q, h, runs) in due {
         state.table_at(q);
         let now = state.table.now;
         let rate = state.table.take(now, "unit state: rate part");
         let watch = state.table.take(now, "unit state: limit watch");
-        let end = add(add(q, AFTER_DEATH), crate::timers::MIN_TIMEOUT);
+        let cooldown = state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .and_then(|t| t.weapon.as_ref())
+            .map(|w| w.cooldown);
+        let end = match cooldown {
+            Some(c) if runs => add(q, c),
+            _ => add(add(q, AFTER_DEATH), crate::timers::MIN_TIMEOUT),
+        };
         state.table.free_at_q(end, rate, "unit state: rate part");
         state.table.free_at_q(end, watch, "unit state: limit watch");
         state.table.now = tick;
@@ -4931,7 +4960,9 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         // Nor the first check after a guard check gave its chase up: it finds
         // none, the next comes 0.5 s on (c-SCA-1: the turtle's of 10.659,
         // the archer taken again at 11.159128, hub #14).
+        // It closes the window in which a hit makes it run (`retaliate`).
         if expired.is_some() && std::mem::take(&mut u.entries.skip_check) {
+            u.entries.given_up_on = None;
             continue;
         }
         // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster
@@ -5813,6 +5844,36 @@ pub(super) fn retaliate(
         }
         return;
     }
+    // A creep standing with no target and no order of its own, hit by an
+    // attacker its guard check gave up (one it cannot act against), runs:
+    // a move to the point its attacker's weapon range + 100 straight away
+    // from it (c-SCA-1: the turtle at 22.537218, 600 from the archer on the
+    // high ground, hub #14).
+    // PROVISIONAL: "cannot act against" is read as the give-up's target.
+    if state.unit(Some(victim)).is_some_and(|u| {
+        u.alive
+            && u.owner == super::creeps::CREEPS
+            && u.attack.is_none()
+            && u.movement.is_none_or(|m| !m.ordered())
+            && u.entries.given_up_on == Some(attacker)
+    }) {
+        let reach = state
+            .unit(Some(attacker))
+            .and_then(|a| state.data.units.get(&a.type_id))
+            .and_then(|t| t.weapon.as_ref())
+            .map_or(FLEE, |w| real_of(w.range) + 100.0);
+        let dx = sub(x.to_bits(), at[0]);
+        let dy = sub(y.to_bits(), at[1]);
+        let len = sqrt(add(mul(dx, dx), mul(dy, dy)));
+        if real_of(len) > 0.0 {
+            let k = div(reach.to_bits(), len);
+            let point = [add(x.to_bits(), mul(dx, k)), add(y.to_bits(), mul(dy, k))];
+            if point_order(state, victim, "move", point) {
+                super::table::creep_flight_ordered(state, victim);
+            }
+        }
+        return;
+    }
     // A hero in Bladestorm, its own checks off and with no order, is
     // given an attack-move to the point 300 straight away from its
     // attacker, as a fleeing unit's (c-SBW-1: the Blademaster hit by
@@ -6511,6 +6572,23 @@ fn cooldown_expiries(state: &mut State, until: Option<u32>) {
             continue;
         }
         freeze(state, h);
+        // On hold position with the target out of its reach: the attack
+        // ends, no chase (c-SCA-1: the archer at 24.626966, the turtle gone
+        // in its flight).
+        let holding = state.unit(Some(h)).is_some_and(|u| u.holding);
+        if holding && !in_reach {
+            super::table::hold_target_lost(state, h);
+            // Its weapon's step 0.01 s on (c-SCA-1: 24.636866, hub #14).
+            let end = state.unit(Some(h)).map(|u| u.cooldown_end);
+            if let Some(end) = end {
+                state.weapon_resets.push((add(end, AFTER_DEATH), h));
+            }
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.attack = None;
+                u.movement = None;
+            }
+            continue;
+        }
         if in_reach && turned {
             super::attack::begin(state, h, target, tick, order_id);
         } else {

@@ -1083,8 +1083,13 @@ pub struct State {
     /// Construction starts whose rest waits for their event's triggers:
     /// worker, building, whether it turns to it first.
     pending_starts: Vec<(u32, u32, bool)>,
-    /// Weapon steps 0.01 s after a hold-position order (hub #14).
-    weapon_steps: Vec<(u32, u32)>,
+    /// Weapon steps that make a cooldown countdown (hub #14): its time,
+    /// the unit, and whether the countdown runs its whole cooldown (else
+    /// it is let go 0.01 s on, as after a hold-position order).
+    weapon_steps: Vec<(u32, u32, bool)>,
+    /// Weapon steps that start a countdown's step 0.5 s on (a holding
+    /// unit that dropped its target, c-SCA-1 at 24.636866, hub #14).
+    weapon_resets: Vec<(u32, u32)>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1310,6 +1315,7 @@ impl State {
             bladestorms: Vec::new(),
             pending_starts: Vec::new(),
             weapon_steps: Vec::new(),
+            weapon_resets: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,
@@ -3302,8 +3308,16 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         };
         // Each call is counted, for the table's log.
         let counted = shared.clone();
+        let name: &'static str = Box::leak(
+            players::native_name(declaration)
+                .to_string()
+                .into_boxed_str(),
+        );
         let f: NativeFn = Rc::new(move |vm: &mut Vm, args: &[Value]| {
-            counted.borrow_mut().table.call += 1;
+            let mut s = counted.borrow_mut();
+            s.table.call += 1;
+            s.table.call_name = name;
+            drop(s);
             f(vm, args)
         });
         natives.register(declaration, f);

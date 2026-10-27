@@ -17,6 +17,8 @@ pub struct TableEvent {
     pub tag: &'static str,
     /// The number of the script's native calls made before it.
     pub call: u32,
+    /// The name of that native.
+    pub call_name: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -119,6 +121,8 @@ pub struct ObjectTable {
     pub clocks: Option<Vec<(u64, u32)>>,
     /// The number of the script's native calls made so far.
     pub call: u32,
+    /// The name of the last one.
+    pub call_name: &'static str,
 }
 
 impl ObjectTable {
@@ -168,6 +172,7 @@ impl ObjectTable {
             log: None,
             clocks: None,
             call: 0,
+            call_name: "",
         }
     }
 
@@ -204,6 +209,7 @@ impl ObjectTable {
                 creation,
                 tag,
                 call: self.call,
+                call_name: self.call_name,
             });
         }
         entry
@@ -221,6 +227,7 @@ impl ObjectTable {
                 creation,
                 tag,
                 call: self.call,
+                call_name: self.call_name,
             });
         }
     }
@@ -441,6 +448,10 @@ pub struct UnitEntries {
     pub wake_part: Option<u32>,
     /// Its next acquisition check finds nothing (after a guard give-up).
     pub skip_check: bool,
+    /// The target its last guard check gave up: one it cannot act against.
+    pub given_up_on: Option<u32>,
+    /// The object a creep's flight keeps until it goes home.
+    pub flight_part: Option<u32>,
     /// A building's objects of its making, all of them (for a cancel).
     pub made: Vec<u32>,
     /// A helper's order part freed when its help starts.
@@ -1408,6 +1419,63 @@ pub(super) fn attack_point_ordered(state: &mut super::State, h: u32) {
 /// PROVISIONAL: when the order and the 5 kept parts go is not read.
 pub(super) fn flee_ordered(state: &mut super::State, h: u32) {
     attack_point_parts(state, h, 10);
+}
+
+/// A creep hit by an attacker it cannot act against, standing with no
+/// target, runs by a move order to a point away from it: an object, the
+/// order's record, 13 objects of its start, the record and the last 7
+/// (from the last) freed 0.0001 s later, and its walk (c-SCA-1: the turtle
+/// at 22.537218, 1620 .. 1637, hub #14).
+///
+/// PROVISIONAL: when the kept ones go is not read.
+pub(super) fn creep_flight_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "creep flight: order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let start = state.table.take_n(tick, 13, "move ability: order start");
+    for &e in start[6..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    let mut kept: Vec<u32> = start[..6].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+    walk_made_at_order(state, h);
+    // An object kept until it goes home (c-SCA-1: 1638, freed at its
+    // return of 29.996065).
+    let part = state.table.take(tick, "creep flight: kept");
+    if let Some(e) = entries(state, h) {
+        e.flight_part = Some(part);
+    }
+}
+
+/// Unit `h` on hold position lost its target out of its reach at its
+/// cooldown's end: the objects of its acquisition go 0.0001 s later, the
+/// newest first (c-SCA-1: the archer's 1246 .. 1240 at 24.626966).
+///
+/// PROVISIONAL: read for one acquisition of a holding unit.
+pub(super) fn hold_target_lost(state: &mut super::State, h: u32) {
+    let Some(e) = entries(state, h) else {
+        return;
+    };
+    let mut all: Vec<u32> = std::mem::take(&mut e.acquisition);
+    all.extend(std::mem::take(&mut e.reaction));
+    all.extend(
+        std::mem::take(&mut e.target_death)
+            .into_iter()
+            .map(|(_, o)| o),
+    );
+    all.extend(e.current.take());
+    if std::mem::take(&mut e.own_attack) {
+        all.extend(std::mem::take(&mut e.order));
+    }
+    all.sort_by_key(|&o| std::cmp::Reverse(state.table.creation_of(o)));
+    for o in all {
+        state.table.defer(o, "acquisition: attack object");
+    }
 }
 
 fn attack_point_parts(state: &mut super::State, h: u32, n: usize) {

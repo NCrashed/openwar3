@@ -548,6 +548,15 @@ fn go_home(state: &mut State, h: u32) {
     let Some((home, at)) = state.unit(Some(h)).map(|u| (u.home, u.creep.return_time)) else {
         return;
     };
+    // A flight's kept object goes (c-SCA-1: 1638 at 29.996065, hub #14).
+    // PROVISIONAL: its place among the return's frees is not read.
+    let part = match state.objects.get_mut(&h) {
+        Some(super::Object::Unit(u)) => u.entries.flight_part.take(),
+        _ => None,
+    };
+    if let Some(p) = part {
+        state.table.defer(p, "creep flight: kept");
+    }
     // The walk home restarts its acquisition check 0.01 s after the
     // return timer (c-RXD-1: creep 6, return at 4557, check at 4559, then
     // every 0.5 s).

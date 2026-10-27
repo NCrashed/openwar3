@@ -39,6 +39,11 @@ const RACE_HUMAN: i32 = 1;
 const RACE_PREF_RANDOM: i32 = 32;
 const SLOT_EMPTY: i32 = 0;
 const SLOT_PLAYING: i32 = 1;
+const SLOT_LEFT: i32 = 2;
+const GAME_RESULT_VICTORY: i32 = 0;
+const GAME_RESULT_DEFEAT: i32 = 1;
+const EVENT_PLAYER_DEFEAT: i32 = 13;
+const EVENT_PLAYER_VICTORY: i32 = 14;
 const ALLIANCE_PASSIVE: i32 = 0;
 const ALLIANCE_HELP_REQUEST: i32 = 1;
 const ALLIANCE_HELP_RESPONSE: i32 = 2;
@@ -56,6 +61,8 @@ const COMPUTER_NAME: &str = "Computer (Normal)";
 pub struct Slot {
     /// In the game: `PLAYER_SLOT_STATE_PLAYING`, otherwise empty.
     pub present: bool,
+    /// Removed from the game (`RemovePlayer`): `PLAYER_SLOT_STATE_LEFT`.
+    pub left: bool,
     pub controller: i32,
     /// The race played, 0 before the slots are filled.
     pub race: i32,
@@ -147,6 +154,7 @@ impl Setup {
                 let neutral = id >= PLAYABLE;
                 Slot {
                     present: neutral,
+                    left: false,
                     controller: if neutral { CONTROL_CREEP } else { CONTROL_NONE },
                     race: 0,
                     race_preference: RACE_PREF_RANDOM,
@@ -410,6 +418,33 @@ pub(super) fn resolving(f: NativeFn, state: Rc<RefCell<State>>) -> NativeFn {
     })
 }
 
+/// Runs the triggers of player event `event` of player `id`.
+fn player_event(vm: &mut Vm, state: &Rc<RefCell<State>>, event: i32, id: i32) {
+    let (registrations, handle) = {
+        let mut s = state.borrow_mut();
+        (s.events.clone(), s.player_handle(id))
+    };
+    super::begin_event(state);
+    for registration in &registrations {
+        if let super::widgets::Registration::Player {
+            trigger,
+            player,
+            event: e,
+        } = *registration
+            && e == event
+            && player == id
+        {
+            let context = super::Context {
+                event_id: Some(event),
+                triggering_player: Some(handle),
+                ..super::Context::default()
+            };
+            super::fire_trigger(vm, state, trigger, context);
+        }
+    }
+    super::end_event(state);
+}
+
 fn player(state: &State, value: &Value) -> Option<i32> {
     state.player_id(handle(value))
 }
@@ -636,12 +671,67 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let mut state = state.borrow_mut();
             let id = player(&state, &args[0]);
-            let present = state.setup.slot(id).map(|s| s.present);
+            let present = state.setup.slot(id).map(|s| (s.present, s.left));
             Ok(Some(match present {
-                Some(true) => converted(SLOT_PLAYING),
-                Some(false) => converted(SLOT_EMPTY),
+                Some((_, true)) => converted(SLOT_LEFT),
+                Some((true, _)) => converted(SLOT_PLAYING),
+                Some((false, _)) => converted(SLOT_EMPTY),
                 None => Value::Handle(None),
             }))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native TriggerRegisterPlayerEvent takes trigger whichTrigger, player whichPlayer, playerevent whichPlayerEvent returns event",
+        |vm, state, args| {
+            let player = state.borrow().player_id(handle(&args[1]));
+            let (Some(trigger), Some(player), Some(event)) =
+                (handle(&args[0]), player, handle(&args[2]))
+            else {
+                return Ok(Some(Value::Handle(None)));
+            };
+            let registration = super::widgets::Registration::Player {
+                trigger,
+                player,
+                event: event as i32,
+            };
+            Ok(Some(super::widgets::register_event(state, registration)))
+        }
+    );
+    native!(
+        add,
+        state,
+        "native RemovePlayer takes player whichPlayer, playergameresult gameResult returns nothing",
+        |vm, state, args| {
+            let Some(id) = state.borrow().player_id(handle(&args[0])) else {
+                return Ok(None);
+            };
+            // Its defeat or victory event first (c-SCF-1: player 1's defeat
+            // before its great hall's death event, hub #15).
+            let event = match handle(&args[1]).map(|r| r as i32) {
+                Some(GAME_RESULT_VICTORY) => Some(EVENT_PLAYER_VICTORY),
+                Some(GAME_RESULT_DEFEAT) => Some(EVENT_PLAYER_DEFEAT),
+                _ => None,
+            };
+            if let Some(event) = event {
+                player_event(vm, state, event, id);
+            }
+            // The victor stays in the game with its units (c-SCD-1: player 0
+            // after its victory, slot 1, its units its own).
+            // PROVISIONAL: a tie and a neutral result are not read.
+            if event != Some(EVENT_PLAYER_DEFEAT) {
+                return Ok(None);
+            }
+            // Its slot is left (c-SCF-1, hub #15). (Blizzard.j gives its
+            // units to the neutral victim before, with SetUnitOwner.)
+            // PROVISIONAL: its objects and when the slot changes in the tick
+            // are not read.
+            let mut s = state.borrow_mut();
+            if let Some(slot) = s.setup.slot(Some(id)) {
+                slot.left = true;
+            }
+            Ok(None)
         }
     );
     native!(
@@ -786,6 +876,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let state = state.borrow();
             let value = match (player(&state, &args[0]), handle(&args[1])) {
+                // The upkeep rates follow the food used, in the same tick
+                // (c-SCE-1: 0, 30 at 53, 60 at 83; lumber's stays 0; hub
+                // #15).
+                (Some(p), Some(13)) => {
+                    let used = state.setup.player_states.get(&(p, 5)).copied().unwrap_or(0);
+                    Some(100 - 10 * super::harvest::upkeep_tenths(used))
+                }
+                (Some(_), Some(14)) => Some(0),
                 (Some(p), Some(s)) => state.setup.player_states.get(&(p, s as i32)).copied(),
                 _ => None,
             };

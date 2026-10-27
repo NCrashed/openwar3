@@ -88,6 +88,12 @@ pub enum Registration {
         event: i32,
         filter: Option<u32>,
     },
+    /// `TriggerRegisterPlayerEvent`.
+    Player {
+        trigger: u32,
+        player: i32,
+        event: i32,
+    },
     /// `TriggerRegisterTimerExpireEvent`.
     TimerExpire { trigger: u32, timer: u32 },
     /// `TriggerRegisterDeathEvent` of a unit, destructable or item.
@@ -1499,6 +1505,39 @@ pub(super) fn set_destructable_life(
         died(vm, state, h, None);
     }
 }
+/// Unit `h` changes owner to player `to`, without an event yet: the food of a
+/// living unit goes with it (c-SCF-1: a defeated player's food 0/0, hub
+/// #15).
+pub(super) fn owner_changed(state: &mut State, h: u32, to: i32) {
+    let Some(u) = state.unit(Some(h)) else {
+        return;
+    };
+    let from = u.owner;
+    if from == to {
+        return;
+    }
+    let food = state.data.units.get(&u.type_id).and_then(|t| {
+        match (u.alive, t.building, u.construction.is_none()) {
+            (false, _, _) | (true, true, false) => None,
+            (true, true, true) => Some((FOOD_CAP, t.food_made)),
+            (true, false, _) => Some((FOOD_USED, t.food_used)),
+        }
+    });
+    if let Some((key, food)) = food
+        && food != 0
+    {
+        *state.setup.player_states.entry((from, key)).or_default() -= food;
+        *state.setup.player_states.entry((to, key)).or_default() += food;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.owner = to;
+    }
+    // Every real change of owner ends the unit's order: it stands (c-SCG,
+    // hub #15).
+    // PROVISIONAL: its objects and the change-owner event are not read.
+    super::movement::stop(state, h);
+}
+
 pub(super) fn register_event(state: &Rc<RefCell<State>>, registration: Registration) -> Value {
     let mut state = state.borrow_mut();
     state.events.push(registration);
@@ -2198,8 +2237,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         |vm, state, args| {
             let mut state = state.borrow_mut();
             let owner = state.player_id(handle(&args[1]));
-            if let (Some(owner), Some(u)) = (owner, unit_mut(&mut state, handle(&args[0]))) {
-                u.owner = owner;
+            if let (Some(owner), Some(h)) = (owner, handle(&args[0])) {
+                owner_changed(&mut state, h, owner);
             }
             Ok(None)
         }

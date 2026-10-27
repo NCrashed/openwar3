@@ -33,6 +33,8 @@ pub const ORDER_RESUME_HARVESTING: i32 = 852_017;
 /// The player states of gold and lumber.
 const GOLD: i32 = 1;
 const LUMBER: i32 = 2;
+const GOLD_GATHERED: i32 = 15;
+const LUMBER_GATHERED: i32 = 16;
 /// `PLAYER_STATE_RESOURCE_FOOD_USED`.
 const FOOD_USED: i32 = 5;
 
@@ -40,7 +42,7 @@ const FOOD_USED: i32 = 5;
 /// in use: all up to 50, 7 up to 80, 4 above (SPEC-0029, "Upkeep": 10,
 /// 7 and 4 at 41, 61 and 81 food). PROVISIONAL: the borders are the
 /// usual table, not measured; lumber was not tested.
-fn upkeep_tenths(used: i32) -> i32 {
+pub(super) fn upkeep_tenths(used: i32) -> i32 {
     match used {
         ..=50 => 10,
         51..=80 => 7,
@@ -1058,6 +1060,17 @@ fn deliver(state: &mut State, h: u32) {
             Resource::Lumber => amount,
         };
         *state.setup.player_states.entry((owner, which)).or_default() += amount;
+        // What was gathered counts the load after the upkeep (c-SCE-1: 7 and
+        // 4, hub #15).
+        let gathered = match resource {
+            Resource::Gold => GOLD_GATHERED,
+            Resource::Lumber => LUMBER_GATHERED,
+        };
+        *state
+            .setup
+            .player_states
+            .entry((owner, gathered))
+            .or_default() += amount;
     }
     // Back to its tree, the felled one it left included: then another
     // tree, costed from that tree's point (SPEC-0029, "When the tree is

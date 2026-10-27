@@ -216,6 +216,22 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "the end of a melee game (MeleeInitVictoryDefeat) on a ladder map: not matched yet",
     ),
     (
+        "c-SCE-1.w3g",
+        "upkeep: food crossing 50 and 80 with workers on gold: not matched yet",
+    ),
+    (
+        "c-SCF-1.w3g",
+        "a melee defeat and a crippled player, read in detail: not matched yet",
+    ),
+    (
+        "c-SCI-1.w3g",
+        "one unit of each creep and neutral type, and abilities added: not matched yet",
+    ),
+    (
+        "c-SCJ-1.w3g",
+        "computer workers given harvest at their creation: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

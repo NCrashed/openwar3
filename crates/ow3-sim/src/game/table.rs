@@ -123,6 +123,8 @@ pub struct ObjectTable {
     pub call: u32,
     /// The name of the last one.
     pub call_name: &'static str,
+    /// Every native call by name, while the log is kept.
+    pub call_log: Vec<&'static str>,
 }
 
 impl ObjectTable {
@@ -173,6 +175,7 @@ impl ObjectTable {
             clocks: None,
             call: 0,
             call_name: "",
+            call_log: Vec::new(),
         }
     }
 
@@ -4675,9 +4678,20 @@ pub(super) fn native_objects(name: &str) -> usize {
         | "TriggerRegisterUnitEvent"
         | "TriggerRegisterPlayerUnitEvent"
         | "TriggerRegisterEnterRegion"
-        | "TriggerRegisterTimerEvent" => 1,
-        "TriggerAddAction" | "CreateRegion" => 2,
-        "CreateTrigger" => 3,
+        | "TriggerRegisterTimerEvent"
+        // (c-SCC-1's init, hub #15: the natives that make a handle.)
+        | "TriggerRegisterTimerExpireEvent"
+        | "TriggerExecute"
+        | "CreateGroup"
+        | "ForGroup"
+        | "Rect"
+        | "Location"
+        | "GetUnitLoc"
+        | "GetStartLocationLoc"
+        | "CreateSoundFromLabel"
+        | "CreateMIDISound" => 1,
+        "TriggerAddAction" | "CreateRegion" | "Filter" | "TriggerRegisterGameStateEvent" => 2,
+        "CreateTrigger" | "CreateForce" => 3,
         _ => 0,
     }
 }

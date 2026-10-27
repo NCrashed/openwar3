@@ -35,12 +35,17 @@ pub const MAX_NESTING: u32 = 100;
 /// that return nothing.
 pub type NativeFn = Rc<dyn Fn(&mut Vm, &[Value]) -> Result<Option<Value>, RuntimeError>>;
 
+/// Told the name of each stub native called.
+pub type StubHook = Rc<dyn Fn(&str)>;
+
 /// Native implementations by name, each with the JASS declaration it
 /// implements.
 #[derive(Clone, Default)]
 pub struct Natives {
     entries: HashMap<String, (Signature, NativeFn)>,
     stub_missing: bool,
+    /// Told the name of each stub called, as natives are counted.
+    stub_hook: Option<StubHook>,
 }
 
 impl Natives {
@@ -61,6 +66,11 @@ impl Natives {
     pub fn stub_missing(mut self) -> Self {
         self.stub_missing = true;
         self
+    }
+
+    /// Calls `hook` with the name of every stub called.
+    pub fn set_stub_hook(&mut self, hook: StubHook) {
+        self.stub_hook = Some(hook);
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -236,7 +246,12 @@ impl<'a> Vm<'a> {
                 None if natives.stub_missing => {
                     let returns = info.returns;
                     let index = bodies.len();
+                    let hook = natives.stub_hook.clone();
+                    let name = info.name.clone();
                     Rc::new(move |vm: &mut Vm, _: &[Value]| {
+                        if let Some(hook) = &hook {
+                            hook(&name);
+                        }
                         *vm.stub_calls.entry(index).or_default() += 1;
                         Ok(returns.map(Value::default_of))
                     }) as NativeFn

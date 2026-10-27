@@ -49,6 +49,9 @@ pub struct Creep {
     /// It answered a call on its way home: the walk home lies below the
     /// attack in its order queue, after a move to the target (SPEC-0030).
     pub(super) queued_home: bool,
+    /// Woken by a building: its zone checks keep the wake's phase until it
+    /// is home again (c-SCA-1, hub #14).
+    pub(super) wake_phase: bool,
     /// Where its last walk home ended: it walks back there when it loses
     /// its target.
     pub(super) guard: Option<[u32; 2]>,
@@ -132,6 +135,10 @@ pub(super) fn wake_checks(state: &mut State) {
                 // Its acquisition check 0.01 s later takes the nearest enemy
                 // (the peasant at 7.009730).
                 u.next_acquire = add(at, 0.01f32.to_bits());
+                // Its zone checks run every 2.0 s from the wake, hits and fights
+                // leaving them in phase (c-SCA-1: 9.000099 .. 25.000099, hub #14).
+                u.creep.checks_next = Some(add(at, CHECK_PERIOD));
+                u.creep.wake_phase = true;
             }
             state.table_at(at);
             let place = state.unit(Some(building)).map_or([0, 0], |b| [b.x, b.y]);
@@ -188,6 +195,10 @@ pub(super) fn enter_fight(state: &mut State, h: u32, at: u32) {
         && u.owner == CREEPS
         && !u.creep.returning
         && u.creep.return_time.is_none()
+        // The checks of a creep woken by a building keep their phase (c-SCA-1:
+        // the turtle, hub #14).
+        // PROVISIONAL: read for that creep only; c-RXD-1's restart.
+        && !u.creep.wake_phase
     {
         u.creep.checks_next = Some(at);
         state.creep_timers += 1;
@@ -494,6 +505,7 @@ pub(super) fn tick(state: &mut State) {
                 set(state, h, |c| {
                     c.returning = false;
                     c.guard = Some(here);
+                    c.wake_phase = false;
                 });
                 // Home again: its acquisition check restarts 0.01 s later
                 // (c-RXD-1: creep 8 home in 5917, check in 5919).

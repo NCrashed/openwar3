@@ -1676,7 +1676,24 @@ impl<'a> Game<'a> {
     /// destructables and bounds of the map, as single player. Run `config`
     /// and `main` next, or use [`Game::start`].
     pub fn load_map(program: &'a Program, map: &'a Map) -> Result<Game<'a>, LoadError> {
+        Self::load_map_with_table(program, map, None)
+    }
+
+    /// Loads `map` as [`Game::load_map`], with the object table set to
+    /// `table` (its log kept) before the script's globals are made, as their
+    /// natives take objects (hub #15: Blizzard.j's CreateTimer and
+    /// CreateGroup before `config`).
+    pub fn load_map_with_table(
+        program: &'a Program,
+        map: &'a Map,
+        table: Option<table::ObjectTable>,
+    ) -> Result<Game<'a>, LoadError> {
         let mut state = State::new();
+        if let Some(mut table) = table {
+            table.log = Some(Vec::new());
+            table.clocks = Some(Vec::new());
+            state.table = table;
+        }
         state.setup = players::Setup::from_map(map);
         let b = &map.world_bounds;
         state.world_bounds = [b.min_x, b.min_y, b.max_x, b.max_y].map(f32::to_bits);
@@ -1780,6 +1797,21 @@ impl<'a> Game<'a> {
         let state = Rc::new(RefCell::new(state));
         let mut natives = Natives::default().stub_missing();
         register_natives(&mut natives, &state, program);
+        // The natives not built yet count as calls too, for the table's log.
+        let counted = state.clone();
+        let names: RefCell<BTreeMap<String, &'static str>> = RefCell::default();
+        natives.set_stub_hook(Rc::new(move |name: &str| {
+            let name = *names
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| Box::leak(name.to_owned().into_boxed_str()));
+            let mut s = counted.borrow_mut();
+            s.table.call += 1;
+            s.table.call_name = name;
+            if s.table.log.is_some() {
+                s.table.call_log.push(name);
+            }
+        }));
         let vm = Vm::load(program, scripts, &natives)?;
         Ok(Game {
             vm,
@@ -2958,6 +2990,11 @@ impl<'a> Game<'a> {
         self.state.borrow().table.log.clone().unwrap_or_default()
     }
 
+    /// The names of the natives called since the table was set with its log.
+    pub fn table_calls(&self) -> Vec<&'static str> {
+        self.state.borrow().table.call_log.clone()
+    }
+
     pub fn handles_made(&self) -> u32 {
         self.state.borrow().next_handle
     }
@@ -3317,6 +3354,9 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             let mut s = counted.borrow_mut();
             s.table.call += 1;
             s.table.call_name = name;
+            if s.table.log.is_some() {
+                s.table.call_log.push(name);
+            }
             drop(s);
             f(vm, args)
         });
@@ -4108,12 +4148,24 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             program.type_name(function.returns.expect("checked")),
         );
         let state = state.clone();
+        // Counted as the other natives, for the table's log.
+        let name: &'static str = Box::leak(function.name.clone().into_boxed_str());
         natives.register(
             &declaration,
             Rc::new(move |_: &mut Vm, _: &[Value]| {
-                Ok(Some(Value::Handle(Some(
-                    state.borrow_mut().create(Object::Opaque),
-                ))))
+                let mut s = state.borrow_mut();
+                s.table.call += 1;
+                s.table.call_name = name;
+                if s.table.log.is_some() {
+                    s.table.call_log.push(name);
+                }
+                // Its object of the table (c-SCC-1's init, hub #15).
+                let objects = table::native_objects(name);
+                if objects > 0 {
+                    let tick = s.table.now;
+                    s.table.take_n(tick, objects, name);
+                }
+                Ok(Some(Value::Handle(Some(s.create(Object::Opaque)))))
             }),
         );
     }

@@ -5822,6 +5822,14 @@ pub(super) fn retaliate(
     {
         return;
     }
+    // A creep on its flight keeps its move: no answer, no call, no zone
+    // check (c-SCA-1: the turtle hit at 24.511887, hub #14).
+    if state
+        .unit(Some(victim))
+        .is_some_and(|u| u.entries.flight_part.is_some() && u.movement.is_some_and(|m| m.ordered()))
+    {
+        return;
+    }
     // A sleeping creep wakes in this tick with the sleeping creeps near it,
     // and answers; one going home does not answer (SPEC-0030).
     super::creeps::wake_on_hit(state, victim, attacker);

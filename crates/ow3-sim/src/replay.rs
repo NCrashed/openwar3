@@ -131,10 +131,7 @@ impl<'a> Playback<'a> {
         replay: &Replay,
         table: Option<crate::game::table::ObjectTable>,
     ) -> Result<Playback<'a>, String> {
-        let mut game = Game::load_map(program, map).map_err(|e| e.to_string())?;
-        if let Some(table) = table {
-            game.set_table(table, true);
-        }
+        let mut game = Game::load_map_with_table(program, map, table).map_err(|e| e.to_string())?;
         let name = |id: u8| {
             replay
                 .players

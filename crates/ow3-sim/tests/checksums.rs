@@ -232,6 +232,10 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "computer workers given harvest at their creation: not matched yet",
     ),
     (
+        "c-SCK-1.w3g",
+        "RemoveUnit of creeps, a footman, a barracks and a mine: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

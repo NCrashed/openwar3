@@ -264,6 +264,30 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "64 footmen in a grid: the second pool's groups: not matched yet",
     ),
     (
+        "c-SCS-1.w3g",
+        "units of several owners side by side: the second pool's groups: not matched yet",
+    ),
+    (
+        "c-SCT-1.w3g",
+        "one unit at a time with the hour crossed: not matched yet",
+    ),
+    (
+        "c-SCU-1.w3g",
+        "one unit at a time with the hour crossed both ways: not matched yet",
+    ),
+    (
+        "c-SCV-1.w3g",
+        "units and buildings made for four kinds of owner: not matched yet",
+    ),
+    (
+        "c-SCW-1.w3g",
+        "the rest of IceCrown's creep types with the hour crossed: not matched yet",
+    ),
+    (
+        "c-SCX-1.w3g",
+        "workers of several races made for a computer player: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

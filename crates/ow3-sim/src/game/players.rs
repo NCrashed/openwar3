@@ -32,7 +32,7 @@ pub const PLAYABLE: i32 = 12;
 const NEUTRAL_PASSIVE: i32 = 15;
 
 const CONTROL_USER: i32 = 0;
-const CONTROL_COMPUTER: i32 = 1;
+pub(super) const CONTROL_COMPUTER: i32 = 1;
 const CONTROL_CREEP: i32 = 4;
 const CONTROL_NONE: i32 = 5;
 const RACE_HUMAN: i32 = 1;

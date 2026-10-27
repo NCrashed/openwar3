@@ -1003,6 +1003,62 @@ fn second_pool_left(state: &mut super::State, h: u32) {
     }
 }
 
+/// The objects a unit or building of a computer player takes after its own
+/// (c-SCV-1, hub #15): two kept (a town hall three), nine freed 0.0001 s
+/// later, for a worker three more freed then for each worker its player has
+/// (itself included), and for a unit not a worker a last kept one.
+///
+/// PROVISIONAL: when the kept ones go is not read.
+fn computer_tail(state: &mut super::State, owner: i32, type_id: i32, building: bool) {
+    let computer = state
+        .setup
+        .slots
+        .get(owner as usize)
+        .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER)
+        && owner < super::creeps::CREEPS;
+    if !computer {
+        return;
+    }
+    let Some(t) = state.data.units.get(&type_id) else {
+        return;
+    };
+    let worker = |state: &super::State, t: &crate::data::UnitType| {
+        t.abilities
+            .iter()
+            .any(|&a| [*b"Ahar", *b"Aaha", *b"Awha"].contains(&ability_code(state, a)))
+    };
+    let is_worker = !building && worker(state, t);
+    let town_hall = building && t.classes.iter().any(|c| c == "townhall");
+    let kept = if town_hall { 3 } else { 2 };
+    let workers = if is_worker {
+        state
+            .units
+            .iter()
+            .filter(|&&u| {
+                state.unit(Some(u)).is_some_and(|x| {
+                    x.alive
+                        && x.owner == owner
+                        && state
+                            .data
+                            .units
+                            .get(&x.type_id)
+                            .is_some_and(|d| worker(state, d))
+                })
+            })
+            .count()
+    } else {
+        0
+    };
+    let last = usize::from(!building && !is_worker);
+    let tick = state.table.now;
+    let tail = state
+        .table
+        .take_n(tick, kept + 9 + 3 * workers + last, "computer unit");
+    for &e in &tail[kept..kept + 9 + 3 * workers] {
+        state.table.defer(e, "computer unit");
+    }
+}
+
 /// Unit `h` was made by `CreateUnit`: it takes its objects.
 ///
 /// The first creep of a group (SPEC-0030, "Joining") holds the objects of
@@ -1174,6 +1230,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
     }
+    computer_tail(state, owner, type_id, building.is_some());
     let mut pending_dispel = Vec::new();
     if let Some((count, at, after)) = building {
         state.table.defer(entries[count - 1], "map start: unit");

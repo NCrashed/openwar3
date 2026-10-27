@@ -5299,14 +5299,30 @@ pub(super) fn construction_cancelled(
 /// Creep `h`'s chase walk ended out of reach of a target it cannot act
 /// against: its guard check gives the chase up (c-SCA-1: the turtle under
 /// the archer's cliff at 10.649214, hub #14). The target's object goes,
-/// three objects, a walk to the old order's place, an object and the new
+/// three objects, for an attack-move a walk to its place, an object and the new
 /// standing order's two records; 0.0001 s later in the game's order the
 /// last acquisition's, the wake's part, a record, the old order's kept
 /// parts and the order, the other record and the object.
-pub(super) fn guard_given_up(state: &mut super::State, h: u32) {
+pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: bool) {
     let tick = state.table.now;
     let acquisition = entries(state, h)
-        .map(|e| std::mem::take(&mut e.acquisition))
+        .map(|e| {
+            // An attack of its own acquisition: its target's three and its
+            // order's three go in the place of the acquisition's, its
+            // current target's first (c-SCA-1: 1280, then 1279 .. 1274 at
+            // 11.549162, hub #14).
+            if std::mem::take(&mut e.own_attack) {
+                let mut all: Vec<u32> = std::mem::take(&mut e.target_death)
+                    .into_iter()
+                    .map(|(_, o)| o)
+                    .collect();
+                all.extend(std::mem::take(&mut e.order));
+                all.extend(e.current.take());
+                all
+            } else {
+                std::mem::take(&mut e.acquisition)
+            }
+        })
         .unwrap_or_default();
     if let Some(&last) = acquisition.last() {
         state.table.defer(last, "acquisition: extra object");
@@ -5315,7 +5331,13 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32) {
     for &e in three.iter().rev() {
         state.table.defer(e, "guard: given up");
     }
-    walk_made(state, h);
+    // An attack-move (the wake's) is ended with a walk made; a plain attack
+    // (from an idle acquisition) without one (c-SCA-1: 10.649214 and
+    // 11.549063, hub #14).
+    // PROVISIONAL: the walk's cause is read from these two only.
+    if moving_order {
+        walk_made(state, h);
+    }
     // It stands: the walk goes at its next update, before the older one
     // (1268, 1267, then 1226, 1225 at 10.679209).
     walk_dropped(state, h);

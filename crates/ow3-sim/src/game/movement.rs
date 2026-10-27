@@ -106,6 +106,9 @@ pub(super) const CELL: u32 = 0x3D00_0000;
 const BACK_REACH: u32 = 0x3FC8_0000;
 /// The arrival radius of a point move in cells (0.49, 15.68 world units).
 const ARRIVAL: u32 = 0x3EFA_E148;
+/// The step at which a walk that makes no progress ends (hub #14: the
+/// first about 0.02 s after it is made, then 11 more 0.03 s apart).
+const WALK_GIVES_UP: u32 = 12;
 /// A unit attacks once its heading is this close to its target (radians).
 const ATTACK_ANGLE: f32 = 0.2;
 /// AttackHalfAngle: a target further off the facing than this is faced
@@ -291,6 +294,10 @@ pub struct Moving {
     remade_search: bool,
     /// A drop order stood within DropItemRange at its last update: it
     /// drops at this one (c-SBR-1: stopped at 9.599, dropped at 9.629385).
+    /// The walk it is on (its `given`), where it stood when it was made
+    /// and its updates on it so far (hub #14: a walk that never moves ends
+    /// at its 12th step).
+    walk_steps: Option<(u64, [u32; 2], u32)>,
     drop_ready: bool,
     /// The number of the order, counted over the game: units are handled
     /// newest order first (SPEC-0021).
@@ -571,6 +578,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             help: None,
             remade: false,
             remade_search: false,
+            walk_steps: None,
             drop_ready: false,
             ..m
         },
@@ -614,6 +622,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             help: None,
             remade: false,
             remade_search: false,
+            walk_steps: None,
             drop_ready: false,
         },
     };
@@ -2873,6 +2882,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         }
         let here = m.origin;
         let mut begin_attack = None;
+        if m.walk_steps.is_none_or(|(g, _, _)| g != m.given) {
+            m.walk_steps = Some((m.given, here, 0));
+        }
+        if let Some(w) = m.walk_steps.as_mut() {
+            w.2 += 1;
+        }
         // Still in the reaction delay: the unit stands.
         let waiting = m.reaction_end.is_some()
             || m.reaction.is_some_and(|(from, delay, earliest)| {
@@ -3625,7 +3640,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                     // check gives the chase up (c-SCA-1: the turtle at
                                     // 10.649214, hub #14).
                                     // PROVISIONAL: read for a target it cannot reach.
-                                    given_up.push(h);
+                                    // A walk made where it stands never moves: it
+                                    // faces the goal and ends at its 12th step
+                                    // (c-SCA-1: the turtle at the cliff's foot,
+                                    // 11.199121 to 11.549063, hub #14).
+                                    let steps = m.walk_steps.map_or(0, |(_, _, n)| n);
+                                    let still =
+                                        m.walk_steps.is_some_and(|(_, from, _)| from == here);
+                                    if !still || steps >= WALK_GIVES_UP {
+                                        given_up.push(h);
+                                    }
                                 }
                             }
                         }
@@ -3948,7 +3972,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
     for h in given_up {
-        super::table::guard_given_up(state, h);
+        let moving_order = state.unit(Some(h)).is_some_and(|u| u.attack_move.is_some());
+        // The queue's timers up to its 0.0001 s frees free first (c-SCA-1:
+        // a missile's 5.0 s objects at 17.038240, before the give-up's).
+        state.table.queue_through(add(state.update_time, NO_TIME));
+        super::table::guard_given_up(state, h, moving_order);
         // Its old order, the wake's attack-move, ends.
         set_attack_move(state, h, None);
         let at = add(state.update_time, AFTER_DEATH);

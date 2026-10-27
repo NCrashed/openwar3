@@ -1041,7 +1041,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 if s == 2 {
                     let mut state = state_rc.borrow_mut();
                     let tick = state.table.now;
-                    super::table::time_of_day_set(&mut state.table, tick, old, value);
+                    super::table::time_of_day_set(&mut state, tick, old, value);
                 }
             }
             Ok(None)

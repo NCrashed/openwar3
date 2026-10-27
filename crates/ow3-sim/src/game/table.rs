@@ -1334,7 +1334,7 @@ pub(super) fn level_changed(state: &mut super::State, h: u32) {
 ///
 /// PROVISIONAL: read with the clock suspended right after; a running
 /// clock may make a rate part as well.
-pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64, old: u32, new: u32) {
+pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new: u32) {
     // Only a change across a watched hour (dawn or dusk) makes them; else
     // the last old part goes alone (hub #14: c-SCA-1, 0.05 -> 0.0, freed
     // only 819 0.0001 s later).
@@ -1344,16 +1344,86 @@ pub(super) fn time_of_day_set(table: &mut ObjectTable, tick: u64, old: u32, new:
         .iter()
         .any(|&w| (f32::from_bits(old) < w) != (f32::from_bits(new) < w));
     if !crosses {
-        if let Some(e) = table.day.pop() {
-            table.defer(e, "time of day");
+        if let Some(e) = state.table.day.pop() {
+            state.table.defer(e, "time of day");
         }
         return;
     }
-    // (The event objects are its triggers', taken before.)
-    let new = table.take_n(tick, 3, "time of day");
-    for e in std::mem::replace(&mut table.day, new) {
-        table.defer(e, "time of day");
+    // (The event objects are its triggers', taken before.) The clock's own
+    // watches, three at night's end before the units and at its start one
+    // before them and one after, and every unit's
+    // parts one unit after another: a rate part, a nightcrawler's second
+    // and its watch, and at night's end a watch for each spell with a
+    // mana cost and an Ensnare's r (c-SCT-1, c-SCU-1, c-SCW-1, SPEC-0017).
+    let to_day = (6.0..18.0).contains(&f32::from_bits(new));
+    let mut new_parts = state
+        .table
+        .take_n(tick, if to_day { 3 } else { 1 }, "time of day");
+    let units = state.units.clone();
+    for h in units {
+        let Some(type_id) = state.unit(Some(h)).map(|u| u.type_id) else {
+            continue;
+        };
+        let (night, watches, ensnare) = day_parts(state, type_id);
+        let mut kinds: Vec<&'static str> = vec!["unit state: rate part"];
+        if night {
+            kinds.push("unit state: rate part");
+        }
+        if to_day {
+            kinds.extend(std::iter::repeat_n("unit state: limit watch", watches));
+            if ensnare {
+                kinds.push("unit state: other");
+            }
+        }
+        if night {
+            kinds.push("unit state: limit watch");
+        }
+        for kind in kinds {
+            new_parts.push(state.table.take(tick, kind));
+        }
     }
+    if !to_day {
+        new_parts.push(state.table.take(tick, "time of day"));
+    }
+    for e in std::mem::replace(&mut state.table.day, new_parts) {
+        state.table.defer(e, "time of day");
+    }
+}
+
+/// A unit type's parts at a change of the hour: whether it has an ability
+/// of the night (Shadowmeld), how many spells with a mana cost it has (each
+/// a watch at night's end; Possession and Reincarnation none), and whether
+/// it has Ensnare (c-SCW-1, hub #15).
+/// PROVISIONAL: the attribution to these abilities is read from IceCrown's
+/// types.
+fn day_parts(state: &super::State, type_id: i32) -> (bool, usize, bool) {
+    let Some(t) = state.data.units.get(&type_id) else {
+        return (false, 0, false);
+    };
+    let mut night = false;
+    let mut watches = 0;
+    let mut ensnare = false;
+    for &a in &t.abilities {
+        let code = ability_code(state, a);
+        let cost = state
+            .data
+            .abilities
+            .get(&a)
+            .and_then(|d| d.per_level.first())
+            .map_or(0, |l| l.cost);
+        match &code {
+            b"Ashm" => night = true,
+            b"Aens" => {
+                watches += 1;
+                ensnare = true;
+            }
+            b"Aweb" => watches += 1,
+            b"Apos" | b"ACrn" | b"AOre" => {}
+            _ if cost > 0 => watches += 1,
+            _ => {}
+        }
+    }
+    (night, watches, ensnare)
 }
 
 /// The entries of unit `h`, if it is one.

@@ -513,6 +513,24 @@ pub fn search(state: &mut State, walker: &Walker, tick: u64) {
 }
 
 fn steer_or_search(state: &mut State, walker: &Walker, tick: u64, search_only: bool) -> Steer {
+    // An amphibious unit searches its move kind's grid (hub #14: the
+    // Giant Sea Turtle).
+    let amphibious = state
+        .unit(Some(walker.handle))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|t| t.move_type == "amph")
+        && state.amphibious.is_some();
+    if amphibious {
+        std::mem::swap(&mut state.grid, &mut state.amphibious);
+    }
+    let steer = steer_in_grid(state, walker, tick, search_only);
+    if amphibious {
+        std::mem::swap(&mut state.grid, &mut state.amphibious);
+    }
+    steer
+}
+
+fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: bool) -> Steer {
     if state.grid.is_none() {
         return Steer::Walk(walker.order);
     }

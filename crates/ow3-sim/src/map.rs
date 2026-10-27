@@ -78,6 +78,9 @@ pub struct Map {
     /// Where ground units may walk (SPEC-0020), if the map has a
     /// `war3map.wpm`.
     pub pathing: Option<crate::path::Grid>,
+    /// Where amphibious units may move: the same map with that move
+    /// kind's mask (hub #14).
+    pub amphibious: Option<crate::path::Grid>,
     /// Damage constants (SPEC-0015).
     pub combat: crate::combat::Combat,
     /// Unit, destructable and item types.
@@ -191,8 +194,9 @@ impl Map {
             .map(|d| {
                 ow3_formats::map::pathing::Pathing::parse(&d).map_err(|e| error("war3map.wpm", e))
             })
-            .transpose()?
-            .map(|p| crate::path::Grid::new(&p));
+            .transpose()?;
+        let amphibious = pathing.as_ref().map(crate::path::Grid::amphibious);
+        let pathing = pathing.map(|p| crate::path::Grid::new(&p));
         // The melee flag of war3map.w3i chooses the constants (SPEC-0015).
         let combat = crate::combat::Combat::load(archives, info.flags & 0x04 != 0);
         let data = ObjectData::load(archives, info.flags & 0x04 != 0)?;
@@ -206,6 +210,7 @@ impl Map {
             world_bounds,
             heights,
             pathing,
+            amphibious,
             combat,
             data,
             localized,

@@ -147,6 +147,11 @@ fn stamp(state: &mut State, footprint: &Footprint, add: bool) {
     if let Some(grid) = state.grid.as_mut() {
         grid.stamp(&footprint.red, &footprint.green, add);
     }
+    // The same occupants in the amphibious kind's grid (hub #14).
+    // PROVISIONAL: which occupants close cells for that kind is not read.
+    if let Some(grid) = state.amphibious.as_mut() {
+        grid.stamp(&footprint.red, &footprint.green, add);
+    }
 }
 
 /// A new building of type `type_id` at (`x`, `y`) facing `facing`

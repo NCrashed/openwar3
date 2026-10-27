@@ -4880,6 +4880,22 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         .partition(|&(q, _, _)| real_of(q) <= real_of(next_clock));
     state.weapon_steps = later;
     for (q, h, runs) in due {
+        // A countdown due with the unit's acquisition step, an enemy in its
+        // reach, is not made: the acquisition comes first (c-SCA-1: the
+        // archer at 39.386570).
+        // PROVISIONAL: read for one holding unit.
+        let acquires = runs
+            && state
+                .unit(Some(h))
+                .is_some_and(|u| real_of(u.next_acquire) <= real_of(q))
+            && state.units.iter().any(|&o| {
+                state.unit(Some(o)).is_some_and(|t| t.alive)
+                    && hostile(state, h, o)
+                    && reaches(state, h, o)
+            });
+        if acquires {
+            continue;
+        }
         state.table_at(q);
         let now = state.table.now;
         let rate = state.table.take(now, "unit state: rate part");

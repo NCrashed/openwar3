@@ -85,6 +85,22 @@ impl Grid {
         grid
     }
 
+    /// The grid an amphibious unit searches (a move kind's mask, hub #14):
+    /// a cell is closed only where the map says it is neither walkable nor
+    /// floatable (0x02 and 0x40), or by the map's own bit 0x80; ground,
+    /// shallow and deep water are open.
+    pub fn amphibious(pathing: &ow3_formats::map::pathing::Pathing) -> Grid {
+        let open: Vec<bool> = pathing
+            .cells
+            .iter()
+            .map(|&v| v & 0x80 == 0 && v & 0x42 != 0x42)
+            .collect();
+        let fly = vec![true; open.len()];
+        let mut grid = Grid::from_layers(pathing.width as i32, pathing.height as i32, open, fly);
+        grid.build = pathing.cells.iter().map(|&v| v & 0x08 == 0).collect();
+        grid
+    }
+
     /// A grid of `width` x `height` walkable or closed cells, row by row
     /// from the bottom.
     pub fn from_cells(width: i32, height: i32, passable: Vec<bool>) -> Grid {

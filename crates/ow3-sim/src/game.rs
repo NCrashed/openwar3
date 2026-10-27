@@ -1000,6 +1000,9 @@ pub struct State {
     /// Where ground units may walk (SPEC-0020), and the paths units
     /// follow, by handle.
     grid: Option<crate::path::Grid>,
+    /// Where amphibious units move (hub #14); swapped with `grid` while
+    /// such a unit searches (`follow::steer`).
+    amphibious: Option<crate::path::Grid>,
     /// The clock of the movement system: 0.005 added every tick in the
     /// engine arithmetic (SPEC-0018).
     move_clock: u32,
@@ -1283,6 +1286,7 @@ impl State {
             localized: BTreeMap::new(),
             world_bounds: [0; 4],
             grid: None,
+            amphibious: None,
             move_clock: 0,
             update_time: 0,
             last_move_clock: 0,
@@ -1706,6 +1710,7 @@ impl<'a> Game<'a> {
         state.heights = map.heights.clone();
         state.fog = fog::Fog::new(state.heights.cells());
         state.grid = map.pathing.clone();
+        state.amphibious = map.amphibious.clone();
         state.combat = map.combat.clone();
         state.camera_bounds = bounds_of(&map.info.camera_bounds.map(f32::to_bits));
         state.data = map.data.clone();

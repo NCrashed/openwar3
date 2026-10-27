@@ -138,9 +138,10 @@ pub(super) fn wake_checks(state: &mut State) {
             if movement::point_order(state, h, "attack", place) {
                 super::table::flee_ordered(state, h);
                 let tick = state.table.now;
-                state.table.take(tick, "creep: woken");
+                let part = state.table.take(tick, "creep: woken");
                 if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                     u.entries.engaged = true;
+                    u.entries.wake_part = Some(part);
                 }
             }
             state.table.now = state.ticks;

@@ -2686,6 +2686,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     let mut attacks_after = Vec::new();
     let mut faced_ends = Vec::new();
     let mut help_starts: Vec<(u32, u32)> = Vec::new();
+    // Creeps whose guard check gives their chase up (`table::guard_given_up`).
+    let mut given_up: Vec<u32> = Vec::new();
     for h in moving {
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
@@ -3604,10 +3606,26 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                                 // (c-SAK-1: footman 2 at 925, hitting at 1025).
                                 if let Order::Attack { target } = m.order
                                     && begin_attack.is_none()
+                                    && !(state
+                                        .unit(Some(h))
+                                        .is_some_and(|u| u.owner == super::creeps::CREEPS)
+                                        && follow::found_nothing_nearer(state, h))
                                     && reaches_with(state, h, target, AFTER_MOVEMENT)
                                 {
                                     begin_attack = Some(target);
                                     m.arrived = true;
+                                } else if let Order::Attack { .. } = m.order
+                                    && begin_attack.is_none()
+                                    && state
+                                        .unit(Some(h))
+                                        .is_some_and(|u| u.owner == super::creeps::CREEPS)
+                                    && follow::found_nothing_nearer(state, h)
+                                {
+                                    // A creep at its chase's end out of reach: its guard
+                                    // check gives the chase up (c-SCA-1: the turtle at
+                                    // 10.649214, hub #14).
+                                    // PROVISIONAL: read for a target it cannot reach.
+                                    given_up.push(h);
                                 }
                             }
                         }
@@ -3929,6 +3947,20 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    for h in given_up {
+        super::table::guard_given_up(state, h);
+        // Its old order, the wake's attack-move, ends.
+        set_attack_move(state, h, None);
+        let at = add(state.update_time, AFTER_DEATH);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.attack = None;
+            u.movement = None;
+            // Its acquisition's 0.01 s step starts here.
+            u.next_acquire = at;
+            u.entries.skip_check = true;
+        }
+        state.moving.retain(|&o| o != h);
+    }
     // Helpers whose help starts: their walks end, and their objects (hub #13).
     for (h, building) in help_starts {
         super::table::chase_walk_ended(state, h);
@@ -4862,6 +4894,12 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
         }
         // Nor one whose attack ability was removed (c-SBI-1: the heroes).
         if u.attack_removed {
+            continue;
+        }
+        // Nor the first check after a guard check gave its chase up: it finds
+        // none, the next comes 0.5 s on (c-SCA-1: the turtle's of 10.659,
+        // the archer taken again at 11.159128, hub #14).
+        if expired.is_some() && std::mem::take(&mut u.entries.skip_check) {
             continue;
         }
         // Nor one walking invisible (SPEC-0040; c-SAK-1: the Blademaster

@@ -1414,3 +1414,13 @@ pub(super) fn regroup(state: &mut State, h: u32) {
 pub(super) fn quiet(state: &mut State, h: u32) {
     state.quiet_paths.insert(h);
 }
+
+/// Whether unit `h`'s last search found no point nearer to its goal than
+/// where it stands: a partial path of its own place alone (c-SCA-1: the
+/// turtle's chase of the archer above the cliff at 10.629217, hub #14).
+pub(super) fn found_nothing_nearer(state: &State, h: u32) -> bool {
+    state
+        .paths
+        .get(&h)
+        .is_some_and(|f| f.partial && f.local.len() <= 1)
+}

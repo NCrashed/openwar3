@@ -430,6 +430,10 @@ pub struct UnitEntries {
     pub engaged: bool,
     /// Its acquisition made its chase walk: none at its reaction's end.
     pub walk_at_acquire: bool,
+    /// The object a wake's attack-move left kept (`creeps::wake_checks`).
+    pub wake_part: Option<u32>,
+    /// Its next acquisition check finds nothing (after a guard give-up).
+    pub skip_check: bool,
     /// A building's objects of its making, all of them (for a cancel).
     pub made: Vec<u32>,
     /// A helper's order part freed when its help starts.
@@ -5283,6 +5287,49 @@ pub(super) fn construction_cancelled(
         e.order = work.into_iter().rev().collect();
     }
     [one, event]
+}
+
+/// Creep `h`'s chase walk ended out of reach of a target it cannot act
+/// against: its guard check gives the chase up (c-SCA-1: the turtle under
+/// the archer's cliff at 10.649214, hub #14). The target's object goes,
+/// three objects, a walk to the old order's place, an object and the new
+/// standing order's two records; 0.0001 s later in the game's order the
+/// last acquisition's, the wake's part, a record, the old order's kept
+/// parts and the order, the other record and the object.
+pub(super) fn guard_given_up(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let acquisition = entries(state, h)
+        .map(|e| std::mem::take(&mut e.acquisition))
+        .unwrap_or_default();
+    if let Some(&last) = acquisition.last() {
+        state.table.defer(last, "acquisition: extra object");
+    }
+    let three = state.table.take_n(tick, 3, "guard: given up");
+    for &e in three.iter().rev() {
+        state.table.defer(e, "guard: given up");
+    }
+    walk_made(state, h);
+    // It stands: the walk goes at its next update, before the older one
+    // (1268, 1267, then 1226, 1225 at 10.679209).
+    walk_dropped(state, h);
+    let one = state.table.take(tick, "guard: given up");
+    let record = state.table.take(tick, "order record");
+    let record2 = state.table.take(tick, "order record");
+    for &e in acquisition.iter().take(acquisition.len().saturating_sub(1)) {
+        state.table.defer(e, "acquisition: attack object");
+    }
+    if let Some(p) = entries(state, h).and_then(|e| e.wake_part.take()) {
+        state.table.defer(p, "creep: woken");
+    }
+    state.table.defer(record, "order record");
+    let order = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    for e in order {
+        state.table.defer(e, "order: given up");
+    }
+    state.table.defer(record2, "order record");
+    state.table.defer(one, "guard: given up");
 }
 
 /// Building `building` is finished at queue time `q` (c-SBZ-1: the

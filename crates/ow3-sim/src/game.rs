@@ -1083,6 +1083,8 @@ pub struct State {
     /// Construction starts whose rest waits for their event's triggers:
     /// worker, building, whether it turns to it first.
     pending_starts: Vec<(u32, u32, bool)>,
+    /// Weapon steps 0.01 s after a hold-position order (hub #14).
+    weapon_steps: Vec<(u32, u32)>,
     /// Units whose cast's end ran before this tick's updates.
     early_ends: Vec<u32>,
     pub(super) call_only: bool,
@@ -1307,6 +1309,7 @@ impl State {
             tranquilities: Vec::new(),
             bladestorms: Vec::new(),
             pending_starts: Vec::new(),
+            weapon_steps: Vec::new(),
             early_ends: Vec::new(),
             call_only: false,
             victim_only: false,

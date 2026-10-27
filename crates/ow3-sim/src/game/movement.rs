@@ -1924,9 +1924,30 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
                         Order::Repair { building } => Some(building),
                         _ => None,
                     });
+            let attacking = state.unit(Some(h)).is_some_and(|u| {
+                u.attack.is_some()
+                    || u.movement
+                        .is_some_and(|m| matches!(m.order, Order::Attack { .. }))
+            });
             let done = halt(state, h);
             if done && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.holding = name == "holdposition";
+            }
+            // A hold-position order starts its weapon's and its acquisition's
+            // 0.01 s steps itself (c-SCA-1: the archer at 9.359430, both at
+            // 9.369429, hub #14).
+            // PROVISIONAL: read for a unit attacking at the order; stop not read.
+            if done && attacking && name == "holdposition" {
+                let q = add(
+                    state.event_time.unwrap_or_else(|| state.timers.time()),
+                    AFTER_DEATH,
+                );
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                    && u.acquire_phase != super::NO_PHASE
+                {
+                    u.next_acquire = q;
+                    state.weapon_steps.push((q, h));
+                }
             }
             // Its building's growth stops at the order (c-SBZ-1: the farm
             // at 422.45 from 19.4977 s, hub #13).
@@ -4767,6 +4788,22 @@ fn checks(state: &mut State, bound: Option<u32>, early: bool) -> Vec<u32> {
     let tick = state.ticks;
     // Below `bound`, as the bits of a positive float grow with it.
     let next_clock = bound.map_or(add(state.move_clock, crate::timers::TICK), |b| b - 1);
+    // Weapon steps due: a cooldown countdown (a rate part and its watch),
+    // let go at the next step 0.01 s on (c-SCA-1: 1236, 1237 of the archer).
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.weapon_steps)
+        .into_iter()
+        .partition(|&(q, _)| real_of(q) <= real_of(next_clock));
+    state.weapon_steps = later;
+    for (q, _) in due {
+        state.table_at(q);
+        let now = state.table.now;
+        let rate = state.table.take(now, "unit state: rate part");
+        let watch = state.table.take(now, "unit state: limit watch");
+        let end = add(add(q, AFTER_DEATH), crate::timers::MIN_TIMEOUT);
+        state.table.free_at_q(end, rate, "unit state: rate part");
+        state.table.free_at_q(end, watch, "unit state: limit watch");
+        state.table.now = tick;
+    }
     let alive: BTreeSet<u32> = state
         .units
         .iter()

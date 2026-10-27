@@ -5684,17 +5684,25 @@ pub(super) fn retaliate(
         return;
     }
     // A hero in Bladestorm, its own checks off and with no order, is
-    // given an attack order to its attacker's place (c-SBW-1: the
-    // Blademaster hit by kobold 4 at 4.729896, 11 parts and a walk, hub
+    // given an attack-move to the point 300 straight away from its
+    // attacker, as a fleeing unit's (c-SBW-1: the Blademaster hit by
+    // kobold 4 at 4.729896, to (-7.668, 333.340), 11 parts and a walk, hub
     // #10).
-    // PROVISIONAL: the point read from the order's objects, not its value.
+    // PROVISIONAL: the condition read for one case.
     if state.bladestorms.iter().any(|b| b.hero() == victim)
         && state
             .unit(Some(victim))
             .is_some_and(|u| u.checks_off && u.movement.is_none() && u.attack.is_none())
     {
-        if point_order(state, victim, "attack", at) {
-            super::table::attack_point_ordered(state, victim);
+        let dx = sub(x.to_bits(), at[0]);
+        let dy = sub(y.to_bits(), at[1]);
+        let len = sqrt(add(mul(dx, dx), mul(dy, dy)));
+        if real_of(len) > 0.0 {
+            let k = div(FLEE.to_bits(), len);
+            let point = [add(x.to_bits(), mul(dx, k)), add(y.to_bits(), mul(dy, k))];
+            if point_order(state, victim, "attack", point) {
+                super::table::attack_point_ordered(state, victim);
+            }
         }
         return;
     }

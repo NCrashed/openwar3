@@ -3500,7 +3500,7 @@ fn quakes(s: &mut State) {
             if !first {
                 let staying: Vec<u32> = q.inside.iter().map(|i| i.0).collect();
                 for o in movement::call_order(s, staying) {
-                    super::table::quake_renewed(s, o);
+                    super::table::quake_renewed(s, o, false);
                 }
             }
             let fresh: Vec<u32> = now

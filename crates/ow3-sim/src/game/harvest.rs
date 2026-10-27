@@ -1311,6 +1311,69 @@ fn start_waiting(state: &mut State) {
     }
 }
 
+/// A worker made for a computer player goes to gather at once, inside its
+/// making: the gold mine nearest its player's town hall, when that is a
+/// plain one it can gather from (c-SCH, c-SCJ-1, hub #15: the Orc's peons;
+/// none with only a Haunted Gold Mine or no town hall).
+///
+/// PROVISIONAL: which town hall counts with several, the search's objects
+/// and the order's drop on a far mine are not built.
+pub(super) fn computer_worker_made(state: &mut State, h: u32) {
+    let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
+        return;
+    };
+    let computer = state
+        .setup
+        .slots
+        .get(owner as usize)
+        .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER);
+    if !computer || gathering(state, h).is_none() {
+        return;
+    }
+    let hall = state.units.iter().copied().find(|&b| {
+        state.unit(Some(b)).is_some_and(|u| {
+            u.alive
+                && u.owner == owner
+                && state
+                    .data
+                    .units
+                    .get(&u.type_id)
+                    .is_some_and(|t| t.classes.iter().any(|c| c == "townhall"))
+        })
+    });
+    let Some(at) = hall.and_then(|b| state.unit(Some(b))).map(|u| (u.x, u.y)) else {
+        return;
+    };
+    let mines = [*b"ngol", *b"ugol", *b"egol"].map(i32::from_be_bytes);
+    let distance = |u: &super::Unit| {
+        let (dx, dy) = (
+            f32::from_bits(u.x) - f32::from_bits(at.0),
+            f32::from_bits(u.y) - f32::from_bits(at.1),
+        );
+        dx * dx + dy * dy
+    };
+    let nearest = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&m| {
+            state
+                .unit(Some(m))
+                .is_some_and(|u| u.alive && mines.contains(&u.type_id))
+        })
+        .min_by(|&a, &b| {
+            let (da, db) = (
+                state.unit(Some(a)).map_or(f32::MAX, distance),
+                state.unit(Some(b)).map_or(f32::MAX, distance),
+            );
+            da.total_cmp(&db)
+        });
+    if let Some(mine) = nearest
+        && can_harvest(state, h, mine)
+    {
+        movement::target_order(state, h, "harvest", mine);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

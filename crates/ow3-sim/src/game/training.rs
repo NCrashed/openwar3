@@ -392,6 +392,11 @@ fn end_training(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) {
     // The unit walks to the rally point after the finish event.
     if let Some(rally) = rally {
         super::movement::rally_order(&mut state.borrow_mut(), unit, rally);
+    } else {
+        // A computer's worker goes to gather (c-SCJ-1, hub #15).
+        // PROVISIONAL: before or after the finish event, and with a rally
+        // point, are not read.
+        super::harvest::computer_worker_made(&mut state.borrow_mut(), unit);
     }
     start_head(vm, state, building, add(expiry, NEXT_START));
 }

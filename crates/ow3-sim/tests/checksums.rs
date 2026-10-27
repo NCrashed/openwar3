@@ -256,6 +256,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "SetFloatGameState of the hour with and without a crossing: not matched yet",
     ),
     (
+        "c-SCQ-1.w3g",
+        "units of nine types made, removed and killed: the second pool's groups: not matched yet",
+    ),
+    (
+        "c-SCR-1.w3g",
+        "64 footmen in a grid: the second pool's groups: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

@@ -1025,7 +1025,8 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             parts.extend([(0, None), (1, None), (0, None)]);
         // Ensnare and Web, of no mana cost, as a spell: its object and a limit
         // watch (c-SCI-1: nitt, nmrr, nnwl, hub #15).
-        } else if [*b"Aens", *b"Aweb"].contains(&d.code.to_be_bytes()) {
+        // So does Reincarnation, its watch its cooldown's (c-SCO-1: nwna).
+        } else if [*b"Aens", *b"Aweb", *b"ACrn", *b"AOre"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (2, None)]);
         // Possession one (c-SCI-1: ngh1, hub #15).
         // PROVISIONAL: which of its two the game keeps is not read.

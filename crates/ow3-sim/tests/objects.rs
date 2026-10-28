@@ -602,7 +602,6 @@ fn bladestorm_earthquake_checksums() {
 
 /// `c-SBW-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn bladestorm_earthquake_objects() {
     if let Some(first) = compare_objects("c-SBW-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

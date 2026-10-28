@@ -1895,6 +1895,7 @@ fn effect(s: &mut State, h: u32, c: &Casting, deferred: &mut Vec<Deferred>) -> b
                     stop: sub(add(c.effect_q, n.duration), n.data[0]),
                     objects: Vec::new(),
                     inside: Vec::new(),
+                    leaving: Vec::new(),
                     occupied: None,
                     empty: false,
                 });
@@ -3427,6 +3428,10 @@ pub struct Quake {
     stop: u32,
     objects: Vec<u32>,
     inside: Vec<(u32, u32)>,
+    /// The units of `inside` its last action found out: they keep the slow
+    /// and their object to its next action (c-SBW-1: the Blademaster out at
+    /// 8.799524, his object freed at 9.799456, hub #10).
+    leaving: Vec<u32>,
     /// An object it holds while units are in it, and whether it found none
     /// at its last action.
     occupied: Option<u32>,
@@ -3456,7 +3461,9 @@ fn quakes(s: &mut State) {
             .retain(|&(o, _)| s.unit(Some(o)).is_some_and(|u| u.alive));
         while f32::from_bits(q.next) < next_clock {
             s.table_at(q.next);
-            if f32::from_bits(q.next) > f32::from_bits(q.stop) {
+            // Its last action is the one at its end: the actions run a little
+            // early on the queue (c-SBW-1: 27.796334 for 27.7999, hub #10).
+            if f32::from_bits(q.next) > f32::from_bits(q.stop) - 0.5 * QUAKE_EVERY {
                 super::table::quake_ended(s, &q.objects, &q.inside);
                 if let Some(o) = q.occupied.take() {
                     s.table.defer(o, "Earthquake: occupied");
@@ -3499,7 +3506,15 @@ fn quakes(s: &mut State) {
                 .copied()
                 .filter(|(o, _)| !now.contains(o))
                 .collect();
+            // A unit found out keeps its slow and object to the next action,
+            // and loses them there if still out (c-SBW-1, hub #10).
+            // PROVISIONAL: one back in by then keeps them, nothing made anew.
+            let was_leaving = std::mem::take(&mut q.leaving);
             for (o, obj) in gone {
+                if !was_leaving.contains(&o) {
+                    q.leaving.push(o);
+                    continue;
+                }
                 super::table::quake_left(s, o, obj);
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&o) {
                     u.move_slow = None;
@@ -3509,7 +3524,12 @@ fn quakes(s: &mut State) {
             // The units already in it first, their slows renewed (c-SBW-1:
             // kobold 5's walk at 4.799891 before the Blademaster's object).
             if !first {
-                let staying: Vec<u32> = q.inside.iter().map(|i| i.0).collect();
+                let staying: Vec<u32> = q
+                    .inside
+                    .iter()
+                    .map(|i| i.0)
+                    .filter(|o| !q.leaving.contains(o))
+                    .collect();
                 for o in movement::call_order(s, staying) {
                     super::table::quake_renewed(s, o, false);
                 }

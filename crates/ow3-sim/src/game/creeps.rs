@@ -52,6 +52,9 @@ pub struct Creep {
     /// Woken by a building: its zone checks keep the wake's phase until it
     /// is home again (c-SCA-1, hub #14).
     pub(super) wake_phase: bool,
+    /// The attacker it last fled from and the queue time until which it
+    /// gets no answer to its hits (10 s from the flight; c-SCA-1, hub #14).
+    pub(super) fled_from: Option<(u32, u32)>,
     /// Where its last walk home ended: it walks back there when it loses
     /// its target.
     pub(super) guard: Option<[u32; 2]>,
@@ -445,7 +448,10 @@ fn restart_returns(state: &mut State, caller: u32, at: u32) {
             f32::from_bits(u.x) - f32::from_bits(u.home[0]),
             f32::from_bits(u.y) - f32::from_bits(u.home[1]),
         );
-        if u.alive
+        // The receivers only (SPEC-0030; c-SCA-1: the turtle's own
+        // acquisition at 44.303867 left its timer of the hit at 43.35).
+        if h != caller
+            && u.alive
             && u.owner == CREEPS
             // The return is in progress from the start of its timer until
             // the walk home ends (SPEC-0030; c-RZJ-1: ogre 14, timer from

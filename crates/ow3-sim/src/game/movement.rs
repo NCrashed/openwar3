@@ -3593,6 +3593,37 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         } else {
                             follow::steer(state, &walker, tick)
                         };
+                        // A unit holding its position takes no step after its
+                        // target: at the update that would move it its walk
+                        // ends and it stands (c-SCA-1: the archer at
+                        // 53.393871, the turtle out of her reach).
+                        // Its first walking update only starts the walk.
+                        let steer = if matches!(steer, follow::Steer::Walk(_))
+                            && state
+                                .unit(Some(h))
+                                .is_some_and(|u| u.holding && !u.entries.hold_walked)
+                        {
+                            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                                u.entries.hold_walked = true;
+                            }
+                            match steer {
+                                follow::Steer::Walk(to) => follow::Steer::Stand(to),
+                                other => other,
+                            }
+                        } else if matches!(steer, follow::Steer::Walk(_))
+                            && state.unit(Some(h)).is_some_and(|u| u.holding)
+                        {
+                            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                                u.entries.hold_walked = false;
+                            }
+                            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                                u.entries.quiet_walk = false;
+                            }
+                            super::table::walk_dropped(state, h);
+                            follow::Steer::Hold
+                        } else {
+                            steer
+                        };
                         match steer {
                             follow::Steer::Walk(to) => {
                                 motion(&mut m, to, true, speed, limit, turn_rate, window);
@@ -3974,6 +4005,11 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     refresh_call_cells(state);
     still.extend(std::mem::take(&mut state.moving));
     state.moving = still;
+    // The walks given up at the updates are freed before (c-SCA-1: the
+    // archer's face walk at 40.525944, before the turtle's give-up, hub #14).
+    if !given_up.is_empty() {
+        super::table::walks_freed(state);
+    }
     for h in given_up {
         // The check tests the creep's current order: one with a target or a
         // point gets the walk (c-SCA-1: the wake's attack at 10.649214, the
@@ -4007,6 +4043,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // idle, with its reaction delay (c-SCA-1: 11.159128, hub #14).
             u.entries.engaged = false;
             u.entries.walk_at_acquire = false;
+            // Its queue goes with its order: no walk home follows (c-SCA-1:
+            // the turtle stopped on its way home, given up at 40.525944,
+            // takes its next target at a check, hub #14).
+            u.creep.queued_home = false;
         }
         state.moving.retain(|&o| o != h);
     }
@@ -5881,12 +5921,18 @@ pub(super) fn retaliate(
     // from it (c-SCA-1: the turtle at 22.537218, 600 from the archer on the
     // high ground, hub #14).
     // PROVISIONAL: "cannot act against" is read as the give-up's target.
+    // So does one hit by an attacker it fled from less than 10 s ago (c-SCA-1:
+    // the turtle at 53.818638, its flight of 44.865 remembered, hub #14).
+    let hit_at = state.event_time.unwrap_or_else(|| state.timers.time());
     if state.unit(Some(victim)).is_some_and(|u| {
         u.alive
             && u.owner == super::creeps::CREEPS
             && u.attack.is_none()
             && u.movement.is_none_or(|m| !m.ordered())
-            && u.entries.given_up_on == Some(attacker)
+            && (u.entries.given_up_on == Some(attacker)
+                || u.creep
+                    .fled_from
+                    .is_some_and(|(a, until)| a == attacker && real_of(hit_at) < real_of(until)))
     }) {
         let reach = state
             .unit(Some(attacker))
@@ -5903,6 +5949,25 @@ pub(super) fn retaliate(
                 super::table::creep_flight_ordered(state, victim);
             }
         }
+        // It remembers the attacker it fled from for 10 s (c-SCA-1: the
+        // archer from 22.537 to 32.530, hub #14).
+        let hit = state.event_time.unwrap_or_else(|| state.timers.time());
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&victim) {
+            u.creep.fled_from = Some((attacker, add(hit, FLED_MEMORY.to_bits())));
+        }
+        return;
+    }
+    // Hits of an attacker it fled from less than 10 s ago get no answer:
+    // no acquisition, no chase, whatever its order (c-SCA-1: the turtle on
+    // its way home, hit at 51.950 inside the memory of its flight of
+    // 44.865, answered the hit of 38.690 after the first one ran out, hub
+    // #14).
+    let hit = state.event_time.unwrap_or_else(|| state.timers.time());
+    if state.unit(Some(victim)).is_some_and(|u| {
+        u.creep
+            .fled_from
+            .is_some_and(|(a, until)| a == attacker && real_of(hit) < real_of(until))
+    }) {
         return;
     }
     // A hero in Bladestorm, its own checks off and with no order, is
@@ -7139,6 +7204,8 @@ fn pick_up_order(state: &mut State, h: u32, item: u32) -> bool {
 
 /// How far a unit that cannot attack runs from its attacker (c-SBJ-1).
 const FLEE: f32 = 300.0;
+/// How long a creep remembers an attacker it fled from (c-SCA-1, hub #14).
+const FLED_MEMORY: f32 = 10.0;
 
 /// Whether unit `h`, hit, runs from its attacker: it cannot attack and
 /// has no order, and is not on hold position.

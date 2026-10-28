@@ -1591,15 +1591,14 @@ fn order_paid(state: &mut State, h: u32, mine: u32) -> bool {
     movement::harvest_order(state, h, Order::Gather { target: mine }, ORDER_HARVEST, at)
 }
 
-/// An acolyte whose walk stopped by itself at its path's end, within reach:
-/// the first update after does not finish the walk, the next one does
-/// (SPEC-0029; c-SDA-1: acolytes 0, 4, 1 and 3, hub #15). True when it
-/// finishes now.
-pub(super) fn arrival_ready(state: &mut State, h: u32) -> bool {
+/// Worker `h` turned to its target within reach (`movement`): its next
+/// update finishes the walk. True when the mark was set, clearing it;
+/// with `set`, sets it.
+pub(super) fn turned_mark(state: &mut State, h: u32, set_it: bool) -> bool {
     let mut g = get(state, h).unwrap_or_default();
-    let ready = std::mem::replace(&mut g.ready, true);
+    let was = std::mem::replace(&mut g.ready, set_it);
     set(state, h, Some(g));
-    ready
+    was
 }
 
 /// Acolyte `h` reached haunted mine `mine`: it is put at once on the free

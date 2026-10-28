@@ -479,6 +479,7 @@ fn construction(state: &mut State, tick: u64) {
     for (h, _) in due {
         movement::stop(state, h);
     }
+    movement::entangling(state);
     // The buildings a worker builds now.
     let worked = movement::worked(state);
     let mut ends = Vec::new();
@@ -1246,6 +1247,8 @@ pub struct State {
     wisp_trees: BTreeMap<u32, (u32, u32)>,
     /// Acolytes that leave their buildings' orders at a tick (SPEC-0026).
     released: Vec<(u32, u64)>,
+    /// Trees of life on their way to entangle a gold mine (SPEC-0029).
+    entangling: Vec<movement::Entangling>,
     harvest_reached: Vec<(u32, u32, bool)>,
     /// Workers that deliver at their next update, with its tick
     /// (SPEC-0029).
@@ -1409,6 +1412,7 @@ impl State {
             paying: BTreeMap::new(),
             wisp_trees: BTreeMap::new(),
             released: Vec::new(),
+            entangling: Vec::new(),
             harvest_reached: Vec::new(),
             deliveries: Vec::new(),
             objects_changed: 0,

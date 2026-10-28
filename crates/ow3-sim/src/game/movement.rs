@@ -1244,6 +1244,31 @@ pub(super) fn start_buildings(state: &mut State) {
     }
 }
 
+/// A walk to a unit within reach at the update's start (SPEC-0029; c-SDA-1,
+/// hub #15): it finishes now with the heading within 0.2 rad of the
+/// direction to the target; else the agent stops, takes that heading, and
+/// it finishes at the next update.
+fn facing_to_finish(
+    state: &State,
+    m: &mut Moving,
+    target: u32,
+    here: [u32; 2],
+    min: [u32; 2],
+) -> bool {
+    let Some(at) = position_of(state, target).map(|p| relative(p, min)) else {
+        return true;
+    };
+    let to = angle(sub(at[0], here[0]), sub(at[1], here[1]));
+    let off = super::facing::angle_difference(to, normal(m.heading));
+    if real_of(off).abs() < ATTACK_ANGLE {
+        return true;
+    }
+    m.heading = to;
+    m.walking = false;
+    m.velocity = [0, 0];
+    false
+}
+
 /// Whether `h` is a worker and `building` a building of its player under
 /// construction.
 fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
@@ -1825,13 +1850,29 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
     done
 }
 
-/// `entangleinstant`: tree of life `h` entangles gold mine `mine` at once
-/// (c-SCC-1: the Night Elf start, hub #15). The mine is hidden and an
-/// entangled gold mine of the tree's player stands in its place with its
-/// gold.
-///
-/// PROVISIONAL: the tree's binding to the mine, and what the hidden mine
-/// keeps, are not read.
+/// The order id of `entangleinstant`.
+const ORDER_ENTANGLE: i32 = 852_148;
+/// A tree of life within this of a gold mine's centre entangles it (its
+/// `Aent` range 500, its collision 144 and a margin, SPEC-0029: it stops
+/// about 656 from the mine).
+/// PROVISIONAL: the margin of 12 is fitted to c-SDB-1 and c-SDC-1.
+const ENTANGLE_REACH: f32 = 656.0;
+
+/// A tree of life on its way to entangle a gold mine (SPEC-0029, "Night
+/// Elf: entangling a gold mine"): uprooting to a queue time, walking,
+/// rooting at a tick, rooted to a queue time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Entangling {
+    Uprooting { tree: u32, mine: u32, until: u32 },
+    Walking { tree: u32, mine: u32 },
+    Rooting { tree: u32, mine: u32, at: u64 },
+    Rooted { tree: u32, mine: u32, until: u32 },
+}
+
+/// `entangleinstant`: tree of life `h` entangles gold mine `mine`. Near it,
+/// at once (c-SCC-1: the Night Elf start, hub #15); farther, it uproots
+/// (2.5 s), walks to it, roots on the building grid at its next update and
+/// entangles it 2.5 s later (c-SDB-1, c-SDC-1).
 fn entangle(state: &mut State, h: u32, mine: u32) -> bool {
     let entangles = state.unit(Some(h)).is_some_and(|u| {
         state
@@ -1840,16 +1881,49 @@ fn entangle(state: &mut State, h: u32, mine: u32) -> bool {
             .get(&u.type_id)
             .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Aent")))
     });
-    let Some((x, y, gold)) = state
+    let mine_at = state
         .unit(Some(mine))
         .filter(|m| m.alive && !m.hidden && m.type_id == i32::from_be_bytes(*b"ngol"))
-        .map(|m| (m.x, m.y, m.resources))
-    else {
+        .map(|m| [m.x, m.y]);
+    let (Some(at), Some(tree)) = (mine_at, state.unit(Some(h)).map(|u| [u.x, u.y])) else {
         return false;
     };
     if !entangles {
         return false;
     }
+    let (dx, dy) = (sub(tree[0], at[0]), sub(tree[1], at[1]));
+    if real_of(add(mul(dx, dx), mul(dy, dy))) <= ENTANGLE_REACH * ENTANGLE_REACH {
+        return entangle_now(state, h, mine);
+    }
+    let until = add(state.timers.time(), ROOT_TIME.to_bits());
+    state.entangling.push(Entangling::Uprooting {
+        tree: h,
+        mine,
+        until,
+    });
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.shown_order = Some((ORDER_ENTANGLE, u64::MAX));
+    }
+    true
+}
+
+/// The time to uproot and to root (`Aroo` `Dur`, 2.5 s).
+const ROOT_TIME: f32 = 2.5;
+/// The distance from the mine of the point a tree of life walks to and
+/// roots at (SPEC-0029; c-SDB-1, hub #15).
+const ROOT_DISTANCE: f32 = 640.0;
+
+/// Tree of life `h` entangles gold mine `mine` now: the mine is hidden and
+/// an entangled gold mine of the tree's player stands in its place with
+/// its gold.
+fn entangle_now(state: &mut State, h: u32, mine: u32) -> bool {
+    let Some((x, y, gold)) = state
+        .unit(Some(mine))
+        .filter(|m| m.alive && !m.hidden)
+        .map(|m| (m.x, m.y, m.resources))
+    else {
+        return false;
+    };
     let owner = state.unit(Some(h)).map_or(-1, |u| u.owner);
     let Some(egol) =
         super::widgets::create_unit(state, owner, i32::from_be_bytes(*b"egol"), [x, y, 0])
@@ -1864,6 +1938,93 @@ fn entangle(state: &mut State, h: u32, mine: u32) -> bool {
     }
     super::table::entangled(state, mine, egol);
     true
+}
+
+/// The trees of life on their way to entangle, at this tick.
+///
+/// PROVISIONAL: the walk is a plain move to the mine's position; the
+/// objects of the walk and of the rooting are not read.
+pub(super) fn entangling(state: &mut State) {
+    let end = add(state.move_clock, crate::timers::TICK);
+    let tick = state.ticks;
+    let due = |q: u32| f32::from_bits(q) <= f32::from_bits(end);
+    for e in std::mem::take(&mut state.entangling) {
+        let next = match e {
+            Entangling::Uprooting { tree, mine, until } if due(until) => {
+                // Uprooted: its footprint goes and it walks.
+                super::obstacles::died(state, tree);
+                // Its goal is the building-grid point 640 from the mine on
+                // the line to the tree, where it roots (c-SDB-1: (0, 256),
+                // hub #15).
+                let goal = match (state.unit(Some(mine)), state.unit(Some(tree))) {
+                    (Some(m), Some(t)) => {
+                        let (dx, dy) = (sub(t.x, m.x), sub(t.y, m.y));
+                        let len = sqrt(add(mul(dx, dx), mul(dy, dy)));
+                        let k = div(ROOT_DISTANCE.to_bits(), len);
+                        let (x, y) = (add(m.x, mul(dx, k)), add(m.y, mul(dy, k)));
+                        let (x, y) =
+                            super::obstacles::site(state, t.type_id, x, y, 270f32.to_bits());
+                        Some([x, y])
+                    }
+                    _ => None,
+                };
+                if let Some(at) = goal {
+                    order(state, tree, Order::Point, ORDER_ENTANGLE, at);
+                }
+                Some(Entangling::Walking { tree, mine })
+            }
+            Entangling::Walking { tree, mine } => {
+                let (t, m) = (state.unit(Some(tree)), state.unit(Some(mine)));
+                let near = match (t, m) {
+                    (Some(t), Some(m)) => {
+                        let (dx, dy) = (sub(t.x, m.x), sub(t.y, m.y));
+                        real_of(add(mul(dx, dx), mul(dy, dy))) <= ENTANGLE_REACH * ENTANGLE_REACH
+                    }
+                    _ => false,
+                };
+                if near {
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&tree) {
+                        u.movement = None;
+                    }
+                    state.drop_path(tree);
+                    // It roots at its next update (c-SDB-1, c-SDC-1: 7 ticks).
+                    Some(Entangling::Rooting {
+                        tree,
+                        mine,
+                        at: tick + 7,
+                    })
+                } else {
+                    Some(e)
+                }
+            }
+            Entangling::Rooting { tree, mine, at } if at <= tick => {
+                let place = state.unit(Some(tree)).map(|u| (u.type_id, u.x, u.y));
+                if let Some((type_id, x, y)) = place {
+                    let facing = 270f32.to_bits();
+                    let ((x, y), footprint) =
+                        super::obstacles::place_building(state, type_id, x, y, facing);
+                    if let Some(Object::Unit(u)) = state.objects.get_mut(&tree) {
+                        u.x = x;
+                        u.y = y;
+                        u.footprint = footprint.map(Box::new);
+                    }
+                }
+                let until = add(state.timers.time(), ROOT_TIME.to_bits());
+                Some(Entangling::Rooted { tree, mine, until })
+            }
+            Entangling::Rooted { tree, mine, until } if due(until) => {
+                entangle_now(state, tree, mine);
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&tree) {
+                    u.shown_order = None;
+                }
+                None
+            }
+            other => Some(other),
+        };
+        if let Some(n) = next {
+            state.entangling.push(n);
+        }
+    }
 }
 
 fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> bool {
@@ -3057,9 +3218,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 m.arrived
             } else {
                 super::harvest::reached(state, h, here, target)
-                    && (!m.arrived
-                        || !super::harvest::reaches_by_distance(state, h, target)
-                        || super::harvest::arrival_ready(state, h))
+                    && (!super::harvest::reaches_by_distance(state, h, target)
+                        || super::harvest::turned_mark(state, h, false)
+                        || {
+                            let facing = facing_to_finish(state, &mut m, target, here, min);
+                            if !facing {
+                                super::harvest::turned_mark(state, h, true);
+                            }
+                            facing
+                        })
             }
         {
             let delivering = matches!(m.order, Order::Return { .. });

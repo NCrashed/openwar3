@@ -308,6 +308,10 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "Orc peons gathering gold and lumber: not matched yet",
     ),
     (
+        "c-SDG-1.w3g",
+        "a building made on a taken place: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

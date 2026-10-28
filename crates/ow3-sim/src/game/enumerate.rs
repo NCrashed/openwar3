@@ -120,8 +120,45 @@ fn group_enum(
         filter_unit: Some(u),
         ..c
     });
-    if let Some(units) = state.borrow_mut().group(group) {
-        units.extend(chosen);
+    let mut s = state.borrow_mut();
+    for u in chosen {
+        group_insert(&mut s, group, u);
+    }
+}
+
+/// Adds unit `u` to group `group` in the game's order (hub #15, read in
+/// c-SDK-1 and on c-SCC-1's MeleeClearExcessUnits): before the first unit
+/// of the same type with a larger key (the table entry of the first object
+/// of its creation); with none, a hero at the front, any other unit at the
+/// end.
+///
+/// PROVISIONAL: a unit made without the table keys by its handle.
+fn group_insert(state: &mut State, group: Option<u32>, u: u32) {
+    let key = |state: &State, h: u32| {
+        state
+            .unit(Some(h))
+            .and_then(|x| x.entries.id)
+            .map_or(h, |id| id[0])
+    };
+    let Some((type_id, k)) = state.unit(Some(u)).map(|x| (x.type_id, key(state, u))) else {
+        return;
+    };
+    let members = state.group(group).cloned().unwrap_or_default();
+    if members.contains(&u) {
+        return;
+    }
+    let at = members.iter().position(|&o| {
+        state
+            .unit(Some(o))
+            .is_some_and(|x| x.type_id == type_id && key(state, o) > k)
+    });
+    let hero = type_id.to_be_bytes()[0].is_ascii_uppercase();
+    if let Some(units) = state.group(group) {
+        match at {
+            Some(i) => units.insert(i, u),
+            None if hero => units.insert(0, u),
+            None => units.push(u),
+        }
     }
 }
 
@@ -389,12 +426,8 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "native GroupAddUnit takes group whichGroup, unit whichUnit returns nothing",
         |vm, state, args| {
             let mut state = state.borrow_mut();
-            let unit = handle(&args[1]).filter(|&u| state.unit(Some(u)).is_some());
-            if let Some(u) = unit
-                && let Some(units) = state.group(handle(&args[0]))
-                && !units.contains(&u)
-            {
-                units.push(u);
+            if let Some(u) = handle(&args[1]).filter(|&u| state.unit(Some(u)).is_some()) {
+                group_insert(&mut state, handle(&args[0]), u);
             }
             Ok(None)
         }

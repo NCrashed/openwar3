@@ -312,6 +312,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "the analyst's test of placement or watches: not matched yet",
     ),
     (
+        "c-SDJ-1.w3g",
+        "group order and the enumeration's order: not matched yet",
+    ),
+    (
+        "c-SDK-1.w3g",
+        "group order with heroes and removed units: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

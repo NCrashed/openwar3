@@ -320,6 +320,14 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "group order with heroes and removed units: not matched yet",
     ),
     (
+        "c-SDM-1.w3g",
+        "the enumeration's blocks, 256 footmen: not matched yet",
+    ),
+    (
+        "c-SDN-1.w3g",
+        "the enumeration's block edges: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

@@ -55,7 +55,10 @@ pub struct ObjectTable {
     /// Each unit's watches of the last change of the hour (in `day` too),
     /// freed in its removal's group A before its R (c-SCC-1: the nrvi's
     /// 10571, hub #15).
-    pub day_of: std::collections::BTreeMap<u32, Vec<u32>>,
+    pub day_of: std::collections::BTreeMap<u32, (Vec<u32>, Vec<u32>)>,
+    /// The other parts of the hour of units removed, freed 0.0001 s after
+    /// the removals' tails (c-SCC-1: 10573 .. at 0.0002, hub #15).
+    pub removal_late: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
     /// The pathing parts of each destructable, freed when it dies.
@@ -149,6 +152,8 @@ pub struct ObjectTable {
     /// loading's 0.0001 s frees, ahead of the removals' tails (c-SCC-1: 10045,
     /// hub #15).
     pub executed: Vec<u32>,
+    /// Each started timer's object of its first start, by its handle.
+    pub timer_starts: std::collections::BTreeMap<u32, u32>,
     /// Every native call by name, while the log is kept.
     pub call_log: Vec<&'static str>,
 }
@@ -170,6 +175,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             day_of: std::collections::BTreeMap::new(),
+            removal_late: Vec::new(),
             walks_due: Vec::new(),
             mine_used: false,
             computer_harvest: None,
@@ -209,6 +215,7 @@ impl ObjectTable {
             group_made: None,
             group_objects: std::collections::BTreeMap::new(),
             executed: Vec::new(),
+            timer_starts: std::collections::BTreeMap::new(),
             call_log: Vec::new(),
         }
     }
@@ -449,6 +456,10 @@ impl ObjectTable {
             for entry in tail {
                 self.free(tick, entry, "RemoveUnit");
             }
+        }
+        // Then, 0.0001 s later, their other parts of the hour (`removal_late`).
+        for entry in std::mem::take(&mut self.removal_late) {
+            self.deferred.push((tick, entry, "time of day"));
         }
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.timed)
             .into_iter()
@@ -1637,6 +1648,15 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
                 b.sort_by_key(|e| std::cmp::Reverse(entries.iter().position(|x| x == e)));
                 b.extend([8, 7, 6, 5, 4, 9, 2, 3, 1, 0].map(|k| entries[k]));
                 (a, b)
+            } else if std::ptr::eq(making, &GOLD_MINE) {
+                // A gold mine's: A its 10, B its 19 .. 14 and its first set
+                // (c-SCC-1: the Undead's mine at call 3104, hub #15).
+                (
+                    vec![entries[10]],
+                    [19, 18, 17, 16, 15, 14, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0]
+                        .map(|k| entries[k])
+                        .to_vec(),
+                )
             } else {
                 (Vec::new(), Vec::new())
             },
@@ -1745,15 +1765,17 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
         if night {
             kinds.push("unit state: limit watch");
         }
-        let mut own = Vec::new();
+        let (mut own, mut rest) = (Vec::new(), Vec::new());
         for kind in kinds {
             let e = state.table.take(tick, kind);
             new_parts.push(e);
             if kind == "unit state: limit watch" {
                 own.push(e);
+            } else {
+                rest.push(e);
             }
         }
-        state.table.day_of.insert(h, own);
+        state.table.day_of.insert(h, (own, rest));
     }
     if !to_day {
         new_parts.push(state.table.take(tick, "time of day"));
@@ -5514,8 +5536,12 @@ pub(super) fn unit_removed(state: &mut super::State, h: u32) {
         .unwrap_or_default();
     // Its parts of the hour go before its own R (`day_of`).
     // PROVISIONAL: read on the nrvi; its watch only, its rate part goes later.
-    if let Some(own) = state.table.day_of.remove(&h) {
-        state.table.day.retain(|e| !own.contains(e));
+    if let Some((own, rest)) = state.table.day_of.remove(&h) {
+        state
+            .table
+            .day
+            .retain(|e| !own.contains(e) && !rest.contains(e));
+        state.table.removal_late.extend(rest.iter().rev().copied());
         // (A ends with its R, a mana R if it has mana, and its L.)
         let mana = state
             .unit(Some(h))

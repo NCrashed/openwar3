@@ -95,6 +95,24 @@ fn filter_then_act(
     }
 }
 
+/// The order a `GroupEnum*` calls its filter in (hub #15, c-SDM-1): by the
+/// 256 x 256 blocks of the map, rows from the bottom up, left to right,
+/// newest first in a block (in range, in a rect); the player's units newest
+/// first (of a player); as made (of a type).
+#[derive(Clone, Copy)]
+enum Walk {
+    Blocks,
+    Newest,
+    Made,
+}
+
+/// The side of the enumeration's blocks.
+const BLOCK: f32 = 256.0;
+/// Their edges from the world's lower left corner: 24 < o <= 28.5 fits every
+/// case read (c-SDM-1, c-SDJ-1, c-SDN-1, c-SCC-1's groups; hub #15).
+/// PROVISIONAL: the exact edge, and other maps' bounds, are not read.
+const BLOCK_EDGE: f32 = 28.0;
+
 /// `GroupEnum*`: clears the group, then adds the units that `include`
 /// accepts and that pass the filter.
 fn group_enum(
@@ -103,6 +121,7 @@ fn group_enum(
     group: Option<u32>,
     filter: Option<u32>,
     limit: Option<i32>,
+    walk: Walk,
     include: impl Fn(&Unit) -> bool,
 ) {
     let candidates: Vec<u32> = {
@@ -112,9 +131,25 @@ fn group_enum(
         };
         units.clear();
         let all = state.units.clone();
-        all.into_iter()
+        let mut found: Vec<u32> = all
+            .into_iter()
             .filter(|&u| state.unit(Some(u)).is_some_and(&include))
-            .collect()
+            .collect();
+        match walk {
+            Walk::Made => {}
+            Walk::Newest => found.reverse(),
+            Walk::Blocks => {
+                found.reverse();
+                let min = [state.world_bounds[0], state.world_bounds[1]];
+                let block = |p: u32, m: u32| ((f(p) - f(m) - BLOCK_EDGE) / BLOCK).floor() as i64;
+                found.sort_by_key(|&u| {
+                    state.unit(Some(u)).map_or((i64::MAX, i64::MAX), |x| {
+                        (block(x.y, min[1]), block(x.x, min[0]))
+                    })
+                });
+            }
+        }
+        found
     };
     let chosen = select(vm, state, candidates, filter, limit, |c, u| Context {
         filter_unit: Some(u),
@@ -531,9 +566,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         "native GroupEnumUnitsOfPlayer takes group whichGroup, player whichPlayer, boolexpr filter returns nothing",
         |vm, state, args| {
             let owner = state.borrow().player_id(handle(&args[1]));
-            group_enum(vm, state, handle(&args[0]), handle(&args[2]), None, |u| {
-                Some(u.owner) == owner
-            });
+            group_enum(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[2]),
+                None,
+                Walk::Newest,
+                |u| Some(u.owner) == owner,
+            );
             Ok(None)
         }
     );
@@ -550,9 +591,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         native!(add, state, declaration, |vm, state, args| {
             let (x, y, radius) = (real(&args[1]), real(&args[2]), real(&args[3]));
             let limit = counted.then(|| integer(&args[5]));
-            group_enum(vm, state, handle(&args[0]), handle(&args[4]), limit, |u| {
-                in_range(u, x, y, radius)
-            });
+            group_enum(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[4]),
+                limit,
+                Walk::Blocks,
+                |u| in_range(u, x, y, radius),
+            );
             Ok(None)
         });
     }
@@ -572,9 +619,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             };
             let radius = real(&args[2]);
             let limit = counted.then(|| integer(&args[4]));
-            group_enum(vm, state, handle(&args[0]), handle(&args[3]), limit, |u| {
-                in_range(u, x, y, radius)
-            });
+            group_enum(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[3]),
+                limit,
+                Walk::Blocks,
+                |u| in_range(u, x, y, radius),
+            );
             Ok(None)
         });
     }
@@ -593,9 +646,18 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(None);
             };
             let limit = counted.then(|| integer(&args[3]));
-            group_enum(vm, state, handle(&args[0]), handle(&args[2]), limit, |u| {
-                (f(min_x)..=f(max_x)).contains(&f(u.x)) && (f(min_y)..=f(max_y)).contains(&f(u.y))
-            });
+            group_enum(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[2]),
+                limit,
+                Walk::Blocks,
+                |u| {
+                    (f(min_x)..=f(max_x)).contains(&f(u.x))
+                        && (f(min_y)..=f(max_y)).contains(&f(u.y))
+                },
+            );
             Ok(None)
         });
     }
@@ -826,9 +888,15 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         native!(add, state, declaration, |vm, state, args| {
             let type_id = string(&args[1]).and_then(|n| state.borrow().data.unit_id(n));
             let limit = counted.then(|| integer(&args[3]));
-            group_enum(vm, state, handle(&args[0]), handle(&args[2]), limit, |u| {
-                Some(u.type_id) == type_id
-            });
+            group_enum(
+                vm,
+                state,
+                handle(&args[0]),
+                handle(&args[2]),
+                limit,
+                Walk::Made,
+                |u| Some(u.type_id) == type_id,
+            );
             Ok(None)
         });
     }

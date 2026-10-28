@@ -159,8 +159,10 @@ endfunction
             "3", "1", "-", // insertion order
             "1", "2", "3", "-", // the radius is inclusive
             "1", "seen 4", // And stops after a false left side
-            "1", "3", "4", "-", // Or skips Odd when Big holds
-            "1", "2", "-", // counted
+            // Or skips Odd when Big holds; the enumeration goes by blocks of
+            // 256, rows from the bottom: 3 at (0, 300) is in the row above
+            // 1 and 4 (hub #15).
+            "1", "4", "3", "-", "1", "2", "-", // counted
             "2", "4", "empty",
         ]
     );

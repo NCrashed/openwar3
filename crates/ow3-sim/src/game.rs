@@ -3424,12 +3424,23 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                         };
                     if !again {
                         let made = s.table.take_n(tick, objects, tag);
+                        // A started timer's object goes with it (`DestroyTimer`).
+                        if tag == "TimerStart"
+                            && let Some(Value::Handle(Some(t))) = args.first()
+                            && let Some(&e) = made.first()
+                        {
+                            s.table.timer_starts.insert(*t, e);
+                        }
                         if tag == "TriggerExecute" && s.ticks == 0 {
                             s.table.executed.extend(made.first().copied());
                         }
                         if matches!(
                             tag,
-                            "CreateGroup" | "Location" | "GetUnitLoc" | "GetStartLocationLoc"
+                            "CreateGroup"
+                                | "Location"
+                                | "GetUnitLoc"
+                                | "GetStartLocationLoc"
+                                | "CreateTimer"
                         ) {
                             s.table.group_made = made.first().copied();
                         }
@@ -3445,7 +3456,11 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                 // `RemoveLocation`).
                 if matches!(
                     tag,
-                    "CreateGroup" | "Location" | "GetUnitLoc" | "GetStartLocationLoc"
+                    "CreateGroup"
+                        | "Location"
+                        | "GetUnitLoc"
+                        | "GetStartLocationLoc"
+                        | "CreateTimer"
                 ) && let Ok(Some(Value::Handle(Some(g)))) = &result
                 {
                     let mut s = state.borrow_mut();
@@ -3496,6 +3511,14 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
         |vm, state, args| {
             if let Some(handle) = handle(&args[0]) {
                 let mut state = state.borrow_mut();
+                // Its objects go 0.0001 s later: its making's, then its start's
+                // (c-SCC-1: 10032, 10033 at 0.0101, hub #15).
+                if let Some(e) = state.table.group_objects.remove(&handle) {
+                    state.table.defer(e, "timer");
+                }
+                if let Some(e) = state.table.timer_starts.remove(&handle) {
+                    state.table.defer(e, "timer start");
+                }
                 state.stop_timer(handle);
                 state.objects.remove(&handle);
             }

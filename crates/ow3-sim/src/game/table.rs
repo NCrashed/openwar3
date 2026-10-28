@@ -58,6 +58,9 @@ pub struct ObjectTable {
     pub destructable_paths: std::collections::BTreeMap<u32, Vec<u32>>,
     /// A gold mine had a worker inside (its object taken).
     pub mine_used: bool,
+    /// The idle workers of the computer whose new worker's harvest order is
+    /// being given (`computer_harvest_ordered`), or none.
+    pub computer_harvest: Option<usize>,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
     /// ahead of its cooldowns, freed ahead of a later timer of the tick
     /// (`flush_early`).
@@ -148,6 +151,7 @@ impl ObjectTable {
             day: Vec::new(),
             walks_due: Vec::new(),
             mine_used: false,
+            computer_harvest: None,
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
             cast_at_once: false,
@@ -539,6 +543,9 @@ pub struct UnitEntries {
     /// Its walk is that of a goal taken in reach after a swing, which ends
     /// when it faces its target.
     pub quiet_walk: bool,
+    /// Holding its position, its chase made one turning update: the next
+    /// that would step ends the walk (c-SCA-1, the archer).
+    pub hold_walked: bool,
     /// The objects of its Wind Walk freed at the fade and at the end.
     pub fade: Vec<u32>,
     pub lasting: Vec<u32>,
@@ -780,6 +787,26 @@ const BUILDING: Making = Making {
 /// arcane vault only.
 fn building_layout(state: &super::State, type_id: i32) -> Option<(usize, usize, f32)> {
     let t = state.data.units.get(&type_id)?;
+    let head = 14
+        + usize::from(t.weapon.is_some() || t.weapon2.is_some())
+        + 2 * usize::from(t.queue)
+        + 2 * usize::from(t.upgrades);
+    let tail = |id: i32| {
+        let others = t.abilities.iter().filter(|&&a| a != id).count();
+        2 + others + usize::from(t.rally) + 3 * usize::from(t.sells_items)
+    };
+    // An Undead building growing blight (Abgl): the blight's three in the
+    // place of the dispel's five, two more before them, all kept (c-SCC-1:
+    // the necropolis, 20 .. 22, hub #15). A negative time: no dispel.
+    // PROVISIONAL: what the two before are is not read.
+    let blight = i32::from_be_bytes(*b"Abgl");
+    let dispelling = t
+        .abilities
+        .iter()
+        .any(|a| [*b"Abds", *b"Abdl"].contains(&a.to_be_bytes()));
+    if !dispelling && t.abilities.contains(&blight) {
+        return Some((head + 2 + 3 + tail(blight) + 2, head + 2, -1.0));
+    }
     let (&id, dispel) = t.abilities.iter().find_map(|a| {
         [*b"Abds", *b"Abdl"]
             .contains(&a.to_be_bytes())
@@ -796,13 +823,7 @@ fn building_layout(state: &super::State, type_id: i32) -> Option<(usize, usize, 
         0
     };
     let after = step * steps as f32;
-    let head = 14
-        + usize::from(t.weapon.is_some() || t.weapon2.is_some())
-        + 2 * usize::from(t.queue)
-        + 2 * usize::from(t.upgrades);
-    let others = t.abilities.iter().filter(|&&a| a != id).count();
-    let tail = 2 + others + usize::from(t.rally) + 3 * usize::from(t.sells_items);
-    Some((head + 5 + tail + 2, head, after))
+    Some((head + 5 + tail(id) + 2, head, after))
 }
 
 /// The five of a building's dispel, from its first, in the order they go
@@ -1005,11 +1026,11 @@ fn second_pool_left(state: &mut super::State, h: u32) {
 
 /// The objects a unit or building of a computer player takes after its own
 /// (c-SCV-1, hub #15): two kept (a town hall three), nine freed 0.0001 s
-/// later, for a worker three more freed then for each worker its player has
-/// (itself included), and for a unit not a worker a last kept one.
+/// later, for a worker more freed then (its growth, below), and for a unit
+/// not a worker a last kept one.
 ///
 /// PROVISIONAL: when the kept ones go is not read.
-fn computer_tail(state: &mut super::State, owner: i32, type_id: i32, building: bool) {
+fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, building: bool) {
     let computer = state
         .setup
         .slots
@@ -1022,30 +1043,19 @@ fn computer_tail(state: &mut super::State, owner: i32, type_id: i32, building: b
     let Some(t) = state.data.units.get(&type_id) else {
         return;
     };
-    let worker = |state: &super::State, t: &crate::data::UnitType| {
-        t.abilities
-            .iter()
-            .any(|&a| [*b"Ahar", *b"Aaha", *b"Awha"].contains(&ability_code(state, a)))
-    };
     let is_worker = !building && worker(state, t);
-    let town_hall = building && t.classes.iter().any(|c| c == "townhall");
-    let kept = if town_hall { 3 } else { 2 };
-    let workers = if is_worker {
-        state
-            .units
-            .iter()
-            .filter(|&&u| {
-                state.unit(Some(u)).is_some_and(|x| {
-                    x.alive
-                        && x.owner == owner
-                        && state
-                            .data
-                            .units
-                            .get(&x.type_id)
-                            .is_some_and(|d| worker(state, d))
-                })
-            })
-            .count()
+    // Two kept, a town hall too (c-SCC-1: the necropolis, call 3099, hub
+    // #15).
+    let kept = 2;
+    // A worker sent to gather at once takes none: its order's runs follow
+    // (`computer_harvest_ordered`; c-SCC-1, hub #15). One that stays idle
+    // takes 3 more for each idle worker of its player, itself included
+    // (c-SCX-1: acolyte 12, wisp 15, acolyte 18).
+    if is_worker && super::harvest::computer_mine(state, h).is_some() {
+        return;
+    }
+    let growth = if is_worker {
+        3 * super::harvest::idle_workers(state, owner)
     } else {
         0
     };
@@ -1053,9 +1063,46 @@ fn computer_tail(state: &mut super::State, owner: i32, type_id: i32, building: b
     let tick = state.table.now;
     let tail = state
         .table
-        .take_n(tick, kept + 9 + 3 * workers + last, "computer unit");
-    for &e in &tail[kept..kept + 9 + 3 * workers] {
+        .take_n(tick, kept + 9 + growth + last, "computer unit");
+    for &e in &tail[kept..kept + 9 + growth] {
         state.table.defer(e, "computer unit");
+    }
+}
+
+/// Whether type `t` is a worker: it gathers (Ahar, Aaha or Awha).
+pub(super) fn worker(state: &super::State, t: &crate::data::UnitType) -> bool {
+    t.abilities
+        .iter()
+        .any(|&a| [*b"Ahar", *b"Aaha", *b"Awha"].contains(&ability_code(state, a)))
+}
+
+/// A Haunted Gold Mine made by `CreateBlightedGoldmine` (c-SCC-1: call
+/// 3105, hub #15): a gold mine's 22 first, its three of 11 .. 13 freed at
+/// once, then the haunted mine's 49 (taking those three first), all kept,
+/// the creation's pair freed 0.0001 s later, and a computer's tail.
+///
+/// PROVISIONAL: what its parts are (the five and the five groups of four
+/// match the workers it holds) and when they go is not read.
+pub(super) fn blighted_mine_made(state: &mut super::State, h: u32) {
+    let Some((owner, type_id)) = state.unit(Some(h)).map(|u| (u.owner, u.type_id)) else {
+        return;
+    };
+    let tick = state.table.now;
+    let mine = state.table.take_n(tick, 22, "blighted mine: gold mine");
+    for &e in &mine[11..14] {
+        state.table.free(tick, e, "blighted mine: gold mine");
+    }
+    let body = state.table.take_n(tick, 49, "blighted mine: unit");
+    for e in state.table.take_n(tick, 2, "blighted mine: unit") {
+        state.table.defer(e, "blighted mine: unit");
+    }
+    computer_tail(state, h, owner, type_id, true);
+    let id = [body[0], state.table.creation_of(body[0])];
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.entries = UnitEntries {
+            id: Some(id),
+            ..UnitEntries::default()
+        };
     }
 }
 
@@ -1230,14 +1277,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
     }
-    computer_tail(state, owner, type_id, building.is_some());
+    computer_tail(state, h, owner, type_id, building.is_some());
     let mut pending_dispel = Vec::new();
     if let Some((count, at, after)) = building {
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
-        if std::mem::take(&mut state.table.constructing) {
+        if after < 0.0 {
+            // Its blight's three are kept (`building_layout`).
+        } else if std::mem::take(&mut state.table.constructing) {
             pending_dispel = DISPEL_PARTS.map(|k| entries[at + k]).to_vec();
         } else {
             let end = ow3_math::add(state.timers.time(), after.to_bits());
@@ -2047,6 +2096,10 @@ pub(super) fn item_used_end(
 /// 7 .. 0 and the order when the order ends (the worker leaves the mine
 /// with its gold).
 pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
+    if let Some(idle) = state.table.computer_harvest.take() {
+        computer_harvest_ordered(state, h, idle);
+        return;
+    }
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
@@ -2064,6 +2117,45 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         let kept = if tree { n - 5 } else { n - 6 };
         e.harvest_arrive = parts[kept..n - 4].iter().rev().copied().collect();
         e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
+    }
+    walk_made_at_order(state, h);
+}
+
+/// A computer's new worker `h` is sent to its gold mine (c-SCC-1: the Orc's
+/// peons, hub #15): the order and its record, kept; a run of 18 (a head
+/// of 4 and the 14 parts of the mine), freed 0.0001 s later, and a walk;
+/// then the order started again: a run of 24 (9 freed 0.0001 s later, 9
+/// kept, 2 freed when the walk to the mine ends, 4 freed 0.0001 s later)
+/// and its walk, the first walk given up. The kept part grows by 3 for
+/// each idle worker of its player, `idle` (c-SCX-1).
+///
+/// PROVISIONAL: the six entries of the second run the first lacks, and
+/// where the growth sits in it, are not read.
+fn computer_harvest_ordered(state: &mut super::State, h: u32, idle: usize) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    order_ended(state, h);
+    for e in state.table.take_n(tick, 18, "harvest: order start") {
+        state.table.defer(e, "harvest: order start");
+    }
+    walk_made_at_order(state, h);
+    let kept = 9 + 3 * idle;
+    let run = state.table.take_n(tick, 15 + kept, "harvest: order start");
+    for &e in &run[..9] {
+        state.table.defer(e, "harvest: order start");
+    }
+    for &e in &run[9 + kept + 2..] {
+        state.table.defer(e, "harvest: order start");
+    }
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = run[9 + kept..9 + kept + 2].iter().rev().copied().collect();
+        e.order = run[9..9 + kept]
+            .iter()
+            .rev()
+            .copied()
+            .chain([record, order])
+            .collect();
     }
     walk_made_at_order(state, h);
 }
@@ -5783,7 +5875,15 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
                 all.extend(e.current.take());
                 all
             } else {
-                std::mem::take(&mut e.acquisition)
+                // Its target's object last (c-SCA-1: the turtle's 1703 of the
+                // call answer at 38.686954, freed first at 40.526043, hub #14).
+                let mut all = std::mem::take(&mut e.acquisition);
+                all.extend(
+                    std::mem::take(&mut e.target_death)
+                        .into_iter()
+                        .map(|(_, o)| o),
+                );
+                all
             }
         })
         .unwrap_or_default();
@@ -5813,12 +5913,27 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
     if let Some(p) = entries(state, h).and_then(|e| e.wake_part.take()) {
         state.table.defer(p, "creep: woken");
     }
+    // An order of the game it had (a return home it was stopped on) goes
+    // with it: its extra object here, its order after the order's objects
+    // (c-SCA-1: 1674 and 1656 at 40.526043, hub #14).
+    let game = entries(state, h)
+        .map(|e| {
+            e.game_order = false;
+            std::mem::take(&mut e.game_objects)
+        })
+        .unwrap_or_default();
+    if let Some(&extra) = game.get(1) {
+        state.table.defer(extra, "game order: extra object");
+    }
     state.table.defer(record, "order record");
     let order = entries(state, h)
         .map(|e| std::mem::take(&mut e.order))
         .unwrap_or_default();
     for e in order {
         state.table.defer(e, "order: given up");
+    }
+    if let Some(&k) = game.first() {
+        state.table.defer(k, "game order");
     }
     state.table.defer(record2, "order record");
     state.table.defer(one, "guard: given up");

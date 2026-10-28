@@ -1589,7 +1589,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let at = [real(&args[1]), real(&args[2]), real(&args[3])];
             let h = create_unit_by_script(&mut s, owner, i32::from_be_bytes(*b"ugol"), at);
             if let Some(h) = h {
-                super::table::unit_made(&mut s, h);
+                super::table::blighted_mine_made(&mut s, h);
                 super::harvest::computer_worker_made(&mut s, h);
             }
             drop(s);

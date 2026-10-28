@@ -1319,16 +1319,29 @@ fn start_waiting(state: &mut State) {
 /// PROVISIONAL: which town hall counts with several, the search's objects
 /// and the order's drop on a far mine are not built.
 pub(super) fn computer_worker_made(state: &mut State, h: u32) {
-    let Some(owner) = state.unit(Some(h)).map(|u| u.owner) else {
+    let Some(mine) = computer_mine(state, h) else {
         return;
     };
+    // Its order's kept part grows by 3 for each idle worker of its player,
+    // itself not counted (c-SCX-1, hub #15: 9, 9, 12, 15, 18, 18).
+    let owner = state.unit(Some(h)).map_or(-1, |u| u.owner);
+    let idle = idle_workers(state, owner).saturating_sub(1);
+    state.table.computer_harvest = Some(idle);
+    movement::target_order(state, h, "harvest", mine);
+    state.table.computer_harvest = None;
+}
+
+/// The gold mine a computer's new worker `h` is sent to: the plain one
+/// nearest its player's first town hall, when it can gather from it.
+pub(super) fn computer_mine(state: &State, h: u32) -> Option<u32> {
+    let owner = state.unit(Some(h))?.owner;
     let computer = state
         .setup
         .slots
         .get(owner as usize)
         .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER);
     if !computer || gathering(state, h).is_none() {
-        return;
+        return None;
     }
     let hall = state.units.iter().copied().find(|&b| {
         state.unit(Some(b)).is_some_and(|u| {
@@ -1341,9 +1354,7 @@ pub(super) fn computer_worker_made(state: &mut State, h: u32) {
                     .is_some_and(|t| t.classes.iter().any(|c| c == "townhall"))
         })
     });
-    let Some(at) = hall.and_then(|b| state.unit(Some(b))).map(|u| (u.x, u.y)) else {
-        return;
-    };
+    let at = hall.and_then(|b| state.unit(Some(b))).map(|u| (u.x, u.y))?;
     let mines = [*b"ngol", *b"ugol", *b"egol"].map(i32::from_be_bytes);
     let distance = |u: &super::Unit| {
         let (dx, dy) = (
@@ -1367,12 +1378,31 @@ pub(super) fn computer_worker_made(state: &mut State, h: u32) {
                 state.unit(Some(b)).map_or(f32::MAX, distance),
             );
             da.total_cmp(&db)
-        });
-    if let Some(mine) = nearest
-        && can_harvest(state, h, mine)
-    {
-        movement::target_order(state, h, "harvest", mine);
-    }
+        })?;
+    can_harvest(state, h, nearest).then_some(nearest)
+}
+
+/// The idle workers of player `owner`: its living workers with no order
+/// (c-SCX-1, hub #15).
+pub(super) fn idle_workers(state: &State, owner: i32) -> usize {
+    state
+        .units
+        .iter()
+        .filter(|&&w| {
+            state.unit(Some(w)).is_some_and(|u| {
+                u.alive
+                    && u.owner == owner
+                    && !u.hidden
+                    && u.movement.is_none()
+                    && u.attack.is_none()
+                    && state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .is_some_and(|t| super::table::worker(state, t))
+            })
+        })
+        .count()
 }
 #[cfg(test)]
 mod tests {

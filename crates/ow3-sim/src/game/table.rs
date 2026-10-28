@@ -906,6 +906,43 @@ pub(super) fn summon_made(state: &mut super::State, caster: u32, h: u32, cost: i
     }
 }
 
+/// The count of a unit's creation objects as read ability by ability for
+/// an Undead unit or a Night Elf worker (c-SCC-1: the ghoul 18, the acolyte
+/// 23, the wisp 20, each with the pair after; hub #15): the common start of
+/// ten, the unit's own L, Ablr for the Undead (blight regeneration), Amov
+/// when it moves, Aatk with a weapon, each ability one more and an L for
+/// those acting on a target or a corpse, a worker's build ability and its
+/// s, an inventory one.
+///
+/// PROVISIONAL: other races' units keep their counts as read before.
+fn read_body(state: &super::State, type_id: i32) -> Option<usize> {
+    let t = state.data.units.get(&type_id)?;
+    let race = t.race.to_ascii_lowercase();
+    let is_worker = worker(state, t);
+    if !(race == "undead" || (race == "nightelf" && is_worker)) {
+        return None;
+    }
+    const L_ABILITIES: [[u8; 4]; 6] = [*b"Acan", *b"Arst", *b"Alam", *b"Auns", *b"Adtn", *b"Aren"];
+    const INVENTORY: [[u8; 4]; 5] = [*b"AInv", *b"Aihn", *b"Aion", *b"Aien", *b"Aiun"];
+    let mut n = 10 + 1;
+    n += usize::from(race == "undead");
+    n += usize::from(f32::from_bits(t.speed) > 0.0);
+    n += usize::from(t.weapon.is_some() || t.weapon2.is_some());
+    let mut inventory = false;
+    for &a in &t.abilities {
+        let id = a.to_be_bytes();
+        if INVENTORY.contains(&id) {
+            inventory = true;
+            continue;
+        }
+        n += 1 + usize::from(L_ABILITIES.contains(&id));
+    }
+    n += usize::from(inventory);
+    n += 2 * usize::from(is_worker);
+    // The pair freed 0.0001 s later.
+    Some(n + 2)
+}
+
 /// The abilities of type `type_id` other than the hidden inventory ones.
 ///
 /// PROVISIONAL: a unit with two of its own is taken as one with one.
@@ -1313,7 +1350,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .units
             .get(&type_id)
             .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Ashm")));
-        own_abilities(state, type_id).saturating_sub(1) + usize::from(shadowmeld)
+        match read_body(state, type_id) {
+            Some(total) => total.saturating_sub(UNIT.count),
+            None => own_abilities(state, type_id).saturating_sub(1) + usize::from(shadowmeld),
+        }
     } else {
         0
     };

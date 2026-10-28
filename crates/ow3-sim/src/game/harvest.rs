@@ -365,6 +365,17 @@ pub(super) fn passes_through(state: &State, h: u32) -> bool {
     get(state, h).is_some_and(|g| g.cycling)
 }
 
+/// Whether worker `h` goes into its mine in this tick and has had its
+/// update: it went in there, and the later updates of the tick do not see
+/// it (hub #15, c-SCC-1: peon 1 walked on past peon 2 going in at 0.6).
+pub(super) fn gone_in_now(state: &State, h: u32) -> bool {
+    state.updated.contains(&h)
+        && state.mines.values().any(|m| {
+            m.inside
+                .is_some_and(|(w, t, leave)| w == h && t == state.ticks && leave == 0)
+        })
+}
+
 /// The workers waiting at the mines, in the order of the mines.
 pub(super) fn waiting(state: &State) -> impl Iterator<Item = u32> + '_ {
     state.mines.values().flat_map(|m| m.waiting.iter().copied())
@@ -716,6 +727,25 @@ fn forget_others(state: &mut State) {
     }
 }
 
+/// A computer's worker reaching a gold mine: an r of the harvest's timer
+/// (c-SCC-1: 10807 after peon 2's going in, 11160 and 11161 for the next
+/// peons at the busy mine, hub #15).
+///
+/// PROVISIONAL: its owner and when it goes are not read.
+fn computer_harvest_timer(state: &mut State, h: u32) {
+    let computer = state.unit(Some(h)).is_some_and(|u| {
+        state
+            .setup
+            .slots
+            .get(u.owner as usize)
+            .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER)
+    });
+    if computer {
+        let tick = state.table.now;
+        state.table.take(tick, "computer worker: harvest timer");
+    }
+}
+
 /// A worker at its mine: with a load it first takes it back; else it
 /// enters if the mine is free, or waits.
 fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
@@ -736,6 +766,7 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         entry.starting.push((h, tick + UPDATE));
         state.objects_change_in(tick + UPDATE);
         state.objects_change_in(tick + 2 * UPDATE);
+        computer_harvest_timer(state, h);
     }
 }
 
@@ -882,6 +913,7 @@ fn enter_mines(state: &Rc<RefCell<State>>) {
             // Its objects of going in, then its walk ends (SPEC-0024;
             // c-RXI-1: worker 5 at 871).
             super::table::harvest_entered(&mut s, w);
+            computer_harvest_timer(&mut s, w);
             super::table::harvest_arrived(&mut s, w);
             super::table::walk_dropped_at_update(&mut s, w);
             push_aside(&mut s, w);

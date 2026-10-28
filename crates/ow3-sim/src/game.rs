@@ -1061,7 +1061,7 @@ pub struct State {
     /// a member of a group keeps its cells until its whole cluster is
     /// updated (SPEC-0021, "Occupied cells").
     start_origins: std::collections::BTreeMap<u32, [u32; 2]>,
-    updated: std::collections::BTreeSet<u32>,
+    pub(crate) updated: std::collections::BTreeSet<u32>,
     /// The tick whose updates have started (`table::walk_dropped`).
     updates_started: u64,
     /// The iterations of local searches in the current window (SPEC-0021).

@@ -29,7 +29,7 @@ pub const SLOTS: i32 = 16;
 /// Players 0..11; 12..15 are the neutral players.
 pub const PLAYABLE: i32 = 12;
 /// Player 15, `PLAYER_NEUTRAL_PASSIVE`.
-const NEUTRAL_PASSIVE: i32 = 15;
+pub(super) const NEUTRAL_PASSIVE: i32 = 15;
 
 const CONTROL_USER: i32 = 0;
 pub(super) const CONTROL_COMPUTER: i32 = 1;

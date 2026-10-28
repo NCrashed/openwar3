@@ -71,6 +71,17 @@ fn aura_of(state: &State, h: u32) -> Option<(i32, i32)> {
         .map(|a| (a, 1))
 }
 
+/// An aura's "friend" target: its owner's unit or an ally's. A Neutral
+/// Passive unit is no friend of another player's aura though allied by
+/// the passive flag (hub #15, c-SCC-1: the nsea critter in a creep
+/// Unholy Aura at 0.5 s).
+///
+/// PROVISIONAL: which flags the game reads is open; an aura of Neutral
+/// Passive itself is not seen.
+fn friend(state: &State, owner: i32, of: i32) -> bool {
+    of == owner || (of != super::players::NEUTRAL_PASSIVE && state.setup.is_ally(owner, of))
+}
+
 /// The order an aura's pass gives its units: a call's grid order
 /// (SPEC-0019) read backwards (rows from the top, cells from the right,
 /// in a cell the unit that entered first).
@@ -184,7 +195,7 @@ pub(super) fn tick(state: &mut State) {
                 .units
                 .get(&u.type_id)
                 .is_some_and(|t| t.target_type.iter().any(|c| c == "ground"));
-            let friend = u.owner == owner || state.setup.is_ally(owner, u.owner);
+            let friend = friend(state, owner, u.owner);
             let (dx, dy) = (f32::from_bits(u.x) - x, f32::from_bits(u.y) - y);
             if u.alive && !u.hidden && ground && friend && dx * dx + dy * dy <= area * area {
                 near.push(o);
@@ -339,7 +350,7 @@ fn brilliance(state: &mut State) -> Vec<(u64, u32, i32)> {
                     return false;
                 };
                 let collision = state.data.units.get(&u.type_id).map_or(0, |t| t.collision);
-                let friend = u.owner == owner || state.setup.is_ally(owner, u.owner);
+                let friend = friend(state, owner, u.owner);
                 let (dx, dy) = (sub(u.x, x), sub(u.y, y));
                 let reach = add(area, collision);
                 u.alive

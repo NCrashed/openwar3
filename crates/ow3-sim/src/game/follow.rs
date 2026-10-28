@@ -325,7 +325,11 @@ fn others(state: &State, h: u32) -> Others {
             continue;
         }
         // A worker in the gathering cycle is seen by no one (SPEC-0029).
-        if !u.alive || u.hidden || super::harvest::passes_through(state, o) {
+        if !u.alive
+            || u.hidden
+            || super::harvest::passes_through(state, o)
+            || super::harvest::gone_in_now(state, o)
+        {
             continue;
         }
         let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));

@@ -282,6 +282,50 @@ eight existing peasants was `q0` = 2147483647, `q1` = 8, `q2` = 0,
 construction, `q1` and `q4` count finished units (their difference is
 not known), and `q6` is 4 for a building type and 8 for a unit type.
 
+### Other races
+
+Read in `c-SDD-1`: an acolyte builds a ziggurat (`uzig`, on blight
+made by `SetBlight`), a wisp a moon well (`emow`) and a peon an orc
+burrow (`otrb`), all three with build time 50 and ordered in the same
+tick from 256 north of their sites; a second peon is ordered to
+`repair` the burrow 3 s after its start.
+
+1. The walk, the start and the placement are those of the peasant.
+   Each starts at its first update with its distance from the
+   building's position at most 100 (acolyte 99.47, wisp 96.72, peon
+   96.93). The building stands on the snapped position of the site
+   (requested (-768, -256), (0, -256), (768, -256); placed at
+   (-800, -288), (32, -288), (800, -288)).
+2. In the construction start trigger the building's life reads its
+   `HP` (550 or 600). From the next tick it reads the growing life.
+3. The life grows by the formula of "Construction progress" with
+   `Tb = Ts`, `Ts` the clock of the start tick, for all three. The work
+   starts at once (no delay of 12 ticks for a moved worker). The life
+   is `base` in the first tick the periodic timer reads it (tick 448
+   for the moon well, whose start event the log has in tick 447) and
+   `base + rate * 0.005` in the next one (60.0540 for 600 and 50 s,
+   55.0495 for 550). For a Human worker that was not moved, this step
+   is `rate * 0.0049`. The completion event comes 10004 log ticks after
+   the start event for all three, as for `add(Ts, 50)`.
+4. What the worker does:
+   - **acolyte (Undead):** at the start it is moved out of the
+     footprint (to (-752, -144) here). It keeps its build order for 1 s
+     (201 ticks), then its order becomes 0 and it stands there. The
+     building grows without it.
+   - **wisp (Night Elf):** at the start it is put on the building's
+     position and hidden, with its build order. At the completion it
+     appears again, alive, at a free place next to the building
+     ((-48, -400), that is (-80, -112) from the building's position),
+     and its order becomes 0 in the next tick. In this version it is
+     not used up.
+   - **peon (Orc):** the same as the wisp: hidden inside while it
+     builds, out at (720, -400) ((-80, -112) from the building) at the
+     completion, order 0 in the next tick.
+5. A second Orc worker cannot help: its `repair` order on the burrow
+   under construction is refused (`IssueTargetOrder` returns false).
+6. The burrow's own abilities (workers going in to fight) are not
+   covered here.
+
 ## Edge cases
 
 - In one test five of twenty script build orders were not executed at
@@ -307,8 +351,8 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
 4. Whether the distance of 100 depends on the building or the worker
    (only farms and peasants were measured), and the exact comparison
    (cells or world units).
-5. Other races (Orc and Night Elf workers, Undead summoning) and
-   several workers on one building.
+5. Several Human workers on one building; other races' placement rules
+   (blight for Undead, the Night Elf rules) and cancelling for them.
 
 ## Sources
 
@@ -328,6 +372,11 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
   start and the end), RTL and RTM (four farms; the time of each
   construction start event and of every periodic timer call read
   through `TimerGetElapsed` of a reference timer).
+- Replay `c-SDD-1` (map c-SDD run live), 2026-10-28: an acolyte, a
+  wisp and a peon each building a 50 s building, and a second peon
+  ordered to repair; positions, orders, hidden state and the
+  buildings' life logged every tick (life near the start and every 100
+  ticks).
 - Debugger on the running game and on playback of `c-RSR-1.w3g`: the
   movement clock at the creation of the buildings, at the start of
   work and at each read of the script's periodic timer.
@@ -374,3 +423,9 @@ not known), and `q6` is 4 for a building type and 8 for a unit type.
 7. **Heading** (RTC .. RTF): a worker created 98 units east of the site,
    facing 11 degrees away from it, starts at its first update; facing 12
    degrees away it turns first and starts later.
+8. **Other races** (`c-SDD-1`): construction starts in ticks 447 (moon
+   well), 477 (ziggurat) and 507 (burrow), and finishes in 10451, 10481
+   and 10511; the moon well's life is 60.0540 in tick 449 and 575.6484
+   in tick 10000; the wisp is hidden from tick 448 to 10451 and appears
+   at (-48, -400); the acolyte's order is 0 from tick 678; the second
+   peon's repair order is refused.

@@ -663,6 +663,33 @@ with `Aenc` (`DataA` 5) and pays with `Aegm` (`DataA` 10). Read in
    The wisp carries nothing and goes nowhere.
 3. The tree loses no life (both trees stayed at 50).
 
+### Orc: peons
+
+A peon (`opeo`) gathers with the same ability `Ahar` as the peasant
+and walks at the same speed (190). A great hall (`ogre`) takes gold
+and lumber (`Argl`). Everything above holds for it unchanged except
+the timing of the lumber swing. Read in `c-SDE-1`.
+
+1. Gold: as for the peasant. The peon enters the mine one update after
+   it stops (6 ticks: stop at 670, hidden at 676), is inside 1.0 s
+   (out at 877 with order 852017; the mine loses 10 gold there), and
+   delivers 10 gold at the great hall (tick 1355). One peon is inside
+   at a time: with six peons on the mine it loses 10 gold every 200
+   ticks (7080, 7280, ...).
+2. Lumber: 1 life from the tree and 1 lumber per hit, a hit every 1.1 s
+   (220 ticks), 10 per trip. The swing follows the peon's second
+   weapon (`targs2` tree, `cool2` 1.1, `dmgpt2` 0.5):
+   - the first hit comes 106 ticks after the peon stops (the peasant's
+     99): one update and then 0.5 s, the swing point `dmgpt2`;
+   - after the 10th hit the peon leaves 100 ticks later (the peasant's
+     114).
+   For both workers the hit and the rest of the swing add up to 1.0 s
+   (0.433 + 0.567, 0.5 + 0.5). That is `cool2` less the 0.1 s pause
+   between swings.
+   `c-SDE-1`: peon 1 stops at 544 and hits tree 0 at 650, 871, ...,
+   2631 (life 40), and leaves at 2731; peon 2 stops at 490, hits tree
+   1 from 596, and leaves at 2677 after its 10th hit at 2577.
+
 ## Edge cases
 
 - Two peasants on two neighbouring trees hit in their own cycles of
@@ -715,6 +742,10 @@ with `Aenc` (`DataA` 5) and pays with `Aegm` (`DataA` 10). Read in
   of life entangling a gold mine (with a long walk in SDB), wisps on the
   entangled mine and on two trees; positions, orders, gold, lumber, the
   mines' gold and the trees' life logged every tick for 59 s.
+- Replay `c-SDE-1` (map c-SDE run live), 2026-10-28: a great hall, a
+  peon on a gold mine, two peons on two trees, five more peons on the
+  mine from 31.5 s; positions, orders, gold, the mine's gold and the
+  trees' life logged every tick for 59 s.
 - Replay `c-RXI-1` (map c-RXJ run live), 2026-10-21: the timer, the
   trip times, the sums and the bonus of every mine entry to 28 s, and
   the speed of worker 5's path agent, read in the running game.
@@ -747,3 +778,6 @@ with `Aenc` (`DataA` 5) and pays with `Aegm` (`DataA` 10). Read in
 7. **Wisps** (`c-SDC-1`): gold 10 at tick 2530 and 210 at 6531; lumber
    5 at 2751, 10 at 2937, 15 at 4351 and 60 at 10940; the trees stay at
    50 life.
+8. **Peons** (`c-SDE-1`): peon 0 is hidden from tick 676 to 877 and the
+   player's gold is 10 at 1355; tree 0 has 40 life at 2631 and peon 1's
+   order is 852017 from 2731; peon 2's from 2677.

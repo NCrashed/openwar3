@@ -551,6 +551,118 @@ each peasant's model polled every 20 ms):
 
 `Stand Work` (a short loop of 0.6 s) was not seen in gathering.
 
+### Undead: acolytes on a haunted mine
+
+A haunted mine (`ugol`) stands on a gold mine and has its gold
+(SPEC-0024 for how it is made). Its ability `Abgm` gives the numbers:
+`DataA` 10 (gold per payment), `DataC` 5 (acolytes at a time), `DataD`
+200 (radius of the places round it). An acolyte (`uaco`) gathers with
+`Aaha`. Acolytes do not go in and carry nothing; the gold goes to the
+owner directly. Read in `c-SDA-1`.
+
+1. `harvest` (852018) on the haunted mine: the acolyte walks to it like
+   a peasant to a mine (it stops where its footprint reaches the mine,
+   in `c-SDA-1` 260 to 268 from the mine's position). In its next
+   update (0 to 7 ticks later) it is put at once, without walking, on
+   a free place round the mine, and stands there with order 852018,
+   not hidden.
+2. The places: five points on a circle of radius `DataD` (200), one
+   straight up (+y) from the centre and the others every 72 degrees
+   (angles 90, 162, 234, 306 and 18). The centre is the mine's
+   position plus (16, 16): for the mine at (0, -384) the places are
+   (16, -168), (-174.21, -306.20), (-101.56, -529.80),
+   (133.56, -529.80) and (206.21, -306.20), the coordinates of
+   `c-SDA-1`.
+3. The acolyte takes the free place nearest to where it stopped.
+   In `c-SDA-1` the arrival order was acolyte 2 (place 90), 0 (162),
+   4 (18), 1 (234), 3 (306).
+4. When the five places are taken, the order `harvest` on the mine is
+   refused (`IssueTargetOrder` returns false; acolyte 5 at log tick
+   1700).
+5. Payment: the mine pays `DataA` (10) gold every `5 / n` seconds,
+   with `n` the acolytes on their places. The mine's gold
+   (`GetResourceAmount`) and the owner's gold change in the same tick.
+   When `n` changes, the part of the period already done is kept and
+   the rest runs at the new rate. Equivalently, each acolyte on its
+   place adds 1/5 of a payment per second, and a payment is made each
+   time the sum reaches 1. Examples from `c-SDA-1`:
+   - with five acolytes the payments come every 200 ticks (ticks 971,
+     1171, ..., 3972, with one step of 201 at 3372);
+   - acolyte 2 is stopped at tick 4101, 129 ticks after the payment of
+     3972; the next payment comes 88 ticks later (4189, the 71 ticks
+     left of 200 at 5/4 of that time), then every 250 ticks;
+   - acolyte 2 is ordered back at 5301 (from its place, so it does not
+     move), 112 ticks after the payment of 5189; the next one comes at
+     5412, then every 200 ticks;
+   - the first payment: the acolytes reached their places at ticks
+     652, 682, 773, 803 and 935, and the first payment came at 971.
+     The sum rule gives 969; each acolyte starts adding about 2 ticks
+     after it is put on its place.
+6. A stopped acolyte stays where it stood on its place (order 0) and
+   the place stays its own: ordered to harvest again it does not move.
+7. No carrying, so the necropolis takes nothing from the acolytes in
+   this cycle; `c-SDA-1` does not test a haunted mine without a
+   necropolis.
+
+### Night Elf: entangling a gold mine
+
+The tree of life (`etol`) entangles a gold mine with `Aent`, order
+`entangleinstant` (852148) on the mine. Read in `c-SDB-1` and
+`c-SDC-1`.
+
+1. A rooted tree of life first uproots: it does not move for 2.5 s
+   after the order (ticks 300 to 803 in both tests).
+2. It then walks to the mine at 40 per second and stops when its
+   centre is about 656 from the mine's position (655.6 in `c-SDB-1`,
+   656.9 in `c-SDC-1`).
+3. In its next update (7 ticks later) it roots again. It is put on a
+   point of the building grid next to where it stopped: (0, 271.57) to
+   (0, 256) in `c-SDB-1`, and (70.53, 269.07) to (64, 256) in `c-SDC-1`.
+4. 2.5 s after it roots (500 ticks: 1703 to 2203, 1451 to 1951) the
+   mine is entangled:
+   - the gold mine is hidden;
+   - an entangled gold mine (`egol`) appears at its position with the
+     gold mine's gold (12500 here);
+   - the tree of life's order becomes 0.
+   From then on, gathering takes the entangled mine's gold. The hidden
+   gold mine's own amount stays as it was.
+
+### Night Elf: wisps on an entangled mine
+
+A wisp (`ewsp`) gathers with `Awha`; the entangled mine holds wisps
+with `Aenc` (`DataA` 5) and pays with `Aegm` (`DataA` 10). Read in
+`c-SDC-1`.
+
+1. `harvest` on the entangled mine: the wisp walks to it. When it
+   reaches it (185 to 200 from the mine's position in `c-SDC-1`) it
+   goes in: hidden, at the point where it stopped, with order 852018.
+2. At most five wisps are inside. A wisp that reaches the mine while
+   five are inside loses its order (order 0) and stands where it
+   stopped (wisp 3 at tick 2513).
+3. Payment: as for the haunted mine. The mine pays 10 gold every
+   `5 / n` seconds, with `n` the wisps inside, and a change of `n`
+   keeps the part of the period already done. In `c-SDC-1` the wisps
+   went in at ticks 2045, 2273, 2375, 2471 and 2477. The first payment
+   came at 2530 (the sum rule gives 2528), then one every 200 ticks.
+4. A wisp inside ignores `stop` (its order stays 852018 and the
+   payments keep their period). A new `harvest` on the mine is refused
+   (`c-SDC-1` ticks 5300 and 6501).
+
+### Night Elf: wisps on trees
+
+1. `harvest` on a tree: the wisp walks towards it. When it reaches it
+   (about 118 from the tree in `c-SDC-1`) it is put at once on the
+   tree's position. Only one wisp sits on a tree: a wisp whose tree
+   is taken is put on another tree nearby (wisp 6, ordered to tree 0
+   at (-704, 448) after wisp 7 sat on it, was put on tree 1 at
+   (-704, 576), 128 away).
+2. From the moment it is put on the tree, the owner gets 5 lumber
+   (`Awha` `DataA`) every 8 s (`Dur`): 1600 or 1601 ticks. In
+   `c-SDC-1` wisp 7 was put on its tree at tick 1151 and wisp 6 at
+   1337; the lumber rose by 5 at 2751, 2937, 4351, 4537, ...
+   The wisp carries nothing and goes nowhere.
+3. The tree loses no life (both trees stayed at 50).
+
 ## Edge cases
 
 - Two peasants on two neighbouring trees hit in their own cycles of
@@ -596,6 +708,13 @@ each peasant's model polled every 20 ms):
   every change of order or hidden state.
 - `Units\AbilityData.slk`, `Units\UnitAbilities.slk`,
   `Units\DestructableData.slk`.
+- Replay `c-SDA-1` (map c-SDA run live), 2026-10-28: six acolytes, a
+  necropolis and a haunted mine; positions, orders, the player's gold
+  and the mine's gold logged every tick for 44 s.
+- Replays `c-SDB-1` and `c-SDC-1` (maps run live), 2026-10-28: a tree
+  of life entangling a gold mine (with a long walk in SDB), wisps on the
+  entangled mine and on two trees; positions, orders, gold, lumber, the
+  mines' gold and the trees' life logged every tick for 59 s.
 - Replay `c-RXI-1` (map c-RXJ run live), 2026-10-21: the timer, the
   trip times, the sums and the bonus of every mine entry to 28 s, and
   the speed of worker 5's path agent, read in the running game.
@@ -617,3 +736,14 @@ each peasant's model polled every 20 ms):
 4. **Busy mine** (RUF, five peasants): the mine's gold drops by 10 at
    ticks 769, 969, 1169, 1369, 1569, ...; each entry is in the tick of
    the previous peasant's exit.
+5. **Haunted mine** (`c-SDA-1`): the five acolytes stand at
+   (16, -168), (-174.21, -306.20), (-101.56, -529.80),
+   (133.56, -529.80) and (206.21, -306.20); the sixth acolyte's order
+   is refused; the player's gold is 10 at tick 971, 160 at 3972, 170
+   at 4189, 210 at 5189, 220 at 5412 and 390 at 8814.
+6. **Entangle** (`c-SDC-1`): the tree of life roots at (64, 256) in
+   tick 1451, and the entangled mine appears in tick 1951 with 12500
+   gold.
+7. **Wisps** (`c-SDC-1`): gold 10 at tick 2530 and 210 at 6531; lumber
+   5 at 2751, 10 at 2937, 15 at 4351 and 60 at 10940; the trees stay at
+   50 life.

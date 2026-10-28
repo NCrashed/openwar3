@@ -671,7 +671,6 @@ fn turtle_checksums() {
 
 /// `c-SCA-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn turtle_objects() {
     if let Some(first) = compare_objects("c-SCA-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

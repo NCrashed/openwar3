@@ -200,6 +200,8 @@ fn takes(state: &State, h: u32, owner: i32, resource: Resource) -> bool {
 /// Whether worker `h` can gather from `target` (a gold mine or a tree).
 pub(super) fn can_harvest(state: &State, h: u32, target: u32) -> bool {
     gathering(state, h).is_some() && (is_mine(state, target) || is_tree(state, target))
+        || pays_for(state, h, target)
+        || wisp_tree(state, h, target)
 }
 
 /// Whether worker `h`, carrying something, would deliver it at `building`.
@@ -217,6 +219,20 @@ pub(super) fn can_deliver(state: &State, h: u32, building: u32) -> bool {
 /// else than `target` gives, or anything to a mine, it first takes that
 /// back (SPEC-0029, "New orders while carrying").
 pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
+    if pays_for(state, h, target) {
+        return order_paid(state, h, target);
+    }
+    // A wisp walks to its tree (SPEC-0029, "Night Elf: wisps on trees").
+    // PROVISIONAL: the order's objects are not read.
+    if wisp_tree(state, h, target) {
+        let mut g = get(state, h).unwrap_or_default();
+        g.target = Some(target);
+        set(state, h, Some(g));
+        let Some(at) = position(state, target) else {
+            return false;
+        };
+        return movement::harvest_order(state, h, Order::Gather { target }, ORDER_HARVEST, at);
+    }
     if !can_harvest(state, h, target) {
         return false;
     }
@@ -488,6 +504,26 @@ fn squared(a: [u32; 2], b: [u32; 2]) -> f32 {
 /// texture, a tree within reach.
 pub(super) fn reached(state: &State, h: u32, here: [u32; 2], target: u32) -> bool {
     let min = [state.world_bounds[0], state.world_bounds[1]];
+    // An acolyte reaches a haunted mine within its ability's range and the
+    // two collision sizes of the mine's centre (c-SDA-1: 260 to 268 for
+    // 200 + 50 + 16).
+    // PROVISIONAL: inferred from the distances of SPEC-0029.
+    if reaches_by_distance(state, h, target) {
+        let (Some(u), Some(m)) = (state.unit(Some(h)), state.unit(Some(target))) else {
+            return false;
+        };
+        let collision = |t: i32| {
+            state
+                .data
+                .units
+                .get(&t)
+                .map_or(0.0, |d| f32::from_bits(d.collision))
+        };
+        let range =
+            ability_of(state, u.type_id, code(b"Aaha")).map_or(0.0, |a| f32::from_bits(a.range));
+        let reach = range + collision(u.type_id) + collision(m.type_id);
+        return squared(here, relative([m.x, m.y], min)) <= reach * reach;
+    }
     match state.objects.get(&target) {
         Some(Object::Unit(b)) => {
             let Some(footprint) = b.footprint.as_deref() else {
@@ -539,6 +575,8 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    pay_mines(&mut state.borrow_mut());
+    wisp_lumber(&mut state.borrow_mut());
     let mut reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
     // A worker that reached its drop-off delivers at its next update
     // (SPEC-0029: it stands at the end of its path, and gives its load at
@@ -575,6 +613,10 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             deliver(&mut s, h);
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target);
+        } else if pays_for(&s, h, target) {
+            arrive_paid(&mut s, h, target);
+        } else if wisp_tree(&s, h, target) {
+            sit_on_tree(&mut s, h, target);
         } else if is_tree(&s, target) {
             let tick = s.ticks;
             super::table::tree_arrival_ended(&mut s, h);
@@ -630,7 +672,8 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     }
     forget_others(&mut state.borrow_mut());
     start_waiting(&mut state.borrow_mut());
-    leave_mines(vm, state);
+    enter_mines(state);
+    // (The workers coming out are timers of the queue: `mines_left_before`.)
     {
         let mut s = state.borrow_mut();
         for w in std::mem::take(&mut s.harvest_waiters) {
@@ -639,7 +682,9 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             super::table::walk_dropped_at_update(&mut s, w);
         }
     }
-    hit_trees(vm, state);
+    // The rest of the work on trees; the hits are timers of the queue, in
+    // order with the script's (`trees_hit_before`).
+    trees_hit_before(vm, state, Some(0), false);
 }
 
 /// Workers whose order is no longer one of gathering keep their load and
@@ -799,7 +844,7 @@ fn hide(state: &mut State, h: u32, hidden: bool) {
 /// The workers whose time in their mine is over come out with gold; the
 /// next waiting one goes in in the same tick. A mine without gold left
 /// dies.
-fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+fn enter_mines(state: &Rc<RefCell<State>>) {
     // Those whose time to go in has come are hidden.
     {
         let mut s = state.borrow_mut();
@@ -836,6 +881,13 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             pace(&mut s, w);
         }
     }
+}
+
+/// The workers whose time in their mine ends in this tick before queue time
+/// `before` (all without it) come out: timers of the queue, in order with
+/// the script's (c-SDE-1: the peon out at 5.379993 after the timer of the
+/// tick, hub #15).
+pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before: Option<u32>) {
     let due: Vec<(u32, u32, u32)> = {
         let s = state.borrow();
         // The end of this tick on the queue, Q(k + 1).
@@ -845,7 +897,9 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             .filter_map(|(&mine, m)| {
                 m.inside
                     .filter(|&(_, _, leave)| {
-                        leave != 0 && f32::from_bits(leave) <= f32::from_bits(now)
+                        leave != 0
+                            && f32::from_bits(leave) <= f32::from_bits(now)
+                            && before.is_none_or(|b| f32::from_bits(leave) < f32::from_bits(b))
                     })
                     .map(|(w, _, leave)| (mine, w, leave))
             })
@@ -936,7 +990,15 @@ fn leave_mines(vm: &mut Vm, state: &Rc<RefCell<State>>) {
 
 /// The hits on trees due in this tick, and the walks back with a full
 /// load.
-fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+/// The hits on trees due in this tick before queue time `before` (all of
+/// them without it): timers of the queue, in order with the script's
+/// (c-SDE-1: the peon's hit at 5.079997 after the timer of the tick, hub #15).
+pub(super) fn trees_hit_before(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    before: Option<u32>,
+    hits_only: bool,
+) {
     let units = state.borrow().units.clone();
     for h in units {
         let (tick, g, numbers) = {
@@ -949,7 +1011,13 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         let Some(numbers) = numbers else {
             continue;
         };
-        if g.back_at.is_some_and(|e| due(&state.borrow(), e)) {
+        // The walk back after the last hit: a timer of the queue as the hits.
+        if hits_only
+            && g.back_at.is_some_and(|e| {
+                due(&state.borrow(), e)
+                    && before.is_none_or(|b| f32::from_bits(e) < f32::from_bits(b))
+            })
+        {
             let mut s = state.borrow_mut();
             let mut g = g;
             g.back_at = None;
@@ -962,36 +1030,40 @@ fn hit_trees(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             super::table::harvest_turned_back(&mut s, h);
             continue;
         }
-        // At the end of its backswing a worker whose tree is gone takes
-        // another tree, the search from the worker; the pause after the
-        // backswing runs on (SPEC-0029, "When the tree is gone"; c-RYP-1:
-        // peasant 0 at 10109, peasant 3 at 10123).
-        if let Some(e) = g.swing_end.filter(|&e| due(&state.borrow(), e)) {
-            let mut s = state.borrow_mut();
-            let mut g = g;
-            g.swing_end = None;
-            if let Some(tree) = g.target.filter(|&t| !is_tree(&s, t)) {
-                g.next_hit = None;
-                g.pause_end = Some(add(e, PAUSE));
-                g.home = g.home.or(Some(tree));
-                g.at_tree = false;
-                g.cycling = true;
+        if !hits_only {
+            // At the end of its backswing a worker whose tree is gone takes
+            // another tree, the search from the worker; the pause after the
+            // backswing runs on (SPEC-0029, "When the tree is gone"; c-RYP-1:
+            // peasant 0 at 10109, peasant 3 at 10123).
+            if let Some(e) = g.swing_end.filter(|&e| due(&state.borrow(), e)) {
+                let mut s = state.borrow_mut();
+                let mut g = g;
+                g.swing_end = None;
+                if let Some(tree) = g.target.filter(|&t| !is_tree(&s, t)) {
+                    g.next_hit = None;
+                    g.pause_end = Some(add(e, PAUSE));
+                    g.home = g.home.or(Some(tree));
+                    g.at_tree = false;
+                    g.cycling = true;
+                    set(&mut s, h, Some(g));
+                    take_another_tree(&mut s, h, false);
+                    // Its order on the new tree, as at a delivery (c-RYP-1: peasant
+                    // 0 at 10106, 13 parts).
+                    super::table::lumber_delivered(&mut s, h);
+                    continue;
+                }
                 set(&mut s, h, Some(g));
+            }
+            if g.switch_at == Some(tick) {
+                let mut s = state.borrow_mut();
                 take_another_tree(&mut s, h, false);
-                // Its order on the new tree, as at a delivery (c-RYP-1: peasant
-                // 0 at 10106, 13 parts).
-                super::table::lumber_delivered(&mut s, h);
+                super::table::tree_switched(&mut s, h);
                 continue;
             }
-            set(&mut s, h, Some(g));
         }
-        if g.switch_at == Some(tick) {
-            let mut s = state.borrow_mut();
-            take_another_tree(&mut s, h, false);
-            super::table::tree_switched(&mut s, h);
-            continue;
-        }
-        let Some(hit) = g.next_hit.filter(|&e| due(&state.borrow(), e)) else {
+        let Some(hit) = g.next_hit.filter(|&e| {
+            due(&state.borrow(), e) && before.is_none_or(|b| f32::from_bits(e) < f32::from_bits(b))
+        }) else {
             continue;
         };
         let Some(tree) = g.target else {
@@ -1115,13 +1187,29 @@ fn due(state: &State, e: u32) -> bool {
     f32::from_bits(e) <= f32::from_bits(add(state.move_clock, crate::timers::TICK))
 }
 
-/// The damage point and the backswing of worker `h`'s weapon, in seconds.
+/// The damage point and the backswing of worker `h`'s weapon on trees, in
+/// seconds: its second when only that one targets trees (SPEC-0029, "Orc:
+/// peons": the peon's `targs2` tree, `dmgpt2` 0.5).
 fn swing(state: &State, h: u32) -> (u32, u32) {
-    state
+    let t = state
         .unit(Some(h))
-        .and_then(|u| state.data.units.get(&u.type_id))
-        .and_then(|t| t.weapon.as_ref())
-        .map_or((0, 0), |w| (w.damage_point, w.backswing))
+        .and_then(|u| state.data.units.get(&u.type_id));
+    let on_trees =
+        |w: &&crate::data::Weapon| w.targets.iter().any(|s| s.eq_ignore_ascii_case("tree"));
+    let first = t.and_then(|t| t.weapon.as_ref());
+    let second = t.and_then(|t| t.weapon2.as_ref()).filter(on_trees);
+    let w = if first.is_some_and(|w| on_trees(&w)) {
+        first
+    } else {
+        second.or(first)
+    };
+    // The rest of the swing is the cooldown less the 0.1 s pause and the
+    // damage point (SPEC-0029: 0.433 + 0.567 for the peasant, 0.5 + 0.5 for
+    // the peon, both of `cool2` 1.1).
+    w.map_or((0, 0), |w| {
+        let rest = sub(sub(w.cooldown, 0.1f32.to_bits()), w.damage_point);
+        (w.damage_point, rest)
+    })
 }
 
 /// Worker `h` hitting a tree: the tick of its next hit, the ticks between
@@ -1404,6 +1492,439 @@ pub(super) fn idle_workers(state: &State, owner: i32) -> usize {
         })
         .count()
 }
+
+/// A mine that pays its owner for the workers at it, without trips
+/// (SPEC-0029, "Undead: acolytes on a haunted mine"): a haunted mine with
+/// its five places round it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PayingMine {
+    /// The worker on each place, by angle 90, 162, 234, 306, 18.
+    places: [Option<u32>; PLACES],
+    /// The workers that count for the payments.
+    working: Vec<u32>,
+    /// Workers that start to count at a queue time.
+    joining: Vec<(u32, u32)>,
+    /// The queue time of the next payment, while any worker counts.
+    expiry: Option<u32>,
+    /// The time left to the next payment for one worker (seconds), while
+    /// none counts.
+    left: Option<u32>,
+}
+
+/// Places round a haunted mine (`Abgm` `DataC`).
+const PLACES: usize = 5;
+/// A worker put on its place starts to count 0.01 s later (SPEC-0029: about
+/// 2 ticks).
+const JOIN_DELAY: u32 = 0x3C23_D70A;
+
+/// Whether `h` gathers from `mine` without trips: an acolyte (`Aaha`) on a
+/// haunted mine (`Abgm`).
+pub(super) fn pays_for(state: &State, h: u32, mine: u32) -> bool {
+    let (Some(u), Some(m)) = (state.unit(Some(h)), state.unit(Some(mine))) else {
+        return false;
+    };
+    let haunted = ability_of(state, u.type_id, code(b"Aaha")).is_some()
+        && ability_of(state, m.type_id, code(b"Abgm")).is_some();
+    m.alive && !m.hidden && (haunted || entangled_for(state, h, mine))
+}
+
+/// Whether `h` is a wisp (`Awha`) and `mine` an entangled mine (`Aegm`):
+/// the wisps go in (SPEC-0029, "Night Elf: wisps on an entangled mine").
+fn entangled_for(state: &State, h: u32, mine: u32) -> bool {
+    let (Some(u), Some(m)) = (state.unit(Some(h)), state.unit(Some(mine))) else {
+        return false;
+    };
+    ability_of(state, u.type_id, code(b"Awha")).is_some()
+        && ability_of(state, m.type_id, code(b"Aegm")).is_some()
+}
+
+/// Whether acolyte `h` reaches haunted mine `mine` by the distance, not by
+/// touching it (`reached`).
+pub(super) fn reaches_by_distance(state: &State, h: u32, mine: u32) -> bool {
+    pays_for(state, h, mine) && !entangled_for(state, h, mine)
+}
+
+/// The numbers of a paying mine's `Abgm` or `Aegm`: gold per payment,
+/// radius of the places.
+fn paying_numbers(state: &State, mine: u32) -> (i32, u32) {
+    let a = state.unit(Some(mine)).and_then(|m| {
+        ability_of(state, m.type_id, code(b"Abgm"))
+            .or_else(|| ability_of(state, m.type_id, code(b"Aegm")))
+    });
+    // (DataD, the radius, is not loaded: 200 as read.)
+    let radius = 200.0f32.to_bits();
+    a.map_or((10, radius), |a| (f32::from_bits(a.data[0]) as i32, radius))
+}
+
+/// `harvest` by acolyte `h` on haunted mine `mine` (SPEC-0029): back on
+/// its own place it counts again at once, without moving; else it walks
+/// to the mine, refused when the five places are taken.
+fn order_paid(state: &mut State, h: u32, mine: u32) -> bool {
+    let wisp = entangled_for(state, h, mine);
+    let p = state.paying.entry(mine).or_default();
+    // A wisp inside: a new harvest is refused (c-SDC-1: 6501).
+    if wisp && p.places.contains(&Some(h)) {
+        return false;
+    }
+    if p.places.contains(&Some(h)) {
+        if !p.working.contains(&h) {
+            let now = state.timers.time();
+            count_change(state, mine, now, Some(h), None);
+        }
+        return true;
+    }
+    // A full haunted mine refuses the order; a wisp walks to a full
+    // entangled mine and loses its order there.
+    if !wisp && p.places.iter().all(Option::is_some) {
+        return false;
+    }
+    let mut g = state
+        .unit(Some(h))
+        .and_then(|u| u.harvest)
+        .unwrap_or_default();
+    g.ready = false;
+    g.target = Some(mine);
+    set(state, h, Some(g));
+    let Some(at) = position(state, mine) else {
+        return false;
+    };
+    movement::harvest_order(state, h, Order::Gather { target: mine }, ORDER_HARVEST, at)
+}
+
+/// An acolyte whose walk stopped by itself at its path's end, within reach:
+/// the first update after does not finish the walk, the next one does
+/// (SPEC-0029; c-SDA-1: acolytes 0, 4, 1 and 3, hub #15). True when it
+/// finishes now.
+pub(super) fn arrival_ready(state: &mut State, h: u32) -> bool {
+    let mut g = get(state, h).unwrap_or_default();
+    let ready = std::mem::replace(&mut g.ready, true);
+    set(state, h, Some(g));
+    ready
+}
+
+/// Acolyte `h` reached haunted mine `mine`: it is put at once on the free
+/// place nearest to where it stopped, and counts 0.01 s later.
+fn arrive_paid(state: &mut State, h: u32, mine: u32) {
+    if entangled_for(state, h, mine) {
+        go_in_paid(state, h, mine);
+        return;
+    }
+    let Some(here) = position(state, h) else {
+        return;
+    };
+    let Some(centre) = position(state, mine) else {
+        return;
+    };
+    let (_, radius) = paying_numbers(state, mine);
+    let r = f32::from_bits(radius);
+    let (cx, cy) = (
+        f32::from_bits(centre[0]) + 16.0,
+        f32::from_bits(centre[1]) + 16.0,
+    );
+    let points: Vec<[u32; 2]> = (0..PLACES)
+        .map(|k| {
+            let angle = (90.0 + 72.0 * k as f32).to_bits();
+            let rad = mul(angle, (std::f32::consts::PI / 180.0).to_bits());
+            [
+                add(cx.to_bits(), mul(r.to_bits(), ow3_math::natives::cos(rad))),
+                add(cy.to_bits(), mul(r.to_bits(), ow3_math::natives::sin(rad))),
+            ]
+        })
+        .collect();
+    let p = state.paying.entry(mine).or_default();
+    let free = (0..PLACES)
+        .filter(|&k| p.places[k].is_none())
+        .min_by(|&a, &b| squared(here, points[a]).total_cmp(&squared(here, points[b])));
+    let Some(k) = free else {
+        movement::stop(state, h);
+        return;
+    };
+    p.places[k] = Some(h);
+    let at = add(state.timers.time(), JOIN_DELAY);
+    p.joining.push((h, at));
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.x = points[k][0];
+        u.y = points[k][1];
+        u.movement = None;
+    }
+    state.drop_path(h);
+    super::table::walk_dropped(state, h);
+}
+
+/// Wisp `h` reached entangled mine `mine` (SPEC-0029): it goes in, hidden
+/// where it stopped, and counts 0.01 s later; at a mine with five inside it
+/// loses its order and stands.
+fn go_in_paid(state: &mut State, h: u32, mine: u32) {
+    let p = state.paying.entry(mine).or_default();
+    let Some(k) = (0..PLACES).find(|&k| p.places[k].is_none()) else {
+        movement::stop(state, h);
+        return;
+    };
+    p.places[k] = Some(h);
+    let at = add(state.timers.time(), JOIN_DELAY);
+    p.joining.push((h, at));
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.movement = None;
+    }
+    hide(state, h, true);
+    state.drop_path(h);
+    super::table::walk_dropped(state, h);
+}
+
+/// Worker `h` takes another order: it stops counting; a `stop` keeps its
+/// place (SPEC-0029), any other order gives it up.
+///
+/// PROVISIONAL: an order that moves it away is taken to free the place.
+pub(super) fn paid_order_given(state: &mut State, h: u32, keeps_place: bool) {
+    if !keeps_place {
+        wisp_order_given(state, h);
+    }
+    let Some(mine) = state
+        .paying
+        .iter()
+        .find(|(_, p)| p.places.contains(&Some(h)))
+        .map(|(&m, _)| m)
+    else {
+        return;
+    };
+    // A wisp inside ignores it (SPEC-0029; c-SDC-1: stop at 5300).
+    // PROVISIONAL: read for `stop` only.
+    if entangled_for(state, h, mine) {
+        return;
+    }
+    let now = state.timers.time();
+    if let Some(p) = state.paying.get_mut(&mine) {
+        p.joining.retain(|&(w, _)| w != h);
+    }
+    if state
+        .paying
+        .get(&mine)
+        .is_some_and(|p| p.working.contains(&h))
+    {
+        count_change(state, mine, now, None, Some(h));
+    }
+    if !keeps_place && let Some(p) = state.paying.get_mut(&mine) {
+        for place in &mut p.places {
+            if *place == Some(h) {
+                *place = None;
+            }
+        }
+    }
+}
+
+/// Whether worker `h` gathers at a paying mine now (its order reads
+/// `harvest`).
+pub(super) fn paid_working(state: &State, h: u32) -> bool {
+    state
+        .paying
+        .values()
+        .any(|p| p.working.contains(&h) || p.joining.iter().any(|&(w, _)| w == h))
+        || state.wisp_trees.values().any(|&(w, _)| w == h)
+}
+
+/// The number of workers counting at `mine` changes at queue time `now`
+/// (`join` comes, `leave` goes): the part of the period already done is
+/// kept, the rest runs at the new rate.
+fn count_change(state: &mut State, mine: u32, now: u32, join: Option<u32>, leave: Option<u32>) {
+    let Some(p) = state.paying.get_mut(&mine) else {
+        return;
+    };
+    let old = p.working.len() as f32;
+    // The time one worker still needs for the next payment.
+    let left = match (p.expiry, p.left) {
+        (Some(e), _) => (f32::from_bits(e) - f32::from_bits(now)).max(0.0) * old,
+        (None, Some(l)) => f32::from_bits(l),
+        (None, None) => 5.0,
+    };
+    if let Some(w) = join {
+        p.working.push(w);
+    }
+    if let Some(w) = leave {
+        p.working.retain(|&x| x != w);
+    }
+    let n = p.working.len() as f32;
+    if n > 0.0 {
+        p.expiry = Some(add(now, (left / n).to_bits()));
+        p.left = None;
+    } else {
+        p.expiry = None;
+        p.left = Some(left.to_bits());
+    }
+}
+
+/// The paying mines of this tick: workers that start to count, and the
+/// payments due in it, in the order of their times.
+fn pay_mines(state: &mut State) {
+    let end = add(state.move_clock, crate::timers::TICK);
+    let mines: Vec<u32> = state.paying.keys().copied().collect();
+    for mine in mines {
+        while let Some(p) = state.paying.get(&mine) {
+            let join = p
+                .joining
+                .iter()
+                .copied()
+                .filter(|&(_, at)| f32::from_bits(at) <= f32::from_bits(end))
+                .min_by(|a, b| f32::from_bits(a.1).total_cmp(&f32::from_bits(b.1)));
+            let pay = p
+                .expiry
+                .filter(|&e| f32::from_bits(e) <= f32::from_bits(end));
+            match (join, pay) {
+                (Some((w, at)), pay)
+                    if pay.is_none_or(|e| f32::from_bits(at) <= f32::from_bits(e)) =>
+                {
+                    if let Some(p) = state.paying.get_mut(&mine) {
+                        p.joining.retain(|&(x, _)| x != w);
+                    }
+                    count_change(state, mine, at, Some(w), None);
+                }
+                (_, Some(e)) => {
+                    paid(state, mine);
+                    if let Some(p) = state.paying.get_mut(&mine) {
+                        let n = p.working.len() as f32;
+                        p.expiry = Some(add(e, (5.0 / n).to_bits()));
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+}
+
+/// A payment of `mine`: its gold to its owner, from the mine's.
+///
+/// PROVISIONAL: the upkeep is taken as for a delivery; an exhausted mine
+/// is not read.
+fn paid(state: &mut State, mine: u32) {
+    let (gold, _) = paying_numbers(state, mine);
+    let Some(owner) = state.unit(Some(mine)).map(|m| m.owner) else {
+        return;
+    };
+    let used = state
+        .setup
+        .player_states
+        .get(&(owner, FOOD_USED))
+        .copied()
+        .unwrap_or(0);
+    let amount = gold * upkeep_tenths(used) / 10;
+    *state.setup.player_states.entry((owner, GOLD)).or_default() += amount;
+    *state
+        .setup
+        .player_states
+        .entry((owner, GOLD_GATHERED))
+        .or_default() += amount;
+    if let Some(Object::Unit(m)) = state.objects.get_mut(&mine) {
+        m.resources -= gold;
+    }
+}
+
+/// Whether wisp `h` (`Awha`) can sit on tree `tree` (SPEC-0029, "Night
+/// Elf: wisps on trees").
+pub(super) fn wisp_tree(state: &State, h: u32, tree: u32) -> bool {
+    state
+        .unit(Some(h))
+        .is_some_and(|u| ability_of(state, u.type_id, code(b"Awha")).is_some())
+        && is_tree(state, tree)
+}
+
+/// The wisp sitting on `tree`, if any.
+fn sitter(state: &State, tree: u32) -> Option<u32> {
+    state.wisp_trees.get(&tree).map(|&(w, _)| w)
+}
+
+/// Wisp `h` reached tree `tree`: it is put at once on the tree's position,
+/// or, the tree taken, on the nearest free tree; the owner gets `Awha`
+/// `DataA` lumber every `Dur` from then on.
+///
+/// PROVISIONAL: the search for another tree is taken as the nearest free
+/// living tree within 800.
+fn sit_on_tree(state: &mut State, h: u32, tree: u32) {
+    let Some(here) = position(state, tree) else {
+        return;
+    };
+    let tree = if sitter(state, tree).is_none_or(|w| w == h) {
+        Some(tree)
+    } else {
+        let mut best: Option<(f32, u32)> = None;
+        for (&t, o) in &state.objects {
+            if !matches!(o, Object::Destructable(_))
+                || !is_tree(state, t)
+                || sitter(state, t).is_some()
+            {
+                continue;
+            }
+            let Some(p) = position(state, t) else {
+                continue;
+            };
+            let d = squared(here, p);
+            if d <= 800.0 * 800.0 && best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, t));
+            }
+        }
+        best.map(|(_, t)| t)
+    };
+    let Some(tree) = tree else {
+        movement::stop(state, h);
+        return;
+    };
+    let Some(at) = position(state, tree) else {
+        return;
+    };
+    let period = state
+        .unit(Some(h))
+        .and_then(|u| ability_of(state, u.type_id, code(b"Awha")))
+        .map_or(8.0f32.to_bits(), |a| a.duration);
+    let next = add(state.timers.time(), period);
+    state.wisp_trees.insert(tree, (h, next));
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.x = at[0];
+        u.y = at[1];
+        u.movement = None;
+    }
+    state.drop_path(h);
+    super::table::walk_dropped(state, h);
+}
+
+/// The lumber of the wisps on trees due in this tick.
+fn wisp_lumber(state: &mut State) {
+    let end = add(state.move_clock, crate::timers::TICK);
+    let trees: Vec<u32> = state.wisp_trees.keys().copied().collect();
+    for tree in trees {
+        let Some(&(w, next)) = state.wisp_trees.get(&tree) else {
+            continue;
+        };
+        if f32::from_bits(next) > f32::from_bits(end) {
+            continue;
+        }
+        let Some(u) = state.unit(Some(w)) else {
+            state.wisp_trees.remove(&tree);
+            continue;
+        };
+        let owner = u.owner;
+        let a = ability_of(state, u.type_id, code(b"Awha"));
+        let (amount, period) = a.map_or((5, 8.0f32.to_bits()), |a| {
+            (f32::from_bits(a.data[0]) as i32, a.duration)
+        });
+        *state
+            .setup
+            .player_states
+            .entry((owner, LUMBER))
+            .or_default() += amount;
+        *state
+            .setup
+            .player_states
+            .entry((owner, LUMBER_GATHERED))
+            .or_default() += amount;
+        state.wisp_trees.insert(tree, (w, add(next, period)));
+    }
+}
+
+/// Wisp `h` takes another order: it leaves its tree.
+///
+/// PROVISIONAL: whether `stop` keeps it on the tree is not read.
+fn wisp_order_given(state: &mut State, h: u32) {
+    state.wisp_trees.retain(|_, &mut (w, _)| w != h);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

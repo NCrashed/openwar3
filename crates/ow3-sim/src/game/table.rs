@@ -129,6 +129,8 @@ pub struct ObjectTable {
     pub call: u32,
     /// The name of the last one.
     pub call_name: &'static str,
+    /// The natives whose first call made its one-time objects (`first_call`).
+    pub first_calls: std::collections::BTreeSet<&'static str>,
     /// Every native call by name, while the log is kept.
     pub call_log: Vec<&'static str>,
 }
@@ -183,6 +185,7 @@ impl ObjectTable {
             clocks: None,
             call: 0,
             call_name: "",
+            first_calls: std::collections::BTreeSet::new(),
             call_log: Vec::new(),
         }
     }
@@ -546,6 +549,8 @@ pub struct UnitEntries {
     /// Holding its position, its chase made one turning update: the next
     /// that would step ends the walk (c-SCA-1, the archer).
     pub hold_walked: bool,
+    /// A gold mine's three w entries (`entangled`).
+    pub mine_w: Vec<u32>,
     /// The objects of its Wind Walk freed at the fade and at the end.
     pub fade: Vec<u32>,
     pub lasting: Vec<u32>,
@@ -785,6 +790,13 @@ const BUILDING: Making = Making {
 /// PROVISIONAL: the step rule fits two Areas, not read as a value; blight
 /// on the map is not tested. The three of selling items are read on the
 /// arcane vault only.
+/// Whether type `t` roots (a Night Elf building with Aroo).
+fn roots_type(state: &super::State, t: &crate::data::UnitType) -> bool {
+    t.abilities
+        .iter()
+        .any(|&a| ability_code(state, a) == *b"Aroo")
+}
+
 fn building_layout(state: &super::State, type_id: i32) -> Option<(usize, usize, f32)> {
     let t = state.data.units.get(&type_id)?;
     let head = 14
@@ -806,6 +818,20 @@ fn building_layout(state: &super::State, type_id: i32) -> Option<(usize, usize, 
         .any(|a| [*b"Abds", *b"Abdl"].contains(&a.to_be_bytes()));
     if !dispelling && t.abilities.contains(&blight) {
         return Some((head + 2 + 3 + tail(blight) + 2, head + 2, -1.0));
+    }
+    // A Night Elf building that roots (Aroo): no dispel; seven more before a
+    // blight's three, three fewer after; the fourth of those seven an L
+    // freed 0.0001 s later (-2.0) (c-SCC-1: the tree of life, 22 and 26 ..
+    // 28, hub #15).
+    // PROVISIONAL: fitted to the one tree of life read.
+    if roots_type(state, t) {
+        let id = t
+            .abilities
+            .iter()
+            .copied()
+            .find(|a| [*b"Abds", *b"Abdl"].contains(&a.to_be_bytes()))
+            .unwrap_or(0);
+        return Some((head + 7 + 3 + tail(id) - 3 + 2, head, -2.0));
     }
     let (&id, dispel) = t.abilities.iter().find_map(|a| {
         [*b"Abds", *b"Abdl"]
@@ -1059,7 +1085,9 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     } else {
         0
     };
-    let last = usize::from(!building && !is_worker);
+    // A rooting building takes the last one too (c-SCC-1: the tree of life's
+    // 51, hub #15).
+    let last = usize::from((!building && !is_worker) || (building && roots_type(state, t)));
     let tick = state.table.now;
     let tail = state
         .table
@@ -1074,6 +1102,48 @@ pub(super) fn worker(state: &super::State, t: &crate::data::UnitType) -> bool {
     t.abilities
         .iter()
         .any(|&a| [*b"Ahar", *b"Aaha", *b"Awha"].contains(&ability_code(state, a)))
+}
+
+/// Tree of life `tree` entangles gold mine `mine` (`entangleinstant`;
+/// c-SCC-1: call 3190, hub #15), inside the order: ten freed 0.0001 s
+/// later (the order's start and the ability's), the mine's three w freed
+/// at once, then the entangled mine `egol`: its 29 (taking those three
+/// first), five of them freed 0.88 s on, all others kept; the creation's
+/// pair freed 0.0001 s later, a computer's tail, and one more kept.
+///
+/// PROVISIONAL: what the five and the ability's eight are is not read;
+/// the 0.88 s is read once, from the map's start.
+pub(super) fn entangled(state: &mut super::State, mine: u32, egol: u32) {
+    let tick = state.table.now;
+    for e in state.table.take_n(tick, 10, "entangle: order start") {
+        state.table.defer(e, "entangle: order start");
+    }
+    let w = entries(state, mine)
+        .map(|e| std::mem::take(&mut e.mine_w))
+        .unwrap_or_default();
+    for e in w {
+        state.table.free(tick, e, "gold mine: entangled");
+    }
+    let body = state.table.take_n(tick, 29, "entangled mine: unit");
+    let end = ow3_math::add(state.timers.time(), 0.88f32.to_bits());
+    for &e in &body[14..19] {
+        state.table.free_at_q(end, e, "entangled mine: unit");
+    }
+    for e in state.table.take_n(tick, 2, "entangled mine: unit") {
+        state.table.defer(e, "entangled mine: unit");
+    }
+    let Some((owner, type_id)) = state.unit(Some(egol)).map(|u| (u.owner, u.type_id)) else {
+        return;
+    };
+    computer_tail(state, egol, owner, type_id, true);
+    state.table.take(tick, "entangled mine: kept");
+    let id = [body[0], state.table.creation_of(body[0])];
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&egol) {
+        u.entries = UnitEntries {
+            id: Some(id),
+            ..UnitEntries::default()
+        };
+    }
 }
 
 /// A Haunted Gold Mine made by `CreateBlightedGoldmine` (c-SCC-1: call
@@ -1284,7 +1354,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         state.table.defer(entries[count - 2], "map start: unit");
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
-        if after < 0.0 {
+        if after == -2.0 {
+            // A rooting building's L (`building_layout`).
+            state.table.defer(entries[at + 3], "map start: unit");
+        } else if after < 0.0 {
             // Its blight's three are kept (`building_layout`).
         } else if std::mem::take(&mut state.table.constructing) {
             pending_dispel = DISPEL_PARTS.map(|k| entries[at + k]).to_vec();
@@ -1338,6 +1411,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             dispel: pending_dispel,
             made: if std::ptr::eq(making, &BUILDING) {
                 entries.clone()
+            } else {
+                Vec::new()
+            },
+            // A gold mine's three w, freed when it is entangled or blighted
+            // (c-SCC-1: 779 .. 781 at call 3190, hub #15).
+            mine_w: if std::ptr::eq(making, &GOLD_MINE) {
+                entries[11..14].to_vec()
             } else {
                 Vec::new()
             },
@@ -1817,6 +1897,25 @@ pub(super) fn creep_flight_ordered(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.flight_part = Some(part);
         e.targeted_order = true;
+    }
+}
+
+/// A creep's flight ends at its point (c-SCA-1: the turtle at 59.905293,
+/// hub #14): one object first, then after its order's objects (freed
+/// 0.0001 s later) that one and the flight's kept one
+/// (`creep_flight_arrived`).
+pub(super) fn creep_flight_arriving(state: &mut super::State, h: u32) -> Option<(u32, u32)> {
+    let part = entries(state, h).and_then(|e| e.flight_part.take())?;
+    let tick = state.table.now;
+    let one = state.table.take(tick, "creep flight: arrival");
+    Some((one, part))
+}
+
+/// The end of [`creep_flight_arriving`].
+pub(super) fn creep_flight_arrived(state: &mut super::State, flight: Option<(u32, u32)>) {
+    if let Some((one, part)) = flight {
+        state.table.defer(one, "creep flight: arrival");
+        state.table.defer(part, "creep flight: kept");
     }
 }
 
@@ -5115,6 +5214,14 @@ pub(super) fn death_rest(state: &mut super::State) {
 pub(super) fn unit_removed(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     second_pool_left(state, h);
+    // A gold mine frees its three w first, at once (c-SCC-1: 733 .. 735 at
+    // call 3104, hub #15).
+    let w = entries(state, h)
+        .map(|e| std::mem::take(&mut e.mine_w))
+        .unwrap_or_default();
+    for e in w {
+        state.table.free(tick, e, "gold mine: removed");
+    }
     let made = entries(state, h)
         .map(|e| e.made.clone())
         .unwrap_or_default();
@@ -5140,6 +5247,25 @@ pub(super) fn unit_removed(state: &mut super::State, h: u32) {
     }
     state.table.removal_tails.push((tick, tail));
 }
+/// The objects a native's first call of the game makes once (c-SCC-1's
+/// init, hub #15): the first `CreateTimer` 8 more than its own, the first
+/// `SetStartLocPrio` 13, all kept.
+///
+/// PROVISIONAL: what they are and when they go is not read.
+pub(super) fn first_call(state: &mut super::State, name: &'static str) {
+    let n = match name {
+        "CreateTimer" => 8,
+        "SetStartLocPrio" => 13,
+        _ => return,
+    };
+    // Only in the map's loading (c-SCA-1: its first CreateTimer at 1.0 s takes
+    // its one).
+    if state.ticks == 0 && state.table.first_calls.insert(name) {
+        let tick = state.table.now;
+        state.table.take_n(tick, n, "first call");
+    }
+}
+
 /// The number of objects a native of the script takes when called
 /// (SPEC-0024, the analyst's reading of c-SAK-1's map start), for the
 /// natives whose objects do not depend on their arguments.
@@ -5946,7 +6072,9 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
 pub(super) fn construction_finished(state: &mut super::State, building: u32, builder: u32, q: u32) {
     let tick = state.table.now;
     let type_id = state.unit(Some(building)).map_or(0, |u| u.type_id);
-    let after = building_layout(state, type_id).map_or(0, |b| b.2.to_bits());
+    let after = building_layout(state, type_id)
+        .filter(|b| b.2 >= 0.0)
+        .map_or(0, |b| b.2.to_bits());
     let one = state.table.take(tick, "construction: finished");
     let event = state.table.take(tick, "construction: event");
     let (progress, dispel, rates) = entries(state, building)

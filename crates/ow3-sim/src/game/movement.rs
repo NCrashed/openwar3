@@ -1227,11 +1227,18 @@ pub(super) fn start_buildings(state: &mut State) {
         let Some(building) = start_construction(state, h, type_id, site) else {
             continue;
         };
+        // The other races keep showing their build order (c-SDD-1).
+        let other = state
+            .unit(Some(building))
+            .and_then(|b| b.construction.as_ref())
+            .is_some_and(|c| c.alone || c.inside.is_some());
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
             && let Some(m) = u.movement.as_mut()
         {
             m.order = Order::Repair { building };
-            m.order_id = ORDER_REPAIR;
+            if !other {
+                m.order_id = ORDER_REPAIR;
+            }
         }
         state.drop_path(h);
     }
@@ -1285,6 +1292,8 @@ pub(super) fn worked(state: &State) -> std::collections::BTreeSet<u32> {
 /// ticks were also seen and the rule is not known). Without the move work
 /// begins in the tick of the start.
 const WORK_DELAY_MOVED: u64 = 12;
+/// Ticks an acolyte keeps its build order after the start (SPEC-0026).
+pub(super) const RELEASE_TICKS: u64 = 200;
 
 /// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
 /// building appears there with a tenth of its life, its alarm draws game
@@ -1308,7 +1317,28 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     // Its food comes when it is finished.
     let food = state.data.units.get(&type_id).map_or(0, |t| t.food_made);
     *state.setup.player_states.entry((owner, 4)).or_default() -= food;
-    let moved = move_off_footprint(state, h);
+    // The other races (SPEC-0026, "Other races"): the acolyte is moved off
+    // and the building grows alone; a wisp or a peon goes inside, hidden,
+    // to the building's position. Their work starts at once from the
+    // start's clock.
+    let race = state
+        .unit(Some(h))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .map_or(String::new(), |t| t.race.to_ascii_lowercase());
+    let other = matches!(race.as_str(), "undead" | "nightelf" | "orc");
+    let goes_in = matches!(race.as_str(), "nightelf" | "orc");
+    let moved = if goes_in {
+        let at = state.unit(Some(building)).map(|b| (b.x, b.y));
+        if let (Some((x, y)), Some(Object::Unit(u))) = (at, state.objects.get_mut(&h)) {
+            u.x = x;
+            u.y = y;
+            u.hidden = true;
+        }
+        false
+    } else {
+        move_off_footprint(state, h)
+    };
+    let moved = moved && !other;
     let data = state.data.units.get(&type_id);
     let (max, build_time) = data.map_or((0, 0), |t| (t.hp, t.build_time));
     let base = mul(max, TENTH);
@@ -1324,6 +1354,12 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let mut construction = super::Construction::new(base, rate, max, build_time, begin);
     construction.builder = h;
     construction.turning = delay > 0;
+    construction.alone = race == "undead";
+    construction.inside = goes_in.then_some(h);
+    if race == "undead" {
+        // It keeps its build order 1 s, then stands idle (c-SDD-1: 201 ticks).
+        state.released.push((h, state.ticks + RELEASE_TICKS));
+    }
     // The rest of its start after the start event's triggers, if its owner
     // has any (`widgets::constructions`; c-SCA-1, hub #14).
     let triggers = state.events.iter().any(|r| {
@@ -1335,7 +1371,13 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     } else {
         super::table::construction_rest(state, h, building, delay > 0);
     }
-    let end = (delay == 0).then(|| construction.work(add(state.move_clock, GROWTH_OFFSET)));
+    // The other races grow from the clock itself (`Tb = Ts`).
+    let tb = if other {
+        state.move_clock
+    } else {
+        add(state.move_clock, GROWTH_OFFSET)
+    };
+    let end = (delay == 0).then(|| construction.work(tb));
     if let Some(Object::Unit(b)) = state.objects.get_mut(&building) {
         b.life = super::Regenerating::full(max, 0);
         b.life.set(base);
@@ -1681,6 +1723,7 @@ fn resume_checks(state: &mut State, h: u32, off: bool, taken: bool) {
 pub(super) fn point_order(state: &mut State, h: u32, name: &str, target: [u32; 2]) -> bool {
     // An order without Shift empties the queue (SPEC-0031).
     super::queue::clear(state, h);
+    super::harvest::paid_order_given(state, h, false);
     let off = take_checks_off(state, h);
     let (taken, done) = point_order_taken(state, h, name, target, true);
     resume_checks(state, h, off, taken);
@@ -1758,6 +1801,7 @@ fn point_order_taken(
 /// ends an attack-move.
 pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -> bool {
     super::queue::clear(state, h);
+    super::harvest::paid_order_given(state, h, matches!(name, "harvest" | "smart"));
     let off = take_checks_off(state, h);
     let done = target_order_taken(state, h, name, target);
     resume_checks(state, h, off, done);
@@ -1771,6 +1815,7 @@ pub(super) fn target_order(state: &mut State, h: u32, name: &str, target: u32) -
 /// new order ends an attack-move.
 pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
     super::queue::clear(state, h);
+    super::harvest::paid_order_given(state, h, matches!(name, "stop" | "holdposition"));
     let off = take_checks_off(state, h);
     let done = immediate_order_taken(state, h, name);
     resume_checks(state, h, off, done);
@@ -1780,13 +1825,69 @@ pub(super) fn immediate_order(state: &mut State, h: u32, name: &str) -> bool {
     done
 }
 
+/// `entangleinstant`: tree of life `h` entangles gold mine `mine` at once
+/// (c-SCC-1: the Night Elf start, hub #15). The mine is hidden and an
+/// entangled gold mine of the tree's player stands in its place with its
+/// gold.
+///
+/// PROVISIONAL: the tree's binding to the mine, and what the hidden mine
+/// keeps, are not read.
+fn entangle(state: &mut State, h: u32, mine: u32) -> bool {
+    let entangles = state.unit(Some(h)).is_some_and(|u| {
+        state
+            .data
+            .units
+            .get(&u.type_id)
+            .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Aent")))
+    });
+    let Some((x, y, gold)) = state
+        .unit(Some(mine))
+        .filter(|m| m.alive && !m.hidden && m.type_id == i32::from_be_bytes(*b"ngol"))
+        .map(|m| (m.x, m.y, m.resources))
+    else {
+        return false;
+    };
+    if !entangles {
+        return false;
+    }
+    let owner = state.unit(Some(h)).map_or(-1, |u| u.owner);
+    let Some(egol) =
+        super::widgets::create_unit(state, owner, i32::from_be_bytes(*b"egol"), [x, y, 0])
+    else {
+        return false;
+    };
+    if let Some(Object::Unit(m)) = state.objects.get_mut(&mine) {
+        m.hidden = true;
+    }
+    if let Some(Object::Unit(e)) = state.objects.get_mut(&egol) {
+        e.resources = gold;
+    }
+    super::table::entangled(state, mine, egol);
+    true
+}
+
 fn target_order_taken(state: &mut State, h: u32, name: &str, target: u32) -> bool {
+    if name == "entangleinstant" {
+        return entangle(state, h, target);
+    }
     // The order of an ability (SPEC-0035).
     if let Some(taken) = super::cast::order(state, h, name, target) {
         return taken;
     }
     if name == "move" {
         return follow_order(state, h, target, ORDER_MOVE);
+    }
+    // A second Orc worker cannot help on a building under construction
+    // (SPEC-0026, "Other races"; c-SDD-1); nor can the other races' workers.
+    // PROVISIONAL: read for a peon on a burrow.
+    if matches!(name, "smart" | "repair")
+        && unfinished_of_own(state, h, target)
+        && state
+            .unit(Some(h))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .is_some_and(|t| t.race.eq_ignore_ascii_case("orc"))
+    {
+        return false;
     }
     if matches!(name, "smart" | "repair") && unfinished_of_own(state, h, target) {
         // PROVISIONAL (not in SPEC-0026): a worker sent to its player's
@@ -1969,6 +2070,7 @@ fn immediate_order_taken(state: &mut State, h: u32, name: &str) -> bool {
                 && let Some(c) = u.construction.as_mut()
                 && c.builder == h
                 && c.gone.is_none()
+                && !c.alone
             {
                 c.gone = Some(now);
                 c.base = c.grown(clock);
@@ -2579,6 +2681,13 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 }
                 Some(u) if u.casting.is_some() => u.casting.map_or(0, |c| c.order_id),
                 Some(u) if u.attack.is_some() => u.attack.map_or(0, |a| a.order_id),
+                // An acolyte on its place gathering (SPEC-0029).
+                Some(_)
+                    if handle(&args[0])
+                        .is_some_and(|h| super::harvest::paid_working(&state, h)) =>
+                {
+                    super::harvest::ORDER_HARVEST
+                }
                 Some(u) => u.movement.map_or(0, |m| m.order_id()),
                 None => 0,
             };
@@ -2941,10 +3050,16 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             // (SPEC-0019, SPEC-0029; c-RYP-1: peasant 5 turned at 1339 and
             // 1345 and arrived at 1351, peasant 0 turned at 991 and
             // arrived at 997).
-            && if building_target(target) || is_tree_target(state, target) {
+            // An acolyte reaches a haunted mine by the distance (SPEC-0029).
+            && if !super::harvest::reaches_by_distance(state, h, target)
+                && (building_target(target) || is_tree_target(state, target))
+            {
                 m.arrived
             } else {
                 super::harvest::reached(state, h, here, target)
+                    && (!m.arrived
+                        || !super::harvest::reaches_by_distance(state, h, target)
+                        || super::harvest::arrival_ready(state, h))
             }
         {
             let delivering = matches!(m.order, Order::Return { .. });
@@ -3983,7 +4098,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         u.creep.return_time =
                             Some(add(state.update_time, state.combat.guard_return_time));
                     }
+                    let flight = super::table::creep_flight_arriving(state, h);
                     super::table::order_ended(state, h);
+                    super::table::creep_flight_arrived(state, flight);
                     super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);
                 }

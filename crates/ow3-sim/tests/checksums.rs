@@ -288,6 +288,26 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "workers of several races made for a computer player: not matched yet",
     ),
     (
+        "c-SDA-1.w3g",
+        "acolytes on a haunted mine (SPEC-0029): not matched yet",
+    ),
+    (
+        "c-SDB-1.w3g",
+        "a tree of life entangling a far gold mine: not matched yet",
+    ),
+    (
+        "c-SDC-1.w3g",
+        "wisps on an entangled mine and on trees: not matched yet",
+    ),
+    (
+        "c-SDD-1.w3g",
+        "an acolyte, a wisp and a peon building: not matched yet",
+    ),
+    (
+        "c-SDE-1.w3g",
+        "Orc peons gathering gold and lumber: not matched yet",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

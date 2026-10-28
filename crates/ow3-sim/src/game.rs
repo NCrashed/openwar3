@@ -376,6 +376,11 @@ pub struct Construction {
     base_rate: u32,
     factor: u32,
     pub(crate) builder: u32,
+    /// It grows without a worker (an Undead building, SPEC-0026 "Other
+    /// races"), and the worker hidden inside it while it builds (a wisp
+    /// or a peon).
+    pub(crate) alone: bool,
+    pub(crate) inside: Option<u32>,
     /// Its builder turns to it before the work begins (hub #14).
     turning: bool,
     /// The helpers paying for it, and the queue times its gold and lumber
@@ -418,6 +423,8 @@ impl Construction {
             begin,
             tb: None,
             started: false,
+            alone: false,
+            inside: None,
             lost: 0,
             last: base,
         }
@@ -464,6 +471,14 @@ const PLAYER_STATE_RESOURCE_FOOD_CAP: i32 = 4;
 /// `base + rate (T - Tb)` with `T` the clock of the tick, at least `base`.
 fn construction(state: &mut State, tick: u64) {
     let clock = state.move_clock;
+    // Acolytes whose build order runs out stand idle (SPEC-0026).
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.released)
+        .into_iter()
+        .partition(|&(_, at)| at <= tick);
+    state.released = later;
+    for (h, _) in due {
+        movement::stop(state, h);
+    }
     // The buildings a worker builds now.
     let worked = movement::worked(state);
     let mut ends = Vec::new();
@@ -484,7 +499,7 @@ fn construction(state: &mut State, tick: u64) {
         if now != c.last {
             c.lost = add(c.lost, sub(c.last, now));
         }
-        let working = worked.contains(&h);
+        let working = worked.contains(&h) || c.alone || c.inside.is_some();
         if c.tb.is_some() && !working {
             // The worker left: the life stays.
             c.base = c.grown(clock);
@@ -547,6 +562,19 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
             .or_default() += food;
         let q = s.event_time.unwrap_or_else(|| s.timers.time());
         table::construction_finished(s, h, c.builder, q);
+        // A wisp or a peon inside comes out at (-80, -112) from the
+        // building, alive, and stands (SPEC-0026, "Other races").
+        // PROVISIONAL: the free place next to the building is taken as that
+        // offset; the order 0 comes in this tick, the game's in the next.
+        if let Some(w) = c.inside {
+            let at = s.unit(Some(h)).map(|b| (b.x, b.y));
+            if let (Some((x, y)), Some(Object::Unit(u))) = (at, s.objects.get_mut(&w)) {
+                u.x = add(x, (-80.0f32).to_bits());
+                u.y = add(y, (-112.0f32).to_bits());
+                u.hidden = false;
+            }
+            movement::stop(s, w);
+        }
         // The work on it ends two ticks later (c-SBZ-1: 25.801769 after
         // 25.791811, 44.054104 after 44.043449), its workers' in the order
         // they took it up; the building's kept part goes after its first
@@ -1211,6 +1239,13 @@ pub struct State {
     /// mine, tree (false) or drop-off (true) at the updates of this tick
     /// (SPEC-0029).
     mines: BTreeMap<u32, harvest::Mine>,
+    /// The mines that pay for their workers without trips (SPEC-0029).
+    paying: BTreeMap<u32, harvest::PayingMine>,
+    /// The trees with a wisp on them: the wisp and its next lumber's queue
+    /// time (SPEC-0029).
+    wisp_trees: BTreeMap<u32, (u32, u32)>,
+    /// Acolytes that leave their buildings' orders at a tick (SPEC-0026).
+    released: Vec<(u32, u64)>,
     harvest_reached: Vec<(u32, u32, bool)>,
     /// Workers that deliver at their next update, with its tick
     /// (SPEC-0029).
@@ -1371,6 +1406,9 @@ impl State {
             constructions: Vec::new(),
             summons: Vec::new(),
             mines: BTreeMap::new(),
+            paying: BTreeMap::new(),
+            wisp_trees: BTreeMap::new(),
+            released: Vec::new(),
             harvest_reached: Vec::new(),
             deliveries: Vec::new(),
             objects_changed: 0,
@@ -1822,6 +1860,7 @@ impl<'a> Game<'a> {
             if s.table.log.is_some() {
                 s.table.call_log.push(name);
             }
+            table::first_call(&mut s, name);
         }));
         let vm = Vm::load(program, scripts, &natives)?;
         Ok(Game {
@@ -2174,9 +2213,14 @@ impl<'a> Game<'a> {
             attack::hits_ahead_of(&mut self.vm, &self.state, fired.expiry);
             self.state.borrow_mut().table.mark_early(from);
             self.state.borrow_mut().table.queue_before(fired.expiry);
+            // So do the hits on trees (c-SDE-1, hub #15).
+            harvest::trees_hit_before(&mut self.vm, &self.state, Some(fired.expiry), true);
+            harvest::mines_left_before(&mut self.vm, &self.state, Some(fired.expiry));
             self.fire(fired);
             self.park();
         }
+        harvest::trees_hit_before(&mut self.vm, &self.state, None, true);
+        harvest::mines_left_before(&mut self.vm, &self.state, None);
         self.state.borrow_mut().timers.end_tick(tick);
         // The attack-moves going on at backswing ends of this tick, in the
         // order of those ends (c-SAK-1: footmen 2 and 3 at 3285).
@@ -3389,6 +3433,7 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             if s.table.log.is_some() {
                 s.table.call_log.push(name);
             }
+            table::first_call(&mut s, name);
             drop(s);
             f(vm, args)
         });
@@ -4324,7 +4369,7 @@ fn power_building(state: &mut State) {
         c.helpers.retain(|x| workers.contains(&x.0));
         // Its first builder left: no growth and no payments until a helper
         // takes over at its next 1.0 s timer (hub #13).
-        if c.gone.is_none() && c.tb.is_some() && !workers.contains(&c.builder) {
+        if c.gone.is_none() && !c.alone && c.tb.is_some() && !workers.contains(&c.builder) {
             c.gone = Some(now);
         }
         if let Some(gone) = c.gone

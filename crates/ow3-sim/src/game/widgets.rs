@@ -1589,6 +1589,22 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             let at = [real(&args[1]), real(&args[2]), real(&args[3])];
             let h = create_unit_by_script(&mut s, owner, i32::from_be_bytes(*b"ugol"), at);
             if let Some(h) = h {
+                // It holds a gold mine's gold (SPEC-0029; c-SDA-1: 12500 on
+                // bare ground).
+                let gold = s
+                    .data
+                    .units
+                    .get(&i32::from_be_bytes(*b"ngol"))
+                    .and_then(|t| {
+                        t.abilities
+                            .iter()
+                            .filter_map(|a| s.data.abilities.get(a))
+                            .find(|a| a.code == i32::from_be_bytes(*b"Agld"))
+                    })
+                    .map_or(0, |a| f32::from_bits(a.data[0]) as i32);
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&h) {
+                    u.resources = gold;
+                }
                 super::table::blighted_mine_made(&mut s, h);
                 super::harvest::computer_worker_made(&mut s, h);
             }

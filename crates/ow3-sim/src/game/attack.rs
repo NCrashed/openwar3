@@ -23,7 +23,7 @@ use crate::combat::{DAMAGE_TYPE_NORMAL, hit_amount};
 use crate::data::{Area, Weapon, WeaponKind, is_hero};
 use crate::random::ATTACK_DICE;
 use ow3_math::natives::{cos, sin, sqrt};
-use ow3_math::{add, div, floor, mul, sub};
+use ow3_math::{add, div, floor, mul, recip, sub};
 
 /// A unit's attack on a target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -751,6 +751,38 @@ const MIN_DELAY: u32 = 0x38D1_B717;
 const HOMING_STEP: u32 = 0x3DCC_CCCD;
 
 /// The plane distance from `a` to `b` (world units, engine reals).
+/// The aim point of a missile from `origin` at speed `s` leading a target
+/// at `t` walking with velocity `v` (hub #14): the larger root of
+/// |t + v x - origin| = s x in the soft arithmetic, operand order as read.
+fn lead(origin: [u32; 2], t: [u32; 2], v: [u32; 2], s: u32) -> Option<[u32; 2]> {
+    let (dx, dy) = (sub(t[0], origin[0]), sub(t[1], origin[1]));
+    let c = add(mul(dx, dx), mul(dy, dy));
+    let b = mul(add(mul(dx, v[0]), mul(dy, v[1])), 2.0f32.to_bits());
+    let a = sub(add(mul(v[0], v[0]), mul(v[1], v[1])), mul(s, s));
+    let bb = mul(b, b);
+    let ac4 = mul(mul(4.0f32.to_bits(), a), c);
+    if f32::from_bits(bb) <= f32::from_bits(ac4) {
+        return None;
+    }
+    let e = sqrt(sub(bb, ac4));
+    let q = mul(
+        if f32::from_bits(b) > 0.0 {
+            add(b, e)
+        } else {
+            sub(b, e)
+        },
+        (-0.5f32).to_bits(),
+    );
+    let r = recip(mul(a, q));
+    let (one, two) = (mul(mul(q, q), r), mul(mul(c, a), r));
+    let x = if f32::from_bits(one) > f32::from_bits(two) {
+        one
+    } else {
+        two
+    };
+    Some([add(t[0], mul(v[0], x)), add(t[1], mul(v[1], x))])
+}
+
 fn distance(a: [u32; 2], b: [u32; 2]) -> u32 {
     let (dx, dy) = (sub(b[0], a[0]), sub(b[1], a[1]));
     sqrt(add(mul(dx, dx), mul(dy, dy)))
@@ -814,17 +846,25 @@ fn launch(
     let [side, ahead] = data.launch;
     let [bx, by] = drawn_position(state, h);
     let quarter = |v: u32| mul(floor(mul(v, 4.0f32.to_bits())), 0.25f32.to_bits());
-    let at = [
-        quarter(add(bx, add(mul(fx, ahead), mul(fy, side)))),
-        quarter(add(by, sub(mul(fy, ahead), mul(fx, side)))),
+    let origin = [
+        add(bx, add(mul(fx, ahead), mul(fy, side))),
+        add(by, sub(mul(fy, ahead), mul(fx, side))),
     ];
-    // A target walking is led: the flight is the time to where it will be,
-    // |to + v t - at| = speed t (c-SCA-1: the archer's arrow at the walking
-    // turtle, 0.509774 s for 378 at the launch, hub #14).
-    // PROVISIONAL: the solution's arithmetic and the velocity read are not
-    // given; read once.
-    let flight = match super::movement::walking_velocity(state, target) {
-        Some(v) if !artillery => {
+    let at = [quarter(origin[0]), quarter(origin[1])];
+    let velocity = super::movement::walking_velocity(state, target).filter(|_| !artillery);
+    // A walking target is led by a plain missile: it flies to where the
+    // target will be, solved from the launch point before its floor (hub
+    // #14, read in c-SCA-1 on two arrows, bit for bit).
+    // PROVISIONAL: the branch with no root is not read.
+    let led = velocity
+        .filter(|_| !data.missile_homing)
+        .and_then(|v| lead(origin, to, v, speed));
+    let to = led.unwrap_or(to);
+    let flight = match velocity {
+        _ if led.is_some() => distance(at, to),
+        // A homing one: the time to the meeting point from the floored
+        // point (c-SCA-1, hub #14).
+        Some(v) => {
             let (dx, dy) = (sub(to[0], at[0]), sub(to[1], at[1]));
             let a = sub(add(mul(v[0], v[0]), mul(v[1], v[1])), mul(speed, speed));
             let b = add(mul(dx, v[0]), mul(dy, v[1]));
@@ -838,7 +878,7 @@ fn launch(
                 distance(at, to)
             }
         }
-        _ => distance(at, to),
+        None => distance(at, to),
     };
     let step = mul(speed, HOMING_STEP);
     if f32::from_bits(flight) < f32::from_bits(step) {

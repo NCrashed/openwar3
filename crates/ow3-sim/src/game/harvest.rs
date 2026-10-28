@@ -791,24 +791,27 @@ pub(super) fn pace_factor(state: &State, h: u32) -> Option<u32> {
         .map(|g| add(1.0f32.to_bits(), g.bonus))
 }
 
+/// Whether the collision circles of units `a` and `b` overlap.
+fn overlaps(state: &State, a: u32, b: u32) -> bool {
+    let (Some(u), Some(v)) = (state.unit(Some(a)), state.unit(Some(b))) else {
+        return false;
+    };
+    let size = |t: i32| {
+        state
+            .data
+            .units
+            .get(&t)
+            .map_or(0.0, |d| f32::from_bits(d.collision))
+    };
+    let reach = size(u.type_id) + size(v.type_id);
+    squared([u.x, u.y], [v.x, v.y]) < reach * reach
+}
+
 /// A worker that starts to wait at a busy mine holds its cells for every
 /// unit: the units on them are put at the nearest free place by the
 /// search of a worker coming out of a mine (SPEC-0029).
 fn push_aside(state: &mut State, h: u32) {
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    let cells_of = |state: &State, o: u32| -> Vec<(i32, i32)> {
-        let Some(u) = state.unit(Some(o)) else {
-            return Vec::new();
-        };
-        let class = state
-            .data
-            .units
-            .get(&u.type_id)
-            .map_or(0, |t| crate::path::size_class(t.collision));
-        let r = relative([u.x, u.y], min);
-        crate::path::occupied_cells([mul(r[0], CELL), mul(r[1], CELL)], class)
-    };
-    let mine = cells_of(state, h);
     let on: Vec<u32> = state
         .units
         .iter()
@@ -821,7 +824,12 @@ fn push_aside(state: &mut State, h: u32) {
                     && !state.data.units.get(&u.type_id).is_some_and(|t| t.building)
             })
         })
-        .filter(|&o| cells_of(state, o).iter().any(|c| mine.contains(c)))
+        // Those whose collision circles overlap its own (centre distance
+        // under the two sizes; c-RXI-1: 21.9 found, c-SDE-1: 35.9 not, both
+        // 32; hub #15).
+        // PROVISIONAL: the test read by its result in two cases; the unit
+        // state the game tests after it is taken as always set.
+        .filter(|&o| overlaps(state, h, o))
         .collect();
     for o in on {
         if let Some(at) = exit_place(state, o, true)

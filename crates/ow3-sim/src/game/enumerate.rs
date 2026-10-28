@@ -371,6 +371,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native DestroyGroup takes group whichGroup returns nothing",
         |vm, state, args| {
+            // Its object of the table goes 0.0001 s later (c-SCC-1: 10710 in
+            // MeleeClearExcessUnits, hub #15).
+            if let Some(g) = handle(&args[0]) {
+                let mut s = state.borrow_mut();
+                if let Some(e) = s.table.group_objects.remove(&g) {
+                    s.table.defer(e, "group");
+                }
+            }
             destroy(state, handle(&args[0]), |o| matches!(o, Object::Group(_)));
             Ok(None)
         }
@@ -808,6 +816,14 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native RemoveLocation takes location whichLocation returns nothing",
         |vm, state, args| {
+            // Its object of the table goes 0.0001 s later (c-SCC-1: 10830 of
+            // a GetUnitLoc, hub #15).
+            if let Some(l) = handle(&args[0]) {
+                let mut s = state.borrow_mut();
+                if let Some(e) = s.table.group_objects.remove(&l) {
+                    s.table.defer(e, "location");
+                }
+            }
             destroy(state, handle(&args[0]), |o| {
                 matches!(o, Object::Location { .. })
             });

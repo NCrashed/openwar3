@@ -52,6 +52,10 @@ pub struct ObjectTable {
     /// The parts of the time of day (its rate and the watches of the hours
     /// where something happens), replaced when the time is set.
     pub day: Vec<u32>,
+    /// Each unit's watches of the last change of the hour (in `day` too),
+    /// freed in its removal's group A before its R (c-SCC-1: the nrvi's
+    /// 10571, hub #15).
+    pub day_of: std::collections::BTreeMap<u32, Vec<u32>>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
     /// The pathing parts of each destructable, freed when it dies.
@@ -131,6 +135,20 @@ pub struct ObjectTable {
     pub call_name: &'static str,
     /// The natives whose first call made its one-time objects (`first_call`).
     pub first_calls: std::collections::BTreeSet<&'static str>,
+    /// The second object of each game-state event registration of the
+    /// loading, by registration, and one of the first timer's, freed 0.0001 s
+    /// after the first such event fires (`players::game_state_events`).
+    pub play_frees: (Vec<u32>, Vec<u32>),
+    /// The object of the group or location being made, and each one's by its
+    /// handle
+    /// (freed 0.0001 s after `DestroyGroup` or `RemoveLocation`; c-SCC-1:
+    /// 10710, 10830, hub #15).
+    pub group_made: Option<u32>,
+    pub group_objects: std::collections::BTreeMap<u32, u32>,
+    /// The objects of `TriggerExecute` in the loading, freed after the
+    /// loading's 0.0001 s frees, ahead of the removals' tails (c-SCC-1: 10045,
+    /// hub #15).
+    pub executed: Vec<u32>,
     /// Every native call by name, while the log is kept.
     pub call_log: Vec<&'static str>,
 }
@@ -151,6 +169,7 @@ impl ObjectTable {
             deferred: Vec::new(),
             now: 0,
             day: Vec::new(),
+            day_of: std::collections::BTreeMap::new(),
             walks_due: Vec::new(),
             mine_used: false,
             computer_harvest: None,
@@ -186,6 +205,10 @@ impl ObjectTable {
             call: 0,
             call_name: "",
             first_calls: std::collections::BTreeSet::new(),
+            play_frees: (Vec::new(), Vec::new()),
+            group_made: None,
+            group_objects: std::collections::BTreeMap::new(),
+            executed: Vec::new(),
             call_log: Vec::new(),
         }
     }
@@ -412,6 +435,12 @@ impl ObjectTable {
         for (_, entry, tag) in due {
             self.free(tick, entry, tag);
         }
+        // PROVISIONAL: taken as the end of the executed trigger's thread.
+        if tick >= 1 {
+            for entry in std::mem::take(&mut self.executed) {
+                self.free(tick, entry, "TriggerExecute");
+            }
+        }
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.removal_tails)
             .into_iter()
             .partition(|&(t, _)| t <= tick);
@@ -551,6 +580,9 @@ pub struct UnitEntries {
     pub hold_walked: bool,
     /// A gold mine's three w entries (`entangled`).
     pub mine_w: Vec<u32>,
+    /// A creep's own objects in its removal's tail: group A (between its
+    /// RemoveUnit's 4th and 3rd) and group B (between the 3rd and 2nd).
+    pub removal: (Vec<u32>, Vec<u32>),
     /// The objects of its Wind Walk freed at the fade and at the end.
     pub fade: Vec<u32>,
     pub lasting: Vec<u32>,
@@ -1129,8 +1161,22 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     let tail = state
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
-    for &e in &tail[kept..kept + 9 + growth] {
-        state.table.defer(e, "computer unit");
+    // An idle worker's growth comes before the nine, each three going 1, 2, 0
+    // (c-SCC-1: the acolyte's 28, 29, 27); the nine go in the order 1, 6, 5,
+    // 4, 3, 2, 0, 8, 7 (the great hall's 11011, 11016 .. 11012, 11010, 11018,
+    // 11017; hub #15).
+    // PROVISIONAL: the orders read on one building and one acolyte.
+    let grown = &tail[kept..kept + growth];
+    // (By threes: the second acolyte's 28, 29, 27, 31, 32, 30.)
+    let ks: Vec<usize> = (0..growth / 3)
+        .flat_map(|g| [3 * g + 1, 3 * g + 2, 3 * g])
+        .collect();
+    for k in ks {
+        state.table.defer(grown[k], "computer unit");
+    }
+    let nine = &tail[kept + growth..kept + growth + 9];
+    for k in [1, 6, 5, 4, 3, 2, 0, 8, 7] {
+        state.table.defer(nine[k], "computer unit");
     }
 }
 
@@ -1152,8 +1198,11 @@ pub(super) fn worker(state: &super::State, t: &crate::data::UnitType) -> bool {
 /// the 0.88 s is read once, from the map's start.
 pub(super) fn entangled(state: &mut super::State, mine: u32, egol: u32) {
     let tick = state.table.now;
-    for e in state.table.take_n(tick, 10, "entangle: order start") {
-        state.table.defer(e, "entangle: order start");
+    // The order's ten go 1, 9 .. 6 now and 5 .. 2, 0 after the mine's tail
+    // (c-SCC-1, hub #15).
+    let start = state.table.take_n(tick, 10, "entangle: order start");
+    for k in [1, 9, 8, 7, 6] {
+        state.table.defer(start[k], "entangle: order start");
     }
     let w = entries(state, mine)
         .map(|e| std::mem::take(&mut e.mine_w))
@@ -1166,13 +1215,16 @@ pub(super) fn entangled(state: &mut super::State, mine: u32, egol: u32) {
     for &e in &body[14..19] {
         state.table.free_at_q(end, e, "entangled mine: unit");
     }
-    for e in state.table.take_n(tick, 2, "entangled mine: unit") {
-        state.table.defer(e, "entangled mine: unit");
-    }
+    let pair = state.table.take_n(tick, 2, "entangled mine: unit");
+    state.table.defer(pair[1], "entangled mine: unit");
+    state.table.defer(pair[0], "entangled mine: unit");
     let Some((owner, type_id)) = state.unit(Some(egol)).map(|u| (u.owner, u.type_id)) else {
         return;
     };
     computer_tail(state, egol, owner, type_id, true);
+    for k in [5, 4, 3, 2, 0] {
+        state.table.defer(start[k], "entangle: order start");
+    }
     state.table.take(tick, "entangled mine: kept");
     let id = [body[0], state.table.creation_of(body[0])];
     if let Some(super::Object::Unit(u)) = state.objects.get_mut(&egol) {
@@ -1196,13 +1248,16 @@ pub(super) fn blighted_mine_made(state: &mut super::State, h: u32) {
     };
     let tick = state.table.now;
     let mine = state.table.take_n(tick, 22, "blighted mine: gold mine");
+    // The gold mine's pair, the last first (c-SCC-1, hub #15).
+    state.table.defer(mine[21], "blighted mine: gold mine");
+    state.table.defer(mine[20], "blighted mine: gold mine");
     for &e in &mine[11..14] {
         state.table.free(tick, e, "blighted mine: gold mine");
     }
     let body = state.table.take_n(tick, 49, "blighted mine: unit");
-    for e in state.table.take_n(tick, 2, "blighted mine: unit") {
-        state.table.defer(e, "blighted mine: unit");
-    }
+    let pair = state.table.take_n(tick, 2, "blighted mine: unit");
+    state.table.defer(pair[1], "blighted mine: unit");
+    state.table.defer(pair[0], "blighted mine: unit");
     computer_tail(state, h, owner, type_id, true);
     let id = [body[0], state.table.creation_of(body[0])];
     if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
@@ -1286,18 +1341,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // (freed at its death: 1 first, 2 with its buffs, 3 0.0001 s later;
     // cost of a watch)
     let mut parts: Vec<(u8, Option<i32>)> = Vec::new();
-    // The first part after the first aura's (`let_go` below).
-    let mut after_aura: Option<usize> = None;
-    let mut aura_seen = false;
+    // Each part's role in a removal's tail (`removal_groups`): 0 a plain object
+    // (group B), 1 an aura's r, 2 an aura's held objects, 3 a watch (group
+    // A), 4 a watch kept in B (Reincarnation's), 5 none (freed at creation).
+    let mut roles: Vec<u8> = Vec::new();
+    // The watches of Web and Ensnare (`let_go` below).
+    let mut spell_watches: Vec<usize> = Vec::new();
     for a in abilities {
         let Some(d) = state.data.abilities.get(&a) else {
             continue;
         };
-        if aura_seen && after_aura.is_none() {
-            after_aura = Some(parts.len());
-        }
-        aura_seen |= [*b"AHab", *b"AHad", *b"AOae", *b"AOac", *b"AUau", *b"AUav"]
-            .contains(&d.code.to_be_bytes());
         let level = d.per_level.first();
         if [*b"AHab", *b"AHad", *b"AOae", *b"AOac"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
@@ -1312,6 +1365,9 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         // watch (c-SCI-1: nitt, nmrr, nnwl, hub #15).
         // So does Reincarnation, its watch its cooldown's (c-SCO-1: nwna).
         } else if [*b"Aens", *b"Aweb", *b"ACrn", *b"AOre"].contains(&d.code.to_be_bytes()) {
+            if [*b"Aens", *b"Aweb"].contains(&d.code.to_be_bytes()) {
+                spell_watches.push(parts.len() + 1);
+            }
             parts.extend([(0, None), (2, None)]);
         // Possession one (c-SCI-1: ngh1, hub #15).
         // PROVISIONAL: which of its two the game keeps is not read.
@@ -1326,6 +1382,19 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         } else {
             parts.push((0, None));
         }
+        let code = d.code.to_be_bytes();
+        let added = parts.len() - roles.len();
+        let of: &[u8] = match &code {
+            b"AHab" | b"AHad" | b"AOae" | b"AOac" => &[0, 1, 2],
+            b"AUau" => &[0, 1, 2, 2],
+            b"AUav" => &[0, 1, 2],
+            b"ACrn" | b"AOre" => &[0, 4],
+            b"AUts" => &[0, 0],
+            _ if added == 2 => &[0, 3],
+            b"Apos" => &[3],
+            _ => &[0],
+        };
+        roles.extend((0..added).map(|k| of.get(k).copied().unwrap_or(0)));
     }
     // An autocast on from the start (`auto`) takes one more, freed 0.0001 s
     // later; a costed ability its cost watch also without a cooldown
@@ -1333,6 +1402,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // cooldown).
     if creep && state.data.units.get(&type_id).is_some_and(|t| t.auto != 0) {
         parts.push((3, None));
+        roles.push(5);
     }
     // A hero's own abilities (`abilList`, but the inventory) take theirs
     // before its last two (c-SBK-1: Ultravision 1, Shadow Meld 1; c-SBH-1:
@@ -1388,16 +1458,15 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .table
             .defer(entries[14 + shift + i], "map start: autocast");
     }
-    // A spell's cost watch checked as it is made: with the unit's mana at or
-    // above the cost it is let go, 0.0001 s later, ahead of the creation's
-    // (c-SCC-1: the nrvi's Frost Nova watch 1689 at mana 500, hub #15).
-    // PROVISIONAL: the comparison (above or at) is not read.
-    // Only for a unit made in the map's loading (c-SBL-1: the ogre lord made at
-    // 1.0 s keeps its Shockwave watch).
-    // And only after an aura of its own, whose buff on the unit sets its
-    // mana first (c-SCC-1: the nrvi's ACvp; the ngh1, nwna and nwns keep
-    // theirs). PROVISIONAL: a reading of four units.
+    // A creep that can sleep re-checks its abilities as its sleep ability
+    // is added, its mana set: each cost watch that turns true there (the
+    // mana reaching the cost less 0.1) is let go 0.0001 s later, ahead of
+    // the creation's (c-SCC-1: the nrvi's Frost Nova watch 1689, the nwna's
+    // War Stomp 3270; the ngh1, without the sleep ability, keeps its
+    // Possession watch; a watch of no cost starts true and stays; hub #15).
+    // PROVISIONAL: read in the map's loading; >= is not read.
     let loading = state.ticks == 0;
+    let sleeps = creep && state.data.units.get(&type_id).is_some_and(|t| t.can_sleep);
     let mana_now = state
         .unit(Some(h))
         .map_or(f32::MAX, |u| f32::from_bits(u.mana.value()));
@@ -1406,12 +1475,14 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         .enumerate()
         .filter(|&(i, p)| {
             loading
-                && after_aura.is_some_and(|a| i >= a)
-                && p.1.is_some_and(|c| mana_now >= c as f32)
+                && sleeps
+                && (spell_watches.contains(&i)
+                    || p.1.is_some_and(|c| c > 0 && mana_now >= c as f32 - 0.1))
         })
         .map(|(i, _)| i)
         .collect();
-    for &i in &let_go {
+    // The last first (c-SCC-1: the nwns's 3468, then 3466).
+    for &i in let_go.iter().rev() {
         state
             .table
             .defer(entries[14 + shift + i], "unit state: limit watch");
@@ -1423,17 +1494,18 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
     }
-    computer_tail(state, h, owner, type_id, building.is_some());
     let mut pending_dispel = Vec::new();
     if let Some((count, at, after)) = building {
+        // A rooting building's L goes first (c-SCC-1: the tree of life's 22,
+        // then its pair; `building_layout`).
+        if after == -2.0 {
+            state.table.defer(entries[at + 3], "map start: unit");
+        }
         state.table.defer(entries[count - 1], "map start: unit");
         state.table.defer(entries[count - 2], "map start: unit");
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
-        if after == -2.0 {
-            // A rooting building's L (`building_layout`).
-            state.table.defer(entries[at + 3], "map start: unit");
-        } else if after < 0.0 {
+        if after < 0.0 {
             // Its blight's three are kept (`building_layout`).
         } else if std::mem::take(&mut state.table.constructing) {
             pending_dispel = DISPEL_PARTS.map(|k| entries[at + k]).to_vec();
@@ -1446,6 +1518,9 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             }
         }
     }
+    // A computer's tail after the building's pair (c-SCC-1: the great hall's
+    // 11007, 11006, then its tail; hub #15).
+    computer_tail(state, h, owner, type_id, building.is_some());
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
     let death_mana = mana.then(|| entries[12]);
     let (mut death_first, mut death_late) = (Vec::new(), Vec::new());
@@ -1497,6 +1572,74 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             },
             // A gold mine's three w, freed when it is entangled or blighted
             // (c-SCC-1: 779 .. 781 at call 3190, hub #15).
+            removal: if creep && (std::ptr::eq(making, &CREEP) || std::ptr::eq(making, &CAMP_CREEP))
+            {
+                // A creep's tail at its removal (c-SCO-1, hub #15): group A
+                // its auras' r, its kept pair, its auras' held objects (the
+                // last first), its watches (the last spell first), its R, a
+                // mana R and its L; group B its plain objects from the last
+                // down (its abilities', its sleep ability's, its two basic
+                // ones), then its first set as 8 7 6 5 4 9 2 3 1 0.
+                // A camp creep's group object stays (c-SCC-1: the ngh1 of call 837).
+                // PROVISIONAL: a type's last r is not made.
+                let camp = std::ptr::eq(making, &CAMP_CREEP);
+                let part = |i: usize| entries[14 + shift + i];
+                let pick = |role: u8| -> Vec<u32> {
+                    roles
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, &r)| r == role && !let_go.contains(&i))
+                        .map(|(i, _)| part(i))
+                        .collect()
+                };
+                let pair = if camp { [18, 19] } else { [17, 18] };
+                // A creep that cannot sleep has no sleep ability's object: what we
+                // lay out there is its last watch, and a one-part watch
+                // (Possession's) its ability's object (c-SCC-1: the ngh1's 15 a,
+                // 16 L; hub #15).
+                // PROVISIONAL: read on the ngh1.
+                let sleeps = state.data.units.get(&type_id).is_some_and(|t| t.can_sleep);
+                let one_part: Vec<u32> = if sleeps {
+                    Vec::new()
+                } else {
+                    roles
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, &r)| {
+                            r == 3 && parts[i].0 == 2 && (i == 0 || roles[i - 1] != 0)
+                        })
+                        .map(|(i, _)| part(i))
+                        .collect()
+                };
+                let mut a: Vec<u32> = pick(1);
+                a.extend(pair.map(|k| entries[at(k)]));
+                a.extend(pick(2).into_iter().rev());
+                let mut watches: Vec<u32> = pick(3)
+                    .into_iter()
+                    .filter(|e| !one_part.contains(e))
+                    .collect();
+                if !sleeps && !one_part.is_empty() {
+                    watches.push(entries[at(14)]);
+                }
+                a.extend(watches.into_iter().rev());
+                a.push(entries[10]);
+                if mana {
+                    a.push(entries[12]);
+                }
+                a.push(entries[11]);
+                let mut b: Vec<u32> = pick(0);
+                b.extend(pick(4));
+                b.extend(one_part.iter().copied());
+                b.extend([12, 13].map(|k| entries[at(k)]));
+                if sleeps || one_part.is_empty() {
+                    b.push(entries[at(14)]);
+                }
+                b.sort_by_key(|e| std::cmp::Reverse(entries.iter().position(|x| x == e)));
+                b.extend([8, 7, 6, 5, 4, 9, 2, 3, 1, 0].map(|k| entries[k]));
+                (a, b)
+            } else {
+                (Vec::new(), Vec::new())
+            },
             mine_w: if std::ptr::eq(making, &GOLD_MINE) {
                 entries[11..14].to_vec()
             } else {
@@ -1584,7 +1727,7 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
         .table
         .take_n(tick, if to_day { 3 } else { 1 }, "time of day");
     let units = state.units.clone();
-    for h in units {
+    for h in units.into_iter().rev() {
         let Some(type_id) = state.unit(Some(h)).map(|u| u.type_id) else {
             continue;
         };
@@ -1602,9 +1745,15 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
         if night {
             kinds.push("unit state: limit watch");
         }
+        let mut own = Vec::new();
         for kind in kinds {
-            new_parts.push(state.table.take(tick, kind));
+            let e = state.table.take(tick, kind);
+            new_parts.push(e);
+            if kind == "unit state: limit watch" {
+                own.push(e);
+            }
         }
+        state.table.day_of.insert(h, own);
     }
     if !to_day {
         new_parts.push(state.table.take(tick, "time of day"));
@@ -2330,16 +2479,23 @@ fn computer_harvest_ordered(state: &mut super::State, h: u32, idle: usize) {
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
     order_ended(state, h);
-    for e in state.table.take_n(tick, 18, "harvest: order start") {
-        state.table.defer(e, "harvest: order start");
-    }
+    let first = state.table.take_n(tick, 18, "harvest: order start");
     walk_made_at_order(state, h);
     let kept = 9 + 3 * idle;
     let run = state.table.take_n(tick, 15 + kept, "harvest: order start");
-    for &e in &run[..9] {
-        state.table.defer(e, "harvest: order start");
-    }
-    for &e in &run[9 + kept + 2..] {
+    // Their frees in the game's order (c-SCC-1: the peons' of call 3062 ..,
+    // hub #15): the first run's 1, 2, 0, 17 .. 14, the second's 1, the
+    // first's 13 .. 3, the second's 6 .. 2, 0, 8, 7 and its last four.
+    // PROVISIONAL: read on these peons (no idle worker).
+    let tail = 9 + kept + 2;
+    let mut order_of: Vec<u32> = vec![first[1], first[2], first[0]];
+    order_of.extend((14..18).rev().map(|k| first[k]));
+    order_of.push(run[1]);
+    order_of.extend((3..14).rev().map(|k| first[k]));
+    order_of.extend((2..7).rev().map(|k| run[k]));
+    order_of.extend([run[0], run[8], run[7]]);
+    order_of.extend((tail..run.len()).rev().map(|k| run[k]));
+    for e in order_of {
         state.table.defer(e, "harvest: order start");
     }
     if let Some(e) = entries(state, h) {
@@ -5352,7 +5508,29 @@ pub(super) fn unit_removed(state: &mut super::State, h: u32) {
     for k in [0, 6, 5, 4] {
         state.table.defer(r[k], "RemoveUnit");
     }
-    let mut tail = vec![r[3], r[2], r[1]];
+    // A creep's own objects between them (`UnitEntries::removal`).
+    let (mut a, b) = entries(state, h)
+        .map(|e| std::mem::take(&mut e.removal))
+        .unwrap_or_default();
+    // Its parts of the hour go before its own R (`day_of`).
+    // PROVISIONAL: read on the nrvi; its watch only, its rate part goes later.
+    if let Some(own) = state.table.day_of.remove(&h) {
+        state.table.day.retain(|e| !own.contains(e));
+        // (A ends with its R, a mana R if it has mana, and its L.)
+        let mana = state
+            .unit(Some(h))
+            .is_some_and(|u| f32::from_bits(u.mana.max) > 0.0);
+        let k = if mana { 3 } else { 2 };
+        if a.len() >= k {
+            let at = a.len() - k;
+            a.splice(at..at, own);
+        }
+    }
+    let mut tail = vec![r[3]];
+    tail.extend(a);
+    tail.push(r[2]);
+    tail.extend(b);
+    tail.push(r[1]);
     if hero {
         tail.extend([r[7], r[8]]);
     }
@@ -5373,7 +5551,11 @@ pub(super) fn first_call(state: &mut super::State, name: &'static str) {
     // its one).
     if state.ticks == 0 && state.table.first_calls.insert(name) {
         let tick = state.table.now;
-        state.table.take_n(tick, n, "first call");
+        let made = state.table.take_n(tick, n, "first call");
+        // The first timer's eighth goes at the start of play (c-SCC-1: 647).
+        if name == "CreateTimer" {
+            state.table.play_frees.1.push(made[7]);
+        }
     }
 }
 

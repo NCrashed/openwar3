@@ -3423,10 +3423,37 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
                             _ => false,
                         };
                     if !again {
-                        s.table.take_n(tick, objects, tag);
+                        let made = s.table.take_n(tick, objects, tag);
+                        if tag == "TriggerExecute" && s.ticks == 0 {
+                            s.table.executed.extend(made.first().copied());
+                        }
+                        if matches!(
+                            tag,
+                            "CreateGroup" | "Location" | "GetUnitLoc" | "GetStartLocationLoc"
+                        ) {
+                            s.table.group_made = made.first().copied();
+                        }
+                        // A game-state event registration's second goes at the start
+                        // of play (c-SCC-1: 9994, `table::play_started`).
+                        if tag == "TriggerRegisterGameStateEvent" && s.ticks == 0 {
+                            s.table.play_frees.0.push(made[1]);
+                        }
                     }
                 }
-                f(vm, args)
+                let result = f(vm, args);
+                // A group's or a location's object goes with it (`DestroyGroup`,
+                // `RemoveLocation`).
+                if matches!(
+                    tag,
+                    "CreateGroup" | "Location" | "GetUnitLoc" | "GetStartLocationLoc"
+                ) && let Ok(Some(Value::Handle(Some(g)))) = &result
+                {
+                    let mut s = state.borrow_mut();
+                    if let Some(e) = s.table.group_made.take() {
+                        s.table.group_objects.insert(*g, e);
+                    }
+                }
+                result
             })
         } else {
             f

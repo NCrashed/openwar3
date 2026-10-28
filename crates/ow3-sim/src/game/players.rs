@@ -442,6 +442,16 @@ pub(super) fn game_state_events(
         _ => false,
     };
     let (old, new) = (f32::from_bits(old), f32::from_bits(new));
+    // The registrations in their order, for their second objects.
+    let order: Vec<(i32, u32)> = state
+        .borrow()
+        .events
+        .iter()
+        .filter_map(|r| match *r {
+            super::widgets::Registration::GameState { op, value, .. } => Some((op, value)),
+            _ => None,
+        })
+        .collect();
     let firing: Vec<(u32, u32)> = state
         .borrow()
         .events
@@ -494,6 +504,30 @@ pub(super) fn game_state_events(
                 .setup
                 .float_game_states
                 .insert(game_state, k);
+        }
+    }
+    // After the triggers, each "=" registration a set jumps over gives up its
+    // second object 0.0001 s later, and then, once, one of the first timer's
+    // (c-SCC-1: "= 6"'s 9994 and 647 at the melee start's 8:00, after the
+    // event object 10046; hub #15).
+    // PROVISIONAL: read on that one set.
+    if !passing {
+        let mut s = state.borrow_mut();
+        let mut any = false;
+        for (n, &(op, v)) in order.iter().enumerate() {
+            let v = f32::from_bits(v);
+            if op == 2 && old < v && v <= new {
+                let second = s.table.play_frees.0.get_mut(n).map(std::mem::take);
+                if let Some(e) = second.filter(|&e| e != 0) {
+                    s.table.defer(e, "game-state event: registration");
+                    any = true;
+                }
+            }
+        }
+        if any {
+            for t in std::mem::take(&mut s.table.play_frees.1) {
+                s.table.defer(t, "first timer");
+            }
         }
     }
 }

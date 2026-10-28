@@ -308,10 +308,6 @@ const UNSPECIFIED: &[(&str, &str)] = &[
         "Orc peons gathering gold and lumber: not matched yet",
     ),
     (
-        "c-SDG-1.w3g",
-        "a building made on a taken place: not matched yet",
-    ),
-    (
         "c-SDI-1.w3g",
         "the analyst's test of placement or watches: not matched yet",
     ),

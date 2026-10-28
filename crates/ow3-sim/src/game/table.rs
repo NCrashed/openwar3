@@ -1286,10 +1286,18 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // (freed at its death: 1 first, 2 with its buffs, 3 0.0001 s later;
     // cost of a watch)
     let mut parts: Vec<(u8, Option<i32>)> = Vec::new();
+    // The first part after the first aura's (`let_go` below).
+    let mut after_aura: Option<usize> = None;
+    let mut aura_seen = false;
     for a in abilities {
         let Some(d) = state.data.abilities.get(&a) else {
             continue;
         };
+        if aura_seen && after_aura.is_none() {
+            after_aura = Some(parts.len());
+        }
+        aura_seen |= [*b"AHab", *b"AHad", *b"AOae", *b"AOac", *b"AUau", *b"AUav"]
+            .contains(&d.code.to_be_bytes());
         let level = d.per_level.first();
         if [*b"AHab", *b"AHad", *b"AOae", *b"AOac"].contains(&d.code.to_be_bytes()) {
             parts.extend([(0, None), (1, None), (2, None)]);
@@ -1380,6 +1388,34 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .table
             .defer(entries[14 + shift + i], "map start: autocast");
     }
+    // A spell's cost watch checked as it is made: with the unit's mana at or
+    // above the cost it is let go, 0.0001 s later, ahead of the creation's
+    // (c-SCC-1: the nrvi's Frost Nova watch 1689 at mana 500, hub #15).
+    // PROVISIONAL: the comparison (above or at) is not read.
+    // Only for a unit made in the map's loading (c-SBL-1: the ogre lord made at
+    // 1.0 s keeps its Shockwave watch).
+    // And only after an aura of its own, whose buff on the unit sets its
+    // mana first (c-SCC-1: the nrvi's ACvp; the ngh1, nwna and nwns keep
+    // theirs). PROVISIONAL: a reading of four units.
+    let loading = state.ticks == 0;
+    let mana_now = state
+        .unit(Some(h))
+        .map_or(f32::MAX, |u| f32::from_bits(u.mana.value()));
+    let let_go: Vec<usize> = parts
+        .iter()
+        .enumerate()
+        .filter(|&(i, p)| {
+            loading
+                && after_aura.is_some_and(|a| i >= a)
+                && p.1.is_some_and(|c| mana_now >= c as f32)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for &i in &let_go {
+        state
+            .table
+            .defer(entries[14 + shift + i], "unit state: limit watch");
+    }
     for &k in making.deferred {
         state.table.defer(entries[at(k)], "map start: unit");
     }
@@ -1414,7 +1450,12 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     let death_mana = mana.then(|| entries[12]);
     let (mut death_first, mut death_late) = (Vec::new(), Vec::new());
     let mut watches = Vec::new();
+    // A watch starts on the side of its cost the unit's mana is on (c-SCC-1:
+    // the nwna and nwns at 0 make no watch at the start of play, hub #15).
     for (i, &(dies, cost)) in parts.iter().enumerate() {
+        if let_go.contains(&i) {
+            continue;
+        }
         let e = entries[14 + shift + i];
         match dies {
             1 => death_first.push(e),
@@ -1422,7 +1463,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             _ => {}
         }
         if let Some(c) = cost {
-            watches.push((c, e, true));
+            watches.push((c, e, mana_now >= c as f32));
         }
     }
     let id = [entries[0], state.table.creation_of(entries[0])];
@@ -1494,6 +1535,20 @@ pub(super) fn level_changed(state: &mut super::State, h: u32) {
     if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries.level = new;
     }
+}
+
+/// The running game begins (its first tick): the time-of-day clock's
+/// rate part and its watch, kept (c-SCC-1: 11988 R, 11989 L at call 3245,
+/// hub #15).
+///
+/// PROVISIONAL: tied to the clock by the analyst's reading of its code
+/// path; when they go is not read.
+pub(super) fn play_started(state: &mut super::State) {
+    let tick = state.table.now;
+    let r = state.table.take(tick, "time of day: rate part");
+    let l = state.table.take(tick, "time of day: watch");
+    // They are the clock's parts, as a setting's (`time_of_day_set`).
+    state.table.day.extend([r, l]);
 }
 
 /// The time of day is set from `old` to `new` hours (SPEC-0017): when that
@@ -3538,6 +3593,22 @@ pub(super) fn mana_watches(state: &mut super::State, h: u32, spent: i32) {
     if spent > 0 {
         let clock = state.move_clock;
         watches_rebased(state, h, clock);
+    }
+}
+
+/// A script set unit `h`'s mana (`SetUnitState`): its watches take the
+/// side of their costs it is on now, making nothing (c-SCC-1: the nwna and
+/// nwns set to 0 make no watch at the start of play, hub #15).
+///
+/// PROVISIONAL: read for a set below the costs before play.
+pub(super) fn mana_set(state: &mut super::State, h: u32) {
+    let Some(mana) = state.unit(Some(h)).map(|u| f32::from_bits(u.mana.value())) else {
+        return;
+    };
+    if let Some(e) = entries(state, h) {
+        for w in &mut e.mana_watches {
+            w.2 = mana >= w.0 as f32;
+        }
     }
 }
 

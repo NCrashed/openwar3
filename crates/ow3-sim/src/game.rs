@@ -1982,6 +1982,14 @@ impl<'a> Game<'a> {
             state.table.boundary = None;
             let tick = state.ticks;
             state.table.now = tick;
+            // The start of play makes the time-of-day clock's rate part and
+            // watch (c-SCC-1: 11988, 11989 at the first tick, hub #15).
+            // Only for a clock set away from 0:00 before play (c-SCC-1: the
+            // melee start at 8:00; c-SBT-1 at 0:00 then, set later, has none).
+            // PROVISIONAL: the condition is read from these two.
+            if tick == 1 && f32::from_bits(state.setup.clock_base) != 0.0 {
+                table::play_started(state);
+            }
             // The world clock of this tick, for the lists of the game.
             let clock = state.timers.time();
             if let Some(c) = state.table.clocks.as_mut() {

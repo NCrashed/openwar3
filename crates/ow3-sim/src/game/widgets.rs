@@ -2288,6 +2288,9 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                     {
                         u.mana.set(value);
                     }
+                    if let Some(h) = h {
+                        super::table::mana_set(&mut state, h);
+                    }
                 }
                 // SPEC-0013: the maxima cannot be set.
                 _ => {}

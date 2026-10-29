@@ -2210,6 +2210,9 @@ impl<'a> Game<'a> {
         movement::reaction_ends(&mut self.state.borrow_mut(), bound, true);
         if let Some(at) = at {
             cast::effects_before(&mut self.vm, &self.state, at);
+            // The critters' wanders due before the updates come first (c-SCC-1:
+            // the wander of 9.509405 before a critter's order end there).
+            widgets::critters_before(&mut self.state.borrow_mut(), Some(at));
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
         // Workers out of their mines put at their exit points (hub #15).

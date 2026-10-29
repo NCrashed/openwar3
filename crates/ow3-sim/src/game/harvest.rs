@@ -376,10 +376,10 @@ pub(super) fn passes_through(state: &State, h: u32) -> bool {
 /// it (hub #15, c-SCC-1: peon 1 walked on past peon 2 going in at 0.6).
 pub(super) fn gone_in_now(state: &State, h: u32) -> bool {
     state.updated.contains(&h)
-        && state.mines.values().any(|m| {
-            m.inside
-                .is_some_and(|(w, t, leave)| w == h && t == state.ticks && leave == 0)
-        })
+        && state
+            .mines
+            .values()
+            .any(|m| m.inside.is_some_and(|(w, t, _)| w == h && t == state.ticks))
 }
 
 /// The workers waiting at the mines, in the order of the mines.
@@ -807,16 +807,17 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         .map_or(tick, |m| m.next_update);
     state.mine_arrivals.insert(h, phase);
     let entry = state.mines.entry(mine).or_default();
-    if entry.inside.is_none() {
-        // It goes in at the next update, freeing its walk an update
-        // later (SPEC-0024).
-        entry.inside = Some((h, tick + UPDATE, 0));
-        state.objects_change_in(tick + 2 * UPDATE);
-    } else if !entry.waiting.contains(&h) {
+    // At its next update it takes the mine if it is free then, else it
+    // starts to wait, in the update order of that tick (`at_update`;
+    // SPEC-0029; c-RXI-1: 997 and 975 stopped at 865, 997 in at 871, hub
+    // #15).
+    if !entry.waiting.contains(&h) {
+        let free = entry.inside.is_none();
         entry.waiting.push(h);
-        // It starts to wait at its next update (SPEC-0029).
         entry.starting.push((h, tick + UPDATE));
-        state.objects_change_in(tick + UPDATE);
+        if !free {
+            state.objects_change_in(tick + UPDATE);
+        }
         state.objects_change_in(tick + 2 * UPDATE);
     }
 }
@@ -1532,6 +1533,48 @@ pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
 
 /// The workers that start to wait at a busy mine in this tick push aside
 /// the units on their cells.
+/// Worker `h` at its update in the updates of the tick: if it reached its
+/// mine an update ago, it goes in or starts to wait now, its objects in
+/// the order of the units' updates (c-SCC-1: the peon's wait at 8.729536
+/// before the critter's order end of the same tick, hub #15). Those not
+/// updating go at `start_waiting`.
+pub(super) fn at_update(state: &mut State, h: u32) {
+    let tick = state.ticks;
+    if !state
+        .mines
+        .values()
+        .any(|m| m.starting.contains(&(h, tick)))
+    {
+        return;
+    }
+    for m in state.mines.values_mut() {
+        m.starting.retain(|&(w, t)| !(w == h && t == tick));
+    }
+    let free = state
+        .mines
+        .values_mut()
+        .find(|m| m.waiting.contains(&h))
+        .filter(|m| m.inside.is_none());
+    if let Some(mine) = free {
+        mine.waiting.retain(|&x| x != h);
+        // It goes in at its update: the queue time of that update
+        // (`enter_mines`).
+        mine.inside = Some((h, tick, add(state.update_time, IN_MINE_TIME)));
+        super::table::harvest_entered(state, h);
+        super::table::harvest_arrived(state, h);
+        super::table::walk_dropped_at_update(state, h);
+        push_aside(state, h);
+        hide(state, h, true);
+        pace(state, h);
+        return;
+    }
+    super::table::harvest_waits(state, h);
+    super::table::harvest_arrived(state, h);
+    super::table::walk_dropped_at_update(state, h);
+    push_aside(state, h);
+    pace(state, h);
+}
+
 fn start_waiting(state: &mut State) {
     let tick = state.ticks;
     let mut due = Vec::new();

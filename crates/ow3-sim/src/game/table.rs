@@ -2220,6 +2220,30 @@ pub(super) fn critter_wander_ordered(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
+/// A critter gave its wander up short of the point, blocked twice: the old
+/// order's first part goes, a three-object order replacing it is made and
+/// dropped, then the old order's other parts (c-SCC-1: nsea 9516 at
+/// 9.209455, hub #15).
+///
+/// PROVISIONAL: the three are not read one by one.
+pub(super) fn critter_wander_given_up(state: &mut super::State, h: u32) {
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    let tick = state.table.now;
+    let Some((&first, rest)) = old.split_first() else {
+        return;
+    };
+    state.table.defer(first, "critter wander: order");
+    let new = state.table.take_n(tick, 3, "critter wander: given up");
+    for &e in new.iter().rev() {
+        state.table.defer(e, "critter wander: given up");
+    }
+    for &e in rest {
+        state.table.defer(e, "critter wander: order");
+    }
+}
+
 /// A creep's flight ends at its point (c-SCA-1: the turtle at 59.905293,
 /// hub #14): one object first, then after its order's objects (freed
 /// 0.0001 s later) that one and the flight's kept one

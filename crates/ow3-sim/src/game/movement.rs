@@ -2970,6 +2970,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     // Creeps whose guard check gives their chase up (`table::guard_given_up`).
     let mut given_up: Vec<u32> = Vec::new();
     for h in moving {
+        super::harvest::at_update(state, h);
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
             _ => continue,
@@ -4265,8 +4266,19 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         u.creep.return_time =
                             Some(add(state.update_time, state.combat.guard_return_time));
                     }
+                    // A critter that gave its wander up short of its point (hub
+                    // #15, c-SCC-1: nsea 9516 at 9.209455, 46.9 short).
+                    let far = {
+                        let (dx, dy) = (sub(m.target[0], u.x), sub(m.target[1], u.y));
+                        f32::from_bits(add(mul(dx, dx), mul(dy, dy))) > 32.0 * 32.0
+                    };
                     let flight = super::table::creep_flight_arriving(state, h);
-                    super::table::order_ended(state, h);
+                    let short = far && state.critters.contains_key(&h);
+                    if short {
+                        super::table::critter_wander_given_up(state, h);
+                    } else {
+                        super::table::order_ended(state, h);
+                    }
                     super::table::creep_flight_arrived(state, flight);
                     super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);

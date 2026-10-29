@@ -86,6 +86,10 @@ pub struct ObjectTable {
     /// building plan (c-SEA-1, hub #15).
     pub ai_harvest_cleanup_armed: bool,
     pub ai_harvest_cleanup: Vec<u32>,
+    /// Arrival-order cleanup of a common starting-worker group. Unit updates
+    /// may visit that group in the reverse order of their startup placement.
+    pub starting_harvest_left: usize,
+    pub starting_harvest_cleanup: Vec<(usize, Vec<u32>)>,
     /// The rooting computer town hall's production-plan object, by hall.
     pub ai_production: std::collections::BTreeMap<u32, u32>,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
@@ -205,6 +209,8 @@ impl ObjectTable {
             ai_harvest_reassigning: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
+            starting_harvest_left: 0,
+            starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
@@ -692,6 +698,11 @@ pub struct UnitEntries {
     pub blizzard_buff: Option<(u32, u32)>,
     /// The parts of a harvest order freed when the walk to the mine ends.
     pub harvest_arrive: Vec<u32>,
+    /// Its place in a common starting-worker arrival group, until that
+    /// arrival's cleanup is emitted in placement order.
+    pub starting_arrival_order: Option<usize>,
+    /// A wisp's two unit records replaced when it enters an entangled mine.
+    pub wisp_arrival: Vec<u32>,
     /// The objects of its queued orders, in their order.
     pub queued: std::collections::VecDeque<u32>,
     /// An object of its arrival at a tree, freed at its next update, and
@@ -1596,6 +1607,11 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         }
     }
     let id = [entries[0], state.table.creation_of(entries[0])];
+    let wisp = state.data.units.get(&type_id).is_some_and(|t| {
+        t.abilities
+            .iter()
+            .any(|&a| ability_code(state, a) == *b"Awha")
+    });
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.entries = UnitEntries {
             id: Some(id),
@@ -1604,6 +1620,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             death_late,
             death_mana,
             mana_watches: watches,
+            // The two records observed leaving and returning around a wisp's
+            // arrival at an entangled mine (c-SEA-1, hub #15).
+            wisp_arrival: if wisp {
+                vec![entries[17], entries[15]]
+            } else {
+                Vec::new()
+            },
             corpse: {
                 let mut corpse: Vec<u32> = making.corpse.iter().map(|&k| entries[at(k)]).collect();
                 if let Some(i) = corpse
@@ -2620,7 +2643,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         let capture_cleanup = std::mem::take(&mut state.table.ai_harvest_cleanup_armed);
         let mut cleanup = Vec::new();
         if let Some(e) = entries(state, h) {
-            if paid || no_world_target {
+            if paid {
                 e.harvest_arrive.clear();
                 e.order = parts[first_temporary + 1..kept_end]
                     .iter()
@@ -2633,7 +2656,16 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                     .rev()
                     .copied()
                     .collect();
-                e.order = parts[1..kept_end - 2].iter().rev().copied().collect();
+                let order_start = if no_world_target {
+                    first_temporary + 1
+                } else {
+                    1
+                };
+                e.order = parts[order_start..kept_end - 2]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect();
             }
             if capture_cleanup {
                 cleanup = std::mem::take(&mut e.harvest_arrive);
@@ -2789,20 +2821,6 @@ pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
     }
 }
 
-/// The first ordinary gold assignment of the melee AI schedules the one
-/// global mine-use object on the queue, before either assigned worker reaches
-/// the mine. A later entry therefore does not make another one (c-SEA-1:
-/// assignment at 0.100000, take at 0.505000, first arrivals at 0.570000;
-/// hub #15).
-pub(super) fn ai_mine_use_scheduled(state: &mut super::State) {
-    if state.table.mine_used {
-        return;
-    }
-    state.table.mine_used = true;
-    let at = ow3_math::add(state.timers.time(), 0.405f32.to_bits());
-    state.table.take_at_q(at, "gold mine: in use");
-}
-
 /// Worker `h` starts to wait at a gold mine: the mine's reference to it,
 /// freed when it goes in (c-RXI-1: worker 4's 1145 at 871, freed at
 /// 1071; 1162 .. 1165).
@@ -2882,8 +2900,29 @@ pub(super) fn harvest_left(state: &mut super::State, h: u32, next: Option<u32>) 
 /// Worker `h`'s walk to the gold mine ends: two parts of its order go
 /// (c-RXI-1: 1136, 1135 at 4.350023).
 pub(super) fn harvest_arrived(state: &mut super::State, h: u32) {
-    let parts = entries(state, h).map(|e| std::mem::take(&mut e.harvest_arrive));
-    for e in parts.unwrap_or_default() {
+    let (parts, starting) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.harvest_arrive),
+                e.starting_arrival_order.take(),
+            )
+        })
+        .unwrap_or_default();
+    if let Some(order) = starting {
+        state.table.starting_harvest_cleanup.push((order, parts));
+        state.table.starting_harvest_left = state.table.starting_harvest_left.saturating_sub(1);
+        if state.table.starting_harvest_left == 0 {
+            let mut cleanup = std::mem::take(&mut state.table.starting_harvest_cleanup);
+            cleanup.sort_by_key(|&(order, _)| order);
+            for (_, parts) in cleanup {
+                for entry in parts {
+                    state.table.defer(entry, "harvest: order start");
+                }
+            }
+        }
+        return;
+    }
+    for e in parts {
         state.table.defer(e, "harvest: order start");
     }
 }

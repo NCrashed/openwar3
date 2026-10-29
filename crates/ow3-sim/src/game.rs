@@ -3996,6 +3996,7 @@ fn register_ai_natives(
             let Some(mine) = ai_town_mine(&state, player, town) else {
                 return Ok(None);
             };
+            harvest::ai_gold_started(&mut state, player, mine);
             let workers: Vec<u32> = state
                 .units
                 .iter()
@@ -4041,8 +4042,6 @@ fn register_ai_natives(
                         if Some(worker) == paid_placement {
                             table::ai_paid_placement(&mut state, worker);
                         }
-                    } else {
-                        table::ai_mine_use_scheduled(&mut state);
                     }
                     gold_workers.borrow_mut().insert(worker);
                 } else {

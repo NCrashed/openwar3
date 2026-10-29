@@ -117,6 +117,11 @@ pub struct Harvest {
     bonus: u32,
     last_trip: u32,
     last_bonus: u32,
+    /// The common arrival boundary of an automatically ordered starting
+    /// computer worker, and whether its walk reached the mine before it.
+    starting_computer_mine: bool,
+    starting_mine_at: Option<u64>,
+    starting_mine_reached: bool,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -254,6 +259,29 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
         super::table::harvest_ordered(state, h, true);
     }
     taken
+}
+
+/// The first scripted gold assignment of a melee AI starts the shared
+/// placement boundary of that player's automatically ordered starting
+/// workers (c-SEA-1: assignment at 0.100000, arrivals at 0.570000; hub #15).
+pub(super) fn ai_gold_started(state: &mut State, owner: i32, mine: u32) {
+    let at = state.ticks + 94;
+    let workers: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            state.unit(Some(h)).is_some_and(|u| u.owner == owner)
+                && get(state, h).is_some_and(|g| g.starting_computer_mine && g.target == Some(mine))
+        })
+        .collect();
+    for h in workers {
+        if let Some(mut g) = get(state, h) {
+            g.starting_mine_at = Some(at);
+            g.starting_mine_reached = false;
+            set(state, h, Some(g));
+        }
+    }
 }
 
 /// Worker `h` with a load takes it to `building`.
@@ -606,6 +634,7 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    starting_mine_arrivals(&mut state.borrow_mut());
     pay_mines(&mut state.borrow_mut());
     wisp_lumber(&mut state.borrow_mut());
     let mut reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
@@ -800,6 +829,13 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         return;
     }
     let tick = state.ticks;
+    if let Some(mut g) = get(state, h)
+        && g.starting_mine_at.is_some_and(|at| tick < at)
+    {
+        g.starting_mine_reached = true;
+        set(state, h, Some(g));
+        return;
+    }
     // Its update cycle, from the update at or after its arrival.
     let phase = state
         .unit(Some(h))
@@ -820,6 +856,62 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         }
         state.objects_change_in(tick + 2 * UPDATE);
     }
+}
+
+/// Starting computer workers whose automatic walks finished early join their
+/// mine at the common observed startup boundary, in unit order (c-SEA-1: the
+/// first two Orc peons at 0.570000; hub #15).
+fn starting_mine_arrivals(state: &mut State) {
+    let tick = state.ticks;
+    let due: Vec<(u32, u32)> = state
+        .units
+        .iter()
+        .copied()
+        .filter_map(|h| {
+            let g = get(state, h)?;
+            let mine = g.target?;
+            (g.starting_mine_at.is_some_and(|at| at <= tick)
+                && (g.starting_mine_reached || starting_mine_near(state, h, mine)))
+            .then_some((h, mine))
+        })
+        .collect();
+    let expired: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| get(state, h).is_some_and(|g| g.starting_mine_at.is_some_and(|at| at <= tick)))
+        .collect();
+    if !due.is_empty() {
+        state.table.starting_harvest_left += due.len();
+        for (order, &(h, _)) in due.iter().enumerate() {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.entries.starting_arrival_order = Some(order);
+            }
+        }
+    }
+    for h in expired {
+        if let Some(mut g) = get(state, h) {
+            g.starting_computer_mine = false;
+            g.starting_mine_at = None;
+            g.starting_mine_reached = false;
+            set(state, h, Some(g));
+        }
+    }
+    for (h, mine) in due {
+        arrive_at_mine(state, h, mine);
+    }
+}
+
+/// Whether a starting worker is in the mine's near zone at the shared
+/// placement update. This avoids making the result depend on which of two
+/// adjacent workers the local path finder reports first.
+fn starting_mine_near(state: &State, h: u32, mine: u32) -> bool {
+    let (Some(worker), Some(mine)) = (state.unit(Some(h)), state.unit(Some(mine))) else {
+        return false;
+    };
+    let dx = f32::from_bits(worker.x) - f32::from_bits(mine.x);
+    let dy = f32::from_bits(worker.y) - f32::from_bits(mine.y);
+    dx * dx + dy * dy <= 256.0 * 256.0
 }
 
 /// The time a worker's round trip of the gold cycle aims at outside the
@@ -1646,8 +1738,15 @@ pub(super) fn computer_worker_made(state: &mut State, h: u32) {
     let owner = state.unit(Some(h)).map_or(-1, |u| u.owner);
     let idle = idle_workers(state, owner).saturating_sub(1);
     state.table.computer_harvest = Some(idle);
-    movement::target_order(state, h, "harvest", mine);
+    let ordered = movement::target_order(state, h, "harvest", mine);
     state.table.computer_harvest = None;
+    if ordered && state.ticks == 0 {
+        let mut g = get(state, h).unwrap_or_default();
+        g.starting_computer_mine = true;
+        g.starting_mine_at = None;
+        g.starting_mine_reached = false;
+        set(state, h, Some(g));
+    }
 }
 
 /// The gold mine a computer's new worker `h` is sent to: the plain one
@@ -1886,19 +1985,51 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
 /// loses its order and stands.
 fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     let p = state.paying.entry(mine).or_default();
+    let occupied = p.places.iter().any(Option::is_some);
     let Some(k) = (0..PLACES).find(|&k| p.places[k].is_none()) else {
         movement::stop(state, h);
         return;
     };
     p.places[k] = Some(h);
-    let at = add(state.timers.time(), JOIN_DELAY);
+    let at = add(state.move_clock, JOIN_DELAY);
     p.joining.push((h, at));
+    if occupied {
+        let tick = state.table.now;
+        state.table.take(tick, "wisp: entangled-mine arrival");
+        let (order, records) = state
+            .objects
+            .get_mut(&h)
+            .and_then(|o| match o {
+                Object::Unit(u) if !u.entries.order.is_empty() => {
+                    let first = u.entries.order.remove(0);
+                    let second = u.entries.order.first().copied();
+                    Some((
+                        second.map_or_else(|| vec![first], |s| vec![first, s]),
+                        u.entries.wisp_arrival.clone(),
+                    ))
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        for entry in order.into_iter().chain(records) {
+            state.table.defer(entry, "wisp: entangled-mine arrival");
+        }
+        // The two unit records return at the same 0.01 s boundary at which
+        // the wisp starts contributing to the mine. The retained order
+        // record is recreated by the mine's already scheduled resource step
+        // immediately after them (c-SEA-1, hub #15).
+        state.table.take_at_q(at, "wisp: entangled-mine record");
+        state.table.take_at_q(at, "wisp: entangled-mine record");
+        state.drop_path(h);
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = None;
     }
     hide(state, h, true);
-    state.drop_path(h);
-    super::table::walk_dropped(state, h);
+    if !occupied {
+        state.drop_path(h);
+        super::table::walk_dropped(state, h);
+    }
 }
 
 /// Worker `h` takes another order: it stops counting; a `stop` keeps its

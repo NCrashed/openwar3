@@ -1738,15 +1738,171 @@ impl State {
 }
 
 pub struct Game<'a> {
-    pub vm: Vm<'a>,
+    pub vm: Vm,
     pub state: Rc<RefCell<State>>,
     sleeps: SleepQueue<Task>,
+    ai: Rc<RefCell<AiEngine>>,
+    marker: std::marker::PhantomData<&'a ()>,
+}
+
+#[derive(Clone)]
+struct AiTemplate {
+    program: Program,
+    scripts: [Script; 3],
+}
+
+#[derive(Default)]
+struct AiEngine {
+    templates: BTreeMap<String, AiTemplate>,
+    contexts: Vec<AiContext>,
+}
+
+struct AiContext {
+    player: i32,
+    vm: Vm,
+    sleeps: AiSleepQueue,
+    parked: Rc<RefCell<Vec<(Thread, u32)>>>,
+}
+
+#[derive(Default)]
+struct AiSleepQueue {
+    next_sleep: u64,
+    sleepers: BTreeMap<(u64, u64), Thread>,
+}
+
+impl AiSleepQueue {
+    fn sleep(&mut self, start: u64, duration: u32, thread: Thread) {
+        let seconds = f64::from(f32::from_bits(duration)).max(0.0);
+        let units = (seconds * crate::sleep::UNITS_PER_SECOND as f64).round() as u64;
+        let target = start.saturating_add(units);
+        let interval = crate::sleep::CHECK_INTERVAL;
+        let check = target.div_ceil(interval).max(start / interval + 1) * interval;
+        self.sleepers.insert((check, self.next_sleep), thread);
+        self.next_sleep += 1;
+    }
+
+    fn due(&mut self, time: u64) -> Vec<Thread> {
+        let later = self.sleepers.split_off(&(time + 1, 0));
+        std::mem::replace(&mut self.sleepers, later)
+            .into_values()
+            .collect()
+    }
+}
+
+impl AiEngine {
+    fn from_map(map: &Map) -> Result<Self, LoadError> {
+        let mut templates = BTreeMap::new();
+        for name in ["human.ai", "orc.ai", "undead.ai", "elf.ai"] {
+            let refs = map
+                .ai_script_refs(name)
+                .ok_or_else(|| LoadError(format!("Scripts\\{name} not found")))?;
+            let program = map.check_ai(name).map_err(|e| LoadError(e.to_string()))?;
+            templates.insert(
+                name.to_owned(),
+                AiTemplate {
+                    program,
+                    scripts: refs.map(Clone::clone),
+                },
+            );
+        }
+        Ok(AiEngine {
+            templates,
+            contexts: Vec::new(),
+        })
+    }
+
+    fn start(
+        &mut self,
+        state: &Rc<RefCell<State>>,
+        player: i32,
+        difficulty: i32,
+        name: &str,
+    ) -> Result<(), LoadError> {
+        let name = name
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(name)
+            .to_ascii_lowercase();
+        let Some(template) = self.templates.get(&name).cloned() else {
+            return Ok(());
+        };
+        let parked = Rc::new(RefCell::new(Vec::new()));
+        let mut natives = Natives::default().stub_missing();
+        register_natives(&mut natives, state, &template.program, None);
+        register_ai_natives(&mut natives, state, player, difficulty, parked.clone());
+        // Stubbed AI natives participate in the same call stream as map
+        // natives. Existing first-call models cover the table-visible
+        // engine work of several of them.
+        let counted = state.clone();
+        let names: RefCell<BTreeMap<String, &'static str>> = RefCell::default();
+        natives.set_stub_hook(Rc::new(move |name: &str| {
+            let name = *names
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| Box::leak(name.to_owned().into_boxed_str()));
+            let mut state = counted.borrow_mut();
+            state.table.call += 1;
+            state.table.call_name = name;
+            if state.table.log.is_some() {
+                state.table.call_log.push(name);
+            }
+            table::first_call(&mut state, name);
+        }));
+        let refs: Vec<&Script> = template.scripts.iter().collect();
+        let mut vm = Vm::load(&template.program, &refs, &natives)?;
+        let mut sleeps = AiSleepQueue::default();
+        let now = state.borrow().ticks * crate::sleep::UNITS_PER_SECOND / 200;
+        if let Some(main) = vm.program().function_index("main") {
+            match vm.start_thread(main, Vec::new()) {
+                Ok((Outcome::Sleep(duration), thread)) => {
+                    sleeps.sleep(now, duration, thread);
+                }
+                Ok((Outcome::Finished(_), _)) => {}
+                Err(error) => state.borrow_mut().errors.push(error),
+            }
+        }
+        let mut context = AiContext {
+            player,
+            vm,
+            sleeps,
+            parked,
+        };
+        context.park(now);
+        self.contexts.push(context);
+        self.contexts.sort_by_key(|c| c.player);
+        Ok(())
+    }
+
+    fn resume_due(&mut self, state: &Rc<RefCell<State>>, time: u64) {
+        // Contexts are kept in player order. Within one context the sleep
+        // queue preserves the order in which its cooperative threads slept.
+        for context in &mut self.contexts {
+            for mut thread in context.sleeps.due(time) {
+                match context.vm.resume(&mut thread) {
+                    Ok(Outcome::Sleep(duration)) => {
+                        context.sleeps.sleep(time, duration, thread);
+                    }
+                    Ok(Outcome::Finished(_)) => {}
+                    Err(error) => state.borrow_mut().errors.push(error),
+                }
+                context.park(time);
+            }
+        }
+    }
+}
+
+impl AiContext {
+    fn park(&mut self, now: u64) {
+        for (thread, duration) in self.parked.borrow_mut().drain(..) {
+            self.sleeps.sleep(now, duration, thread);
+        }
+    }
 }
 
 impl<'a> Game<'a> {
     /// Loads checked scripts. Natives not implemented here are stubs.
     pub fn load(program: &'a Program, scripts: &[&'a Script]) -> Result<Game<'a>, LoadError> {
-        Game::with_state(program, scripts, State::new())
+        Game::with_state(program, scripts, State::new(), AiEngine::default())
     }
 
     /// Loads a map's checked scripts, with the players, trigger strings,
@@ -1818,7 +1974,8 @@ impl<'a> Game<'a> {
             state.destructables.push(handle);
             obstacles::refresh_destructable(&mut state, handle);
         }
-        Game::with_state(program, &map.script_refs(), state)
+        let ai = AiEngine::from_map(map)?;
+        Game::with_state(program, &map.script_refs(), state, ai)
     }
 
     /// Starts the map as the game does (SPEC-0008): `config`, then the
@@ -1886,10 +2043,12 @@ impl<'a> Game<'a> {
         program: &'a Program,
         scripts: &[&'a Script],
         state: State,
+        ai: AiEngine,
     ) -> Result<Game<'a>, LoadError> {
         let state = Rc::new(RefCell::new(state));
+        let ai = Rc::new(RefCell::new(ai));
         let mut natives = Natives::default().stub_missing();
-        register_natives(&mut natives, &state, program);
+        register_natives(&mut natives, &state, program, Some(ai.clone()));
         // The natives not built yet count as calls too, for the table's log.
         let counted = state.clone();
         let names: RefCell<BTreeMap<String, &'static str>> = RefCell::default();
@@ -1911,6 +2070,8 @@ impl<'a> Game<'a> {
             vm,
             state,
             sleeps: SleepQueue::new(),
+            ai,
+            marker: std::marker::PhantomData,
         })
     }
 
@@ -2012,6 +2173,14 @@ impl<'a> Game<'a> {
     }
 
     fn tick(&mut self) {
+        // AI Sleep follows the world clock, not TriggerSleepAction's real
+        // sleep clock. A context due at 0.100 resumes after the checksum at
+        // that boundary and before the next world tick (c-SEA-1).
+        let elapsed = self.state.borrow().ticks;
+        if elapsed > 0 && elapsed % 20 == 0 {
+            let time = elapsed / 20 * crate::sleep::CHECK_INTERVAL;
+            self.ai.borrow_mut().resume_due(&self.state, time);
+        }
         // The hours before and after the clock's step, for its events.
         let clock_step;
         {
@@ -3151,6 +3320,22 @@ impl<'a> Game<'a> {
     pub fn preload(&self) -> Vec<String> {
         self.state.borrow().preload.clone()
     }
+
+    /// Calls of AI natives that are still stubbed, by player. Useful while
+    /// bringing a supplied AI script's world-facing contract online.
+    pub fn ai_stub_calls(&self) -> Vec<(i32, String, u64)> {
+        self.ai
+            .borrow()
+            .contexts
+            .iter()
+            .flat_map(|context| {
+                context
+                    .vm
+                    .stub_calls()
+                    .map(move |(name, count)| (context.player, name.to_owned(), count))
+            })
+            .collect()
+    }
 }
 
 /// Runs `f` with `context` as the event responses, restoring the previous
@@ -3427,9 +3612,112 @@ fn string(value: &Value) -> Option<&str> {
     }
 }
 
+/// Natives whose meaning belongs to a player-bound AI VM. The ordinary
+/// native set is registered first, so shared operations (`Player`, random
+/// numbers and world queries) use the same state as the map VM; these
+/// implementations then replace the AI-specific stubs.
+fn register_ai_natives(
+    natives: &mut Natives,
+    state: &Rc<RefCell<State>>,
+    player: i32,
+    difficulty: i32,
+    parked: Rc<RefCell<Vec<(Thread, u32)>>>,
+) {
+    let mut add = |declaration: &str, f: NativeFn| {
+        let counted = state.clone();
+        let name: &'static str = Box::leak(
+            players::native_name(declaration)
+                .to_owned()
+                .into_boxed_str(),
+        );
+        natives.register(
+            declaration,
+            Rc::new(move |vm, args| {
+                let mut s = counted.borrow_mut();
+                s.table.call += 1;
+                s.table.call_name = name;
+                if s.table.log.is_some() {
+                    s.table.call_log.push(name);
+                }
+                table::first_call(&mut s, name);
+                drop(s);
+                f(vm, args)
+            }),
+        );
+    };
+
+    add(
+        "native GetAiPlayer takes nothing returns integer",
+        Rc::new(move |_, _| Ok(Some(Value::Integer(player)))),
+    );
+    add(
+        "native MeleeDifficulty takes nothing returns integer",
+        Rc::new(move |_, _| Ok(Some(Value::Integer(difficulty)))),
+    );
+    // The AI native consumes a shared-generator value even for equal
+    // bounds: PickMeleeHero's ranges 1..3, 1..2 and 1..1 account for all
+    // nine c-SEA-1 initialization draws. Map JASS keeps SPEC-0007's
+    // non-advancing equal-bounds rule.
+    let random = state.clone();
+    add(
+        "native GetRandomInt takes integer lowBound, integer highBound returns integer",
+        Rc::new(move |_, args| {
+            let low = integer(&args[0]);
+            let high = integer(&args[1]);
+            let mut state = random.borrow_mut();
+            let value = if low == high {
+                state.random.step();
+                low
+            } else {
+                state.random.integer(low, high)
+            };
+            Ok(Some(Value::Integer(value)))
+        }),
+    );
+    add(
+        "native Sleep takes real seconds returns nothing",
+        Rc::new(move |vm, args| {
+            vm.sleep(real(&args[0]));
+            Ok(None)
+        }),
+    );
+    let errors = state.clone();
+    add(
+        "native StartThread takes code func returns nothing",
+        Rc::new(move |vm, args| {
+            let Some(function) = code(&args[0]) else {
+                return Ok(None);
+            };
+            match vm.start_thread(function, Vec::new()) {
+                Ok((Outcome::Sleep(duration), thread)) => {
+                    parked.borrow_mut().push((thread, duration));
+                }
+                Ok((Outcome::Finished(_), _)) => {}
+                Err(error) => errors.borrow_mut().errors.push(error),
+            }
+            Ok(None)
+        }),
+    );
+    let captains = state.clone();
+    add(
+        "native CreateCaptains takes nothing returns nothing",
+        Rc::new(move |_, _| {
+            let mut state = captains.borrow_mut();
+            let tick = state.table.now;
+            state.table.take_n(tick, 18, "CreateCaptains");
+            Ok(None)
+        }),
+    );
+}
+
 // `rustfmt` wraps short native bodies in braces inside the `native!` calls.
 #[allow(unused_braces)]
-fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: &Program) {
+fn register_natives(
+    natives: &mut Natives,
+    state: &Rc<RefCell<State>>,
+    program: &Program,
+    ai: Option<Rc<RefCell<AiEngine>>>,
+) {
     // Natives that resolve trigger strings get their arguments resolved.
     let shared = state.clone();
     let mut add = |declaration: &str, f: NativeFn| {
@@ -4184,33 +4472,40 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             Ok(Some(Value::Real(value)))
         }
     );
-    // The synchronous part of a standard melee AI's start, before its
-    // first sleep (c-SEA-1 turn 1, hub #15). PROVISIONAL: the AI script VM
-    // and its later work are not run yet; these are the observable table
-    // and generator effects of the three standard race scripts at start.
+    // StartMeleeAI creates an isolated player-bound script VM and runs its
+    // `main` synchronously to the first Sleep. Its world natives share this
+    // state and generator with the map and the other AI contexts (c-SEA-1,
+    // hub #15).
     native!(
         add,
         state,
         "native StartMeleeAI takes player num, string script returns nothing",
         |vm, state, args| {
-            const RACE_UNDEAD: i32 = 3;
+            let player = {
+                let mut state = state.borrow_mut();
+                let player = state.player_id(handle(&args[0]));
+                let tick = state.table.now;
+                state.table.take(tick, "StartMeleeAI");
+                player
+            };
+            if let (Some(ai), Some(player), Some(script)) = (ai.as_ref(), player, string(&args[1]))
+                && let Err(error) = ai.borrow_mut().start(state, player, 1, script)
+            {
+                return Err(vm.fail(error.0));
+            }
+            Ok(None)
+        }
+    );
+    native!(
+        add,
+        state,
+        "native RecycleGuardPosition takes unit hUnit returns nothing",
+        |vm, state, args| {
             let mut state = state.borrow_mut();
-            let player = state.player_id(handle(&args[0]));
-            let undead = player
-                .and_then(|id| usize::try_from(id).ok())
-                .and_then(|id| state.setup.slots.get(id))
-                .is_some_and(|slot| slot.race == RACE_UNDEAD);
             let tick = state.table.now;
-            state.table.take(tick, "StartMeleeAI");
-            for _ in 0..3 {
-                state.random.step();
-            }
-            state.table.take_n(tick, 18, "CreateCaptains");
-            if undead {
-                let recycled = state.table.take_n(tick, 35, "RecycleGuardPosition")[32];
-                state.table.free(tick, recycled, "RecycleGuardPosition");
-                state.table.take(tick, "RecycleGuardPosition");
-            }
+            let recycled = state.table.take_n(tick, 35, "RecycleGuardPosition")[32];
+            state.table.free(tick, recycled, "RecycleGuardPosition");
+            state.table.take(tick, "RecycleGuardPosition");
             Ok(None)
         }
     );

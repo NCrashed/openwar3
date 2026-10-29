@@ -168,8 +168,11 @@ pub enum Outcome {
     Sleep(u32),
 }
 
-pub struct Vm<'a> {
-    program: &'a Program,
+pub struct Vm {
+    // The checked program is small compared with the compiled bodies. Owning
+    // it lets embedders create independent script environments dynamically
+    // (AI scripts are loaded by StartMeleeAI while the map VM is running).
+    program: Program,
     bodies: Vec<Body>,
     globals: Vec<Slot>,
     array_size: usize,
@@ -191,14 +194,14 @@ pub struct Vm<'a> {
     current: (usize, Position),
 }
 
-impl<'a> Vm<'a> {
+impl Vm {
     /// Compiles the scripts, binds natives and runs the global
     /// initialisers in declaration order.
     pub fn load(
-        program: &'a Program,
-        scripts: &[&'a Script],
+        program: &Program,
+        scripts: &[&Script],
         natives: &Natives,
-    ) -> Result<Vm<'a>, LoadError> {
+    ) -> Result<Vm, LoadError> {
         let compiler = Compiler::new(program);
         let compile_error = |e: crate::bytecode::CompileError| {
             LoadError(format!(
@@ -267,7 +270,7 @@ impl<'a> Vm<'a> {
         }
 
         let mut vm = Vm {
-            program,
+            program: program.clone(),
             bodies,
             globals: program
                 .globals
@@ -320,7 +323,7 @@ impl<'a> Vm<'a> {
     }
 
     pub fn program(&self) -> &Program {
-        self.program
+        &self.program
     }
 
     /// Current value of a scalar global, or `None` if it is unknown, an

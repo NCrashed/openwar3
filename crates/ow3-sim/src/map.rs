@@ -71,6 +71,10 @@ pub struct Map {
     pub strings: TriggerStrings,
     /// `common.j`, `Blizzard.j` and the map's `war3map.j`.
     pub scripts: [Script; 3],
+    /// The supplied AI library and the four standard melee race scripts.
+    /// They run in player-bound VMs, separate from the map VM.
+    ai_common: Script,
+    ai_scripts: BTreeMap<String, Script>,
     pub destructables: Vec<PlacedDestructable>,
     pub world_bounds: Bounds,
     /// Ground heights (SPEC-0014).
@@ -153,6 +157,11 @@ impl Map {
         };
         let common = library("Scripts\\common.j")?;
         let blizzard = library("Scripts\\Blizzard.j")?;
+        let ai_common = library("Scripts\\common.ai")?;
+        let mut ai_scripts = BTreeMap::new();
+        for name in ["human.ai", "orc.ai", "undead.ai", "elf.ai"] {
+            ai_scripts.insert(name.to_owned(), library(&format!("Scripts\\{name}"))?);
+        }
         let script = parse_script("war3map.j", &war3map)?;
         // A map may declare only natives the game provides (SPEC-0001):
         // those of the game's own `common.j` and `common.ai`, whatever
@@ -206,6 +215,8 @@ impl Map {
             info,
             strings,
             scripts: [common, blizzard, script],
+            ai_common,
+            ai_scripts,
             destructables,
             world_bounds,
             heights,
@@ -219,6 +230,24 @@ impl Map {
 
     pub fn script_refs(&self) -> Vec<&Script> {
         self.scripts.iter().collect()
+    }
+
+    /// The scripts of a standard melee AI environment: `common.j`,
+    /// `common.ai`, then the named race script.
+    pub(crate) fn ai_script_refs(&self, name: &str) -> Option<[&Script; 3]> {
+        Some([
+            &self.scripts[0],
+            &self.ai_common,
+            self.ai_scripts.get(&name.to_ascii_lowercase())?,
+        ])
+    }
+
+    /// Checks one of the supplied standard melee AI scripts.
+    pub fn check_ai(&self, name: &str) -> Result<Program, MapError> {
+        let scripts = self
+            .ai_script_refs(name)
+            .ok_or_else(|| MapError(format!("Scripts\\{name} not found")))?;
+        ow3_jass::check::check(&scripts).map_err(|d| error(name, &d[0]))
     }
 
     /// Checks the scripts, as the game does before it runs them.

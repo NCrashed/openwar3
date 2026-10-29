@@ -590,6 +590,12 @@ fn turn_checksums(name: &str, through: Option<usize>) -> Option<Option<usize>> {
                 turn.before,
                 turn.recorded,
             );
+            for error in playback.game.state.borrow().errors.iter().take(8) {
+                eprintln!("  script error: {error}");
+            }
+            for (player, native, count) in playback.game.ai_stub_calls() {
+                eprintln!("  AI stub p{player}: {native} x{count}");
+            }
             return Some(Some(k + 1));
         }
         if through == Some(k + 1) {
@@ -768,6 +774,32 @@ fn melee_ai_start_checksums() {
     if let Some(first) = turn_checksums("c-SEA-1", Some(2)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
+}
+
+/// The supplied race scripts resume at the 0.100 world-clock boundary and
+/// start their player-bound worker-assignment threads in player order.
+#[test]
+fn melee_ai_scripts_resume() {
+    let dir = game_data().join("replays");
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..3 {
+        assert!(playback.step_slot());
+    }
+    let clear_harvest: Vec<(i32, u64)> = playback
+        .game
+        .ai_stub_calls()
+        .into_iter()
+        .filter_map(|(player, name, count)| (name == "ClearHarvestAI").then_some((player, count)))
+        .collect();
+    assert_eq!(clear_harvest, [(1, 1), (2, 1), (3, 1)]);
 }
 
 /// `c-SCC-1`'s object table.

@@ -773,11 +773,11 @@ fn melee_ai_checksums() {
 
 /// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
 /// the three standard melee AI scripts, first paid-worker placement and
-/// the queued ordinary-mine state and the first entangled-mine arrivals:
-/// the first eleven turn checksums.
+/// the queued ordinary-mine state, the first entangled-mine arrivals and
+/// the recycled starting-ghoul transition: the first twelve turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(11)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(13)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -889,14 +889,15 @@ fn melee_ai_worker_movements() {
         assert!(playback.step_tick());
         let state = playback.game.state.borrow();
         let [min_x, min_y] = state.world_bounds[..2].try_into().unwrap();
-        for &(_, handle, position, _, _, _) in state
-            .agent_trace
-            .as_deref()
-            .unwrap()
-            .iter()
-            .filter(|&&(at, handle, ..)| {
-                at == tick + 1 && handles.values().any(|&wanted| wanted == handle)
-            })
+        for &(_, handle, position, _, _, _) in
+            state
+                .agent_trace
+                .as_deref()
+                .unwrap()
+                .iter()
+                .filter(|&&(at, handle, ..)| {
+                    at == tick + 1 && handles.values().any(|&wanted| wanted == handle)
+                })
         {
             positions.insert(
                 (tick + 1, handle),
@@ -1118,9 +1119,11 @@ fn melee_ai_turn7_objects() {
     };
     let expected: Vec<(bool, u32, u32)> = text
         .lines()
-        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .filter(|line| {
+            !line.starts_with('#') && !line.starts_with("seq") && !line.trim().is_empty()
+        })
         .map(|line| line.split('\t').collect::<Vec<_>>())
-        .filter(|words| words[7] == "yes" && (words[3] == "take" || words[3] == "free"))
+        .filter(|words| words.get(7) == Some(&"yes") && (words[3] == "take" || words[3] == "free"))
         .map(|words| {
             (
                 words[3] == "take",
@@ -1294,6 +1297,93 @@ fn melee_ai_turn11_objects() {
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
     assert!(ours.starts_with(&expected_after));
+}
+
+/// All main-table events between the turn-11 and turn-12 checkpoints. This
+/// includes the map's one-second logging callback, the following engine
+/// update and the next Night Elf wisp arrival.
+#[test]
+fn melee_ai_turn12_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn12-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[7] == "yes" && (words[3] == "take" || words[3] == "free"))
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..10 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
+}
+
+/// All main-table events between the turn-12 and turn-13 checkpoints: the
+/// next Undead and Night Elf harvest calls and their deferred cleanup.
+#[test]
+fn melee_ai_turn13_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn13-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| {
+            !line.starts_with('#') && !line.starts_with("seq") && !line.trim().is_empty()
+        })
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words.get(7) == Some(&"yes") && (words[3] == "take" || words[3] == "free"))
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..11 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
 }
 
 /// `c-SCC-1`'s object table.

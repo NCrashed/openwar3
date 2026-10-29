@@ -226,7 +226,7 @@ pub struct Moving {
     pub(super) velocity: [u32; 2],
     since: u32,
     /// The step of the facing (SPEC-0013), which grows to its maximum.
-    facing_step: u32,
+    pub(super) facing_step: u32,
     /// Done: only the facing still turns towards the heading.
     arrived: bool,
     /// A new order came while the unit was moving: it starts again from

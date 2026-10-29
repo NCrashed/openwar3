@@ -337,6 +337,9 @@ pub struct Unit {
     harvest: Option<harvest::Harvest>,
     /// Where it was created, and what a creep keeps (SPEC-0030).
     home: [u32; 2],
+    /// The unsnapped point requested when it was created. The melee setup
+    /// recycles the starting ghoul's guard position back to this point.
+    guard_point: [u32; 2],
     creep: creeps::Creep,
     /// Its queued orders (SPEC-0031).
     orders: queue::Queue,
@@ -2252,6 +2255,7 @@ impl<'a> Game<'a> {
                     unit.mana.advance(now, next);
                 }
             }
+            table::recycled_guards_prepare(state);
         }
         // The time-of-day events the running clock passes in this tick
         // (SPEC-0017).
@@ -2333,6 +2337,7 @@ impl<'a> Game<'a> {
             }
             // What happens at the updates sees the queue time `U`.
             self.state.borrow_mut().timers.move_to(at);
+            table::recycled_guards_arrived(&mut self.state.borrow_mut());
         }
         // The hits whose timers expire before `U` come before the updates
         // (SPEC-0018; c-RZJ-1: the Paladin's hit at 31.4073 killed kobold 8
@@ -2441,6 +2446,9 @@ impl<'a> Game<'a> {
             self.fire(fired);
             self.park();
         }
+        // `RecycleGuardPosition` completes just after the one-second map
+        // timer when this tick has no ordinary unit-update boundary.
+        table::recycled_guards_arrived(&mut self.state.borrow_mut());
         harvest::trees_hit_before(&mut self.vm, &self.state, None, true);
         harvest::mines_left_before(&mut self.vm, &self.state, None);
         harvest::building_steps_before(&mut self.state.borrow_mut(), None);
@@ -3976,18 +3984,26 @@ fn register_ai_natives(
         }),
     );
     let assigned = Rc::new(RefCell::new(BTreeSet::<u32>::new()));
+    let gold_counts = Rc::new(RefCell::new(BTreeMap::<u32, usize>::new()));
+    let harvest_cycle = Rc::new(RefCell::new(0usize));
     let clear = assigned.clone();
+    let clear_gold = gold_counts.clone();
+    let clear_cycle = harvest_cycle.clone();
     let cleared = state.clone();
     add(
         "native ClearHarvestAI takes nothing returns nothing",
         Rc::new(move |_, _| {
             clear.borrow_mut().clear();
+            clear_gold.borrow_mut().clear();
+            *clear_cycle.borrow_mut() += 1;
             table::ai_harvest_cleared(&mut cleared.borrow_mut());
             Ok(None)
         }),
     );
     let harvesting = state.clone();
     let gold_workers = assigned.clone();
+    let gold_assigned = gold_counts.clone();
+    let gold_cycle = harvest_cycle.clone();
     add(
         "native HarvestGold takes integer town, integer peons returns nothing",
         Rc::new(move |_, args| {
@@ -3998,6 +4014,29 @@ fn register_ai_natives(
                 return Ok(None);
             };
             harvest::ai_gold_started(&mut state, player, mine);
+            let repeat = *gold_cycle.borrow() > 1;
+            let existing: Vec<u32> = if repeat {
+                state
+                    .units
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|&h| {
+                        state
+                            .unit(Some(h))
+                            .is_some_and(|u| u.owner == player && u.alive)
+                            && harvest::ai_gold_assigned(&state, h, mine)
+                    })
+                    .take(wanted)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            gold_workers.borrow_mut().extend(existing.iter().copied());
+            let already = existing
+                .len()
+                .max(gold_assigned.borrow().get(&mine).copied().unwrap_or(0));
+            let remaining = wanted.saturating_sub(already);
             let workers: Vec<u32> = state
                 .units
                 .iter()
@@ -4005,12 +4044,11 @@ fn register_ai_natives(
                 .copied()
                 .filter(|h| !gold_workers.borrow().contains(h))
                 .filter(|&h| {
-                    state
-                        .unit(Some(h))
-                        .is_some_and(|u| u.owner == player && u.alive)
-                        && harvest::can_harvest(&state, h, mine)
+                    state.unit(Some(h)).is_some_and(|u| {
+                        u.owner == player && u.alive && (!repeat || u.movement.is_none())
+                    }) && harvest::can_harvest(&state, h, mine)
                 })
-                .take(wanted)
+                .take(remaining)
                 .collect();
             let paid_placement = workers
                 .iter()
@@ -4030,8 +4068,12 @@ fn register_ai_natives(
                     };
                     distance(a).total_cmp(&distance(b))
                 });
+            let mut assigned_now = already;
             for worker in workers {
                 let paid = harvest::pays_for(&state, worker, mine);
+                let retain_walk = paid
+                    && harvest::is_wisp(&state, worker)
+                    && harvest::late_wisp_assignment(&state, mine);
                 state.table.ai_harvest_extra = usize::from(!paid) * 3;
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
@@ -4043,23 +4085,30 @@ fn register_ai_natives(
                         if Some(worker) == paid_placement {
                             table::ai_paid_placement(&mut state, worker);
                         }
+                        if retain_walk {
+                            table::retain_late_wisp_walk(&mut state, worker);
+                        }
                     }
                     gold_workers.borrow_mut().insert(worker);
+                    assigned_now += 1;
                 } else {
                     state.table.ai_harvest_reassigning = false;
                 }
                 state.table.ai_harvest_extra = 0;
             }
+            gold_assigned.borrow_mut().insert(mine, assigned_now);
             Ok(None)
         }),
     );
     let harvesting = state.clone();
     let wood_workers = assigned.clone();
+    let wood_cycle = harvest_cycle.clone();
     add(
         "native HarvestWood takes integer town, integer peons returns nothing",
         Rc::new(move |_, args| {
             let wanted = integer(&args[1]).max(0) as usize;
             let mut state = harvesting.borrow_mut();
+            let repeat = *wood_cycle.borrow() > 1;
             let workers: Vec<(u32, Option<u32>)> = state
                 .units
                 .iter()
@@ -4068,9 +4117,15 @@ fn register_ai_natives(
                 .filter(|h| !wood_workers.borrow().contains(h))
                 .filter_map(|h| {
                     let worker = state.unit(Some(h)).is_some_and(|u| {
+                        let data_worker =
+                            state.data.units.get(&u.type_id).is_some_and(|t| t.worker);
                         u.owner == player
                             && u.alive
-                            && state.data.units.get(&u.type_id).is_some_and(|t| t.worker)
+                            && (!repeat
+                                || !harvest::is_wisp(&state, h)
+                                || u.movement.is_none() && u.shown_order.is_none())
+                            && (data_worker
+                                || harvest::ai_wood_harvester(&state, h) && u.movement.is_none())
                     });
                     worker.then(|| {
                         let tree = ai_nearest_tree(&state, h)
@@ -4103,9 +4158,13 @@ fn register_ai_natives(
                     None => {
                         // With no tree on the map the engine still records a
                         // worker's wood assignment, but gives no world order.
-                        state.table.ai_harvest_extra = 4;
-                        table::ai_harvest_reassigning(&mut state, worker);
-                        table::harvest_ordered(&mut state, worker, false);
+                        if repeat && harvest::ai_wood_harvester(&state, worker) {
+                            table::ai_wood_without_target(&mut state, worker);
+                        } else {
+                            state.table.ai_harvest_extra = 4;
+                            table::ai_harvest_reassigning(&mut state, worker);
+                            table::harvest_ordered(&mut state, worker, false);
+                        }
                         wood_workers.borrow_mut().insert(worker);
                     }
                 }
@@ -4918,10 +4977,9 @@ fn register_natives(
         "native RecycleGuardPosition takes unit hUnit returns nothing",
         |vm, state, args| {
             let mut state = state.borrow_mut();
-            let tick = state.table.now;
-            let recycled = state.table.take_n(tick, 35, "RecycleGuardPosition")[32];
-            state.table.free(tick, recycled, "RecycleGuardPosition");
-            state.table.take(tick, "RecycleGuardPosition");
+            if let Some(h) = handle(&args[0]) {
+                table::guard_position_recycled(&mut state, h);
+            }
             Ok(None)
         }
     );

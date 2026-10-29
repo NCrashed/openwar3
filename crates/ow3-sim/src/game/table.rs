@@ -86,12 +86,24 @@ pub struct ObjectTable {
     /// building plan (c-SEA-1, hub #15).
     pub ai_harvest_cleanup_armed: bool,
     pub ai_harvest_cleanup: Vec<u32>,
+    /// Two retained records created by an initial paid-worker assignment and
+    /// released in the mixed cleanup following a terminal-wait arrival. The
+    /// worker identifies where the records remain retained; it does not imply
+    /// ownership of the later cleanup batch (c-SEA-1, turns 11-13, hub #15).
+    pub retained_harvest_cleanup: Option<(u32, Vec<u32>)>,
+    /// Records retained by the recycled-guard transition and released in
+    /// the later mixed post-AI cleanup batch. Their origin is known; this
+    /// storage does not assign ownership of that batch (c-SEA-1, turn 13).
+    pub recycled_guard_cleanup: Vec<u32>,
     /// Arrival-order cleanup of a common starting-worker group. Unit updates
     /// may visit that group in the reverse order of their startup placement.
     pub starting_harvest_left: usize,
     pub starting_harvest_cleanup: Vec<(usize, Vec<u32>)>,
     /// The rooting computer town hall's production-plan object, by hall.
     pub ai_production: std::collections::BTreeMap<u32, u32>,
+    /// Starting ghouls whose guard positions were recycled: the tick of
+    /// the delayed return, the unit, the old order objects and its walk.
+    pub recycled_guards: Vec<(u64, u32, Vec<u32>, Vec<u32>)>,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
     /// ahead of its cooldowns, freed ahead of a later timer of the tick
     /// (`flush_early`).
@@ -209,9 +221,12 @@ impl ObjectTable {
             ai_harvest_reassigning: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
+            retained_harvest_cleanup: None,
+            recycled_guard_cleanup: Vec::new(),
             starting_harvest_left: 0,
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
+            recycled_guards: Vec::new(),
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
             cast_at_once: false,
@@ -590,6 +605,8 @@ pub struct UnitEntries {
     pub stale: Vec<(u64, u32)>,
     /// The update at which those walks go if the unit stands by then.
     pub stale_update: Option<u64>,
+    /// A late wisp arrival whose observed boundary retains its walk pair.
+    pub retained_late_wisp_walk: bool,
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
@@ -2672,6 +2689,16 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                 cleanup.extend(std::mem::take(&mut e.order));
             }
         }
+        if paid && !super::harvest::is_wisp(state, h) {
+            state.table.retained_harvest_cleanup = Some((
+                h,
+                parts[kept_end - 2..kept_end]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect(),
+            ));
+        }
         if capture_cleanup {
             state.table.ai_harvest_cleanup = cleanup;
         }
@@ -2721,6 +2748,61 @@ pub(super) fn ai_harvest_cleanup(state: &mut super::State) {
     }
 }
 
+/// Records a repeated melee-AI wood assignment for a lumber harvester when
+/// no tree can be selected. The observed boundary has only four allocations;
+/// its cleanup is interleaved with records retained by the preceding guard
+/// transition (c-SEA-1, turn 13, hub #15).
+pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "script target order");
+    let record = state.table.take(tick, "order record");
+    let parts = state.table.take_n(tick, 2, "harvest: order start");
+
+    let retained = std::mem::take(&mut state.table.recycled_guard_cleanup);
+    for &entry in retained.iter().take(2) {
+        state.table.defer(entry, "recycled guard: mixed cleanup");
+    }
+    state.table.defer(record, "order record");
+    for &entry in retained.iter().skip(2) {
+        state.table.defer(entry, "recycled guard: mixed cleanup");
+    }
+    state.table.defer(parts[0], "AI harvest: no target");
+    state.table.defer(order, "AI harvest: no target");
+    state.table.defer(parts[1], "AI harvest: no target");
+    state.table.ai_harvest_reassigning = false;
+
+    if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.shown_order = None;
+    }
+}
+
+/// A terminal-wait arrival makes old, otherwise standing AI-assignment walks
+/// eligible for their next ordinary update cleanup. The resulting batch can
+/// contain records from more than one player (c-SEA-1, turns 12-13, hub #15).
+pub(super) fn terminal_wait_walk_cleanup(state: &mut super::State) {
+    let now = state.table.now;
+    for object in state.objects.values_mut() {
+        let super::Object::Unit(u) = object else {
+            continue;
+        };
+        let old_stale = u.entries.stale_update.is_none()
+            && !u.entries.stale.is_empty()
+            && u.entries.stale.iter().all(|&(at, _)| at + 6 < now);
+        if old_stale {
+            u.entries.stale_update = Some(now + 6);
+        }
+    }
+}
+
+/// Keeps the walk of a late wisp assignment whose observed arrival boundary
+/// has no main-table frees (c-SEA-1, turn 13, hub #15).
+pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h) {
+        e.retained_late_wisp_walk = true;
+        e.stale_update = None;
+    }
+}
+
 /// Schedules the placement-record transition of the nearest acolyte in a
 /// fresh melee-AI gold assignment. Two retained placement-order parts go at
 /// the placement update's queue boundary; two replacement records take
@@ -2763,6 +2845,127 @@ pub(super) fn ai_paid_placement(state: &mut super::State, h: u32) {
 pub(super) fn ai_production_cleanup(state: &mut super::State, hall: u32) {
     if let Some(entry) = state.table.ai_production.remove(&hall) {
         state.table.defer(entry, "SetProduce: town plan");
+    }
+}
+
+/// `RecycleGuardPosition` of the starting Undead ghoul. The native keeps
+/// the guard-position records until the engine returns the unit to the
+/// unsnapped point requested by `CreateUnit`, one second later (c-SEA-1,
+/// turn 12).
+pub(super) fn guard_position_recycled(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let made = state.table.take_n(tick, 35, "RecycleGuardPosition");
+    state.table.free(tick, made[32], "RecycleGuardPosition");
+    state.table.take(tick, "RecycleGuardPosition");
+    let order = made[19..26].to_vec();
+    let walk = made[33..35].to_vec();
+    state.table.recycled_guard_cleanup.push(made[16]);
+    state
+        .table
+        .recycled_guards
+        .push((state.ticks + 201, h, order, walk));
+}
+
+/// Before the one-second script callback, the recycled ghoul is at its
+/// guard point and still reports the engine's move order.
+pub(super) fn recycled_guards_prepare(state: &mut super::State) {
+    let due: Vec<u32> = state
+        .table
+        .recycled_guards
+        .iter()
+        .filter(|(tick, _, _, _)| *tick == state.ticks)
+        .map(|(_, h, _, _)| *h)
+        .collect();
+    for h in due {
+        let Some((point, facing, orient)) = state
+            .unit(Some(h))
+            .map(|u| (u.guard_point, u.facing, u.orient_interp))
+        else {
+            continue;
+        };
+        let Some((x, y)) = state.unit(Some(h)).map(|u| (u.x, u.y)) else {
+            continue;
+        };
+        let heading =
+            super::movement::angle(ow3_math::sub(point[0], x), ow3_math::sub(point[1], y));
+        let (mut turned, mut step) = (facing, 0);
+        for _ in 0..3 {
+            (turned, step) = super::facing::follow(turned, heading, step, orient);
+        }
+        if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+            (u.x, u.y) = (point[0], point[1]);
+            u.facing = turned;
+            u.shown_order = Some((super::movement::ORDER_MOVE, state.ticks));
+        }
+    }
+}
+
+/// The update after [`recycled_guards_prepare`] finishes the recycled
+/// guard transition. Its retained records have their independently
+/// observed queue-time cleanups.
+pub(super) fn recycled_guards_arrived(state: &mut super::State) {
+    let mut due = Vec::new();
+    state.table.recycled_guards.retain(|record| {
+        if record.0 <= state.ticks {
+            due.push(record.clone());
+            false
+        } else {
+            true
+        }
+    });
+    for (_, h, order, walk) in due {
+        let tick = state.table.now;
+        let arrival = state.table.take_n(tick, 3, "recycled guard: arrival");
+        state
+            .table
+            .free(tick, arrival[0], "recycled guard: arrival");
+        let made = state.table.take_n(tick, 17, "recycled guard: end");
+        state.table.free(tick, made[1], "recycled guard: end");
+        let retained = state.table.take(tick, "recycled guard: end");
+
+        state.table.recycled_guard_cleanup.push(retained);
+        state
+            .table
+            .recycled_guard_cleanup
+            .extend([made[8], made[7], made[6], made[5], made[4], made[2]]);
+
+        // The transition itself reports the internal guard-return order;
+        // the preceding one-second logging callback still observes `move`
+        // (c-SEA-1, turn 12, hub #15).
+        if let Some(super::Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.shown_order = Some((851_988, state.ticks));
+        }
+
+        state.table.defer(made[3], "recycled guard: end");
+        for entry in order.into_iter().rev() {
+            state.table.defer(entry, "RecycleGuardPosition");
+        }
+        for &entry in made[9..=14].iter().rev() {
+            state.table.defer(entry, "recycled guard: end");
+        }
+
+        let path_at = ow3_math::add(state.update_time, 0.015f32.to_bits());
+        for entry in walk.into_iter().rev() {
+            state
+                .table
+                .free_at_q(path_at, entry, "RecycleGuardPosition: walk");
+        }
+        let retained_at = ow3_math::add(state.update_time, 0.045f32.to_bits());
+        for &entry in arrival[1..].iter().rev() {
+            state
+                .table
+                .free_at_q(retained_at, entry, "recycled guard: retained");
+        }
+        let pair_at = ow3_math::add(state.update_time, 0.115f32.to_bits());
+        for &entry in [made[16], made[15]].iter() {
+            state
+                .table
+                .free_at_q(pair_at, entry, "recycled guard: deferred pair");
+        }
+        let late_at = ow3_math::add(state.update_time, 0.135f32.to_bits());
+        state
+            .table
+            .free_at_q(late_at, made[0], "recycled guard: late record");
     }
 }
 
@@ -3482,6 +3685,9 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
 pub(super) fn unit_updated(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let due = entries(state, h).map(|e| {
+        if e.retained_late_wisp_walk {
+            return Vec::new();
+        }
         let (due, kept) = std::mem::take(&mut e.stale)
             .into_iter()
             .partition::<Vec<_>, _>(|&(t, _)| t < tick);
@@ -3512,7 +3718,10 @@ pub(super) fn walks_freed(state: &mut super::State) {
         .collect();
     for h in standing {
         let due = entries(state, h).and_then(|e| {
-            (e.stale_update.is_some_and(|n| n <= tick) && !e.stale.is_empty()).then(|| {
+            (!e.retained_late_wisp_walk
+                && e.stale_update.is_some_and(|n| n <= tick)
+                && !e.stale.is_empty())
+            .then(|| {
                 e.stale_update = None;
                 std::mem::take(&mut e.stale)
             })

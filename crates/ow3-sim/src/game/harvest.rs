@@ -122,6 +122,13 @@ pub struct Harvest {
     starting_computer_mine: bool,
     starting_mine_at: Option<u64>,
     starting_mine_reached: bool,
+    /// An entangled-mine endpoint whose terminal contact armed the path's
+    /// 20-update retry wait before its last displacement.
+    pending_wisp: bool,
+    pending_wisp_retry: u8,
+    pending_wisp_zero_seen: bool,
+    pending_wisp_heading: u32,
+    pending_wisp_facing_step: u32,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -168,6 +175,17 @@ fn gathering(state: &State, h: u32) -> Option<Gathering> {
         period: (f64::from(f32::from_bits(a.duration)) * 200.0).round() as u64,
         duration: a.duration,
         reach: a.range,
+    })
+}
+
+/// Whether `h` is a unit type the AI may assign to lumber. Ghouls carry
+/// `Ahar` even though their object-data worker flag is clear; wisps use
+/// their separate tree-harvest ability.
+pub(super) fn ai_wood_harvester(state: &State, h: u32) -> bool {
+    state.unit(Some(h)).is_some_and(|u| {
+        gathering(state, h).is_some_and(|g| g.per_hit > 0 || g.lumber > 0)
+            || ability_of(state, u.type_id, code(b"Ahrl")).is_some()
+            || is_wisp(state, h)
     })
 }
 
@@ -634,6 +652,7 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    pending_wisp_arrivals(&mut state.borrow_mut());
     starting_mine_arrivals(&mut state.borrow_mut());
     pay_mines(&mut state.borrow_mut());
     wisp_lumber(&mut state.borrow_mut());
@@ -2009,6 +2028,28 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     p.places[k] = Some(h);
     let at = add(state.move_clock, JOIN_DELAY);
     p.joining.push((h, at));
+    if occupants == 0 {
+        // The terminal contact is observed one update before the final
+        // displacement: count 20 at 0.420 and 19 after 0.450. This hook is
+        // reached after that final displacement, so it retains count 19.
+        if let Some(mut gathering) = get(state, h) {
+            if let Some(moving) = state.unit(Some(h)).and_then(|u| u.movement) {
+                gathering.pending_wisp_heading = moving.heading;
+                gathering.pending_wisp_facing_step = moving.facing_step;
+            }
+            gathering.pending_wisp_retry = 19;
+            gathering.pending_wisp = true;
+            gathering.pending_wisp_zero_seen = false;
+            set(state, h, Some(gathering));
+        }
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.movement = None;
+        }
+        hide(state, h, true);
+        state.drop_path(h);
+        super::table::walk_dropped(state, h);
+        return;
+    }
     if occupants >= 2 {
         // From the third wisp on, reaching an entangled mine does not also
         // enter the ordinary-mine waiting transition. The second wisp still
@@ -2025,47 +2066,160 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
             set(state, h, Some(gathering));
         }
     }
-    if occupants > 0 {
-        let tick = state.table.now;
-        state.table.take(tick, "wisp: entangled-mine arrival");
-        let (order, records) = state
-            .objects
-            .get_mut(&h)
-            .and_then(|o| match o {
-                Object::Unit(u) if !u.entries.order.is_empty() => {
-                    let first = u.entries.order.remove(0);
-                    let second = u.entries.order.first().copied();
-                    Some((
-                        second.map_or_else(|| vec![first], |s| vec![first, s]),
-                        u.entries.wisp_arrival.clone(),
-                    ))
-                }
-                _ => None,
-            })
-            .unwrap_or_default();
-        for entry in order.into_iter().chain(records) {
-            state.table.defer(entry, "wisp: entangled-mine arrival");
-        }
-        if occupants == 1 {
-            // Only the second wisp's two unit records return at the same
-            // 0.01 s boundary at which it starts contributing to the mine.
-            // The retained order record is recreated by the mine's already
-            // scheduled resource step immediately after them (c-SEA-1,
-            // hub #15).
-            state.table.take_at_q(at, "wisp: entangled-mine record");
-            state.table.take_at_q(at, "wisp: entangled-mine record");
-        }
-    }
-    if occupants > 0 {
+    wisp_arrival_records(state, h, occupants, at, false);
+    if occupants >= 3 {
+        state.paths.remove(&h);
+        super::table::retain_late_wisp_walk(state, h);
+    } else {
         state.drop_path(h);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = None;
+        if occupants >= 3 {
+            u.entries.stale_update = None;
+        }
     }
     hide(state, h, true);
-    if occupants == 0 {
+}
+
+/// The table records kept by a wisp's order are released when it completes
+/// entry into an entangled mine. `occupants` includes earlier reservations,
+/// but not a newly allocated place in the ordinary call above.
+fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32, terminal_wait: bool) {
+    // The fourth and later wisps enter without a main-table transition
+    // (c-SEA-1, turn 13, hub #15).
+    if !terminal_wait && occupants >= 3 {
+        return;
+    }
+    let tick = state.table.now;
+    state.table.take(tick, "wisp: entangled-mine arrival");
+    let (order, records) = state
+        .objects
+        .get_mut(&h)
+        .and_then(|o| match o {
+            Object::Unit(u) if !u.entries.order.is_empty() => {
+                let first = u.entries.order.remove(0);
+                let second = u.entries.order.first().copied();
+                Some((
+                    second.map_or_else(|| vec![first], |s| vec![first, s]),
+                    u.entries.wisp_arrival.clone(),
+                ))
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    for entry in order.into_iter().chain(records) {
+        state.table.defer(entry, "wisp: entangled-mine arrival");
+    }
+    if occupants == 1 {
+        // Only the second wisp's two unit records return at the same 0.01 s
+        // boundary at which it starts contributing to the mine. The retained
+        // order record is recreated by the already scheduled resource step.
+        state.table.take_at_q(at, "wisp: entangled-mine record");
+        state.table.take_at_q(at, "wisp: entangled-mine record");
+    }
+}
+
+/// Advance an entangled-mine terminal-contact wait. The retry count reaches
+/// zero, remains zero for one update, and reports arrival on the following
+/// update (c-SEA-1: 20 at 0.420, 0 at 1.020 and arrival at 1.080).
+fn pending_wisp_arrivals(state: &mut State) {
+    if !state.update_now {
+        return;
+    }
+    let pending: Vec<u32> = state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| get(state, h).is_some_and(|g| g.pending_wisp))
+        .collect();
+    let mut finished = Vec::new();
+    for h in pending {
+        let Some(mut gathering) = get(state, h) else {
+            continue;
+        };
+        let Some((facing, orient, turn_rate, at)) = state.unit(Some(h)).map(|u| {
+            let turn_rate = state
+                .data
+                .units
+                .get(&u.type_id)
+                .map_or(std::f32::consts::PI.to_bits(), |data| data.turn_rate);
+            (u.facing, u.orient_interp, turn_rate, [u.x, u.y])
+        }) else {
+            continue;
+        };
+        if let Some(mine) = gathering.target.and_then(|mine| state.unit(Some(mine))) {
+            let desired = movement::angle(sub(mine.x, at[0]), sub(mine.y, at[1]));
+            let difference =
+                super::facing::angle_difference(desired, gathering.pending_wisp_heading);
+            gathering.pending_wisp_heading =
+                if f32::from_bits(difference).abs() <= f32::from_bits(turn_rate) {
+                    add(gathering.pending_wisp_heading, difference)
+                } else if f32::from_bits(difference) > 0.0 {
+                    add(gathering.pending_wisp_heading, turn_rate)
+                } else {
+                    add(gathering.pending_wisp_heading, turn_rate ^ 0x8000_0000)
+                };
+        }
+        let (facing, step) = super::facing::follow(
+            facing,
+            gathering.pending_wisp_heading,
+            gathering.pending_wisp_facing_step,
+            orient,
+        );
+        gathering.pending_wisp_facing_step = step;
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.facing = facing;
+        }
+        let min = [state.world_bounds[0], state.world_bounds[1]];
+        if let Some(trace) = state.agent_trace.as_mut() {
+            trace.push((
+                state.ticks,
+                h,
+                movement::relative(at, min),
+                [0, 0],
+                gathering.pending_wisp_heading,
+                [0, 0],
+            ));
+        }
+        if gathering.pending_wisp_retry > 0 {
+            gathering.pending_wisp_retry -= 1;
+        } else if gathering.pending_wisp_zero_seen {
+            gathering.pending_wisp = false;
+            gathering.pending_wisp_zero_seen = false;
+            if let Some(mine) = gathering.target {
+                finished.push((h, mine));
+            }
+        } else {
+            gathering.pending_wisp_zero_seen = true;
+        }
+        set(state, h, Some(gathering));
+    }
+    for (h, mine) in finished {
+        let occupants = state.paying.get(&mine).map_or(0, |p| {
+            p.places.iter().filter(|place| place.is_some()).count()
+        });
+        wisp_arrival_records(state, h, occupants, state.move_clock, true);
+        super::table::terminal_wait_walk_cleanup(state);
+        if let Some((worker, entries)) = state.table.retained_harvest_cleanup.take() {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+                u.entries.order.retain(|entry| !entries.contains(entry));
+            }
+            for entry in entries {
+                state
+                    .table
+                    .defer(entry, "harvest: retained arrival cleanup");
+            }
+        }
+        for ordinary in state.mines.values_mut() {
+            ordinary.waiting.retain(|&worker| worker != h);
+            ordinary.starting.retain(|&(worker, _)| worker != h);
+        }
         state.drop_path(h);
-        super::table::walk_dropped(state, h);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.movement = None;
+        }
+        hide(state, h, true);
     }
 }
 
@@ -2121,6 +2275,23 @@ pub(super) fn paid_working(state: &State, h: u32) -> bool {
             mine.waiting.contains(&h) || mine.inside.is_some_and(|(worker, _, _)| worker == h)
         })
         || state.wisp_trees.values().any(|&(w, _)| w == h)
+}
+
+/// Whether an AI worker is already assigned and active at `mine`. A later
+/// `HarvestGold` call counts it toward the requested total without issuing a
+/// replacement world order (c-SEA-1, turn 13).
+pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32) -> bool {
+    get(state, h).is_some_and(|g| g.target == Some(mine)) && paid_working(state, h)
+}
+
+/// Whether another wisp assigned to this paying mine will be its fourth or
+/// later occupant. Those arrivals retain their walk pair at the observed
+/// boundary (c-SEA-1, turn 13).
+pub(super) fn late_wisp_assignment(state: &State, mine: u32) -> bool {
+    state
+        .paying
+        .get(&mine)
+        .is_some_and(|p| p.places.iter().filter(|place| place.is_some()).count() >= 3)
 }
 
 /// The number of workers counting at `mine` changes at queue time `now`

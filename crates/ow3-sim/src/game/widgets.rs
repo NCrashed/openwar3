@@ -266,6 +266,9 @@ pub(super) fn create_unit_by_script(
     let snap = |v: u32| mul(floor(mul(v, FOUR)), QUARTER);
     let (x, y) = off_other_units(state, type_id, [snap(at[0]), snap(at[1])]);
     let h = create_unit(state, owner, type_id, [x, y, at[2]])?;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.guard_point = [at[0], at[1]];
+    }
     // It enters the regions at the place it stands (SPEC-0049).
     super::regions::test_unit(state, h);
     Some(h)
@@ -472,6 +475,7 @@ pub(super) fn create_unit(
             .map_or(0, |a| f32::from_bits(a.data[0]) as i32),
         harvest: None,
         home: [x, y],
+        guard_point: [x, y],
         creep: super::creeps::born(state, owner, type_id),
         orders: super::queue::Queue::default(),
         footprint: footprint.map(Box::new),

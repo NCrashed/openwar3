@@ -2695,19 +2695,33 @@ pub(super) fn ai_harvest_cleanup(state: &mut super::State) {
 /// their entries at the worker's join boundary and stay live (c-SEA-1:
 /// 0.275000 and 0.280000, hub #15).
 pub(super) fn ai_paid_placement(state: &mut super::State, h: u32) {
-    let records = entries(state, h)
-        .and_then(|e| (e.order.len() >= 2).then(|| e.order.drain(..2).collect::<Vec<_>>()));
+    let now = state.timers.time();
+    let placed = ow3_math::add(now, 0.18f32.to_bits());
+    let placement_tick = state.ticks + (0.18 / f32::from_bits(crate::timers::TICK)).round() as u64;
+    let records = entries(state, h).and_then(|e| {
+        (e.order.len() >= 2).then(|| {
+            let records = e.order.drain(..2).collect::<Vec<_>>();
+            // Joining a paying mine gives up the assignment's walk at the
+            // placement boundary. Its path and cluster remain stale until
+            // the worker's first later update (c-SEA-1: placement at
+            // 0.280000, cleanup in the later phase of 0.300000).
+            e.stale.extend(
+                std::mem::take(&mut e.walk)
+                    .into_iter()
+                    .map(|entry| (placement_tick, entry)),
+            );
+            records
+        })
+    });
     let Some(records) = records else {
         return;
     };
-    let now = state.timers.time();
     let release = ow3_math::add(now, 0.175f32.to_bits());
     for entry in records {
         state
             .table
             .free_at_q(release, entry, "paid worker: old placement");
     }
-    let placed = ow3_math::add(now, 0.18f32.to_bits());
     state.table.take_at_q(placed, "paid worker: placement");
     state.table.take_at_q(placed, "paid worker: placement");
 }

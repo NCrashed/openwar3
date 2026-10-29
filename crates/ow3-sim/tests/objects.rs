@@ -769,10 +769,10 @@ fn melee_ai_checksums() {
 
 /// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
 /// the three standard melee AI scripts and first paid-worker placement:
-/// the first four turn checksums.
+/// the first five turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(4)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(5)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -885,6 +885,34 @@ fn melee_ai_turn4_objects() {
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
     assert_eq!(ours, expected);
+}
+
+/// The paid acolyte's assignment walk becomes stale when it joins the
+/// Haunted Gold Mine and is released at its first later update. The path is
+/// freed before the cluster, leaving the latter at the head of the table.
+#[test]
+fn melee_ai_turn5_objects() {
+    let dir = game_data().join("replays");
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..3 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let log = playback.game.table_log();
+    let ours: Vec<_> = log[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, [(false, 2168, 12277), (false, 10785, 12276)]);
 }
 
 /// `c-SCC-1`'s object table.

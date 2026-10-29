@@ -329,7 +329,7 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SEA-1.w3g",
-        "three computer players running the standard melee AI on IceCrown for 180 seconds: its first two turns match (objects.rs, melee_ai_start_checksums), the rest is not matched yet",
+        "three computer players running the standard melee AI on IceCrown for 180 seconds: its first five turns match (objects.rs, melee_ai_start_checksums), the rest is not matched yet",
     ),
     (
         "c-SBH-1.w3g",

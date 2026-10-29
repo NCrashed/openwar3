@@ -2050,10 +2050,13 @@ fn paid(state: &mut State, mine: u32) {
 /// Whether wisp `h` (`Awha`) can sit on tree `tree` (SPEC-0029, "Night
 /// Elf: wisps on trees").
 pub(super) fn wisp_tree(state: &State, h: u32, tree: u32) -> bool {
+    is_wisp(state, h) && is_tree(state, tree)
+}
+
+pub(super) fn is_wisp(state: &State, h: u32) -> bool {
     state
         .unit(Some(h))
         .is_some_and(|u| ability_of(state, u.type_id, code(b"Awha")).is_some())
-        && is_tree(state, tree)
 }
 
 /// The wisp sitting on `tree`, if any.

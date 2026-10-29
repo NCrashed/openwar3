@@ -767,11 +767,11 @@ fn melee_ai_checksums() {
     }
 }
 
-/// `c-SEA-1`'s synchronous initialization of the three standard melee AI
-/// scripts: the first two turn checksums.
+/// `c-SEA-1`'s synchronous initialization and first 0.100 s resumption of
+/// the three standard melee AI scripts: the first three turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(2)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(3)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -793,13 +793,56 @@ fn melee_ai_scripts_resume() {
     for _ in 0..3 {
         assert!(playback.step_slot());
     }
-    let clear_harvest: Vec<(i32, u64)> = playback
+    let starts = playback
         .game
-        .ai_stub_calls()
-        .into_iter()
-        .filter_map(|(player, name, count)| (name == "ClearHarvestAI").then_some((player, count)))
+        .table_log()
+        .iter()
+        .filter(|event| event.new && event.call_name == "StartThread")
+        .count();
+    assert_eq!(starts, 12);
+}
+
+/// The main-table activity of the three AI batches at world clock 0.100,
+/// from the first `StartThread` object through the turn-3 checksum.
+#[test]
+fn melee_ai_turn3_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn3-objects.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(clear_harvest, [(1, 1), (2, 1), (3, 1)]);
+    let replay = Replay::parse(&std::fs::read(dir.join("c-SEA-1.w3g")).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..3 {
+        assert!(playback.step_slot());
+    }
+    let log = playback.game.table_log();
+    let start = log
+        .iter()
+        .position(|event| event.new && event.creation == 12102)
+        .unwrap();
+    let ours = &log[start..];
+    let first = expected
+        .iter()
+        .zip(ours)
+        .position(|(expected, ours)| *expected != (ours.new, ours.entry, ours.creation))
+        .or((expected.len() != ours.len()).then(|| expected.len().min(ours.len())));
+    assert_eq!(first, None, "the first differing table event {first:?}");
 }
 
 /// `c-SCC-1`'s object table.

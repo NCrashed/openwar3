@@ -72,6 +72,22 @@ pub struct ObjectTable {
     /// The idle workers of the computer whose new worker's harvest order is
     /// being given (`computer_harvest_ordered`), or none.
     pub computer_harvest: Option<usize>,
+    /// Extra order-state entries made by `HarvestGold` or `HarvestWood`
+    /// before the walk of each worker (c-SEA-1, hub #15).
+    pub ai_harvest_extra: usize,
+    /// One fewer order-start entry for an acolyte assigned to a Haunted
+    /// Gold Mine by the melee AI (c-SEA-1, hub #15).
+    pub ai_harvest_fewer: usize,
+    /// The next harvest order comes from the melee AI and releases the old
+    /// order's arrival parts before the rest of that order.
+    pub ai_harvest_reassigning: bool,
+    /// The first worker assigned after `ClearHarvestAI` has its temporary
+    /// order state cleaned between the two cleanup groups of the accepted
+    /// building plan (c-SEA-1, hub #15).
+    pub ai_harvest_cleanup_armed: bool,
+    pub ai_harvest_cleanup: Vec<u32>,
+    /// The rooting computer town hall's production-plan object, by hall.
+    pub ai_production: std::collections::BTreeMap<u32, u32>,
     /// The 0.0001 s frees given up by the tick's held impacts and hits
     /// ahead of its cooldowns, freed ahead of a later timer of the tick
     /// (`flush_early`).
@@ -184,6 +200,12 @@ impl ObjectTable {
             walks_due: Vec::new(),
             mine_used: false,
             computer_harvest: None,
+            ai_harvest_extra: 0,
+            ai_harvest_fewer: 0,
+            ai_harvest_reassigning: false,
+            ai_harvest_cleanup_armed: false,
+            ai_harvest_cleanup: Vec::new(),
+            ai_production: Default::default(),
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
             cast_at_once: false,
@@ -1177,6 +1199,11 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     let tail = state
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
+    if building && roots_type(state, t) {
+        if let Some(&entry) = tail.last() {
+            state.table.ai_production.insert(h, entry);
+        }
+    }
     // An idle worker's growth comes before the nine, each three going 1, 2, 0
     // (c-SCC-1: the acolyte's 28, 29, 27); the nine go in the order 1, 6, 5,
     // 4, 3, 2, 0, 8, 7 (the great hall's 11011, 11016 .. 11012, 11010, 11018,
@@ -2547,21 +2574,127 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
     state.table.defer(record, "order record");
+    let ai_reassignment = std::mem::take(&mut state.table.ai_harvest_reassigning);
+    if ai_reassignment {
+        let arrived = entries(state, h)
+            .map(|e| std::mem::take(&mut e.harvest_arrive))
+            .unwrap_or_default();
+        for entry in arrived {
+            state.table.defer(entry, "AI harvest: old arrival");
+        }
+    }
     order_ended(state, h);
     // On a tree 12 parts, the last 4 freed at once (c-RYP-1 at 1.5 s).
     // PROVISIONAL: the tree's kept parts' ends are taken as the mine's.
-    let n = if tree { 12 } else { 14 };
+    let n = if tree { 12 } else { 14 } - state.table.ai_harvest_fewer;
     let parts = state.table.take_n(tick, n, "harvest: order start");
-    for &e in parts[n - 4..].iter().rev() {
-        state.table.defer(e, "harvest: order start");
-    }
-    if let Some(e) = entries(state, h) {
-        // At the tree only its k 7 goes at the arrival (c-RYP-1: 1265).
-        let kept = if tree { n - 5 } else { n - 6 };
-        e.harvest_arrive = parts[kept..n - 4].iter().rev().copied().collect();
-        e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
+    let extra = state.table.ai_harvest_extra;
+    let extras = state.table.take_n(tick, extra, "AI harvest");
+    if ai_reassignment {
+        // An AI reassignment has a distinct order-state layout. Its first
+        // part and the target order go with the old order. A normal Orc
+        // assignment keeps parts 1..11 and gives up its last two parts;
+        // paid workers keep parts 1..8 and give up the rest. A wood plan
+        // without a tree gives up parts 1 and 13 but makes no world order
+        // (c-SEA-1, hub #15).
+        let paid = extra == 0;
+        let no_world_target = extra == 4;
+        let first_temporary = usize::from(no_world_target);
+        for &entry in parts[..=first_temporary].iter().rev() {
+            state.table.defer(entry, "AI harvest: replaced order");
+        }
+        state.table.defer(order, "AI harvest: replaced order");
+        for &entry in extras.iter().rev() {
+            state.table.defer(entry, "AI harvest");
+        }
+        let kept_end = if paid {
+            9
+        } else if no_world_target {
+            n - 1
+        } else {
+            n - 2
+        };
+        for &entry in parts[kept_end..].iter().rev() {
+            state.table.defer(entry, "harvest: order start");
+        }
+        let capture_cleanup = std::mem::take(&mut state.table.ai_harvest_cleanup_armed);
+        let mut cleanup = Vec::new();
+        if let Some(e) = entries(state, h) {
+            if paid || no_world_target {
+                e.harvest_arrive.clear();
+                e.order = parts[first_temporary + 1..kept_end]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect();
+            } else {
+                e.harvest_arrive = parts[kept_end - 2..kept_end]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect();
+                e.order = parts[1..kept_end - 2].iter().rev().copied().collect();
+            }
+            if capture_cleanup {
+                cleanup = std::mem::take(&mut e.harvest_arrive);
+                cleanup.extend(std::mem::take(&mut e.order));
+            }
+        }
+        if capture_cleanup {
+            state.table.ai_harvest_cleanup = cleanup;
+        }
+        walk_made_at_order(state, h);
+        if capture_cleanup {
+            let tick = state.table.now;
+            if let Some(e) = entries(state, h) {
+                let walk = std::mem::take(&mut e.walk);
+                e.stale.extend(walk.into_iter().map(|entry| (tick, entry)));
+            }
+        }
+        return;
+    } else {
+        for &entry in parts[n - 4..].iter().rev() {
+            state.table.defer(entry, "harvest: order start");
+        }
+        if let Some(e) = entries(state, h) {
+            // At the tree only its k 7 goes at the arrival (c-RYP-1: 1265).
+            let kept = if tree { n - 5 } else { n - 6 };
+            e.harvest_arrive = parts[kept..n - 4].iter().rev().copied().collect();
+            e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
+        }
     }
     walk_made_at_order(state, h);
+}
+
+/// Marks that the next order is a melee-AI harvest reassignment. Its old
+/// arrival parts are released ahead of the rest of the old order at the
+/// 0.0001 s cleanup (c-SEA-1, hub #15).
+pub(super) fn ai_harvest_reassigning(state: &mut super::State, _h: u32) {
+    state.table.ai_harvest_reassigning = true;
+}
+
+/// Starts a fresh AI harvesting pass. The first assignment's temporary
+/// state is released when that pass records its accepted building plan.
+pub(super) fn ai_harvest_cleared(state: &mut super::State) {
+    state.table.ai_harvest_cleanup_armed = true;
+    state.table.ai_harvest_cleanup.clear();
+}
+
+/// Releases the first assignment's temporary state at the observed point
+/// within an accepted building plan's cleanup (c-SEA-1, hub #15).
+pub(super) fn ai_harvest_cleanup(state: &mut super::State) {
+    state.table.ai_harvest_cleanup_armed = false;
+    for entry in std::mem::take(&mut state.table.ai_harvest_cleanup) {
+        state.table.defer(entry, "AI harvest: plan cleanup");
+    }
+}
+
+/// Releases a rooting computer town hall's plan object on its first
+/// multi-worker production request (c-SEA-1, hub #15).
+pub(super) fn ai_production_cleanup(state: &mut super::State, hall: u32) {
+    if let Some(entry) = state.table.ai_production.remove(&hall) {
+        state.table.defer(entry, "SetProduce: town plan");
+    }
 }
 
 /// A computer's new worker `h` is sent to its gold mine (c-SCC-1: the Orc's

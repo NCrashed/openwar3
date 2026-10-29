@@ -3612,6 +3612,105 @@ fn string(value: &Value) -> Option<&str> {
     }
 }
 
+/// The units an AI count query sees.  A requested unit already present in a
+/// training queue counts for `GetUnitCount`, while `GetUnitCountDone` only
+/// sees live, completed units (hub #15, c-SEA-1 turn 3).
+fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
+    let present = state
+        .units
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)))
+        .filter(|u| {
+            u.owner == player
+                && u.type_id == type_id
+                && u.alive
+                && (!done || u.construction.is_none())
+        })
+        .count();
+    let queued = if done {
+        0
+    } else {
+        state
+            .units
+            .iter()
+            .filter_map(|&h| state.unit(Some(h)))
+            .filter(|u| u.owner == player && u.alive)
+            .filter_map(|u| u.queue.as_ref())
+            .map(|q| q.types().iter().filter(|&&id| id == type_id).count())
+            .sum()
+    };
+    (present + queued) as i32
+}
+
+fn ai_town_halls(state: &State, player: i32) -> Vec<u32> {
+    state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            state.unit(Some(h)).is_some_and(|u| {
+                u.owner == player
+                    && u.alive
+                    && u.construction.is_none()
+                    && state
+                        .data
+                        .units
+                        .get(&u.type_id)
+                        .is_some_and(|t| t.classes.iter().any(|c| c == "townhall"))
+            })
+        })
+        .collect()
+}
+
+/// The mine associated with town `town`: the nearest live mine to that
+/// town hall.  The supplied melee AI numbers towns from zero (hub #15,
+/// c-SEA-1 turn 3).
+fn ai_town_mine(state: &State, player: i32, town: i32) -> Option<u32> {
+    let hall = *ai_town_halls(state, player).get(usize::try_from(town).ok()?)?;
+    let hall = state.unit(Some(hall))?;
+    state
+        .units
+        .iter()
+        .copied()
+        .filter(|&h| {
+            harvest::is_mine(state, h)
+                || state
+                    .unit(Some(h))
+                    .is_some_and(|u| u.alive && u.resources > 0)
+        })
+        .filter_map(|h| {
+            let mine = state.unit(Some(h))?;
+            let dx = f32::from_bits(mine.x) - f32::from_bits(hall.x);
+            let dy = f32::from_bits(mine.y) - f32::from_bits(hall.y);
+            Some((mine.owner != player, dx * dx + dy * dy, h))
+        })
+        .min_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| a.1.total_cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        })
+        .map(|(_, _, h)| h)
+}
+
+fn ai_nearest_tree(state: &State, worker: u32) -> Option<u32> {
+    let worker = state.unit(Some(worker))?;
+    state
+        .objects
+        .iter()
+        .filter_map(|(&h, object)| match object {
+            Object::Destructable(tree)
+                if tree.alive && state.data.trees.contains(&tree.type_id) =>
+            {
+                let dx = f32::from_bits(tree.x) - f32::from_bits(worker.x);
+                let dy = f32::from_bits(tree.y) - f32::from_bits(worker.y);
+                Some((dx * dx + dy * dy, h))
+            }
+            _ => None,
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+        .map(|(_, h)| h)
+}
+
 /// Natives whose meaning belongs to a player-bound AI VM. The ordinary
 /// native set is registered first, so shared operations (`Player`, random
 /// numbers and world queries) use the same state as the map VM; these
@@ -3654,6 +3753,178 @@ fn register_ai_natives(
         "native MeleeDifficulty takes nothing returns integer",
         Rc::new(move |_, _| Ok(Some(Value::Integer(difficulty)))),
     );
+    let planned = Rc::new(RefCell::new(BTreeMap::<i32, i32>::new()));
+    let counted = state.clone();
+    let counted_plans = planned.clone();
+    add(
+        "native GetUnitCount takes integer unitid returns integer",
+        Rc::new(move |_, args| {
+            let type_id = integer(&args[0]);
+            Ok(Some(Value::Integer(
+                ai_unit_count(&counted.borrow(), player, type_id, false)
+                    + counted_plans.borrow().get(&type_id).copied().unwrap_or(0),
+            )))
+        }),
+    );
+    let counted = state.clone();
+    add(
+        "native GetUnitCountDone takes integer unitid returns integer",
+        Rc::new(move |_, args| {
+            Ok(Some(Value::Integer(ai_unit_count(
+                &counted.borrow(),
+                player,
+                integer(&args[0]),
+                true,
+            ))))
+        }),
+    );
+    let costs = state.clone();
+    add(
+        "native GetUnitGoldCost takes integer unitid returns integer",
+        Rc::new(move |_, args| {
+            let cost = costs
+                .borrow()
+                .data
+                .units
+                .get(&integer(&args[0]))
+                .map_or(0, |t| t.gold_cost);
+            Ok(Some(Value::Integer(cost)))
+        }),
+    );
+    let costs = state.clone();
+    add(
+        "native GetUnitWoodCost takes integer unitid returns integer",
+        Rc::new(move |_, args| {
+            let cost = costs
+                .borrow()
+                .data
+                .units
+                .get(&integer(&args[0]))
+                .map_or(0, |t| t.lumber_cost);
+            Ok(Some(Value::Integer(cost)))
+        }),
+    );
+    let food = state.clone();
+    add(
+        "native GetFoodMade takes integer unitid returns integer",
+        Rc::new(move |_, args| {
+            let made = food
+                .borrow()
+                .data
+                .units
+                .get(&integer(&args[0]))
+                .map_or(0, |t| t.food_made);
+            Ok(Some(Value::Integer(made)))
+        }),
+    );
+    let mines = state.clone();
+    add(
+        "native TownHasMine takes integer townid returns boolean",
+        Rc::new(move |_, args| {
+            Ok(Some(Value::Boolean(
+                ai_town_mine(&mines.borrow(), player, integer(&args[0])).is_some(),
+            )))
+        }),
+    );
+    let halls = state.clone();
+    add(
+        "native TownHasHall takes integer townid returns boolean",
+        Rc::new(move |_, args| {
+            let town = usize::try_from(integer(&args[0])).ok();
+            Ok(Some(Value::Boolean(town.is_some_and(|town| {
+                town < ai_town_halls(&halls.borrow(), player).len()
+            }))))
+        }),
+    );
+    let mines = state.clone();
+    add(
+        "native TownWithMine takes nothing returns integer",
+        Rc::new(move |_, _| {
+            let state = mines.borrow();
+            let town = (0..ai_town_halls(&state, player).len())
+                .find(|&town| ai_town_mine(&state, player, town as i32).is_some())
+                .map_or(-1, |town| town as i32);
+            Ok(Some(Value::Integer(town)))
+        }),
+    );
+    let mines = state.clone();
+    add(
+        "native GetMinesOwned takes nothing returns integer",
+        Rc::new(move |_, _| {
+            let state = mines.borrow();
+            let count = (0..ai_town_halls(&state, player).len())
+                .filter(|&town| ai_town_mine(&state, player, town as i32).is_some())
+                .count();
+            Ok(Some(Value::Integer(count as i32)))
+        }),
+    );
+    let gold = state.clone();
+    add(
+        "native GetGoldOwned takes nothing returns integer",
+        Rc::new(move |_, _| {
+            let state = gold.borrow();
+            let mut seen = BTreeSet::new();
+            let amount = (0..ai_town_halls(&state, player).len())
+                .filter_map(|town| ai_town_mine(&state, player, town as i32))
+                .filter(|mine| seen.insert(*mine))
+                .filter_map(|mine| state.unit(Some(mine)).map(|u| u.resources))
+                .sum();
+            Ok(Some(Value::Integer(amount)))
+        }),
+    );
+    let production = state.clone();
+    let production_plans = planned.clone();
+    add(
+        "native SetProduce takes integer qty, integer id, integer town returns boolean",
+        Rc::new(move |_, args| {
+            let qty = integer(&args[0]).max(0);
+            let type_id = integer(&args[1]);
+            let mut state = production.borrow_mut();
+            let (worker, building, supply) = state
+                .data
+                .units
+                .get(&type_id)
+                .map_or((false, false, false), |t| {
+                    (t.worker, t.building, t.food_made > 0)
+                });
+            let already = production_plans.borrow().contains_key(&type_id);
+            let accepted = !already && qty > 0 && (worker && qty == 1 || building && !supply);
+            let temporary = !accepted && worker && qty > 1;
+            if accepted || temporary {
+                let tick = state.table.now;
+                if accepted && building {
+                    let made = state.table.take_n(tick, 17, "SetProduce");
+                    state.table.free(tick, made[14], "SetProduce");
+                    state.table.take(tick, "SetProduce");
+                    state.table.defer(made[1], "SetProduce");
+                    table::ai_harvest_cleanup(&mut state);
+                    for &entry in made[8..14].iter().rev() {
+                        state.table.defer(entry, "SetProduce");
+                    }
+                } else {
+                    let made = state.table.take_n(tick, 6, "SetProduce");
+                    state.table.defer(made[1], "SetProduce");
+                    if temporary {
+                        if let Some(hall) = ai_town_halls(&state, player).into_iter().next() {
+                            table::ai_production_cleanup(&mut state, hall);
+                        }
+                    }
+                    for &entry in [made[0], made[5], made[4]].iter() {
+                        state.table.defer(entry, "SetProduce");
+                    }
+                }
+            }
+            if accepted {
+                production_plans.borrow_mut().insert(type_id, qty);
+            }
+            if worker && (accepted || temporary) {
+                widgets::type_record(&mut state, player, type_id, |q| {
+                    q[2] = q[2].wrapping_add(1);
+                });
+            }
+            Ok(Some(Value::Boolean(accepted)))
+        }),
+    );
     // The AI native consumes a shared-generator value even for equal
     // bounds: PickMeleeHero's ranges 1..3, 1..2 and 1..1 account for all
     // nine c-SEA-1 initialization draws. Map JASS keeps SPEC-0007's
@@ -3685,6 +3956,11 @@ fn register_ai_natives(
     add(
         "native StartThread takes code func returns nothing",
         Rc::new(move |vm, args| {
+            {
+                let mut state = errors.borrow_mut();
+                let tick = state.table.now;
+                state.table.take(tick, "StartThread");
+            }
             let Some(function) = code(&args[0]) else {
                 return Ok(None);
             };
@@ -3694,6 +3970,123 @@ fn register_ai_natives(
                 }
                 Ok((Outcome::Finished(_), _)) => {}
                 Err(error) => errors.borrow_mut().errors.push(error),
+            }
+            Ok(None)
+        }),
+    );
+    let assigned = Rc::new(RefCell::new(BTreeSet::<u32>::new()));
+    let clear = assigned.clone();
+    let cleared = state.clone();
+    add(
+        "native ClearHarvestAI takes nothing returns nothing",
+        Rc::new(move |_, _| {
+            clear.borrow_mut().clear();
+            table::ai_harvest_cleared(&mut cleared.borrow_mut());
+            Ok(None)
+        }),
+    );
+    let harvesting = state.clone();
+    let gold_workers = assigned.clone();
+    add(
+        "native HarvestGold takes integer town, integer peons returns nothing",
+        Rc::new(move |_, args| {
+            let town = integer(&args[0]);
+            let wanted = integer(&args[1]).max(0) as usize;
+            let mut state = harvesting.borrow_mut();
+            let Some(mine) = ai_town_mine(&state, player, town) else {
+                return Ok(None);
+            };
+            let workers: Vec<u32> = state
+                .units
+                .iter()
+                .rev()
+                .copied()
+                .filter(|h| !gold_workers.borrow().contains(h))
+                .filter(|&h| {
+                    state
+                        .unit(Some(h))
+                        .is_some_and(|u| u.owner == player && u.alive)
+                        && harvest::can_harvest(&state, h, mine)
+                })
+                .take(wanted)
+                .collect();
+            for worker in workers {
+                let paid = harvest::pays_for(&state, worker, mine);
+                state.table.ai_harvest_extra = usize::from(!paid) * 3;
+                table::ai_harvest_reassigning(&mut state, worker);
+                if harvest::order_harvest(&mut state, worker, mine) {
+                    if paid {
+                        state.table.ai_harvest_fewer =
+                            usize::from(!harvest::is_wisp(&state, worker));
+                        table::harvest_ordered(&mut state, worker, false);
+                        state.table.ai_harvest_fewer = 0;
+                    }
+                    gold_workers.borrow_mut().insert(worker);
+                } else {
+                    state.table.ai_harvest_reassigning = false;
+                }
+                state.table.ai_harvest_extra = 0;
+            }
+            Ok(None)
+        }),
+    );
+    let harvesting = state.clone();
+    let wood_workers = assigned.clone();
+    add(
+        "native HarvestWood takes integer town, integer peons returns nothing",
+        Rc::new(move |_, args| {
+            let wanted = integer(&args[1]).max(0) as usize;
+            let mut state = harvesting.borrow_mut();
+            let workers: Vec<(u32, Option<u32>)> = state
+                .units
+                .iter()
+                .rev()
+                .copied()
+                .filter(|h| !wood_workers.borrow().contains(h))
+                .filter_map(|h| {
+                    let worker = state.unit(Some(h)).is_some_and(|u| {
+                        u.owner == player
+                            && u.alive
+                            && state.data.units.get(&u.type_id).is_some_and(|t| t.worker)
+                    });
+                    worker.then(|| {
+                        let tree = ai_nearest_tree(&state, h)
+                            .filter(|&tree| harvest::can_harvest(&state, h, tree));
+                        (h, tree)
+                    })
+                })
+                .take(wanted)
+                .collect();
+            for (worker, tree) in workers {
+                match tree {
+                    Some(tree) => {
+                        state.table.ai_harvest_extra =
+                            usize::from(!harvest::wisp_tree(&state, worker, tree)) * 7;
+                        table::ai_harvest_reassigning(&mut state, worker);
+                        if harvest::order_harvest(&mut state, worker, tree) {
+                            wood_workers.borrow_mut().insert(worker);
+                        } else {
+                            state.table.ai_harvest_reassigning = false;
+                        }
+                    }
+                    None if harvest::is_wisp(&state, worker) => {
+                        let tick = state.table.now;
+                        let made = state.table.take_n(tick, 3, "AI wood assignment");
+                        for &entry in [made[1], made[2], made[0]].iter() {
+                            state.table.defer(entry, "AI wood assignment");
+                        }
+                        wood_workers.borrow_mut().insert(worker);
+                    }
+                    None => {
+                        // With no tree on the map the engine still records a
+                        // worker's wood assignment, but gives no world order.
+                        state.table.ai_harvest_extra = 4;
+                        table::ai_harvest_reassigning(&mut state, worker);
+                        table::harvest_ordered(&mut state, worker, false);
+                        wood_workers.borrow_mut().insert(worker);
+                    }
+                }
+                state.table.ai_harvest_extra = 0;
             }
             Ok(None)
         }),

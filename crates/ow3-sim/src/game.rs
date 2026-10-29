@@ -4184,6 +4184,36 @@ fn register_natives(natives: &mut Natives, state: &Rc<RefCell<State>>, program: 
             Ok(Some(Value::Real(value)))
         }
     );
+    // The synchronous part of a standard melee AI's start, before its
+    // first sleep (c-SEA-1 turn 1, hub #15). PROVISIONAL: the AI script VM
+    // and its later work are not run yet; these are the observable table
+    // and generator effects of the three standard race scripts at start.
+    native!(
+        add,
+        state,
+        "native StartMeleeAI takes player num, string script returns nothing",
+        |vm, state, args| {
+            const RACE_UNDEAD: i32 = 3;
+            let mut state = state.borrow_mut();
+            let player = state.player_id(handle(&args[0]));
+            let undead = player
+                .and_then(|id| usize::try_from(id).ok())
+                .and_then(|id| state.setup.slots.get(id))
+                .is_some_and(|slot| slot.race == RACE_UNDEAD);
+            let tick = state.table.now;
+            state.table.take(tick, "StartMeleeAI");
+            for _ in 0..3 {
+                state.random.step();
+            }
+            state.table.take_n(tick, 18, "CreateCaptains");
+            if undead {
+                let recycled = state.table.take_n(tick, 35, "RecycleGuardPosition")[32];
+                state.table.free(tick, recycled, "RecycleGuardPosition");
+                state.table.take(tick, "RecycleGuardPosition");
+            }
+            Ok(None)
+        }
+    );
     // The light of the day (SPEC-0017).
     native!(
         add,

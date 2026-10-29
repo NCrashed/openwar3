@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use ow3_formats::replay::Replay;
-use ow3_sim::checksum::{Parts, Statics, time_part, turn_checksum, turns};
+use ow3_sim::checksum::{ICECROWN_TEST, Parts, Statics, time_part, turn_checksum, turns};
 use ow3_sim::game::table::ObjectTable;
 use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
@@ -54,7 +54,7 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
 /// the free list 806, 805, 818, then it grows from 821). The time of day
 /// holds 767, 647 and 819 (two watches, the rate).
 /// The replays whose table is counted from the map's load (IceCrown).
-const INIT_TABLES: [&str; 1] = ["c-SCC-1"];
+const INIT_TABLES: [&str; 2] = ["c-SCC-1", "c-SEA-1"];
 
 fn start_table() -> ObjectTable {
     let mut table = ObjectTable::new(821, Vec::new(), 821);
@@ -557,6 +557,53 @@ fn turn_parts(name: &str) -> Option<Option<usize>> {
     Some(None)
 }
 
+/// The turns of IceCrown replay `name` against the checksums recorded in
+/// the replay: the first turn that differs, `None` when all match; nothing
+/// without the replay.
+fn turn_checksums(name: &str, through: Option<usize>) -> Option<Option<usize>> {
+    let dir = game_data().join("replays");
+    let data = std::fs::read(dir.join(format!("{name}.w3g"))).ok()?;
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    let turns = turns(&replay);
+    while playback.step_slot() {
+        let k = playback.marks.len() - 1;
+        let (turn, marks) = (&turns[k], &playback.marks[k]);
+        let parts = Parts {
+            b: time_part(turn.before),
+            n: turn.n,
+            c: marks.c,
+            d: marks.d,
+            e: marks.e,
+            r: marks.r,
+            g: marks.g,
+        };
+        let ours = turn_checksum(&ICECROWN_TEST, &parts);
+        if ours != turn.recorded {
+            eprintln!(
+                "{name}: turn {} differs at {} ms\n  ours {ours:08x}\n  game {:08x}\n  parts {parts:x?}",
+                k + 1,
+                turn.before,
+                turn.recorded,
+            );
+            return Some(Some(k + 1));
+        }
+        if through == Some(k + 1) {
+            eprintln!("{name}: the first {} turns match", k + 1);
+            return Some(None);
+        }
+    }
+    if turns.len() != playback.marks.len() {
+        return Some(Some(turns.len().min(playback.marks.len()) + 1));
+    }
+    eprintln!("{name}: all turns match");
+    Some(None)
+}
+
 /// `c-SBT-1`: ten Human buildings made by the script, their Blight Dispels
 /// ending at 0.88 s and 1.2 s: every turn checksum.
 #[test]
@@ -701,6 +748,25 @@ fn turtle_objects() {
 fn melee_start_checksums() {
     if let Some(first) = turn_parts("c-SCC-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
+    }
+}
+
+/// `c-SEA-1`: three computer players running the standard melee AI on
+/// (12)IceCrown for 180 seconds: every turn checksum.
+#[test]
+#[ignore = "not matched yet"]
+fn melee_ai_checksums() {
+    if let Some(first) = turn_checksums("c-SEA-1", None) {
+        assert_eq!(first, None, "the first differing turn {first:?}");
+    }
+}
+
+/// `c-SEA-1`'s synchronous initialization of the three standard melee AI
+/// scripts: the first two turn checksums.
+#[test]
+fn melee_ai_start_checksums() {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(2)) {
+        assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
 

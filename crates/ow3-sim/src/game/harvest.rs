@@ -758,7 +758,8 @@ fn forget_others(state: &mut State) {
         let gathering = state
             .unit(Some(h))
             .and_then(|u| u.movement)
-            .is_some_and(|m| m.gathering());
+            .is_some_and(|m| m.gathering())
+            || paid_working(state, h);
         if gathering || g.target.is_none() {
             continue;
         }
@@ -1655,6 +1656,9 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     {
         return false;
     }
+    let starting_computer = state
+        .unit(Some(h))
+        .is_some_and(|worker| worker.entries.starting_arrival_order.is_some());
     for m in state.mines.values_mut() {
         m.starting.retain(|&(w, t)| !(w == h && t == tick));
     }
@@ -1671,6 +1675,12 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         super::table::harvest_entered(state, h);
         super::table::harvest_arrived(state, h);
         super::table::walk_dropped_at_update(state, h);
+        if starting_computer {
+            state.paths.remove(&h);
+            if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
+                worker.movement = None;
+            }
+        }
         push_aside(state, h);
         hide(state, h, true);
         pace(state, h);
@@ -1679,6 +1689,12 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     super::table::harvest_waits(state, h);
     super::table::harvest_arrived(state, h);
     super::table::walk_dropped_at_update(state, h);
+    if starting_computer {
+        state.paths.remove(&h);
+        if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
+            worker.movement = None;
+        }
+    }
     push_aside(state, h);
     pace(state, h);
     false
@@ -1985,7 +2001,7 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
 /// loses its order and stands.
 fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     let p = state.paying.entry(mine).or_default();
-    let occupied = p.places.iter().any(Option::is_some);
+    let occupants = p.places.iter().filter(|place| place.is_some()).count();
     let Some(k) = (0..PLACES).find(|&k| p.places[k].is_none()) else {
         movement::stop(state, h);
         return;
@@ -1993,7 +2009,23 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     p.places[k] = Some(h);
     let at = add(state.move_clock, JOIN_DELAY);
     p.joining.push((h, at));
-    if occupied {
+    if occupants >= 2 {
+        // From the third wisp on, reaching an entangled mine does not also
+        // enter the ordinary-mine waiting transition. The second wisp still
+        // has that transition after its two replacement records (c-SEA-1,
+        // turn 11 vector, hub #15).
+        for ordinary in state.mines.values_mut() {
+            ordinary.waiting.retain(|&worker| worker != h);
+            ordinary.starting.retain(|&(worker, _)| worker != h);
+        }
+        if let Some(mut gathering) = get(state, h) {
+            gathering.starting_computer_mine = false;
+            gathering.starting_mine_at = None;
+            gathering.starting_mine_reached = false;
+            set(state, h, Some(gathering));
+        }
+    }
+    if occupants > 0 {
         let tick = state.table.now;
         state.table.take(tick, "wisp: entangled-mine arrival");
         let (order, records) = state
@@ -2014,19 +2046,24 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
         for entry in order.into_iter().chain(records) {
             state.table.defer(entry, "wisp: entangled-mine arrival");
         }
-        // The two unit records return at the same 0.01 s boundary at which
-        // the wisp starts contributing to the mine. The retained order
-        // record is recreated by the mine's already scheduled resource step
-        // immediately after them (c-SEA-1, hub #15).
-        state.table.take_at_q(at, "wisp: entangled-mine record");
-        state.table.take_at_q(at, "wisp: entangled-mine record");
+        if occupants == 1 {
+            // Only the second wisp's two unit records return at the same
+            // 0.01 s boundary at which it starts contributing to the mine.
+            // The retained order record is recreated by the mine's already
+            // scheduled resource step immediately after them (c-SEA-1,
+            // hub #15).
+            state.table.take_at_q(at, "wisp: entangled-mine record");
+            state.table.take_at_q(at, "wisp: entangled-mine record");
+        }
+    }
+    if occupants > 0 {
         state.drop_path(h);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = None;
     }
     hide(state, h, true);
-    if !occupied {
+    if occupants == 0 {
         state.drop_path(h);
         super::table::walk_dropped(state, h);
     }
@@ -2080,6 +2117,9 @@ pub(super) fn paid_working(state: &State, h: u32) -> bool {
         .paying
         .values()
         .any(|p| p.working.contains(&h) || p.joining.iter().any(|&(w, _)| w == h))
+        || state.mines.values().any(|mine| {
+            mine.waiting.contains(&h) || mine.inside.is_some_and(|(worker, _, _)| worker == h)
+        })
         || state.wisp_trees.values().any(|&(w, _)| w == h)
 }
 

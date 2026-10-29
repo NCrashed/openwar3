@@ -3,6 +3,7 @@
 //! with the simulation's: all 11848 rows match. Skipped without the game
 //! data.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use ow3_formats::replay::Replay;
@@ -22,6 +23,9 @@ fn game_data() -> PathBuf {
 /// tick (an event at a tick's boundary may be counted in either;
 /// `OW3_SLACK` sets another bound in seconds).
 type Row = (u64, bool, u32, Option<u32>, String, f32);
+
+/// Tick, phase, table entry, type, position, facing and current order.
+type MovementRow = (u64, String, u32, i32, f32, f32, f32, i32);
 
 fn game_rows(name: &str) -> Option<Vec<Row>> {
     let text =
@@ -770,10 +774,10 @@ fn melee_ai_checksums() {
 /// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
 /// the three standard melee AI scripts, first paid-worker placement and
 /// the queued ordinary-mine state and the first entangled-mine arrivals:
-/// the first ten turn checksums.
+/// the first eleven turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(10)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(11)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -802,6 +806,137 @@ fn melee_ai_scripts_resume() {
         .filter(|event| event.new && event.call_name == "StartThread")
         .count();
     assert_eq!(starts, 12);
+}
+
+/// Every observed movement state of the first two Orc peons and the first
+/// three Night Elf wisps assigned by the melee AI. The vector names units by
+/// their game-table entries; here they are paired with simulation handles by
+/// type and their unique positions at the 0.100 s order boundary.
+#[test]
+#[ignore = "starting AI worker trajectories not matched yet"]
+fn melee_ai_worker_movements() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-movement-workers.tsv")) else {
+        return;
+    };
+    let expected: Vec<MovementRow> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .map(|words| {
+            let clock: f64 = words[0].parse().unwrap();
+            let type_id = i32::from_be_bytes(words[5].as_bytes().try_into().unwrap());
+            (
+                (clock * 200.0).round() as u64,
+                words[2].to_owned(),
+                words[3].parse().unwrap(),
+                type_id,
+                words[6].parse().unwrap(),
+                words[7].parse().unwrap(),
+                words[8].parse().unwrap(),
+                words[9].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    playback.game.state.borrow_mut().agent_trace = Some(Vec::new());
+    while playback.game.ticks() < 20 {
+        assert!(playback.step_tick());
+    }
+    let mut handles = BTreeMap::new();
+    let units = playback.game.units();
+    for &(tick, ref phase, entry, type_id, x, y, _, _) in &expected {
+        if phase != "order-boundary" {
+            continue;
+        }
+        let handle = units
+            .iter()
+            .find(|unit| {
+                unit.type_id == type_id
+                    && unit.x.to_bits() == x.to_bits()
+                    && unit.y.to_bits() == y.to_bits()
+            })
+            .unwrap_or_else(|| {
+                panic!("no {type_id:08x} at ({x}, {y}) for entry {entry} at tick {tick}")
+            })
+            .handle;
+        assert_eq!(handles.insert(entry, handle), None);
+    }
+    let last_tick = expected.iter().map(|row| row.0).max().unwrap();
+    let mut snapshots = BTreeMap::new();
+    let mut positions = BTreeMap::new();
+    while playback.game.ticks() <= last_tick {
+        let tick = playback.game.ticks();
+        for unit in playback
+            .game
+            .units()
+            .into_iter()
+            .filter(|unit| handles.values().any(|&handle| handle == unit.handle))
+        {
+            snapshots.insert(
+                (tick, unit.handle),
+                (unit.x, unit.y, unit.facing, unit.order),
+            );
+        }
+        assert!(playback.step_tick());
+        let state = playback.game.state.borrow();
+        let [min_x, min_y] = state.world_bounds[..2].try_into().unwrap();
+        for &(_, handle, position, _, _, _) in state
+            .agent_trace
+            .as_deref()
+            .unwrap()
+            .iter()
+            .filter(|&&(at, handle, ..)| {
+                at == tick + 1 && handles.values().any(|&wanted| wanted == handle)
+            })
+        {
+            positions.insert(
+                (tick + 1, handle),
+                (
+                    f32::from_bits(ow3_math::sub(position[0], min_x ^ 0x8000_0000)),
+                    f32::from_bits(ow3_math::sub(position[1], min_y ^ 0x8000_0000)),
+                ),
+            );
+        }
+    }
+    for (tick, phase, entry, _, x, y, facing, order) in expected {
+        // The order-boundary rows are an intra-tick state: the AI callback
+        // has returned, but the 0.105 update in the same simulation step has
+        // not run yet. Playback intentionally exposes only completed ticks.
+        if phase == "order-boundary" {
+            continue;
+        }
+        let handle = handles[&entry];
+        let &(snapshot_x, snapshot_y, observed_facing, observed_order) =
+            &snapshots[&(tick, handle)];
+        let (observed_x, observed_y) = if phase == "order-active" {
+            (snapshot_x, snapshot_y)
+        } else {
+            positions[&(tick + 1, handle)]
+        };
+        assert_eq!(
+            (
+                observed_x.to_bits(),
+                observed_y.to_bits(),
+                observed_facing.to_bits(),
+                observed_order
+            ),
+            (x.to_bits(), y.to_bits(), facing.to_bits(), order),
+            "entry {entry} at tick {tick}: expected ({x}, {y}), facing {facing}, order {order}; got ({}, {}), facing {}, order {}",
+            observed_x,
+            observed_y,
+            observed_facing,
+            observed_order
+        );
+    }
 }
 
 /// The main-table activity of the three AI batches at world clock 0.100,
@@ -1096,6 +1231,69 @@ fn melee_ai_turn10_objects() {
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
     assert_eq!(ours, expected_after);
+}
+
+/// The next Night Elf wisp's arrival between the turn-10 and turn-11
+/// checkpoints. Unlike the preceding arrival, it makes no replacement
+/// records; the map's one-second logging callback starts after the checkpoint.
+#[test]
+fn melee_ai_turn11_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn11-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[7] == "yes" && (words[3] == "take" || words[3] == "free"))
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let expected_after: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[7] == "no" && (words[3] == "take" || words[3] == "free"))
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..9 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
+    let start = playback.game.table_log().len();
+    assert!(playback.step_tick());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert!(ours.starts_with(&expected_after));
 }
 
 /// `c-SCC-1`'s object table.

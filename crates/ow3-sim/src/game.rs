@@ -2723,6 +2723,7 @@ impl<'a> Game<'a> {
                             .filter(|&t| state.ticks < t)
                             .map(|_| cast::ORDER_STUNNED))
                         .or(u.casting.map(|c| c.order_id))
+                        .or(harvest::paid_working(&state, handle).then_some(harvest::ORDER_HARVEST))
                         .unwrap_or_else(|| u.movement.map_or(0, |m| m.order_id())),
                     constructing: u.construction.is_some(),
                     carrying: harvest::carried(&state, handle).map(|(r, n)| match r {

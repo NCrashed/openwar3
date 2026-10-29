@@ -2789,6 +2789,20 @@ pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
     }
 }
 
+/// The first ordinary gold assignment of the melee AI schedules the one
+/// global mine-use object on the queue, before either assigned worker reaches
+/// the mine. A later entry therefore does not make another one (c-SEA-1:
+/// assignment at 0.100000, take at 0.505000, first arrivals at 0.570000;
+/// hub #15).
+pub(super) fn ai_mine_use_scheduled(state: &mut super::State) {
+    if state.table.mine_used {
+        return;
+    }
+    state.table.mine_used = true;
+    let at = ow3_math::add(state.timers.time(), 0.405f32.to_bits());
+    state.table.take_at_q(at, "gold mine: in use");
+}
+
 /// Worker `h` starts to wait at a gold mine: the mine's reference to it,
 /// freed when it goes in (c-RXI-1: worker 4's 1145 at 871, freed at
 /// 1071; 1162 .. 1165).

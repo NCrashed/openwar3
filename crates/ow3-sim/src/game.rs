@@ -4041,6 +4041,8 @@ fn register_ai_natives(
                         if Some(worker) == paid_placement {
                             table::ai_paid_placement(&mut state, worker);
                         }
+                    } else {
+                        table::ai_mine_use_scheduled(&mut state);
                     }
                     gold_workers.borrow_mut().insert(worker);
                 } else {

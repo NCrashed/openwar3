@@ -768,11 +768,11 @@ fn melee_ai_checksums() {
 }
 
 /// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
-/// the three standard melee AI scripts and first paid-worker placement:
-/// the first five turn checksums.
+/// the three standard melee AI scripts, first paid-worker placement and
+/// the queued ordinary-mine state: the first six turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(5)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(6)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -893,6 +893,22 @@ fn melee_ai_turn4_objects() {
 #[test]
 fn melee_ai_turn5_objects() {
     let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn5-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[4] == "take" || words[4] == "free")
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
     let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
         return;
     };
@@ -912,7 +928,47 @@ fn melee_ai_turn5_objects() {
         .iter()
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
-    assert_eq!(ours, [(false, 2168, 12277), (false, 10785, 12276)]);
+    assert_eq!(ours, expected);
+}
+
+/// No main-table object changes between the turn-5 and turn-6 checkpoints.
+/// The first ordinary-mine object is taken on the first queue step after
+/// turn 6, before either assigned peon reaches the mine.
+#[test]
+fn melee_ai_turn6_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn6-events.tsv")) else {
+        return;
+    };
+    let expected = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .find(|words| words[4] == "gold-mine-in-use-take")
+        .map(|words| (true, words[5].parse().unwrap(), words[6].parse().unwrap()))
+        .unwrap();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..4 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    assert_eq!(&playback.game.table_log()[start..], []);
+    assert!(playback.step_tick());
+    let log = playback.game.table_log();
+    let ours: Vec<_> = log[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours.first(), Some(&expected));
 }
 
 /// `c-SCC-1`'s object table.

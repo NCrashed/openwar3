@@ -7040,6 +7040,11 @@ pub(super) fn walking_now(m: &Moving) -> bool {
     m.walking && m.velocity != [0, 0]
 }
 
+/// Whether a walk is done: the unit arrived, only its facing still turns.
+pub(super) fn arrived(m: &Moving) -> bool {
+    m.arrived
+}
+
 /// The value of a move-to-target entry of an order queue: its arrival
 /// distance before the collision size (SPEC-0030; c-SAK-1).
 const MOVE_TO_TARGET: f32 = 181.0;

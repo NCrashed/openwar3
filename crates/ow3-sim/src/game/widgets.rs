@@ -37,6 +37,10 @@ const FOOD_CAP: i32 = 4;
 const FOOD_USED: i32 = 5;
 /// The game generator the alarm of a new building draws (SPEC-0026).
 const ALARM: usize = 21;
+/// The game generator a new creep that can sleep draws (hub #15).
+const SLEEP_DRAW: usize = 37;
+/// The game generator of a critter's wander point (hub #15).
+const WANDER: usize = 8;
 /// 0.5 as a bit pattern of a real.
 const HALF_SECOND: u32 = 0x3F00_0000;
 /// 1.2 as a bit pattern of a real: the timer of the objects a building
@@ -356,6 +360,13 @@ pub(super) fn create_unit(
     } else {
         super::NO_PHASE
     };
+    // A creep that can sleep made in the map's loading draws game generator
+    // 37 once, after its phase (hub #15, c-SCC-1: 192 creeps of the map's
+    // start, not ngh1; none for those the tests make in play).
+    // PROVISIONAL: what the draw is for, and its condition, are not read.
+    if owner == super::creeps::CREEPS && data.can_sleep && state.ticks == 0 {
+        state.game_random[SLEEP_DRAW].step();
+    }
     // A building's alarm ability draws game generator 21 once (SPEC-0026).
     //
     // PROVISIONAL: measured for a farm started by a worker; every building
@@ -374,6 +385,10 @@ pub(super) fn create_unit(
     if is_hero(type_id) {
         state.random.fraction();
     }
+    // So does a critter: the wait to its first wander (hub #15, c-SCC-1: the
+    // 31 nsea of the map's start, the only units drawing it there).
+    // PROVISIONAL: read for nsea alone; taken for the critters' race.
+    let wander = (data.race == "critters").then(|| add(state.timers.time(), critter_wait(state)));
     let unit = Unit {
         owner,
         type_id,
@@ -418,7 +433,9 @@ pub(super) fn create_unit(
         holding: false,
         attack_removed: false,
         move_slow: None,
-        aura_setup: Some(state.ticks),
+        // (One made in the map's init counts from the first tick, whose clock
+        // is also 0: c-SCC-1, the creeps' auras first given at 0.5 s.)
+        aura_setup: Some(state.ticks.max(1)),
         aura_q: None,
         aura_order: {
             state.aura_setups += 1;
@@ -496,6 +513,15 @@ pub(super) fn create_unit(
     }
     if let Some(at) = step {
         state.building_steps.push((at, h));
+    }
+    if let Some(at) = wander {
+        state.critters.insert(h, (at, false));
+    }
+    // A unit (not a building) with blight regeneration checks the ground
+    // 2.0 s on (hub #15).
+    if data.regen_type == crate::data::RegenType::Blight && !data.building {
+        let at = add(state.timers.time(), 2.0f32.to_bits());
+        state.blight_checks.push((at, h));
     }
     // It sees at once (SPEC-0032).
     super::fog::born(state, h);
@@ -617,6 +643,29 @@ pub(super) fn type_record(
         }
     };
     change(&mut list[k].1);
+}
+
+/// `SetPlayerTechMaxAllowed` of `owner` for `type_id`: its type record's
+/// `q0` is the limit, the record made if there is none, with `q6` 0 for
+/// an id that is no unit type (hub #15, c-SCC-1 turn 1: the melee hero
+/// limits, `HERO` 3 0 0 0 0 0 0 and the 24 heroes 1 0 0 0 0 0 8).
+pub(super) fn tech_limit(state: &mut State, owner: i32, type_id: i32, limit: i32) {
+    if !(0..12).contains(&owner) {
+        return;
+    }
+    let q6 = match state.data.units.get(&type_id) {
+        Some(t) if t.building => 4,
+        Some(_) => 8,
+        None => 0,
+    };
+    let list = state
+        .type_records
+        .entry(owner)
+        .or_insert_with(super::start_records);
+    match list.iter_mut().find(|(t, _)| *t == type_id) {
+        Some((_, q)) => q[0] = limit as u32,
+        None => list.push((type_id, [limit as u32, 0, 0, 0, 0, 0, q6])),
+    }
 }
 
 /// The game generator of the kills' gold bounties.
@@ -2782,6 +2831,142 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             ))
         }
     );
+}
+
+/// The blight checks due in this tick before queue time `before` (all
+/// without it), in order of their times: a unit with blight regeneration
+/// on blight starts its life regeneration, a rate part kept (hub #15,
+/// c-SCC-1: the ghoul and the three acolytes at 2.0 s, in the order made).
+///
+/// PROVISIONAL: the ground is not read (no blight on the ground is kept
+/// yet), so every such unit is taken to stand on blight; the life it
+/// regenerates is not built.
+pub(super) fn blight_checks_before(state: &mut State, before: Option<u32>) {
+    let now = add(state.move_clock, crate::timers::TICK);
+    let due = |at: u32| {
+        f32::from_bits(at) <= f32::from_bits(now)
+            && before.is_none_or(|b| f32::from_bits(at) < f32::from_bits(b))
+    };
+    let mut checks: Vec<(u32, u32)> = state
+        .blight_checks
+        .iter()
+        .copied()
+        .filter(|&(at, _)| due(at))
+        .collect();
+    if checks.is_empty() {
+        return;
+    }
+    state.blight_checks.retain(|&(at, _)| !due(at));
+    checks.sort_by(|a, b| f32::from_bits(a.0).total_cmp(&f32::from_bits(b.0)));
+    for (_, h) in checks {
+        if state.unit(Some(h)).is_some_and(|u| u.alive) && on_blight(state, h) {
+            let tick = state.table.now;
+            state.table.take(tick, "unit state: rate part");
+        }
+    }
+}
+
+/// Whether unit `h` stands on blight: within the area of a living unit's
+/// blight ability (base `Abli`: the necropolis' and haunted mine's `Abgl`).
+/// PROVISIONAL: the ground's blight is not kept; its area round its maker
+/// stands for it (c-SCC-1: the undead workers by their necropolis, hub #15;
+/// the undead units of the test maps, on bare ground, take no rate).
+fn on_blight(state: &State, h: u32) -> bool {
+    let Some(u) = state.unit(Some(h)) else {
+        return false;
+    };
+    let (x, y) = (f32::from_bits(u.x), f32::from_bits(u.y));
+    state.units.iter().any(|&o| {
+        let Some(b) = state.unit(Some(o)).filter(|b| b.alive) else {
+            return false;
+        };
+        let Some(t) = state.data.units.get(&b.type_id) else {
+            return false;
+        };
+        t.abilities.iter().any(|a| {
+            state.data.abilities.get(a).is_some_and(|d| {
+                d.code == i32::from_be_bytes(*b"Abli")
+                    && d.per_level.first().is_some_and(|l| {
+                        let area = f32::from_bits(l.area);
+                        let (dx, dy) = (f32::from_bits(b.x) - x, f32::from_bits(b.y) - y);
+                        dx * dx + dy * dy <= area * area
+                    })
+            })
+        })
+    })
+}
+
+/// A critter's wait to its next wander: 5 + 5 x a fraction of one draw of
+/// the script generator, in seconds (hub #15, c-SCC-1: nsea 9468's 5.026072
+/// at its making).
+fn critter_wait(state: &mut State) -> u32 {
+    const FIVE: u32 = 0x40A0_0000;
+    add(FIVE, mul(FIVE, state.random.fraction()))
+}
+
+/// The critters' wanders due in this tick before queue time `before` (all
+/// without it), in order of their times: each moves to a point of the
+/// square of +-250 round where it stands, from two draws of game generator
+/// 8 (x, then y), and waits anew from its wander's time (hub #15, c-SCC-1:
+/// nsea 9468 at 5.026072 to (6470.074, -5609.208), next at 11.106284).
+///
+/// PROVISIONAL: whether the centre is where it stands or its start point
+/// is not read (the one wander read had not moved yet).
+pub(super) fn critters_before(state: &mut State, before: Option<u32>) {
+    const TWO: u32 = 0x4000_0000;
+    const ONE: u32 = 0x3F80_0000;
+    const REACH: u32 = 0x437A_0000;
+    let now = add(state.move_clock, crate::timers::TICK);
+    let mut due: Vec<(u32, u32)> = state
+        .critters
+        .iter()
+        .filter(|&(_, &(at, _))| {
+            f32::from_bits(at) <= f32::from_bits(now)
+                && before.is_none_or(|b| f32::from_bits(at) < f32::from_bits(b))
+        })
+        .map(|(&h, &(at, _))| (at, h))
+        .collect();
+    due.sort_by(|a, b| f32::from_bits(a.0).total_cmp(&f32::from_bits(b.0)));
+    for (at, h) in due {
+        let Some(centre) = state.unit(Some(h)).filter(|u| u.alive).map(|u| [u.x, u.y]) else {
+            state.critters.remove(&h);
+            continue;
+        };
+        let mut offset = || {
+            let f = state.game_random[WANDER].fraction();
+            mul(REACH, sub(mul(TWO, f), ONE))
+        };
+        let (dx, dy) = (offset(), offset());
+        let point = [add(centre[0], dx), add(centre[1], dy)];
+        super::movement::point_order(state, h, "move", point);
+        super::table::critter_wander_ordered(state, h);
+        let next = add(at, critter_wait(state));
+        state.critters.insert(h, (next, true));
+    }
+}
+
+/// The critters whose walk of a wander ended at this tick's updates wait
+/// anew from then (hub #15, c-SCC-1: nsea 9468 stopped at 7.709964, its
+/// wait drawn there, to 15.127618).
+///
+/// PROVISIONAL: that this wait replaces the one drawn at the wander is the
+/// analyst's reading; the replay ends before it shows.
+pub(super) fn critter_walks_ended(state: &mut State) {
+    let ended: Vec<u32> = state
+        .critters
+        .iter()
+        .filter(|&(&h, &(_, walking))| {
+            walking
+                && state
+                    .unit(Some(h))
+                    .is_some_and(|u| u.movement.is_none_or(|m| super::movement::arrived(&m)))
+        })
+        .map(|(&h, _)| h)
+        .collect();
+    for h in ended {
+        let next = add(state.update_time, critter_wait(state));
+        state.critters.insert(h, (next, false));
+    }
 }
 
 #[cfg(test)]

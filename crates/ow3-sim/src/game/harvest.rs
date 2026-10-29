@@ -317,7 +317,13 @@ fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
         // worker 0 at 4191). Pushing aside, walking units do not count
         // (c-RXD-1 worker 1 at 4249). SPEC-0029.
         let moving = w.movement.is_some_and(|m| m.velocity != [0, 0]);
-        let waits = waiting(state).any(|x| x == o);
+        // (Waiting from the update after its arrival: c-SDE-1, unit 3
+        // arrived at 8882 left out of worker 0's exit at 8883, which it
+        // pushed aside at 8889.)
+        let waits = state
+            .mines
+            .values()
+            .any(|m| m.waiting.contains(&o) && !m.starting.iter().any(|&(s, _)| s == o));
         let cycling = w.harvest.is_some_and(|g| g.cycling) && !waits;
         let left_out = if push { moving } else { cycling };
         if o == h || !w.alive || left_out || w.hidden {
@@ -379,6 +385,20 @@ pub(super) fn gone_in_now(state: &State, h: u32) -> bool {
 /// The workers waiting at the mines, in the order of the mines.
 pub(super) fn waiting(state: &State) -> impl Iterator<Item = u32> + '_ {
     state.mines.values().flat_map(|m| m.waiting.iter().copied())
+}
+
+/// Whether worker `h` stands at its work: it waits at a mine (from the
+/// update after its arrival, when it starts to wait) or works at a tree.
+/// The move checks of the updates see it, also those of workers in the
+/// gathering cycle (hub #15, c-SDE-1: unit 5 at 35.908482 blocked by
+/// worker 0 waiting at the mine, unit 4 at 35.53 not by it, its wait to
+/// start after the update).
+pub(super) fn standing_at_work(state: &State, h: u32) -> bool {
+    state
+        .mines
+        .values()
+        .any(|m| m.waiting.contains(&h) && !m.starting.iter().any(|&(s, _)| s == h))
+        || at_work_on_trees(state).any(|w| w == h)
 }
 
 /// The workers working at a tree (between their hits).
@@ -780,6 +800,12 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         return;
     }
     let tick = state.ticks;
+    // Its update cycle, from the update at or after its arrival.
+    let phase = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .map_or(tick, |m| m.next_update);
+    state.mine_arrivals.insert(h, phase);
     let entry = state.mines.entry(mine).or_default();
     if entry.inside.is_none() {
         // It goes in at the next update, freeing its walk an update
@@ -948,9 +974,11 @@ fn enter_mines(state: &Rc<RefCell<State>>) {
 }
 
 /// The workers whose time in their mine ends in this tick before queue time
-/// `before` (all without it) come out: timers of the queue, in order with
-/// the script's (c-SDE-1: the peon out at 5.379993 after the timer of the
-/// tick, hub #15).
+/// `before` (all without it) come out when a worker waits there: timers of
+/// the queue, in order with the script's (c-SDE-1: the peon out at 5.379993
+/// after the timer of the tick, hub #15). With none waiting the worker stays
+/// is shown at once and put out at its own next update (`exits_at_updates`;
+/// hub #15, c-SDE-1: unit 4 at 41.389183 and 41.398857).
 pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before: Option<u32>) {
     let due: Vec<(u32, u32, u32)> = {
         let s = state.borrow();
@@ -970,6 +998,78 @@ pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before:
             .collect()
     };
     for (mine, worker, left_at) in due {
+        let waited = state.borrow().mines.get(&mine).is_some_and(|m| {
+            m.waiting
+                .iter()
+                .any(|w| !m.starting.iter().any(|(s, _)| s == w))
+        });
+        // With none waiting, an end in one of its update ticks lets it out
+        // at once (c-RXI-1: worker 1048691 at 2071).
+        let on_update = {
+            let s = state.borrow();
+            s.mine_arrivals
+                .get(&worker)
+                .is_some_and(|&t| s.ticks >= t && (s.ticks - t) % UPDATE == 0)
+        };
+        if waited {
+            come_out(vm, state, mine, worker, left_at, false, true);
+        } else if on_update {
+            let start = state.borrow().update_time;
+            come_out(vm, state, mine, worker, start, true, true);
+        } else {
+            // Shown with its order now, out at its next update.
+            come_out(vm, state, mine, worker, left_at, false, false);
+            state.borrow_mut().pending_exits.insert(worker);
+        }
+    }
+}
+
+/// The workers out of their mines with none waiting, still at the point
+/// they went in, are put at their exit points at their own first update
+/// after the end of their stay, after it searched their walk back from
+/// there (hub #15, c-SDE-1: unit 4 shown at 8280, out at its update of
+/// 8282; c-RXI-1: the stay ending at 15.319914, out at 15.328428).
+pub(super) fn exits_at_updates(state: &mut State) {
+    let due: Vec<u32> = state
+        .pending_exits
+        .iter()
+        .copied()
+        .filter(|w| {
+            state
+                .mine_arrivals
+                .get(w)
+                .is_some_and(|&t| state.ticks >= t && (state.ticks - t) % UPDATE == 0)
+        })
+        .collect();
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    for w in due {
+        state.pending_exits.remove(&w);
+        if let Some(at) = exit_place(state, w, false) {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&w) {
+                [u.x, u.y] = at;
+                if let Some(m) = u.movement.as_mut() {
+                    m.origin = relative(at, min);
+                }
+            }
+            super::follow::came_out(state, w);
+        }
+    }
+}
+
+/// Worker `worker` comes out of `mine` with its gold; the next worker
+/// waiting goes in, its stay counted from queue time `start`. `from_entry`: its walk
+/// back is searched from where it went in; `relocate`: it is put at its exit
+/// point now (else by `exits_at_updates`).
+fn come_out(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    mine: u32,
+    worker: u32,
+    start: u32,
+    from_entry: bool,
+    relocate: bool,
+) {
+    {
         let empty = {
             let mut s = state.borrow_mut();
             let s = &mut *s;
@@ -981,8 +1081,15 @@ pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before:
             {
                 m.heading = u.facing;
             }
-            if let Some(at) = exit_place(s, worker, false) {
+            if let Some(at) = exit_place(s, worker, false).filter(|_| relocate) {
                 let min = [s.world_bounds[0], s.world_bounds[1]];
+                if from_entry
+                    && let Some(u) = s.unit(Some(worker))
+                    && [u.x, u.y] != at
+                {
+                    let entered = relative([u.x, u.y], min);
+                    s.mine_entries.insert(worker, entered);
+                }
                 if let Some(Object::Unit(u)) = s.objects.get_mut(&worker) {
                     [u.x, u.y] = at;
                     if let Some(m) = u.movement.as_mut() {
@@ -1024,14 +1131,14 @@ pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before:
             {
                 let next = entry.waiting.remove(i);
                 // Its timer starts as the other one's fires.
-                entry.inside = Some((next, tick, add(left_at, IN_MINE_TIME)));
+                entry.inside = Some((next, tick, add(start, IN_MINE_TIME)));
                 hide(s, next, true);
                 going_in = Some(next);
             }
             // The next going in with others still waiting: the mine's queue
             // timer (c-RXI-1: 1271, 1471, 1671).
             if going_in.is_some() && entry_waits(s, mine) {
-                super::table::mine_queue_timer(s, mine, left_at);
+                super::table::mine_queue_timer(s, mine, start);
             }
             super::table::harvest_left(s, worker, going_in);
             left <= 0

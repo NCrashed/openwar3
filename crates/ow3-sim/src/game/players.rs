@@ -911,6 +911,7 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
             if let Some(p) = player(&state, &args[0]) {
                 let key = (p, integer(&args[1]));
                 state.setup.tech_max.insert(key, integer(&args[2]));
+                super::widgets::tech_limit(&mut state, p, integer(&args[1]), integer(&args[2]));
             }
             Ok(None)
         }

@@ -53,6 +53,9 @@ fn game_rows(name: &str) -> Option<Vec<Row>> {
 /// freed before 0.1 s (the first takings of the list at 1.0 s come from
 /// the free list 806, 805, 818, then it grows from 821). The time of day
 /// holds 767, 647 and 819 (two watches, the rate).
+/// The replays whose table is counted from the map's load (IceCrown).
+const INIT_TABLES: [&str; 1] = ["c-SCC-1"];
+
 fn start_table() -> ObjectTable {
     let mut table = ObjectTable::new(821, Vec::new(), 821);
     for e in [818, 805, 806] {
@@ -362,9 +365,17 @@ fn compare_objects(name: &str) -> Option<Option<usize>> {
     let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
-    let mut playback = Playback::new(&program, &map, &replay).unwrap();
-    playback.load_object_ids(&dir.join(format!("{name}.w3g")));
-    playback.game.set_table(start_table(), true);
+    let mut playback = if INIT_TABLES.contains(&name) {
+        let mut table = ObjectTable::new(640, Vec::new(), 640);
+        table.log = Some(Vec::new());
+        table.clocks = Some(Vec::new());
+        Playback::with_table(&program, &map, &replay, Some(table)).unwrap()
+    } else {
+        let mut playback = Playback::new(&program, &map, &replay).unwrap();
+        playback.load_object_ids(&dir.join(format!("{name}.w3g")));
+        playback.game.set_table(start_table(), true);
+        playback
+    };
     // (Some ticks past the list's last, whose tick column runs ahead.)
     // OW3_UNTIL: play to that tick instead.
     let until = std::env::var("OW3_UNTIL")
@@ -489,9 +500,16 @@ fn turn_parts(name: &str) -> Option<Option<usize>> {
     let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
     let map = Map::load(&game_data(), &map_path).unwrap();
     let program = map.check().unwrap();
-    let mut playback = Playback::new(&program, &map, &replay).unwrap();
-    playback.load_object_ids(&dir.join(format!("{name}.w3g")));
-    playback.game.set_table(start_table(), false);
+    // IceCrown's table from the map's load (`compare_init`).
+    let mut playback = if INIT_TABLES.contains(&name) {
+        let table = ObjectTable::new(640, Vec::new(), 640);
+        Playback::with_table(&program, &map, &replay, Some(table)).unwrap()
+    } else {
+        let mut playback = Playback::new(&program, &map, &replay).unwrap();
+        playback.load_object_ids(&dir.join(format!("{name}.w3g")));
+        playback.game.set_table(start_table(), false);
+        playback
+    };
     playback.run();
     let turns = turns(&replay);
     let hex = |s: &str| u32::from_str_radix(s, 16).unwrap();

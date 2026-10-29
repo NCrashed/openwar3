@@ -1137,6 +1137,21 @@ pub struct State {
     /// The first step of each building made: its queue time and handle
     /// (`harvest::building_steps_before`).
     pub(super) building_steps: Vec<(u32, u32)>,
+    /// The blight check of each unit made with blight regeneration: its
+    /// queue time and handle (`widgets::blight_checks_before`).
+    pub(super) blight_checks: Vec<(u32, u32)>,
+    /// Each critter's next wander (queue time) and whether it walks one
+    /// (`widgets::critters_before`).
+    pub(super) critters: BTreeMap<u32, (u32, bool)>,
+    /// The update cycle of each worker at its gold mine: the first update
+    /// tick at or after its arrival (`harvest`).
+    pub(super) mine_arrivals: std::collections::BTreeMap<u32, u64>,
+    /// Workers come out of their mines whose walk back is searched from
+    /// where they went in, relative to the world corner (`follow`).
+    pub(super) mine_entries: std::collections::BTreeMap<u32, [u32; 2]>,
+    /// Workers out of their mines with none waiting, to be put at their
+    /// exit points at their next update (`harvest::exits_at_updates`).
+    pub(super) pending_exits: std::collections::BTreeSet<u32>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1373,6 +1388,11 @@ impl State {
             held_done: false,
             harvest_waiters: Vec::new(),
             building_steps: Vec::new(),
+            blight_checks: Vec::new(),
+            critters: BTreeMap::new(),
+            mine_arrivals: std::collections::BTreeMap::new(),
+            mine_entries: std::collections::BTreeMap::new(),
+            pending_exits: std::collections::BTreeSet::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -1548,6 +1568,7 @@ impl State {
         // Then the timers of the queue (c-SAK-1: the death queue objects at
         // 3353, after the 0.0001 s frees).
         let limit = self.timers.time();
+        table::day_rates_due(self, limit);
         self.table.flush_q(tick, limit);
         // The world clock's timers of the tick (a corpse's end).
         let clock = add(self.move_clock, crate::timers::TICK);
@@ -1818,6 +1839,7 @@ impl<'a> Game<'a> {
         }
         self.state.borrow_mut().setup.fill();
         self.run("main");
+        self.init_ended();
         Ok(())
     }
 
@@ -1843,7 +1865,21 @@ impl<'a> Game<'a> {
             state.setup.fill_lobby(lobby, local);
         }
         self.run("main");
+        self.init_ended();
         Ok(())
+    }
+
+    /// The end of the map's init, before the first tick: the time-of-day
+    /// clock's rate part and watch are made (c-SCC-1: 11988, 11989 after the
+    /// script, in turn 1's checksum, hub #15). Only for a clock set away
+    /// from 0:00 by then (c-SCC-1: the melee start at 8:00; c-SBT-1 at 0:00
+    /// then, set later, has none).
+    /// PROVISIONAL: the condition is read from these two.
+    fn init_ended(&mut self) {
+        let mut state = self.state.borrow_mut();
+        if f32::from_bits(state.setup.clock_base) != 0.0 {
+            table::play_started(&mut state);
+        }
     }
 
     fn with_state(
@@ -1986,14 +2022,6 @@ impl<'a> Game<'a> {
             state.table.boundary = None;
             let tick = state.ticks;
             state.table.now = tick;
-            // The start of play makes the time-of-day clock's rate part and
-            // watch (c-SCC-1: 11988, 11989 at the first tick, hub #15).
-            // Only for a clock set away from 0:00 before play (c-SCC-1: the
-            // melee start at 8:00; c-SBT-1 at 0:00 then, set later, has none).
-            // PROVISIONAL: the condition is read from these two.
-            if tick == 1 && f32::from_bits(state.setup.clock_base) != 0.0 {
-                table::play_started(state);
-            }
             // The world clock of this tick, for the lists of the game.
             let clock = state.timers.time();
             if let Some(c) = state.table.clocks.as_mut() {
@@ -2184,6 +2212,9 @@ impl<'a> Game<'a> {
             cast::effects_before(&mut self.vm, &self.state, at);
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // Workers out of their mines put at their exit points (hub #15).
+        harvest::exits_at_updates(&mut self.state.borrow_mut());
+        widgets::critter_walks_ended(&mut self.state.borrow_mut());
         // A helper that started in its update speeds its building from the
         // clock of that tick (c-SBZ-1: the barracks at 11.249113, hub #13).
         power_building(&mut self.state.borrow_mut());
@@ -2233,12 +2264,16 @@ impl<'a> Game<'a> {
             harvest::trees_hit_before(&mut self.vm, &self.state, Some(fired.expiry), true);
             harvest::mines_left_before(&mut self.vm, &self.state, Some(fired.expiry));
             harvest::building_steps_before(&mut self.state.borrow_mut(), Some(fired.expiry));
+            widgets::blight_checks_before(&mut self.state.borrow_mut(), Some(fired.expiry));
+            widgets::critters_before(&mut self.state.borrow_mut(), Some(fired.expiry));
             self.fire(fired);
             self.park();
         }
         harvest::trees_hit_before(&mut self.vm, &self.state, None, true);
         harvest::mines_left_before(&mut self.vm, &self.state, None);
         harvest::building_steps_before(&mut self.state.borrow_mut(), None);
+        widgets::blight_checks_before(&mut self.state.borrow_mut(), None);
+        widgets::critters_before(&mut self.state.borrow_mut(), None);
         self.state.borrow_mut().timers.end_tick(tick);
         // The attack-moves going on at backswing ends of this tick, in the
         // order of those ends (c-SAK-1: footmen 2 and 3 at 3285).

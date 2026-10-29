@@ -333,3 +333,51 @@ fn training_follows_c_rtp_1() {
     assert!(ours.len() >= game.len());
     assert_eq!(ours[..game.len()], game[..]);
 }
+
+/// `c-SDE-1.w3g`: Orc peons gathering gold and lumber (SPEC-0029, hub
+/// #15). Every position of the log (`p` rows: tick, unit, x, y; the log's
+/// ticks run 201 behind the playback's) is ours to 0.01.
+#[test]
+fn orc_peons_follow_c_sde_1() {
+    let path = game_data().join("replays/c-SDE-1.w3g");
+    let Ok(log) = std::fs::read_to_string(path.with_extension("log.tsv")) else {
+        return;
+    };
+    let mut logged: std::collections::BTreeMap<usize, Vec<(u64, [f32; 2])>> =
+        std::collections::BTreeMap::new();
+    for line in log.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = line.split('\t').collect();
+        if w.get(1) != Some(&"p") {
+            continue;
+        }
+        let (Some(t), Some(u), Some(x), Some(y)) = (
+            w[0].parse::<u64>().ok(),
+            w[2].parse::<usize>().ok(),
+            w[3].parse::<f32>().ok(),
+            w[4].parse::<f32>().ok(),
+        ) else {
+            continue;
+        };
+        logged.entry(u).or_default().push((t + 201, [x, y]));
+    }
+    let replay = Replay::parse(&std::fs::read(&path).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let mut playback = Playback::new(&program, &map, &replay).unwrap();
+    let mut at: std::collections::BTreeMap<(usize, u64), [f32; 2]> =
+        std::collections::BTreeMap::new();
+    while playback.step_tick() {
+        let tick = playback.game.ticks();
+        for (i, u) in playback.game.units().iter().enumerate() {
+            at.insert((i, tick), [u.x, u.y]);
+        }
+    }
+    for (unit, list) in &logged {
+        let miss = list.iter().find(|(t, p)| {
+            at.get(&(*unit, *t))
+                .is_none_or(|q| (q[0] - p[0]).abs() > 0.01 || (q[1] - p[1]).abs() > 0.01)
+        });
+        assert_eq!(miss, None, "unit {unit}: first position that differs");
+    }
+}

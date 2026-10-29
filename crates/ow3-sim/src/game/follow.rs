@@ -114,6 +114,9 @@ pub struct Follow {
     /// A worker at the end of its path to a mine, turning to it: its stop
     /// was logged.
     turning_in: bool,
+    /// A worker come out of its mine at its own update, none waiting: its
+    /// first search starts from where it went in, in cells (hub #15).
+    from_entry: Option<[u32; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,7 +286,13 @@ fn others(state: &State, h: u32) -> Others {
     if super::harvest::passes_through(state, h) {
         // So are the workers working at a tree (c-RYP-1: peasant 2 at its
         // tree in peasant 5's search of 3537).
+        // Waiting from the update after its arrival (c-SDE-1: unit 3,
+        // arrived at 50.395519, not in unit 7's search of 50.428490 but
+        // hiding its goal at 50.548485, hub #15).
         for o in super::harvest::waiting(state).chain(super::harvest::at_work_on_trees(state)) {
+            if !super::harvest::standing_at_work(state, o) {
+                continue;
+            }
             let Some(u) = state.unit(Some(o)) else {
                 continue;
             };
@@ -291,9 +300,10 @@ fn others(state: &State, h: u32) -> Others {
                 path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
             let at = super::movement::relative([u.x, u.y], min);
             let cells = path::occupied_cells(to_cells(at), class);
-            // A worker at work on a tree also stops its look-ahead
-            // (c-RYP-1: peasant 4 at 5449, blocked by peasant 1).
-            if super::harvest::at_work_on_trees(state).any(|w| w == o) {
+            // Standing at their work, both also stop its look-ahead
+            // (c-RYP-1: peasant 4 at 5449, blocked by peasant 1 at its
+            // tree).
+            if super::harvest::standing_at_work(state, o) {
                 for &cell in &cells {
                     others.by_cell.entry(cell).or_default().push(o);
                 }
@@ -324,10 +334,12 @@ fn others(state: &State, h: u32) -> Others {
         if u.wind_walk.is_some_and(|w| w.on(state.ticks)) {
             continue;
         }
-        // A worker in the gathering cycle is seen by no one (SPEC-0029).
+        // A worker in the gathering cycle is seen by no one (SPEC-0029),
+        // but when it stands at its work.
         if !u.alive
             || u.hidden
-            || super::harvest::passes_through(state, o)
+            || (super::harvest::passes_through(state, o)
+                && !super::harvest::standing_at_work(state, o))
             || super::harvest::gone_in_now(state, o)
         {
             continue;
@@ -595,6 +607,15 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     if fresh && state.budget.high > HIGH_BUDGET {
         return Steer::Hold;
     }
+    // Out of its mine at its own update with none waiting, a worker's
+    // walk back is searched in that update from where it went in, before
+    // it was put out (c-SDE-1: unit 4 at 41.398857, hub #15).
+    let from_entry = if fresh {
+        state.mine_entries.remove(&walker.handle).map(to_cells)
+    } else {
+        None
+    };
+    let search_at = from_entry.unwrap_or(at);
     let lifted = footprint.as_ref().filter(|_| fresh);
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
         grid.stamp(red, green, false);
@@ -612,25 +633,25 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         let (cost, found) = if alone {
             let tree = walker.tree.is_some();
             let (cost, cluster) = if tree {
-                path::high_level_to_target(grid, at, order_cells, class)
+                path::high_level_to_target(grid, search_at, order_cells, class)
             } else {
                 (
-                    path::high_level_cost(grid, at, order_cells, class),
-                    path::high_level_cluster(grid, at, order_cells, class),
+                    path::high_level_cost(grid, search_at, order_cells, class),
+                    path::high_level_cluster(grid, search_at, order_cells, class),
                 )
             };
             let list = cluster.map(|f| f.points).unwrap_or_default();
             let (j, w) = next_segment(&list, 0);
             let place = w.unwrap_or(order_cells);
-            let found = member_search(grid, at, place, order_cells, class, tree);
+            let found = member_search(grid, search_at, place, order_cells, class, tree);
             plan = (list, j.unwrap_or(0), w);
             (cost, found)
         } else if walker.tree.is_some() {
-            path::high_level_to_target(grid, at, order_cells, class)
+            path::high_level_to_target(grid, search_at, order_cells, class)
         } else {
             (
-                path::high_level_cost(grid, at, order_cells, class),
-                path::high_level(grid, at, order_cells, class),
+                path::high_level_cost(grid, search_at, order_cells, class),
+                path::high_level(grid, search_at, order_cells, class),
             )
         };
         state.budget.high += cost;
@@ -675,6 +696,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             new_group: held.is_some(),
             end_blocked: false,
             turning_in: false,
+            from_entry,
         };
         follow.take_segment(order_cells);
         follow
@@ -876,6 +898,8 @@ fn decide(
         }
         follow.new_group = false;
         follow.end_blocked = false;
+        let entry = follow.from_entry.take();
+        let at = entry.unwrap_or(at);
         let found = match walker.chase {
             // A chase searches to its goal and ends where it touches its
             // target (SPEC-0019).
@@ -911,7 +935,10 @@ fn decide(
         follow.local = found.points;
         follow.partial = !found.reached;
         // A search that met nothing in the way walks straight to the end.
-        follow.target = if found.clear {
+        // One from its mine's entry walks to the path's next point, from
+        // where it came out (c-SDE-1: unit 4 from (112, -208) towards
+        // (48, -176) at 41.398857, hub #15).
+        follow.target = if found.clear && entry.is_none() {
             follow.local.len() - 1
         } else {
             1.min(follow.local.len() - 1)
@@ -1435,6 +1462,15 @@ pub(super) fn regroup(state: &mut State, h: u32) {
 /// (SPEC-0021).
 pub(super) fn quiet(state: &mut State, h: u32) {
     state.quiet_paths.insert(h);
+}
+
+/// Worker `h` was put out of its mine after its update searched its walk
+/// back from where it went in: it walks to that path's next point (hub
+/// #15, c-SDE-1: unit 4 towards (48, -176) at 41.398857).
+pub(super) fn came_out(state: &mut State, h: u32) {
+    if let Some(f) = state.paths.get_mut(&h) {
+        f.target = 1.min(f.local.len().saturating_sub(1));
+    }
 }
 
 /// Unit `h`'s walk keeps its path to its new goal `order` (world): a slow

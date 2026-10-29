@@ -56,6 +56,10 @@ pub struct ObjectTable {
     /// freed in its removal's group A before its R (c-SCC-1: the nrvi's
     /// 10571, hub #15).
     pub day_of: std::collections::BTreeMap<u32, (Vec<u32>, Vec<u32>)>,
+    /// Each unit's first part of the last change of the hour, freed 3.0 s on
+    /// if the unit still has it (`day_rates_due`): its queue time, unit and
+    /// entry.
+    pub day_rates: Vec<(u32, u32, u32)>,
     /// The other parts of the hour of units removed, freed 0.0001 s after
     /// the removals' tails (c-SCC-1: 10573 .. at 0.0002, hub #15).
     pub removal_late: Vec<u32>,
@@ -175,6 +179,7 @@ impl ObjectTable {
             now: 0,
             day: Vec::new(),
             day_of: std::collections::BTreeMap::new(),
+            day_rates: Vec::new(),
             removal_late: Vec::new(),
             walks_due: Vec::new(),
             mine_used: false,
@@ -1517,7 +1522,17 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         state.table.defer(entries[count - 2], "map start: unit");
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
-        if after < 0.0 {
+        if after == -2.0 {
+            // A rooted building frees five of its parts 1.2 s on (c-SCC-1:
+            // the tree of life's 27, 28, 26, 25, 24 at 1.200099).
+            // PROVISIONAL: what they are is not read; read once.
+            let end = ow3_math::add(state.timers.time(), 1.2f32.to_bits());
+            for k in [27, 28, 26, 25, 24] {
+                state
+                    .table
+                    .free_at_q(end, entries[k], "building: rooted parts");
+            }
+        } else if after < 0.0 {
             // Its blight's three are kept (`building_layout`).
         } else if std::mem::take(&mut state.table.constructing) {
             pending_dispel = DISPEL_PARTS.map(|k| entries[at + k]).to_vec();
@@ -1701,7 +1716,7 @@ pub(super) fn level_changed(state: &mut super::State, h: u32) {
     }
 }
 
-/// The running game begins (its first tick): the time-of-day clock's
+/// The map's init ends (before the first tick): the time-of-day clock's
 /// rate part and its watch, kept (c-SCC-1: 11988 R, 11989 L at call 3245,
 /// hub #15).
 ///
@@ -1767,9 +1782,24 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
             kinds.push("unit state: limit watch");
         }
         let (mut own, mut rest) = (Vec::new(), Vec::new());
-        for kind in kinds {
+        let last = kinds.len() - 1;
+        // At day a nightcrawler's Shadowmeld fades, 1 to 0 at 0.4 a second:
+        // its second rate part and its watch go when that ends, 2.5 s on
+        // (c-SCC-1: the 24 nmrm's pairs at 2.500100, hub #15).
+        let fade = (night && to_day).then(|| ow3_math::add(state.timers.time(), 2.5f32.to_bits()));
+        for (i, kind) in kinds.into_iter().enumerate() {
             let e = state.table.take(tick, kind);
             new_parts.push(e);
+            if let Some(end) = fade
+                && (i == 1 || i == last)
+            {
+                state.table.free_at_q(end, e, "shadowmeld: fade");
+                continue;
+            }
+            if i == 0 {
+                let end = ow3_math::add(state.timers.time(), 3.0f32.to_bits());
+                state.table.day_rates.push((end, h, e));
+            }
             if kind == "unit state: limit watch" {
                 own.push(e);
             } else {
@@ -2167,6 +2197,29 @@ pub(super) fn creep_flight_ordered(state: &mut super::State, h: u32) {
     }
 }
 
+/// A critter wanders, by a move order to a point: the objects of a creep's
+/// flight (`creep_flight_ordered`) without its kept one (c-SCC-1: nsea 9468
+/// at 5.024874, 10624 .. 11300, hub #15).
+///
+/// PROVISIONAL: when the kept ones go is not read.
+pub(super) fn critter_wander_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "critter wander: order");
+    let record = state.table.take(tick, "order record");
+    state.table.defer(record, "order record");
+    order_ended(state, h);
+    let start = state.table.take_n(tick, 13, "move ability: order start");
+    for &e in start[6..].iter().rev() {
+        state.table.defer(e, "move ability: order start");
+    }
+    let mut kept: Vec<u32> = start[..6].iter().rev().copied().collect();
+    kept.push(order);
+    if let Some(e) = entries(state, h) {
+        e.order = kept;
+    }
+    walk_made_at_order(state, h);
+}
+
 /// A creep's flight ends at its point (c-SCA-1: the turtle at 59.905293,
 /// hub #14): one object first, then after its order's objects (freed
 /// 0.0001 s later) that one and the flight's kept one
@@ -2488,7 +2541,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
 }
 
 /// A computer's new worker `h` is sent to its gold mine (c-SCC-1: the Orc's
-/// peons, hub #15): the order and its record, kept; a run of 18 (a head
+/// peons, hub #15): the order and its record, kept for the whole game; a run of 18 (a head
 /// of 4 and the 14 parts of the mine), freed 0.0001 s later, and a walk;
 /// then the order started again: a run of 24 (9 freed 0.0001 s later, 9
 /// kept, 2 freed when the walk to the mine ends, 4 freed 0.0001 s later)
@@ -2499,8 +2552,8 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
 /// where the growth sits in it, are not read.
 fn computer_harvest_ordered(state: &mut super::State, h: u32, idle: usize) {
     let tick = state.table.now;
-    let order = state.table.take(tick, "script target order");
-    let record = state.table.take(tick, "order record");
+    state.table.take(tick, "script target order");
+    state.table.take(tick, "order record");
     order_ended(state, h);
     let first = state.table.take_n(tick, 18, "harvest: order start");
     walk_made_at_order(state, h);
@@ -2523,12 +2576,9 @@ fn computer_harvest_ordered(state: &mut super::State, h: u32, idle: usize) {
     }
     if let Some(e) = entries(state, h) {
         e.harvest_arrive = run[9 + kept..9 + kept + 2].iter().rev().copied().collect();
-        e.order = run[9..9 + kept]
-            .iter()
-            .rev()
-            .copied()
-            .chain([record, order])
-            .collect();
+        // The order and its record stay for the whole game (c-SCC-1: peon
+        // 2's 11113, 11114 freed only at the replay's end, hub #15).
+        e.order = run[9..9 + kept].iter().rev().copied().collect();
     }
     walk_made_at_order(state, h);
 }
@@ -6552,6 +6602,39 @@ pub(super) fn takeover_done(state: &mut super::State, h: u32, building: u32, ord
         e.construction_rates.extend(rates);
     }
 }
+
+/// The first parts of the last change of the hour due by queue time
+/// `limit`: each still kept by its unit is freed 3.0 s after the change,
+/// in the order they were made (c-SCC-1: 286 of call 1844 at 3.000100,
+/// hub #15; those of units removed before go with the removals).
+/// PROVISIONAL: what the part is (a rate ending after 3.0 s) is not read.
+pub(super) fn day_rates_due(state: &mut super::State, limit: u32) {
+    let due: Vec<(u32, u32, u32)> = state
+        .table
+        .day_rates
+        .iter()
+        .copied()
+        .filter(|&(end, _, _)| f32::from_bits(end) <= f32::from_bits(limit))
+        .collect();
+    if due.is_empty() {
+        return;
+    }
+    state
+        .table
+        .day_rates
+        .retain(|&(end, _, _)| f32::from_bits(end) > f32::from_bits(limit));
+    for (end, h, e) in due {
+        let kept = state
+            .table
+            .day_of
+            .get_mut(&h)
+            .and_then(|(_, rest)| rest.iter().position(|&x| x == e).map(|i| rest.remove(i)));
+        if kept.is_some() {
+            state.table.free_at_q(end, e, "time of day: unit part");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

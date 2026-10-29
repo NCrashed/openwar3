@@ -209,7 +209,7 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SCC-1.w3g",
-        "the melee start of four races on a ladder map: not matched yet",
+        "the melee start of four races on a ladder map: its table counts from the map's load (objects.rs, melee_start_checksums)",
     ),
     (
         "c-SCD-1.w3g",

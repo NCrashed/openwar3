@@ -2970,7 +2970,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
     // Creeps whose guard check gives their chase up (`table::guard_given_up`).
     let mut given_up: Vec<u32> = Vec::new();
     for h in moving {
-        super::harvest::at_update(state, h);
+        // A worker that delivered in its update takes its new order at its
+        // next one (c-RXI-1: the frees of 2665).
+        if super::harvest::at_update(state, h) {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+                && let Some(m) = u.movement.as_mut()
+                && m.next_update <= tick
+            {
+                m.next_update = tick + UPDATE;
+            }
+            still.push(h);
+            continue;
+        }
         let (type_id, alive) = match state.objects.get(&h) {
             Some(Object::Unit(u)) => (u.type_id, u.alive),
             _ => continue,

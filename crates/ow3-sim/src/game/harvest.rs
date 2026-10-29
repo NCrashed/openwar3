@@ -1538,14 +1538,30 @@ pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
 /// the order of the units' updates (c-SCC-1: the peon's wait at 8.729536
 /// before the critter's order end of the same tick, hub #15). Those not
 /// updating go at `start_waiting`.
-pub(super) fn at_update(state: &mut State, h: u32) {
+pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     let tick = state.ticks;
+    // A delivery due now is made in its update too (c-SCC-1: the peon's of
+    // 9.569395 before a critter's walk end there, hub #15).
+    if let Some(i) = state
+        .deliveries
+        .iter()
+        .position(|&(w, at)| w == h && at <= tick)
+    {
+        state.deliveries.remove(i);
+        let gold = get(state, h).is_some_and(|g| matches!(g.carry, Some((Resource::Gold, _))));
+        if gold {
+            state.objects_change_in(tick + UPDATE);
+            state.objects_change_in(tick + 2 * UPDATE);
+        }
+        deliver(state, h);
+        return true;
+    }
     if !state
         .mines
         .values()
         .any(|m| m.starting.contains(&(h, tick)))
     {
-        return;
+        return false;
     }
     for m in state.mines.values_mut() {
         m.starting.retain(|&(w, t)| !(w == h && t == tick));
@@ -1566,13 +1582,14 @@ pub(super) fn at_update(state: &mut State, h: u32) {
         push_aside(state, h);
         hide(state, h, true);
         pace(state, h);
-        return;
+        return false;
     }
     super::table::harvest_waits(state, h);
     super::table::harvest_arrived(state, h);
     super::table::walk_dropped_at_update(state, h);
     push_aside(state, h);
     pace(state, h);
+    false
 }
 
 fn start_waiting(state: &mut State) {

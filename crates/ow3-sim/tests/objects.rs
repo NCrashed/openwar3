@@ -698,7 +698,6 @@ fn turtle_objects() {
 /// `c-SCC-1`: the melee start of four races on (12)IceCrown: every turn
 /// checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn melee_start_checksums() {
     if let Some(first) = turn_parts("c-SCC-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");

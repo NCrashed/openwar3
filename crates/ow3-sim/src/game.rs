@@ -1134,6 +1134,9 @@ pub struct State {
     pub(super) held_done: bool,
     /// Workers that started to wait at a gold mine in this tick.
     pub(super) harvest_waiters: Vec<u32>,
+    /// The first step of each building made: its queue time and handle
+    /// (`harvest::building_steps_before`).
+    pub(super) building_steps: Vec<(u32, u32)>,
     /// The queue time up to which this tick's cooldown expiries are
     /// handled.
     cooldowns_done: Option<u32>,
@@ -1369,6 +1372,7 @@ impl State {
             held_impacts: Vec::new(),
             held_done: false,
             harvest_waiters: Vec::new(),
+            building_steps: Vec::new(),
             cooldowns_done: None,
             path_trace: None,
             hit_trace: None,
@@ -2228,11 +2232,13 @@ impl<'a> Game<'a> {
             // So do the hits on trees (c-SDE-1, hub #15).
             harvest::trees_hit_before(&mut self.vm, &self.state, Some(fired.expiry), true);
             harvest::mines_left_before(&mut self.vm, &self.state, Some(fired.expiry));
+            harvest::building_steps_before(&mut self.state.borrow_mut(), Some(fired.expiry));
             self.fire(fired);
             self.park();
         }
         harvest::trees_hit_before(&mut self.vm, &self.state, None, true);
         harvest::mines_left_before(&mut self.vm, &self.state, None);
+        harvest::building_steps_before(&mut self.state.borrow_mut(), None);
         self.state.borrow_mut().timers.end_tick(tick);
         // The attack-moves going on at backswing ends of this tick, in the
         // order of those ends (c-SAK-1: footmen 2 and 3 at 3285).

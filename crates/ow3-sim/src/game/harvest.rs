@@ -727,22 +727,48 @@ fn forget_others(state: &mut State) {
     }
 }
 
-/// A computer's worker reaching a gold mine: an r of the harvest's timer
-/// (c-SCC-1: 10807 after peon 2's going in, 11160 and 11161 for the next
-/// peons at the busy mine, hub #15).
+/// The first steps of the buildings due in this tick before queue time
+/// `before` (all without it), in order of their times: each comes at the
+/// building's making plus the delay it drew from game generator 21. A
+/// computer's building that returns resources or is a gold mine takes an
+/// r there (hub #15, c-SCC-1: the five of 0.601838 .. 0.881501; the user's
+/// town hall and the neutral mines take none).
 ///
-/// PROVISIONAL: its owner and when it goes are not read.
-fn computer_harvest_timer(state: &mut State, h: u32) {
-    let computer = state.unit(Some(h)).is_some_and(|u| {
-        state
+/// PROVISIONAL: what the r is for is not read; it is freed at 11.149229
+/// in c-SCC-1, which is not built.
+pub(super) fn building_steps_before(state: &mut State, before: Option<u32>) {
+    let now = add(state.move_clock, crate::timers::TICK);
+    let due = |at: u32| {
+        f32::from_bits(at) <= f32::from_bits(now)
+            && before.is_none_or(|b| f32::from_bits(at) < f32::from_bits(b))
+    };
+    let mut steps: Vec<(u32, u32)> = state
+        .building_steps
+        .iter()
+        .copied()
+        .filter(|&(at, _)| due(at))
+        .collect();
+    if steps.is_empty() {
+        return;
+    }
+    state.building_steps.retain(|&(at, _)| !due(at));
+    steps.sort_by(|a, b| f32::from_bits(a.0).total_cmp(&f32::from_bits(b.0)));
+    for (_, h) in steps {
+        let Some(u) = state.unit(Some(h)).filter(|u| u.alive) else {
+            continue;
+        };
+        let computer = state
             .setup
             .slots
             .get(u.owner as usize)
-            .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER)
-    });
-    if computer {
-        let tick = state.table.now;
-        state.table.take(tick, "computer worker: harvest timer");
+            .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER);
+        let resources = [b"Artn", b"Agld", b"Abgm", b"Aegm"]
+            .iter()
+            .any(|c| ability_of(state, u.type_id, code(c)).is_some());
+        if computer && resources {
+            let tick = state.table.now;
+            state.table.take(tick, "building: resource step");
+        }
     }
 }
 
@@ -766,7 +792,6 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         entry.starting.push((h, tick + UPDATE));
         state.objects_change_in(tick + UPDATE);
         state.objects_change_in(tick + 2 * UPDATE);
-        computer_harvest_timer(state, h);
     }
 }
 
@@ -913,7 +938,6 @@ fn enter_mines(state: &Rc<RefCell<State>>) {
             // Its objects of going in, then its walk ends (SPEC-0024;
             // c-RXI-1: worker 5 at 871).
             super::table::harvest_entered(&mut s, w);
-            computer_harvest_timer(&mut s, w);
             super::table::harvest_arrived(&mut s, w);
             super::table::walk_dropped_at_update(&mut s, w);
             push_aside(&mut s, w);

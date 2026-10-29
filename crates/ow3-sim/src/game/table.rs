@@ -1223,8 +1223,9 @@ pub(super) fn entangled(state: &mut super::State, mine: u32, egol: u32) {
     }
     let body = state.table.take_n(tick, 29, "entangled mine: unit");
     let end = ow3_math::add(state.timers.time(), 0.88f32.to_bits());
-    for &e in &body[14..19] {
-        state.table.free_at_q(end, e, "entangled mine: unit");
+    // (In the order 17, 18, 16, 15, 14: c-SCC-1 at 0.880099.)
+    for k in [17, 18, 16, 15, 14] {
+        state.table.free_at_q(end, body[k], "entangled mine: unit");
     }
     let pair = state.table.take_n(tick, 2, "entangled mine: unit");
     state.table.defer(pair[1], "entangled mine: unit");

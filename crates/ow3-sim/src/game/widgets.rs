@@ -361,9 +361,12 @@ pub(super) fn create_unit(
     // PROVISIONAL: measured for a farm started by a worker; every building
     // made is taken to have the ability (c-RTP-1, whose script makes a
     // barracks and farms, matches only so).
-    if data.building {
-        state.game_random[ALARM].fraction();
-    }
+    // Its output also delays the building's first step from its making
+    // (hub #15, c-SCC-1: the gold mine of call 692 drew 0xFC638E2B, its
+    // step at 0.777776).
+    let step = data
+        .building
+        .then(|| add(state.timers.time(), state.game_random[ALARM].fraction()));
     // A hero draws the script generator once (c-SAK-1: E of the turn
     // checksum changes with the heroes made at 1.0 s; a Mirror Image's
     // units too).
@@ -490,6 +493,9 @@ pub(super) fn create_unit(
     if data.building && data.classes.iter().any(|c| c == "townhall") {
         let expiry = add(state.timers.time(), BUILDING_OBJECTS);
         state.objects_change_at(expiry, h);
+    }
+    if let Some(at) = step {
+        state.building_steps.push((at, h));
     }
     // It sees at once (SPEC-0032).
     super::fog::born(state, h);
@@ -1587,6 +1593,10 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
                 return Ok(Some(Value::Handle(None)));
             };
             let at = [real(&args[1]), real(&args[2]), real(&args[3])];
+            // The gold mine it holds is made first: its draw of generator 21
+            // for its first step, of a neutral mine that takes nothing (hub
+            // #15, c-SCC-1: 0.801666 before the haunted mine's 0.785854).
+            s.game_random[ALARM].fraction();
             let h = create_unit_by_script(&mut s, owner, i32::from_be_bytes(*b"ugol"), at);
             if let Some(h) = h {
                 // It holds a gold mine's gold (SPEC-0029; c-SDA-1: 12500 on

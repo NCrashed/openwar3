@@ -700,7 +700,6 @@ fn melee_start_objects() {
 /// 640 entries, then IceCrown's script (its units, InitBlizzard, the melee
 /// start) and the first ticks, against the game's (main table only).
 #[test]
-#[ignore = "not matched yet"]
 fn melee_init_objects() {
     if let Some(first) = compare_init("c-SCC-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

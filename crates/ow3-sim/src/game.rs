@@ -4010,6 +4010,24 @@ fn register_ai_natives(
                 })
                 .take(wanted)
                 .collect();
+            let paid_placement = workers
+                .iter()
+                .copied()
+                .filter(|&h| harvest::pays_for(&state, h, mine) && !harvest::is_wisp(&state, h))
+                .min_by(|&a, &b| {
+                    let distance = |h| {
+                        let Some(worker) = state.unit(Some(h)) else {
+                            return f32::INFINITY;
+                        };
+                        let Some(mine) = state.unit(Some(mine)) else {
+                            return f32::INFINITY;
+                        };
+                        let dx = f32::from_bits(worker.x) - f32::from_bits(mine.x);
+                        let dy = f32::from_bits(worker.y) - f32::from_bits(mine.y);
+                        dx * dx + dy * dy
+                    };
+                    distance(a).total_cmp(&distance(b))
+                });
             for worker in workers {
                 let paid = harvest::pays_for(&state, worker, mine);
                 state.table.ai_harvest_extra = usize::from(!paid) * 3;
@@ -4020,6 +4038,9 @@ fn register_ai_natives(
                             usize::from(!harvest::is_wisp(&state, worker));
                         table::harvest_ordered(&mut state, worker, false);
                         state.table.ai_harvest_fewer = 0;
+                        if Some(worker) == paid_placement {
+                            table::ai_paid_placement(&mut state, worker);
+                        }
                     }
                     gold_workers.borrow_mut().insert(worker);
                 } else {

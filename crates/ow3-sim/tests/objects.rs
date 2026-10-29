@@ -767,11 +767,12 @@ fn melee_ai_checksums() {
     }
 }
 
-/// `c-SEA-1`'s synchronous initialization and first 0.100 s resumption of
-/// the three standard melee AI scripts: the first three turn checksums.
+/// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
+/// the three standard melee AI scripts and first paid-worker placement:
+/// the first four turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(3)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(4)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -828,7 +829,7 @@ fn melee_ai_turn3_objects() {
     let program = map.check().unwrap();
     let table = ObjectTable::new(640, Vec::new(), 640);
     let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
-    for _ in 0..3 {
+    for _ in 0..2 {
         assert!(playback.step_slot());
     }
     let log = playback.game.table_log();
@@ -843,6 +844,47 @@ fn melee_ai_turn3_objects() {
         .position(|(expected, ours)| *expected != (ours.new, ours.entry, ours.creation))
         .or((expected.len() != ours.len()).then(|| expected.len().min(ours.len())));
     assert_eq!(first, None, "the first differing table event {first:?}");
+}
+
+/// The four main-table events after `c-SEA-1`'s turn-3 checkpoint through
+/// turn 4: a paid worker's old placement records go, then its two new
+/// placement records take their entries.
+#[test]
+fn melee_ai_turn4_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn4-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("seq"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[3] == "take" || words[3] == "free")
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let replay = Replay::parse(&std::fs::read(dir.join("c-SEA-1.w3g")).unwrap()).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..2 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let log = playback.game.table_log();
+    let ours: Vec<_> = log[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
 }
 
 /// `c-SCC-1`'s object table.

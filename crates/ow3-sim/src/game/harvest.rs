@@ -2435,6 +2435,32 @@ pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32) -> bool {
     get(state, h).is_some_and(|g| g.target == Some(mine)) && paid_working(state, h)
 }
 
+/// Whether the worker's active world order already takes it to `mine`.
+/// A repeated AI pass leaves such a loaded worker on that order instead of
+/// replacing it again (c-SEA-1, turn 43).
+pub(super) fn ai_gold_ordered(state: &State, h: u32, mine: u32) -> bool {
+    let occupied = state.units.iter().copied().any(|worker| {
+        ai_gold_assigned(state, worker, mine)
+            && state
+                .unit(Some(worker))
+                .is_some_and(|unit| unit.hidden && unit.movement.is_none())
+    });
+    occupied
+        && state
+            .unit(Some(mine))
+            .is_some_and(|unit| unit.type_id.to_be_bytes() == *b"ngol")
+        && get(state, h).is_some_and(|g| g.target == Some(mine))
+        && state
+            .unit(Some(h))
+            .and_then(|unit| unit.movement)
+            .is_some_and(|movement| {
+                matches!(
+                    movement.order,
+                    Order::Gather { target } | Order::Work { target } if target == mine
+                ) || matches!(movement.order, Order::Return { .. })
+            })
+}
+
 /// Whether another wisp assigned to this paying mine will be its fourth or
 /// later occupant. Those arrivals retain their walk pair at the observed
 /// boundary (c-SEA-1, turn 13).

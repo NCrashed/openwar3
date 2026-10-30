@@ -4191,6 +4191,7 @@ fn register_ai_natives(
                             && u.alive
                             && (!repeat
                                 || !u.hidden
+                                    && !harvest::ai_gold_ordered(&state, h, mine)
                                     && (u.movement.is_none()
                                         || harvest::carried(&state, h).is_some()))
                     }) && harvest::can_harvest(&state, h, mine)

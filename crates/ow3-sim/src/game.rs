@@ -3966,6 +3966,10 @@ fn register_ai_natives(
             if repeated_single_worker {
                 let at = ow3_math::add(state.timers.time(), 0.13f32.to_bits());
                 state.table.ai_produce_at_clock(at);
+                // PROVISIONAL: this independently observed unit update is
+                // 0.245136 s after the repeated production-plan call.
+                let update = ow3_math::add(state.timers.time(), 0.245136f32.to_bits());
+                state.table.late_entangled_records_at_clock(update);
             } else if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {

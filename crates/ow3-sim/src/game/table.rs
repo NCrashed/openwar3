@@ -399,6 +399,21 @@ impl ObjectTable {
         self.timed_w.push((clock, AI_PRODUCE_AT, "SetProduce"));
     }
 
+    /// Replaces the retained pair at a world-clock unit update. The new
+    /// pair is made at the update and the old pair is released 0.0001 s
+    /// later (c-SEA-1, turn 37, hub #15).
+    pub fn late_entangled_records_at_clock(&mut self, clock: u32) {
+        let new = vec![
+            self.take_at_clock(clock, "scheduled unit update"),
+            self.take_at_clock(clock, "scheduled unit update"),
+        ];
+        let release = ow3_math::add(clock, 0.0001f32.to_bits());
+        for entry in std::mem::take(&mut self.late_entangled_records) {
+            self.free_at_clock(release, entry, "scheduled unit update");
+        }
+        self.late_entangled_records = new;
+    }
+
     fn ai_produce(&mut self, tick: u64) {
         let made = self.take_n(tick, 17, "SetProduce");
         self.free(tick, made[14], "SetProduce");

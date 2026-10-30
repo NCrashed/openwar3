@@ -4025,6 +4025,13 @@ fn register_ai_natives(
             } else if later_temporary_worker {
                 let update_at = state.ticks + 1;
                 state.ai_worker_updates.push(update_at);
+                // The first retry advances the partial worker reservation
+                // to its stable phase. Later retries are silent until the
+                // plan reaches another observed transition (c-SEA-1,
+                // turns 18 and 38, hub #15).
+                production_plans
+                    .borrow_mut()
+                    .insert(type_id, (qty, state.ticks, false));
             }
             if worker && (accepted || temporary) {
                 widgets::type_record(&mut state, player, type_id, |q| {

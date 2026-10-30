@@ -1288,6 +1288,9 @@ pub struct State {
     /// Undead AI builders released from an earlier construction and held at
     /// that construction's side until a pending plan reuses them.
     ai_released_builders: BTreeSet<u32>,
+    /// Released Undead builders walking to a retained supply plan. Their
+    /// construction start uses the accepted AI plan layout.
+    ai_supply_builders: BTreeSet<u32>,
     /// Initial melee-AI miners whose local path reaches an occupied mine at
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
@@ -1494,6 +1497,7 @@ impl State {
             ai_pending_supply: BTreeMap::new(),
             ai_supply_orders: Vec::new(),
             ai_released_builders: BTreeSet::new(),
+            ai_supply_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
             ai_mine_waiting: BTreeSet::new(),
             starting_mine_first: BTreeMap::new(),
@@ -4214,6 +4218,20 @@ fn register_ai_natives(
                     distance(a).total_cmp(&distance(b))
                 });
             let mut assigned_now = already;
+            // A later pass that sees more than one returning gold carrier
+            // leaves their active return orders alone. They still count
+            // toward this pass's assignment total (c-SEA-1, turn 62).
+            if repeat
+                && workers.len() > 1
+                && workers
+                    .iter()
+                    .all(|&worker| harvest::carried(&state, worker).is_some())
+            {
+                gold_workers.borrow_mut().extend(workers.iter().copied());
+                assigned_now += workers.len();
+                gold_assigned.borrow_mut().insert(mine, assigned_now);
+                return Ok(None);
+            }
             for worker in workers {
                 let mut worker = worker;
                 if repeat && harvest::carried(&state, worker).is_some() {

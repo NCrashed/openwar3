@@ -135,6 +135,9 @@ pub struct ObjectTable {
     /// That construction start is an accepted melee-AI Undead plan, whose
     /// self-building work layout is shorter than an attended build.
     pub ai_constructing: bool,
+    /// The accepted Undead plan is a retained supply plan whose cleanup is
+    /// split between its construction start and the next movement update.
+    pub ai_supply_constructing: bool,
     /// An accepted Orc or Night Elf melee-AI building plan is starting.
     /// Unlike the Undead plan it keeps the construction event and its
     /// compact progress state, without making a worker work order.
@@ -143,6 +146,8 @@ pub struct ObjectTable {
     /// layout: a computer-tail part, then the start and event objects.
     ai_construction_tail: Option<u32>,
     ai_construction_start: Option<[u32; 2]>,
+    ai_supply_construction_tail: Vec<u32>,
+    ai_supply_records: Vec<u32>,
     /// Work on finished buildings that ends at a tick: the building and
     /// its workers (`work_ended`).
     pub work_ends: Vec<(u64, u32, Vec<u32>)>,
@@ -261,9 +266,12 @@ impl ObjectTable {
             expiring: None,
             constructing: false,
             ai_constructing: false,
+            ai_supply_constructing: false,
             ai_other_constructing: false,
             ai_construction_tail: None,
             ai_construction_start: None,
+            ai_supply_construction_tail: Vec::new(),
+            ai_supply_records: Vec::new(),
             work_ends: Vec::new(),
             resumed: Vec::new(),
             group_walks: Vec::new(),
@@ -443,6 +451,7 @@ impl ObjectTable {
         for &entry in made[8..14].iter().rev() {
             self.defer(entry, "SetProduce");
         }
+        self.ai_supply_records = vec![made[7], made[16], made[15]];
     }
 
     /// The later phase of a repeated single-worker melee-AI production
@@ -1398,6 +1407,20 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
     if state.table.ai_constructing {
+        if state.table.ai_supply_constructing {
+            for &k in &[6, 5, 10] {
+                if let Some(&entry) = tail.get(k) {
+                    state
+                        .table
+                        .defer(entry, "AI supply construction: computer unit");
+                }
+            }
+            state.table.ai_supply_construction_tail = [11, 9]
+                .into_iter()
+                .filter_map(|k| tail.get(k).copied())
+                .collect();
+            return;
+        }
         // An accepted Undead building plan retains most of the ordinary
         // computer tail. Three records leave in the construction cleanup;
         // one more is interleaved with the start objects below (c-SEA-1,
@@ -7024,7 +7047,40 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
         let progress = state.table.take_n(tick, 2, "construction: progress");
         let timer = state.table.take_n(tick, 3, "construction: timer");
         let work = state.table.take(tick, "work order");
-        let parts = state.table.take_n(tick, 4, "work order: order start");
+        let part_count = if state.table.ai_supply_constructing {
+            3
+        } else {
+            4
+        };
+        let parts = state
+            .table
+            .take_n(tick, part_count, "work order: order start");
+        if state.table.ai_supply_constructing {
+            for &entry in &order {
+                state.table.defer(entry, "build order");
+            }
+            state
+                .table
+                .defer(progress[1], "AI supply construction: progress");
+            state
+                .table
+                .defer(progress[0], "AI supply construction: progress");
+            if let Some([one, event]) = state.table.ai_construction_start.take() {
+                state.table.defer(event, "construction: event");
+                state.table.defer(one, "construction: start");
+            }
+            for entry in std::mem::take(&mut state.table.ai_supply_construction_tail) {
+                state
+                    .table
+                    .defer(entry, "AI supply construction: computer unit");
+            }
+            state.table.defer(timer[1], "AI supply construction: timer");
+            state.table.defer(timer[0], "AI supply construction: timer");
+            if let Some(e) = entries(state, h) {
+                e.work = std::iter::once(work).chain(parts).collect();
+            }
+            return;
+        }
         for &entry in &order {
             state.table.defer(entry, "build order");
         }
@@ -7093,6 +7149,24 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     }
     if turning {
         walk_made(state, h);
+    }
+}
+
+/// Starts the cleanup of a retained Undead supply plan. One plan record is
+/// released with the construction start; its final pair follows one movement
+/// update later (c-SEA-1, turn 63, hub #15).
+pub(super) fn ai_supply_construction_started(state: &mut super::State) {
+    let records = std::mem::take(&mut state.table.ai_supply_records);
+    if let Some(&entry) = records.first() {
+        state
+            .table
+            .defer(entry, "AI supply construction: retained plan");
+    }
+    let release = ow3_math::add(state.move_clock, 0.03f32.to_bits());
+    for &entry in records.iter().skip(1) {
+        state
+            .table
+            .free_at_clock(release, entry, "AI supply construction: retained plan");
     }
 }
 

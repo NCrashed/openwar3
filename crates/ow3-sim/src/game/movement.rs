@@ -1384,7 +1384,10 @@ pub(super) fn start_buildings(state: &mut State) {
             u.harvest = None;
             u.entries.build_order = vec![build_order];
         }
-        let undead = type_id == i32::from_be_bytes(*b"usep");
+        let undead = state
+            .unit(Some(worker))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
         let other = matches!(&type_id.to_be_bytes(), b"oalt" | b"eate");
         state.table.ai_constructing = undead;
         state.table.ai_other_constructing = other;
@@ -1446,7 +1449,16 @@ pub(super) fn start_buildings(state: &mut State) {
         {
             continue;
         }
-        let Some(building) = start_construction(state, h, type_id, site) else {
+        let ai_supply = state.ai_supply_builders.remove(&h);
+        if ai_supply {
+            super::table::ai_supply_construction_started(state);
+        }
+        state.table.ai_constructing = ai_supply;
+        state.table.ai_supply_constructing = ai_supply;
+        let building = start_construction(state, h, type_id, site);
+        state.table.ai_constructing = false;
+        state.table.ai_supply_constructing = false;
+        let Some(building) = building else {
             continue;
         };
         // The other races keep showing their build order (c-SDD-1).
@@ -2740,6 +2752,7 @@ pub(super) fn ai_supply_orders_due(state: &mut State, limit: u32) {
             }
         }
         state.ai_released_builders.remove(&worker);
+        state.ai_supply_builders.insert(worker);
         state.ai_pending_supply.remove(&owner);
     }
 }

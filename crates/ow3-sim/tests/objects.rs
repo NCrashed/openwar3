@@ -774,11 +774,12 @@ fn melee_ai_checksums() {
 /// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
 /// the three standard melee AI scripts, first paid-worker placement and
 /// the queued ordinary-mine state, the first entangled-mine arrivals, the
-/// recycled starting-ghoul transition, first AI construction and the next
-/// ordinary-mine wait: the first sixteen turn checksums.
+/// recycled starting-ghoul transition, the first three AI construction
+/// starts and the next ordinary-mine wait: the first seventeen turn
+/// checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(16)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(17)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -1559,6 +1560,72 @@ fn melee_ai_turn16_objects() {
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
     assert_eq!(ours, expected);
+}
+
+/// All main-table events between the turn-16 and turn-17 checkpoints: the
+/// Orc Altar starts, a peon changes resource state and the Night Elf Altar
+/// starts. The two construction starts also advance the shared generators.
+#[test]
+fn melee_ai_turn17_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn17-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| {
+            !line.starts_with('#') && !line.starts_with("seq") && !line.trim().is_empty()
+        })
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[3] == "take" || words[3] == "free")
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..15 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
+
+    let units = playback.game.units();
+    for (type_id, x, y) in [
+        (i32::from_be_bytes(*b"oalt"), 9312.0f32, 8672.0f32),
+        (i32::from_be_bytes(*b"eate"), 9120.0f32, -6304.0f32),
+    ] {
+        let building = units
+            .iter()
+            .find(|unit| unit.type_id == type_id)
+            .expect("the AI Altar");
+        assert_eq!(
+            (
+                building.x.to_bits(),
+                building.y.to_bits(),
+                building.facing.to_bits(),
+                building.order,
+                building.constructing,
+            ),
+            (x.to_bits(), y.to_bits(), 4.712388515f32.to_bits(), 0, true,)
+        );
+    }
 }
 
 /// `c-SCC-1`'s object table.

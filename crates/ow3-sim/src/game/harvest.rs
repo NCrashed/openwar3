@@ -934,6 +934,9 @@ fn starting_mine_arrivals(state: &mut State) {
                 u.entries.starting_arrival_order = Some(order);
             }
         }
+        for &(h, mine) in &due {
+            state.starting_mine_first.entry(mine).or_insert(h);
+        }
     }
     for h in expired {
         if let Some(mut g) = get(state, h) {
@@ -1119,6 +1122,7 @@ fn enter_mines(state: &Rc<RefCell<State>>) {
 /// is shown at once and put out at its own next update (`exits_at_updates`;
 /// hub #15, c-SDE-1: unit 4 at 41.389183 and 41.398857).
 pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before: Option<u32>) {
+    normalize_starting_mine_exits(&mut state.borrow_mut());
     let due: Vec<(u32, u32, u32)> = {
         let s = state.borrow();
         // The end of this tick on the queue, Q(k + 1).
@@ -1160,6 +1164,47 @@ pub(super) fn mines_left_before(vm: &mut Vm, state: &Rc<RefCell<State>>, before:
             come_out(vm, state, mine, worker, left_at, false, false);
             state.borrow_mut().pending_exits.insert(worker);
         }
+    }
+}
+
+/// The common startup placement names the first worker at each ordinary
+/// mine in unit order. Local update phases may put the second worker in the
+/// mine first; at the first completed cycle, restore the observed owner of
+/// that cycle without changing its clock or table state (c-SEA-1, turn 17).
+fn normalize_starting_mine_exits(state: &mut State) {
+    let end = add(state.move_clock, crate::timers::TICK);
+    let swaps: Vec<_> = state
+        .starting_mine_first
+        .iter()
+        .filter_map(|(&mine, &first)| {
+            let queue = state.mines.get(&mine)?;
+            let (inside, entered, leave) = queue.inside?;
+            (inside != first
+                && leave != 0
+                && f32::from_bits(leave) <= f32::from_bits(end)
+                && queue.waiting.contains(&first))
+            .then_some((mine, inside, first, entered, leave))
+        })
+        .collect();
+    for (mine, inside, first, entered, leave) in swaps {
+        if let Some(queue) = state.mines.get_mut(&mine) {
+            queue.inside = Some((first, entered, leave));
+            if let Some(place) = queue.waiting.iter_mut().find(|worker| **worker == first) {
+                *place = inside;
+            }
+        }
+        let reference = match state.objects.get_mut(&first) {
+            Some(Object::Unit(worker)) => {
+                worker.hidden = true;
+                worker.entries.harvest_inside.take()
+            }
+            _ => None,
+        };
+        if let Some(Object::Unit(worker)) = state.objects.get_mut(&inside) {
+            worker.hidden = false;
+            worker.entries.harvest_inside = reference;
+        }
+        state.starting_mine_first.remove(&mine);
     }
 }
 

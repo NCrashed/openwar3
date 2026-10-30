@@ -128,6 +128,10 @@ pub struct ObjectTable {
     /// That construction start is an accepted melee-AI Undead plan, whose
     /// self-building work layout is shorter than an attended build.
     pub ai_constructing: bool,
+    /// An accepted Orc or Night Elf melee-AI building plan is starting.
+    /// Unlike the Undead plan it keeps the construction event and its
+    /// compact progress state, without making a worker work order.
+    pub ai_other_constructing: bool,
     /// Parts retained between that building's unit layout and construction
     /// layout: a computer-tail part, then the start and event objects.
     ai_construction_tail: Option<u32>,
@@ -247,6 +251,7 @@ impl ObjectTable {
             expiring: None,
             constructing: false,
             ai_constructing: false,
+            ai_other_constructing: false,
             ai_construction_tail: None,
             ai_construction_start: None,
             work_ends: Vec::new(),
@@ -6772,6 +6777,8 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     let event = state.table.take(tick, "construction: event");
     if state.table.ai_constructing {
         state.table.ai_construction_start = Some([one, event]);
+    } else if state.table.ai_other_constructing {
+        // Both stay with the compact AI construction state.
     } else {
         state.table.defer(event, "construction: event");
         state.table.defer(one, "construction: start");
@@ -6811,6 +6818,17 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
         state.table.defer(timer[1], "AI construction: timer");
         if let Some(e) = entries(state, h) {
             e.work = std::iter::once(work).chain(parts).collect();
+        }
+        return;
+    }
+    if state.table.ai_other_constructing {
+        let mut progress = state.table.take_n(tick, 2, "construction: progress");
+        progress.push(state.table.take(tick, "construction: timer"));
+        if let Some(e) = entries(state, building) {
+            e.construction = progress;
+        }
+        for entry in order {
+            state.table.defer(entry, "build order");
         }
         return;
     }

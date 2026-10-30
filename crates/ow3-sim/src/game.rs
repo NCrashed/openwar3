@@ -1244,13 +1244,16 @@ pub struct State {
     /// Accepted melee-AI building plans waiting for their observed engine
     /// start: tick, worker, type, site, its pose when accepted, the build
     /// order record and retained production records.
-    ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>)>,
+    ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>)>,
     /// Retained production records released by later build updates.
     ai_build_followups: Vec<(u64, Vec<u32>)>,
     /// Initial melee-AI miners whose local path reaches an occupied mine at
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
     ai_mine_waits: Vec<(u64, u32, u32)>,
+    /// First worker of each common starting-computer mine arrival, retained
+    /// until that mine's first cycle identifies the observed exiting worker.
+    starting_mine_first: BTreeMap<u32, u32>,
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
@@ -1442,6 +1445,7 @@ impl State {
             ai_builds: Vec::new(),
             ai_build_followups: Vec::new(),
             ai_mine_waits: Vec::new(),
+            starting_mine_first: BTreeMap::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
             engine_started: 0,

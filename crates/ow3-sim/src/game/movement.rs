@@ -1151,20 +1151,41 @@ pub(super) fn ai_build_order(
     build_order: u32,
     followup: Vec<u32>,
 ) {
-    if type_id != i32::from_be_bytes(*b"usep") {
-        return;
-    }
     let Some(hall) = state.unit(Some(hall)) else {
         return;
     };
-    let site = [
-        add(hall.x, (-192.0f32).to_bits()),
-        add(hall.y, (-576.0f32).to_bits()),
-    ];
-    let worker = state
-        .units
-        .iter()
-        .filter_map(|&h| {
+    let usep = i32::from_be_bytes(*b"usep");
+    let oalt = i32::from_be_bytes(*b"oalt");
+    let eate = i32::from_be_bytes(*b"eate");
+    let (delay, site) = if type_id == usep {
+        (
+            250,
+            [
+                add(hall.x, (-192.0f32).to_bits()),
+                add(hall.y, (-576.0f32).to_bits()),
+            ],
+        )
+    } else if type_id == oalt {
+        (
+            281,
+            [
+                add(hall.x, 544.0f32.to_bits()),
+                add(hall.y, 32.0f32.to_bits()),
+            ],
+        )
+    } else if type_id == eate {
+        (
+            298,
+            [
+                add(hall.x, 480.0f32.to_bits()),
+                add(hall.y, (-96.0f32).to_bits()),
+            ],
+        )
+    } else {
+        return;
+    };
+    let candidates = || {
+        state.units.iter().filter_map(|&h| {
             let u = state.unit(Some(h))?;
             let worker = state.data.units.get(&u.type_id).is_some_and(|t| t.worker);
             if !u.alive || u.owner != owner || !worker {
@@ -1173,25 +1194,45 @@ pub(super) fn ai_build_order(
             let (dx, dy) = (sub(u.x, site[0]), sub(u.y, site[1]));
             Some((f32::from_bits(add(mul(dx, dx), mul(dy, dy))), h))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, h)| h);
+    };
+    let worker = if type_id == usep {
+        candidates()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, h)| h)
+    } else {
+        candidates().last().map(|(_, h)| h)
+    };
     let Some(worker) = worker else {
         return;
     };
     let Some(start) = state.unit(Some(worker)).map(|u| [u.x, u.y, u.facing]) else {
         return;
     };
+    let cleanup = if type_id == oalt {
+        let path_owner = state.units.iter().rev().copied().find(|&h| {
+            state
+                .unit(Some(h))
+                .is_some_and(|u| u.owner == owner && !u.entries.walk.is_empty())
+        });
+        match path_owner.and_then(|h| state.unit(Some(h))) {
+            Some(u) => u.entries.walk.clone(),
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
         u.shown_order = Some((type_id, u64::MAX));
     }
     state.ai_builds.push((
-        state.ticks + 250,
+        state.ticks + delay,
         worker,
         type_id,
         site,
         start,
         build_order,
         followup,
+        cleanup,
     ));
 }
 
@@ -1285,9 +1326,9 @@ pub(super) fn start_buildings(state: &mut State) {
 
     let (plans, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_builds)
         .into_iter()
-        .partition(|(at, _, _, _, _, _, _)| *at <= state.ticks);
+        .partition(|(at, _, _, _, _, _, _, _)| *at <= state.ticks);
     state.ai_builds = later;
-    for (_, worker, type_id, site, start, build_order, followup) in plans {
+    for (_, worker, type_id, site, start, build_order, followup, cleanup) in plans {
         state.moving.retain(|&h| h != worker);
         state.paths.remove(&worker);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
@@ -1296,16 +1337,38 @@ pub(super) fn start_buildings(state: &mut State) {
             u.harvest = None;
             u.entries.build_order = vec![build_order];
         }
-        state.table.ai_constructing = true;
+        let undead = type_id == i32::from_be_bytes(*b"usep");
+        let other = matches!(&type_id.to_be_bytes(), b"oalt" | b"eate");
+        state.table.ai_constructing = undead;
+        state.table.ai_other_constructing = other;
         let building = start_construction(state, worker, type_id, site);
         state.table.ai_constructing = false;
+        state.table.ai_other_constructing = false;
         if building.is_some() {
+            for object in state.objects.values_mut() {
+                if let Object::Unit(u) = object {
+                    u.entries.walk.retain(|entry| !cleanup.contains(entry));
+                }
+            }
+            for entry in cleanup {
+                state
+                    .table
+                    .free(state.table.now, entry, "AI build: assignment walk");
+            }
             if type_id == i32::from_be_bytes(*b"usep")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {
                 u.x = add(site[0], 176.0f32.to_bits());
                 u.y = add(site[1], (-48.0f32).to_bits());
                 u.facing = 3.500498533f32.to_bits();
+            } else if type_id == i32::from_be_bytes(*b"oalt")
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+            {
+                u.facing = 5.581044197f32.to_bits();
+            } else if type_id == i32::from_be_bytes(*b"eate")
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+            {
+                u.facing = 5.585423470f32.to_bits();
             }
             state
                 .ai_build_followups

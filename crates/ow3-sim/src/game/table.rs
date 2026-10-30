@@ -95,6 +95,9 @@ pub struct ObjectTable {
     /// the later mixed post-AI cleanup batch. Their origin is known; this
     /// storage does not assign ownership of that batch (c-SEA-1, turn 13).
     pub recycled_guard_cleanup: Vec<u32>,
+    /// Late entangled-mine arrivals whose retained records are visited by
+    /// three following unit-update batches: next update tick, wisp and phase.
+    pub late_wisp_cleanup: Vec<(u64, u32, u8)>,
     /// Arrival-order cleanup of a common starting-worker group. Unit updates
     /// may visit that group in the reverse order of their startup placement.
     pub starting_harvest_left: usize,
@@ -122,6 +125,13 @@ pub struct ObjectTable {
     /// The unit being made is a building whose construction starts
     /// (`unit_made`, `construction_started`).
     pub constructing: bool,
+    /// That construction start is an accepted melee-AI Undead plan, whose
+    /// self-building work layout is shorter than an attended build.
+    pub ai_constructing: bool,
+    /// Parts retained between that building's unit layout and construction
+    /// layout: a computer-tail part, then the start and event objects.
+    ai_construction_tail: Option<u32>,
+    ai_construction_start: Option<[u32; 2]>,
     /// Work on finished buildings that ends at a tick: the building and
     /// its workers (`work_ended`).
     pub work_ends: Vec<(u64, u32, Vec<u32>)>,
@@ -223,6 +233,7 @@ impl ObjectTable {
             ai_harvest_cleanup: Vec::new(),
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
+            late_wisp_cleanup: Vec::new(),
             starting_harvest_left: 0,
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
@@ -235,6 +246,9 @@ impl ObjectTable {
             dying: None,
             expiring: None,
             constructing: false,
+            ai_constructing: false,
+            ai_construction_tail: None,
+            ai_construction_start: None,
             work_ends: Vec::new(),
             resumed: Vec::new(),
             group_walks: Vec::new(),
@@ -1227,6 +1241,19 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     let tail = state
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
+    if state.table.ai_constructing {
+        // An accepted Undead building plan retains most of the ordinary
+        // computer tail. Three records leave in the construction cleanup;
+        // one more is interleaved with the start objects below (c-SEA-1,
+        // turn 15, hub #15).
+        for &k in &[7, 6, tail.len() - 1] {
+            if let Some(&entry) = tail.get(k) {
+                state.table.defer(entry, "AI construction: computer unit");
+            }
+        }
+        state.table.ai_construction_tail = tail.get(10).copied();
+        return;
+    }
     if building && roots_type(state, t) {
         if let Some(&entry) = tail.last() {
             state.table.ai_production.insert(h, entry);
@@ -1559,8 +1586,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .table
             .defer(entries[14 + shift + i], "unit state: limit watch");
     }
-    for &k in making.deferred {
-        state.table.defer(entries[at(k)], "map start: unit");
+    if !state.table.ai_constructing {
+        for &k in making.deferred {
+            state.table.defer(entries[at(k)], "map start: unit");
+        }
     }
     if neutral.is_some() {
         state.table.defer(entries[count - 1], "map start: unit");
@@ -2800,6 +2829,112 @@ pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.retained_late_wisp_walk = true;
         e.stale_update = None;
+    }
+    // The retained arrival is revisited on the fifth shared update after
+    // this boundary, then on the following two updates (c-SEA-1, turn 14).
+    if !state
+        .table
+        .late_wisp_cleanup
+        .iter()
+        .any(|&(_, worker, _)| worker == h)
+    {
+        state
+            .table
+            .late_wisp_cleanup
+            .push((state.table.now + 26, h, 0));
+    }
+}
+
+/// Advances the three observed cleanup updates of a late wisp arrival.
+/// The batches use only records already retained by the workers and by the
+/// current AI harvesting pass; the two takes are transient update records.
+pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
+    let tick = state.table.now;
+    let mut due = Vec::new();
+    state.table.late_wisp_cleanup.retain(|record| {
+        if record.0 <= tick {
+            due.push(*record);
+            false
+        } else {
+            true
+        }
+    });
+    for (_, h, phase) in due {
+        match phase {
+            0 => {
+                state.table.take(tick, "late wisp: update record");
+                let count = state.table.ai_harvest_cleanup.len().min(2);
+                let old_arrival = state
+                    .table
+                    .ai_harvest_cleanup
+                    .drain(..count)
+                    .collect::<Vec<_>>();
+                for entry in old_arrival {
+                    state.table.defer(entry, "late wisp: old arrival");
+                }
+                let records = entries(state, h)
+                    .map(|e| std::mem::take(&mut e.wisp_arrival))
+                    .unwrap_or_default();
+                for entry in records {
+                    state.table.defer(entry, "late wisp: unit record");
+                }
+                state.table.late_wisp_cleanup.push((tick + 6, h, 1));
+            }
+            1 => {
+                let stale = entries(state, h)
+                    .map(|e| {
+                        e.retained_late_wisp_walk = false;
+                        e.stale_update = None;
+                        std::mem::take(&mut e.stale)
+                    })
+                    .unwrap_or_default();
+                for (_, entry) in stale {
+                    state.table.free(tick, entry, "late wisp: walk");
+                }
+                state.table.late_wisp_cleanup.push((tick + 6, h, 2));
+            }
+            2 => {
+                state.table.take(tick, "late wisp: update record");
+                let worker = state
+                    .objects
+                    .iter()
+                    .filter_map(|(&worker, object)| match object {
+                        super::Object::Unit(u) if !u.entries.harvest_arrive.is_empty() => {
+                            let newest = u
+                                .entries
+                                .harvest_arrive
+                                .iter()
+                                .map(|&entry| state.table.creation_of(entry))
+                                .max()
+                                .unwrap_or(0);
+                            Some((newest, worker))
+                        }
+                        _ => None,
+                    })
+                    .max()
+                    .map(|(_, worker)| worker);
+                let arrival = worker
+                    .and_then(|worker| entries(state, worker))
+                    .map(|e| std::mem::take(&mut e.harvest_arrive))
+                    .unwrap_or_default();
+                for entry in arrival {
+                    state.table.defer(entry, "late wisp: retained arrival");
+                }
+                if let Some(worker) = worker {
+                    state.table.late_wisp_cleanup.push((tick + 6, worker, 3));
+                }
+            }
+            _ => {
+                let walk = entries(state, h)
+                    .map(|e| std::mem::take(&mut e.walk))
+                    .unwrap_or_default();
+                for entry in walk {
+                    state
+                        .table
+                        .free(tick, entry, "late wisp: retained worker walk");
+                }
+            }
+        }
     }
 }
 
@@ -6635,8 +6770,12 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     state.table.constructing = false;
     let one = state.table.take(tick, "construction: start");
     let event = state.table.take(tick, "construction: event");
-    state.table.defer(event, "construction: event");
-    state.table.defer(one, "construction: start");
+    if state.table.ai_constructing {
+        state.table.ai_construction_start = Some([one, event]);
+    } else {
+        state.table.defer(event, "construction: event");
+        state.table.defer(one, "construction: start");
+    }
 }
 
 /// The rest of the start: the progress pair, three timers, the worker's
@@ -6650,6 +6789,31 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     let order = entries(state, h)
         .map(|e| std::mem::take(&mut e.build_order))
         .unwrap_or_default();
+    if state.table.ai_constructing {
+        let progress = state.table.take_n(tick, 2, "construction: progress");
+        let timer = state.table.take_n(tick, 3, "construction: timer");
+        let work = state.table.take(tick, "work order");
+        let parts = state.table.take_n(tick, 4, "work order: order start");
+        for &entry in &order {
+            state.table.defer(entry, "build order");
+        }
+        state.table.defer(timer[0], "AI construction: timer");
+        state.table.defer(progress[1], "AI construction: progress");
+        state.table.defer(progress[0], "AI construction: progress");
+        if let Some([one, event]) = state.table.ai_construction_start.take() {
+            state.table.defer(event, "construction: event");
+            state.table.defer(one, "construction: start");
+        }
+        if let Some(entry) = state.table.ai_construction_tail.take() {
+            state.table.defer(entry, "AI construction: computer unit");
+        }
+        state.table.defer(timer[2], "AI construction: timer");
+        state.table.defer(timer[1], "AI construction: timer");
+        if let Some(e) = entries(state, h) {
+            e.work = std::iter::once(work).chain(parts).collect();
+        }
+        return;
+    }
     let progress = state.table.take_n(tick, 2, "construction: progress");
     let timer = state.table.take_n(tick, 3, "construction: timer");
     let work = state.table.take(tick, "work order");

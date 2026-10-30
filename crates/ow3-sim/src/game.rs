@@ -1241,6 +1241,12 @@ pub struct State {
     /// Workers that reached their building sites at this tick's updates,
     /// with the type and the site (SPEC-0026).
     starting: Vec<(u32, i32, [u32; 2])>,
+    /// Accepted melee-AI building plans waiting for their observed engine
+    /// start: tick, worker, type, site, its pose when accepted, the build
+    /// order record and retained production records.
+    ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>)>,
+    /// Retained production records released by later build updates.
+    ai_build_followups: Vec<(u64, Vec<u32>)>,
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
@@ -1429,6 +1435,8 @@ impl State {
             event_time: None,
             regrouping: false,
             starting: Vec::new(),
+            ai_builds: Vec::new(),
+            ai_build_followups: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
             engine_started: 0,
@@ -3909,6 +3917,17 @@ fn register_ai_natives(
                     table::ai_harvest_cleanup(&mut state);
                     for &entry in made[8..14].iter().rev() {
                         state.table.defer(entry, "SetProduce");
+                    }
+                    let hall = ai_town_halls(&state, player).into_iter().next();
+                    if let Some(hall) = hall {
+                        movement::ai_build_order(
+                            &mut state,
+                            player,
+                            hall,
+                            type_id,
+                            made[7],
+                            vec![made[16], made[15]],
+                        );
                     }
                 } else {
                     let made = state.table.take_n(tick, 6, "SetProduce");

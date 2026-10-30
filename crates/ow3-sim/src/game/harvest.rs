@@ -2127,6 +2127,7 @@ fn pending_wisp_arrivals(state: &mut State) {
     if !state.update_now {
         return;
     }
+    super::table::late_wisp_cleanup_updated(state);
     let pending: Vec<u32> = state
         .units
         .iter()

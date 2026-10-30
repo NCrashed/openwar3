@@ -1139,6 +1139,62 @@ pub(super) fn build_order(state: &mut State, h: u32, type_id: i32, target: [u32;
     true
 }
 
+/// Records the observed engine order behind an accepted melee-AI building
+/// plan. The first specified plan is the Undead Crypt next to its first town;
+/// other layouts remain pending further behavioural vectors (c-SEA-1, hub
+/// #15).
+pub(super) fn ai_build_order(
+    state: &mut State,
+    owner: i32,
+    hall: u32,
+    type_id: i32,
+    build_order: u32,
+    followup: Vec<u32>,
+) {
+    if type_id != i32::from_be_bytes(*b"usep") {
+        return;
+    }
+    let Some(hall) = state.unit(Some(hall)) else {
+        return;
+    };
+    let site = [
+        add(hall.x, (-192.0f32).to_bits()),
+        add(hall.y, (-576.0f32).to_bits()),
+    ];
+    let worker = state
+        .units
+        .iter()
+        .filter_map(|&h| {
+            let u = state.unit(Some(h))?;
+            let worker = state.data.units.get(&u.type_id).is_some_and(|t| t.worker);
+            if !u.alive || u.owner != owner || !worker {
+                return None;
+            }
+            let (dx, dy) = (sub(u.x, site[0]), sub(u.y, site[1]));
+            Some((f32::from_bits(add(mul(dx, dx), mul(dy, dy))), h))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, h)| h);
+    let Some(worker) = worker else {
+        return;
+    };
+    let Some(start) = state.unit(Some(worker)).map(|u| [u.x, u.y, u.facing]) else {
+        return;
+    };
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+        u.shown_order = Some((type_id, u64::MAX));
+    }
+    state.ai_builds.push((
+        state.ticks + 250,
+        worker,
+        type_id,
+        site,
+        start,
+        build_order,
+        followup,
+    ));
+}
+
 /// A town hall may not stand this near a gold mine, centre to centre
 /// (SPEC-0026 rule 4: the limit lies above 749 and at most 768).
 /// PROVISIONAL: 768.
@@ -1215,6 +1271,48 @@ pub(super) fn place_allowed(state: &State, owner: i32, type_id: i32, target: [u3
 /// PROVISIONAL: in c-RTI-1 two buildings were started before the timers
 /// of their tick; what decides is SPEC-0026 open question 6.
 pub(super) fn start_buildings(state: &mut State) {
+    let (followups, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_build_followups)
+        .into_iter()
+        .partition(|(at, _)| *at <= state.ticks);
+    state.ai_build_followups = later;
+    for (_, entries) in followups {
+        for entry in entries {
+            state
+                .table
+                .free(state.table.now, entry, "AI build: retained plan");
+        }
+    }
+
+    let (plans, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_builds)
+        .into_iter()
+        .partition(|(at, _, _, _, _, _, _)| *at <= state.ticks);
+    state.ai_builds = later;
+    for (_, worker, type_id, site, start, build_order, followup) in plans {
+        state.moving.retain(|&h| h != worker);
+        state.paths.remove(&worker);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+            (u.x, u.y, u.facing) = (start[0], start[1], start[2]);
+            u.movement = None;
+            u.harvest = None;
+            u.entries.build_order = vec![build_order];
+        }
+        state.table.ai_constructing = true;
+        let building = start_construction(state, worker, type_id, site);
+        state.table.ai_constructing = false;
+        if building.is_some() {
+            if type_id == i32::from_be_bytes(*b"usep")
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+            {
+                u.x = add(site[0], 176.0f32.to_bits());
+                u.y = add(site[1], (-48.0f32).to_bits());
+                u.facing = 3.500498533f32.to_bits();
+            }
+            state
+                .ai_build_followups
+                .push((state.ticks + UPDATE, followup));
+        }
+    }
+
     for (h, type_id, site) in std::mem::take(&mut state.starting) {
         let Some(Object::Unit(u)) = state.objects.get(&h) else {
             continue;

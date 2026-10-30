@@ -654,6 +654,7 @@ pub(super) fn deliveries(state: &mut State) {
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     pending_wisp_arrivals(&mut state.borrow_mut());
     starting_mine_arrivals(&mut state.borrow_mut());
+    ai_mine_waits(&mut state.borrow_mut());
     pay_mines(&mut state.borrow_mut());
     wisp_lumber(&mut state.borrow_mut());
     let mut reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
@@ -764,6 +765,31 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     // The rest of the work on trees; the hits are timers of the queue, in
     // order with the script's (`trees_hit_before`).
     trees_hit_before(vm, state, Some(0), false);
+}
+
+/// Initial melee-AI workers whose observed local path has reached an
+/// occupied ordinary mine enter its regular waiting transition now. This
+/// keeps the queue, worker and table lifecycles in the same machinery as an
+/// ordinary path arrival (c-SEA-1 at 1.470 s, hub #15).
+fn ai_mine_waits(state: &mut State) {
+    let tick = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_mine_waits)
+        .into_iter()
+        .partition(|(at, _, _)| *at <= tick);
+    state.ai_mine_waits = later;
+    for (_, worker, mine) in due {
+        for entry in state.mines.values_mut() {
+            entry.waiting.retain(|&h| h != worker);
+            entry.starting.retain(|&(h, _)| h != worker);
+        }
+        let entry = state.mines.entry(mine).or_default();
+        entry.waiting.push(worker);
+        // This boundary exposes the wait reference and the two arrival
+        // records only. Its walk cleanup starts at the following checkpoint
+        // boundary and is handled when that interval is specified.
+        super::table::harvest_waits(state, worker);
+        super::table::harvest_arrived(state, worker);
+    }
 }
 
 /// Workers whose order is no longer one of gathering keep their load and

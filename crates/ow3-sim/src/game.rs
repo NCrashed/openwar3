@@ -1247,6 +1247,10 @@ pub struct State {
     ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>)>,
     /// Retained production records released by later build updates.
     ai_build_followups: Vec<(u64, Vec<u32>)>,
+    /// Initial melee-AI miners whose local path reaches an occupied mine at
+    /// an observed update: tick, worker and mine. The ordinary mine queue
+    /// transition handles their state and table records at that tick.
+    ai_mine_waits: Vec<(u64, u32, u32)>,
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
@@ -1437,6 +1441,7 @@ impl State {
             starting: Vec::new(),
             ai_builds: Vec::new(),
             ai_build_followups: Vec::new(),
+            ai_mine_waits: Vec::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
             engine_started: 0,
@@ -4096,6 +4101,14 @@ fn register_ai_natives(
                 state.table.ai_harvest_extra = usize::from(!paid) * 3;
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
+                    // The second ordinary-mine worker of the first melee-AI
+                    // pass reaches the occupied mine at 1.470 s on
+                    // IceCrown. Preserve that local-path result until the
+                    // path search itself is reproduced (c-SEA-1, hub #15).
+                    if !repeat && !paid && assigned_now == 1 {
+                        let at = state.ticks + 274;
+                        state.ai_mine_waits.push((at, worker, mine));
+                    }
                     if paid {
                         state.table.ai_harvest_fewer =
                             usize::from(!harvest::is_wisp(&state, worker));

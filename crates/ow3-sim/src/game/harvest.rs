@@ -433,6 +433,12 @@ pub(super) fn waiting(state: &State) -> impl Iterator<Item = u32> + '_ {
     state.mines.values().flat_map(|m| m.waiting.iter().copied())
 }
 
+/// Whether a worker is in the observed initial melee-AI wait placement,
+/// outside the local route of the other starting worker.
+pub(super) fn initial_ai_waiting(state: &State, h: u32) -> bool {
+    state.ai_mine_waiting.contains(&h)
+}
+
 /// Whether worker `h` stands at its work: it waits at a mine (from the
 /// update after its arrival, when it starts to wait) or works at a tree.
 /// The move checks of the updates see it, also those of workers in the
@@ -652,6 +658,7 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    super::table::late_entangled_records_updated(&mut state.borrow_mut());
     pending_wisp_arrivals(&mut state.borrow_mut());
     starting_mine_arrivals(&mut state.borrow_mut());
     ai_mine_waits(&mut state.borrow_mut());
@@ -784,6 +791,7 @@ fn ai_mine_waits(state: &mut State) {
         }
         let entry = state.mines.entry(mine).or_default();
         entry.waiting.push(worker);
+        state.ai_mine_waiting.insert(worker);
         // A worker in the ordinary waiting queue stands with its harvest
         // order still shown. The retained table records keep their own
         // lifetimes after its local path is no longer active.
@@ -800,6 +808,7 @@ fn ai_mine_waits(state: &mut State) {
 /// queue and pending arrival. Its already retained table records keep their
 /// own lifetimes (c-SEA-1, Night Elf Altar at turn 17).
 pub(super) fn builder_started(state: &mut State, worker: u32) {
+    state.ai_mine_waiting.remove(&worker);
     for mine in state.mines.values_mut() {
         mine.waiting.retain(|&h| h != worker);
         mine.starting.retain(|&(h, _)| h != worker);
@@ -850,6 +859,7 @@ fn forget_others(state: &mut State) {
         g.cycling = false;
         g.at_tree = false;
         set(state, h, Some(g));
+        state.ai_mine_waiting.remove(&h);
         for mine in state.mines.values_mut() {
             mine.waiting.retain(|&w| w != h);
         }
@@ -1358,6 +1368,9 @@ fn come_out(
             if going_in.is_some() && entry_waits(s, mine) {
                 super::table::mine_queue_timer(s, mine, start);
             }
+            if let Some(next) = going_in {
+                s.ai_mine_waiting.remove(&next);
+            }
             super::table::harvest_left(s, worker, going_in);
             left <= 0
         };
@@ -1371,6 +1384,7 @@ fn come_out(
             super::widgets::kill_unit(vm, state, Some(mine), None);
             let mut s = state.borrow_mut();
             for w in waiting {
+                s.ai_mine_waiting.remove(&w);
                 movement::stop(&mut s, w);
             }
         }
@@ -1796,6 +1810,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         // It goes in at its update: the queue time of that update
         // (`enter_mines`).
         mine.inside = Some((h, tick, add(state.update_time, IN_MINE_TIME)));
+        state.ai_mine_waiting.remove(&h);
         super::table::harvest_entered(state, h);
         super::table::harvest_arrived(state, h);
         super::table::walk_dropped_at_update(state, h);
@@ -1851,6 +1866,9 @@ fn start_waiting(state: &mut State) {
         } else {
             false
         };
+        if goes_in {
+            state.ai_mine_waiting.remove(&w);
+        }
         // One that goes in is hidden by the entries of this tick.
         if !goes_in {
             // Its walk to the mine ends here, after those going in
@@ -2218,10 +2236,16 @@ fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32, te
     }
     if occupants == 1 {
         // Only the second wisp's two unit records return at the same 0.01 s
-        // boundary at which it starts contributing to the mine. The retained
-        // order record is recreated by the already scheduled resource step.
-        state.table.take_at_q(at, "wisp: entangled-mine record");
-        state.table.take_at_q(at, "wisp: entangled-mine record");
+        // boundary at which it starts contributing to the mine. A later
+        // common engine update replaces the retained pair (c-SEA-1, turns
+        // 10 and 24, hub #15).
+        state.table.late_entangled_records = vec![
+            state.table.take_at_q(at, "wisp: entangled-mine record"),
+            state.table.take_at_q(at, "wisp: entangled-mine record"),
+        ];
+        // PROVISIONAL: the observed update is 284 ticks after this arrival
+        // call (the records themselves materialize one tick later).
+        state.table.late_entangled_update = Some(state.ticks + 284);
     }
 }
 

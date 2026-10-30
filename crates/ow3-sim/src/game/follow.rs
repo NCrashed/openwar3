@@ -303,7 +303,7 @@ fn others(state: &State, h: u32) -> Others {
             // Standing at their work, both also stop its look-ahead
             // (c-RYP-1: peasant 4 at 5449, blocked by peasant 1 at its
             // tree).
-            if super::harvest::standing_at_work(state, o) {
+            if !super::harvest::initial_ai_waiting(state, o) {
                 for &cell in &cells {
                     others.by_cell.entry(cell).or_default().push(o);
                 }

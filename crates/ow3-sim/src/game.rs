@@ -1254,6 +1254,9 @@ pub struct State {
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
     ai_mine_waits: Vec<(u64, u32, u32)>,
+    /// Those initial miners after the observed wait transition. Their
+    /// measured placement is outside another starting worker's local route.
+    ai_mine_waiting: BTreeSet<u32>,
     /// First worker of each common starting-computer mine arrival, retained
     /// until that mine's first cycle identifies the observed exiting worker.
     starting_mine_first: BTreeMap<u32, u32>,
@@ -1449,6 +1452,7 @@ impl State {
             ai_build_followups: Vec::new(),
             ai_worker_updates: Vec::new(),
             ai_mine_waits: Vec::new(),
+            ai_mine_waiting: BTreeSet::new(),
             starting_mine_first: BTreeMap::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),

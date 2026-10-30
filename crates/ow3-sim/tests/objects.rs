@@ -775,12 +775,12 @@ fn melee_ai_checksums() {
 /// the three standard melee AI scripts, first paid-worker placement and
 /// the queued ordinary-mine state, the first entangled-mine arrivals, the
 /// recycled starting-ghoul transition, the first three AI construction
-/// starts, their compact engine updates and the next ordinary-mine wait:
-/// the first nineteen turn
-/// checksums.
+/// starts, their compact engine updates, the next ordinary-mine wait and
+/// the later retained entangled-mine record update: the first twenty-four
+/// turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(19)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(24)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -1754,6 +1754,51 @@ fn melee_ai_turn20_objects() {
     let table = ObjectTable::new(640, Vec::new(), 640);
     let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
     for _ in 0..18 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
+}
+
+/// The interval between the turn-23 and turn-24 checkpoints contains only
+/// the later replacement of two retained entangled-mine records: two takes
+/// at the engine boundary followed by the two old records' cleanup.
+#[test]
+fn melee_ai_turn24_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn24-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| {
+            !line.starts_with('#') && !line.starts_with("seq") && !line.trim().is_empty()
+        })
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[3] == "take" || words[3] == "free")
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..22 {
         assert!(playback.step_slot());
     }
     let start = playback.game.table_log().len();

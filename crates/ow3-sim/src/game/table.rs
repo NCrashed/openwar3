@@ -98,6 +98,11 @@ pub struct ObjectTable {
     /// Late entangled-mine arrivals whose retained records are visited by
     /// three following unit-update batches: next update tick, wisp and phase.
     pub late_wisp_cleanup: Vec<(u64, u32, u8)>,
+    /// The two records made after the second initial wisp enters an
+    /// entangled mine, and their later common engine-update boundary.
+    /// Their owner is deliberately not inferred from that later batch.
+    pub late_entangled_records: Vec<u32>,
+    pub late_entangled_update: Option<u64>,
     /// Arrival-order cleanup of a common starting-worker group. Unit updates
     /// may visit that group in the reverse order of their startup placement.
     pub starting_harvest_left: usize,
@@ -238,6 +243,8 @@ impl ObjectTable {
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
             late_wisp_cleanup: Vec::new(),
+            late_entangled_records: Vec::new(),
+            late_entangled_update: None,
             starting_harvest_left: 0,
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
@@ -2848,6 +2855,31 @@ pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {
             .late_wisp_cleanup
             .push((state.table.now + 26, h, 0));
     }
+}
+
+/// Replaces the retained pair made after the second initial wisp's arrival.
+/// The later batch has no outward unit change and is observed independently
+/// of script calls (c-SEA-1, turn 24, hub #15).
+pub(super) fn late_entangled_records_updated(state: &mut super::State) {
+    if !state
+        .table
+        .late_entangled_update
+        .is_some_and(|at| at <= state.ticks)
+    {
+        return;
+    }
+    state.table.late_entangled_update = None;
+    let tick = state.table.now;
+    let new = state
+        .table
+        .take_n(tick, 2, "entangled mine: retained-record update");
+    for key in std::mem::take(&mut state.table.late_entangled_records) {
+        let entry = state.table.made.remove(&key).unwrap_or(key);
+        state
+            .table
+            .defer(entry, "entangled mine: retained-record update");
+    }
+    state.table.late_entangled_records = new;
 }
 
 /// Advances the three observed cleanup updates of a late wisp arrival.

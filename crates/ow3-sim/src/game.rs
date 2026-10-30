@@ -3836,8 +3836,17 @@ fn register_ai_natives(
         "native MeleeDifficulty takes nothing returns integer",
         Rc::new(move |_, _| Ok(Some(Value::Integer(difficulty)))),
     );
-    // Requested count and the tick of the first accepted production plan.
-    let planned = Rc::new(RefCell::new(BTreeMap::<i32, (i32, u64, bool)>::new()));
+    #[derive(Clone, Copy)]
+    struct ProductionPlan {
+        qty: i32,
+        at: u64,
+        temporary: bool,
+        repeated: bool,
+    }
+
+    // Requested count, acceptance tick and update phase of each production
+    // plan in this player's isolated AI context.
+    let planned = Rc::new(RefCell::new(BTreeMap::<i32, ProductionPlan>::new()));
     let counted = state.clone();
     let counted_plans = planned.clone();
     add(
@@ -3849,7 +3858,7 @@ fn register_ai_natives(
                     + counted_plans
                         .borrow()
                         .get(&type_id)
-                        .map_or(0, |&(qty, _, _)| qty),
+                        .map_or(0, |plan| plan.qty),
             )))
         }),
     );
@@ -3980,12 +3989,12 @@ fn register_ai_natives(
             let temporary = !accepted && worker && qty > 1;
             let later_temporary_worker = worker
                 && qty == 1
-                && planned_at.is_some_and(|(_, at, temporary)| temporary && state.ticks > at);
+                && planned_at.is_some_and(|plan| plan.temporary && state.ticks > plan.at);
             let repeated_single_worker = worker
                 && qty == 1
                 && !harvest::is_wisp_type(&state, type_id)
-                && planned_at.is_some_and(|(_, at, temporary)| {
-                    !temporary && state.ticks >= at.saturating_add(600)
+                && planned_at.is_some_and(|plan| {
+                    !plan.temporary && !plan.repeated && state.ticks >= plan.at.saturating_add(600)
                 });
             if building && supply && qty > 0 {
                 state.ai_pending_supply.entry(player).or_insert(type_id);
@@ -4042,18 +4051,37 @@ fn register_ai_natives(
                 }
             }
             if accepted {
-                production_plans
-                    .borrow_mut()
-                    .insert(type_id, (qty, state.ticks, false));
+                let (gold, lumber) = state
+                    .data
+                    .units
+                    .get(&type_id)
+                    .map_or((0, 0), |unit| (unit.gold_cost, unit.lumber_cost));
+                *state.setup.player_states.entry((player, 1)).or_default() -= gold;
+                *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
+                production_plans.borrow_mut().insert(
+                    type_id,
+                    ProductionPlan {
+                        qty,
+                        at: state.ticks,
+                        temporary: false,
+                        repeated: false,
+                    },
+                );
             } else if repeated_single_worker {
-                production_plans
-                    .borrow_mut()
-                    .insert(type_id, (qty, state.ticks, false));
+                if let Some(plan) = production_plans.borrow_mut().get_mut(&type_id) {
+                    plan.qty = qty;
+                    plan.repeated = true;
+                }
             } else if temporary {
                 production_plans
                     .borrow_mut()
                     .entry(type_id)
-                    .or_insert((1, state.ticks, true));
+                    .or_insert(ProductionPlan {
+                        qty: 1,
+                        at: state.ticks,
+                        temporary: true,
+                        repeated: false,
+                    });
             } else if later_temporary_worker {
                 let update_at = state.ticks + 1;
                 state.ai_worker_updates.push(update_at);
@@ -4061,9 +4089,15 @@ fn register_ai_natives(
                 // to its stable phase. Later retries are silent until the
                 // plan reaches another observed transition (c-SEA-1,
                 // turns 18 and 38, hub #15).
-                production_plans
-                    .borrow_mut()
-                    .insert(type_id, (qty, state.ticks, false));
+                production_plans.borrow_mut().insert(
+                    type_id,
+                    ProductionPlan {
+                        qty,
+                        at: state.ticks,
+                        temporary: false,
+                        repeated: false,
+                    },
+                );
             }
             if worker && (accepted || temporary) {
                 widgets::type_record(&mut state, player, type_id, |q| {

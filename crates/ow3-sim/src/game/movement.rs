@@ -2743,6 +2743,17 @@ pub(super) fn ai_supply_orders_due(state: &mut State, limit: u32) {
         if !order(state, worker, Order::Build { type_id }, type_id, site) {
             continue;
         }
+        let (gold, lumber) = state
+            .data
+            .units
+            .get(&type_id)
+            .map_or((0, 0), |unit| (unit.gold_cost, unit.lumber_cost));
+        *state.setup.player_states.entry((owner, GOLD)).or_default() -= gold;
+        *state
+            .setup
+            .player_states
+            .entry((owner, LUMBER))
+            .or_default() -= lumber;
         ai_reassigned(state, worker, false);
         set_attack_move(state, worker, None);
 

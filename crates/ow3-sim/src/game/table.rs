@@ -399,19 +399,25 @@ impl ObjectTable {
         self.timed_w.push((clock, AI_PRODUCE_AT, "SetProduce"));
     }
 
-    /// Replaces the retained pair at a world-clock unit update. The new
-    /// pair is made at the update and the old pair is released 0.0001 s
-    /// later (c-SEA-1, turn 37, hub #15).
+    /// Schedules the next periodic replacement of the retained pair made
+    /// after the second initial wisp enters an entangled mine.
     pub fn late_entangled_records_at_clock(&mut self, clock: u32) {
-        let new = vec![
-            self.take_at_clock(clock, "scheduled unit update"),
-            self.take_at_clock(clock, "scheduled unit update"),
-        ];
+        self.timed_w
+            .push((clock, LATE_ENTANGLED_UPDATE_AT, "scheduled unit update"));
+    }
+
+    /// Replaces that pair at its world-clock update. The replacement repeats
+    /// every 1.2501 s; each old pair is released 0.0001 s after the new pair
+    /// is made (c-SEA-1, turns 24, 37 and 49, hub #15).
+    fn late_entangled_records_update(&mut self, tick: u64, clock: u32) {
+        let new = self.take_n(tick, 2, "scheduled unit update");
         let release = ow3_math::add(clock, 0.0001f32.to_bits());
         for entry in std::mem::take(&mut self.late_entangled_records) {
             self.free_at_clock(release, entry, "scheduled unit update");
         }
         self.late_entangled_records = new;
+        let next = ow3_math::add(clock, 1.2501f32.to_bits());
+        self.late_entangled_records_at_clock(next);
     }
 
     fn ai_produce(&mut self, tick: u64) {
@@ -521,6 +527,9 @@ impl ObjectTable {
         for d in &mut due {
             if d.1 == AI_PRODUCE_AT {
                 self.ai_produce(tick);
+                continue;
+            } else if d.1 == LATE_ENTANGLED_UPDATE_AT {
+                self.late_entangled_records_update(tick, d.0);
                 continue;
             } else if d.1 == TAKE_AT {
                 d.1 = self.take(tick, d.2);
@@ -3019,6 +3028,8 @@ pub(super) fn late_entangled_records_updated(state: &mut super::State) {
             .defer(entry, "entangled mine: retained-record update");
     }
     state.table.late_entangled_records = new;
+    let next = ow3_math::add(state.move_clock, 1.2501f32.to_bits());
+    state.table.late_entangled_records_at_clock(next);
 }
 
 /// Advances the two observed cleanup updates of a late wisp arrival. The
@@ -6277,6 +6288,7 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
 const TAKE_AT: u32 = u32::MAX;
 /// A repeated single-worker AI production plan due on the world clock.
 const AI_PRODUCE_AT: u32 = u32::MAX - 1;
+const LATE_ENTANGLED_UPDATE_AT: u32 = u32::MAX - 2;
 /// The keys of `ObjectTable::take_at_q`, and its mark for the making.
 const MADE_KEY: u32 = 0x2000_0000;
 const MADE_NOW: u32 = 0x4000_0000;

@@ -989,11 +989,19 @@ fn starting_mine_arrivals(state: &mut State) {
         }
     }
     for h in expired {
+        let arrives_now = due.iter().any(|&(worker, _)| worker == h);
         if let Some(mut g) = get(state, h) {
             g.starting_computer_mine = false;
             g.starting_mine_at = None;
             g.starting_mine_reached = false;
             set(state, h, Some(g));
+        }
+        // Only the second member of the common arrival group keeps its
+        // automatic-start records for its later order resumption. Workers
+        // outside that group use the ordinary delivery lifecycle once they
+        // eventually reach the mine (c-SEA-1, turns 42 and 53, hub #15).
+        if !arrives_now && let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
+            worker.entries.computer_harvest = false;
         }
     }
     for (h, mine) in due {

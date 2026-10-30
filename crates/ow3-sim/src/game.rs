@@ -3997,10 +3997,6 @@ fn register_ai_natives(
                     .map(|(&owner, &type_id)| (at, owner, type_id))
                     .collect();
                 state.ai_supply_orders.extend(pending);
-                // PROVISIONAL: this independently observed unit update is
-                // 0.245136 s after the repeated production-plan call.
-                let update = ow3_math::add(state.timers.time(), 0.245136f32.to_bits());
-                state.table.late_entangled_records_at_clock(update);
             } else if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {

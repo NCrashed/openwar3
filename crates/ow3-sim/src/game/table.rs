@@ -428,6 +428,20 @@ impl ObjectTable {
         }
     }
 
+    /// The later phase of a repeated single-worker melee-AI production
+    /// plan. It replaces the retained return-order state of that player's
+    /// worker and keeps five parts of the new plan until the next phase.
+    fn ai_produce_followup(&mut self, tick: u64, cleanup: Vec<u32>) {
+        let made = self.take_n(tick, 19, "AI production: followup");
+        self.free(tick, made[16], "AI production: followup");
+        for entry in cleanup {
+            self.defer(entry, "AI production: old return order");
+        }
+        for &entry in made[11..16].iter().rev() {
+            self.defer(entry, "AI production: followup");
+        }
+    }
+
     /// Whether a timer's free of `entry` may join the 0.0001 s frees: not
     /// one making an object, nor the free of one not made yet.
     fn movable(&self, entry: u32) -> bool {
@@ -599,6 +613,37 @@ impl ObjectTable {
         for (_, entry, tag) in due {
             self.free(tick, entry, tag);
         }
+    }
+}
+
+/// Runs the later world-clock phases of repeated single-worker melee-AI
+/// production plans. The retained eight-part return order identifies the
+/// worker state replaced by this phase (c-SEA-1, turn 41, hub #15).
+pub(super) fn ai_produce_followups_due(state: &mut super::State, limit: u32) {
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_produce_followups)
+        .into_iter()
+        .partition(|&(at, _)| f32::from_bits(at) <= f32::from_bits(limit));
+    state.ai_produce_followups = later;
+    for (_, owner) in due {
+        let worker = state.units.iter().copied().find(|&h| {
+            state.objects.get(&h).is_some_and(|object| match object {
+                super::Object::Unit(u) => {
+                    u.owner == owner
+                        && u.alive
+                        && u.entries.order.len() == 8
+                        && state.data.units.get(&u.type_id).is_some_and(|t| t.worker)
+                }
+                _ => false,
+            })
+        });
+        let cleanup = worker
+            .and_then(|h| state.objects.get_mut(&h))
+            .and_then(|object| match object {
+                super::Object::Unit(u) => Some(std::mem::take(&mut u.entries.order)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        state.table.ai_produce_followup(state.table.now, cleanup);
     }
 }
 

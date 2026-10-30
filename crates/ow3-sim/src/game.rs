@@ -1276,6 +1276,9 @@ pub struct State {
     /// Compact engine records due after a later check of a pending worker
     /// production plan.
     ai_worker_updates: Vec<u64>,
+    /// Later engine-update phases of repeated single-worker production
+    /// plans: world-clock expiry and player.
+    ai_produce_followups: Vec<(u32, i32)>,
     /// Supply-building requests retained by the melee AI after SetProduce
     /// declined them, by player.
     ai_pending_supply: BTreeMap<i32, i32>,
@@ -1487,6 +1490,7 @@ impl State {
             ai_builds: Vec::new(),
             ai_build_followups: Vec::new(),
             ai_worker_updates: Vec::new(),
+            ai_produce_followups: Vec::new(),
             ai_pending_supply: BTreeMap::new(),
             ai_supply_orders: Vec::new(),
             ai_released_builders: BTreeSet::new(),
@@ -1640,6 +1644,7 @@ impl State {
         // The world clock's timers of the tick (a corpse's end).
         let clock = add(self.move_clock, crate::timers::TICK);
         movement::ai_supply_orders_due(self, clock);
+        table::ai_produce_followups_due(self, clock);
         self.table.flush_clock(tick, clock);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
         let before = self.object_ticks.len() + self.object_timers.len();
@@ -3983,6 +3988,9 @@ fn register_ai_natives(
             if repeated_single_worker {
                 let at = ow3_math::add(state.timers.time(), 0.13f32.to_bits());
                 state.table.ai_produce_at_clock(at);
+                state
+                    .ai_produce_followups
+                    .push((ow3_math::add(at, 0.56f32.to_bits()), player));
                 let pending: Vec<_> = state
                     .ai_pending_supply
                     .iter()

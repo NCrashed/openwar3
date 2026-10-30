@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use ow3_formats::replay::Replay;
 use ow3_sim::checksum::{ICECROWN_TEST, Parts, Statics, time_part, turn_checksum, turns};
+use ow3_sim::game::follow::PathEventKind;
 use ow3_sim::game::table::ObjectTable;
 use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
@@ -780,10 +781,10 @@ fn melee_ai_checksums() {
 /// release, the second AI harvest-assignment pass and the following worker
 /// production-plan update, and the next retained-record update before an
 /// ordinary-mine exit and the following silent AI-plan retry: the first
-/// thirty-eight turn checksums.
+/// forty turn checksums.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(38)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(40)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -1066,6 +1067,196 @@ fn melee_ai_orc_peon_movements() {
             "entry {entry} at tick {tick}: expected ({x}, {y}), facing {facing}, order {order}; got ({observed_x}, {observed_y}), facing {observed_facing}, order {observed_order}",
         );
     }
+}
+
+/// The released Undead builder stays at its Crypt-side pose while the
+/// repeated AI harvest pass shows a gold order, then takes the pending
+/// Ziggurat order atomically between the observed 5-ms samples.
+#[test]
+fn melee_ai_undead_builder_movement() {
+    type Row = (u64, String, f32, f32, f32, i32);
+
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.uaco-11618-movement-expanded.tsv"))
+    else {
+        return;
+    };
+    let expected: Vec<Row> = text
+        .lines()
+        .filter(|line| !line.starts_with("row_kind"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| {
+            words[0] == "movement-update"
+                || words[0] == "order-boundary-old"
+                || words[0] == "order-boundary-new"
+        })
+        .map(|words| {
+            let clock: f64 = words[2].parse().unwrap();
+            (
+                (clock * 200.0).round() as u64,
+                words[0].to_owned(),
+                words[3].parse().unwrap(),
+                words[4].parse().unwrap(),
+                words[5].parse().unwrap(),
+                words[6].split('/').next().unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+
+    while playback.game.ticks() < 600 {
+        assert!(playback.step_tick());
+    }
+    let acolyte = playback
+        .game
+        .units()
+        .into_iter()
+        .find(|unit| {
+            unit.owner == 2
+                && unit.type_id == i32::from_be_bytes(*b"uaco")
+                && unit.x.to_bits() == 8752.0f32.to_bits()
+                && unit.y.to_bits() == 4176.0f32.to_bits()
+        })
+        .expect("released Crypt builder at its observed pose")
+        .handle;
+    let last_tick = expected.iter().map(|row| row.0).max().unwrap();
+    let mut snapshots = BTreeMap::new();
+    while playback.game.ticks() <= last_tick {
+        let tick = playback.game.ticks();
+        let unit = playback
+            .game
+            .units()
+            .into_iter()
+            .find(|unit| unit.handle == acolyte)
+            .unwrap();
+        snapshots.insert(tick, (unit.x, unit.y, unit.facing, unit.order));
+        assert!(playback.step_tick());
+    }
+    for (tick, phase, x, y, facing, order) in expected {
+        let observed = snapshots[&tick];
+        assert_eq!(
+            (
+                observed.0.to_bits(),
+                observed.1.to_bits(),
+                observed.2.to_bits(),
+                observed.3,
+            ),
+            (x.to_bits(), y.to_bits(), facing.to_bits(), order),
+            "{phase} at tick {tick}: expected ({x}, {y}), facing {facing}, order {order}; got ({}, {}), facing {}, order {}",
+            observed.0,
+            observed.1,
+            observed.2,
+            observed.3,
+        );
+    }
+}
+
+/// The pending Ziggurat builder's movement through its first blocked/retry:
+/// every observed 30-ms agent state, the blocking event and its synchronized
+/// script-generator draw before turn 40.
+#[test]
+fn melee_ai_undead_builder_block() {
+    type Row = (u64, f32, f32, f32, f32);
+
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.movement-3.75-3.95.tsv")) else {
+        return;
+    };
+    let expected: Vec<Row> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("row_kind"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[0] == "movement-update" && words[3] == "11618")
+        .map(|words| {
+            let clock: f64 = words[1].parse().unwrap();
+            (
+                (clock * 200.0).round() as u64,
+                words[12].parse().unwrap(),
+                words[13].parse().unwrap(),
+                words[14].parse().unwrap(),
+                words[15].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    playback.game.state.borrow_mut().agent_trace = Some(Vec::new());
+    playback.game.state.borrow_mut().path_trace = Some(Vec::new());
+
+    while playback.game.ticks() < 600 {
+        assert!(playback.step_tick());
+    }
+    let acolyte = playback
+        .game
+        .units()
+        .into_iter()
+        .find(|unit| {
+            unit.owner == 2
+                && unit.type_id == i32::from_be_bytes(*b"uaco")
+                && unit.x.to_bits() == 8752.0f32.to_bits()
+                && unit.y.to_bits() == 4176.0f32.to_bits()
+        })
+        .unwrap()
+        .handle;
+    let last_tick = expected.iter().map(|row| row.0).max().unwrap();
+    while playback.game.ticks() <= last_tick + 1 {
+        assert!(playback.step_tick());
+    }
+    let state = playback.game.state.borrow();
+    let [min_x, min_y] = state.world_bounds[..2].try_into().unwrap();
+    let records: BTreeMap<_, _> = state
+        .agent_trace
+        .as_deref()
+        .unwrap()
+        .iter()
+        .filter(|&&(_, h, ..)| h == acolyte)
+        .map(|&(tick, _, position, velocity, _, _)| {
+            (
+                tick,
+                (
+                    f32::from_bits(ow3_math::sub(position[0], min_x ^ 0x8000_0000)),
+                    f32::from_bits(ow3_math::sub(position[1], min_y ^ 0x8000_0000)),
+                    f32::from_bits(velocity[0]),
+                    f32::from_bits(velocity[1]),
+                ),
+            )
+        })
+        .collect();
+    for (tick, x, y, vx, vy) in expected {
+        let observed = records[&(tick + 1)];
+        assert_eq!(
+            (
+                observed.0.to_bits(),
+                observed.1.to_bits(),
+                observed.2.to_bits(),
+                observed.3.to_bits(),
+            ),
+            (x.to_bits(), y.to_bits(), vx.to_bits(), vy.to_bits()),
+            "agent at tick {tick}: expected ({x}, {y}) v=({vx}, {vy}); got ({}, {}) v=({}, {})",
+            observed.0,
+            observed.1,
+            observed.2,
+            observed.3,
+        );
+    }
+    assert!(state.path_trace.as_deref().unwrap().iter().any(|event| {
+        event.tick == 775 && event.a == acolyte && event.kind == PathEventKind::Blocked
+    }));
 }
 
 /// The main-table activity of the three AI batches at world clock 0.100,
@@ -2148,6 +2339,50 @@ fn melee_ai_turn38_objects() {
     let table = ObjectTable::new(640, Vec::new(), 640);
     let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
     for _ in 0..36 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let ours: Vec<_> = playback.game.table_log()[start..]
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
+}
+
+/// The main-table interval from the turn-39 checkpoint through the
+/// turn-40 checkpoint is silent; only the script generator changes.
+#[test]
+fn melee_ai_turn40_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn40-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| {
+            !line.starts_with('#') && !line.starts_with("seq") && !line.trim().is_empty()
+        })
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[3] == "take" || words[3] == "free")
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..38 {
         assert!(playback.step_slot());
     }
     let start = playback.game.table_log().len();

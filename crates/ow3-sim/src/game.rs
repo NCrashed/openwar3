@@ -489,6 +489,7 @@ fn construction(state: &mut State, tick: u64) {
             _ => Vec::new(),
         };
         if !release.is_empty() {
+            state.ai_released_builders.insert(h);
             // The acolyte's one-second construction order ends in an engine
             // update. Its retained plan records surround that update's
             // transient record in their observed cleanup order (c-SEA-1,
@@ -1275,6 +1276,15 @@ pub struct State {
     /// Compact engine records due after a later check of a pending worker
     /// production plan.
     ai_worker_updates: Vec<u64>,
+    /// Supply-building requests retained by the melee AI after SetProduce
+    /// declined them, by player.
+    ai_pending_supply: BTreeMap<i32, i32>,
+    /// Retained supply plans that become worker orders on the world clock:
+    /// expiry, player and building type.
+    ai_supply_orders: Vec<(u32, i32, i32)>,
+    /// Undead AI builders released from an earlier construction and held at
+    /// that construction's side until a pending plan reuses them.
+    ai_released_builders: BTreeSet<u32>,
     /// Initial melee-AI miners whose local path reaches an occupied mine at
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
@@ -1477,6 +1487,9 @@ impl State {
             ai_builds: Vec::new(),
             ai_build_followups: Vec::new(),
             ai_worker_updates: Vec::new(),
+            ai_pending_supply: BTreeMap::new(),
+            ai_supply_orders: Vec::new(),
+            ai_released_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
             ai_mine_waiting: BTreeSet::new(),
             starting_mine_first: BTreeMap::new(),
@@ -1626,6 +1639,7 @@ impl State {
         self.table.flush_q(tick, limit);
         // The world clock's timers of the tick (a corpse's end).
         let clock = add(self.move_clock, crate::timers::TICK);
+        movement::ai_supply_orders_due(self, clock);
         self.table.flush_clock(tick, clock);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
         let before = self.object_ticks.len() + self.object_timers.len();
@@ -3963,9 +3977,18 @@ fn register_ai_natives(
                 && planned_at.is_some_and(|(_, at, temporary)| {
                     !temporary && state.ticks >= at.saturating_add(600)
                 });
+            if building && supply && qty > 0 {
+                state.ai_pending_supply.entry(player).or_insert(type_id);
+            }
             if repeated_single_worker {
                 let at = ow3_math::add(state.timers.time(), 0.13f32.to_bits());
                 state.table.ai_produce_at_clock(at);
+                let pending: Vec<_> = state
+                    .ai_pending_supply
+                    .iter()
+                    .map(|(&owner, &type_id)| (at, owner, type_id))
+                    .collect();
+                state.ai_supply_orders.extend(pending);
                 // PROVISIONAL: this independently observed unit update is
                 // 0.245136 s after the repeated production-plan call.
                 let update = ow3_math::add(state.timers.time(), 0.245136f32.to_bits());
@@ -4213,6 +4236,13 @@ fn register_ai_natives(
                         table::retain_repeated_harvest_walk(&mut state, worker);
                     }
                     movement::ai_reassigned(&mut state, worker);
+                    let reserved_undead_builder =
+                        state.ai_builds.iter().any(|(_, h, type_id, ..)| {
+                            *h == worker && type_id.to_be_bytes() == *b"usep"
+                        });
+                    if reserved_undead_builder || state.ai_released_builders.contains(&worker) {
+                        movement::hold_ai_order(&mut state, worker);
+                    }
                     // The second ordinary-mine worker of the first melee-AI
                     // pass reaches the occupied mine at 1.470 s on
                     // IceCrown. Preserve that local-path result until the

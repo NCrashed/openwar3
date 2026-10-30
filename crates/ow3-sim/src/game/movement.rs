@@ -240,6 +240,9 @@ pub struct Moving {
     /// A moving initial melee-AI reassignment stands for the whole next
     /// update, not merely the lost movement tick of an ordinary restart.
     ai_restart: bool,
+    /// A reserved Undead AI builder keeps its outward order but stands at
+    /// its assignment pose until the corresponding construction boundary.
+    ai_held: bool,
     /// A point order of a player stopped it: it stops after the motion
     /// of the next tick (SPEC-0019).
     stop_after_step: bool,
@@ -590,6 +593,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             remade_search: false,
             walk_steps: None,
             drop_ready: false,
+            ai_held: false,
             ..m
         },
         None => Moving {
@@ -613,6 +617,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             skip: false,
             ai_standing: false,
             ai_restart: false,
+            ai_held: false,
             stop_after_step: false,
             halt_next: false,
             reaction: None,
@@ -1262,6 +1267,9 @@ pub(super) fn ai_build_order(
         followup,
         cleanup,
     ));
+    if type_id == usep {
+        hold_ai_order(state, worker);
+    }
 }
 
 /// A town hall may not stand this near a gold mine, centre to centre
@@ -2639,6 +2647,90 @@ pub(super) fn ai_reassigned(state: &mut State, h: u32) {
     }
 }
 
+/// Keeps a reserved Undead AI builder at its assignment pose while retaining
+/// the public order and target assigned by the current AI pass.
+pub(super) fn hold_ai_order(state: &mut State, h: u32) {
+    let facing = state.unit(Some(h)).map(|u| u.facing);
+    if let (Some(facing), Some(Object::Unit(u))) = (facing, state.objects.get_mut(&h))
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.walking = false;
+        m.velocity = [0, 0];
+        m.heading = facing;
+        m.facing_step = 0;
+        m.ai_standing = false;
+        m.ai_restart = false;
+        m.ai_held = true;
+    }
+}
+
+/// Turns a retained melee-AI supply plan into the released builder's world
+/// order at its observed world-clock boundary. The first specified layout is
+/// the Undead opening Ziggurat on IceCrown (hub #15).
+pub(super) fn ai_supply_orders_due(state: &mut State, limit: u32) {
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_supply_orders)
+        .into_iter()
+        .partition(|&(at, _, _)| f32::from_bits(at) <= f32::from_bits(limit));
+    state.ai_supply_orders = later;
+    for (at, owner, type_id) in due {
+        let uzig = i32::from_be_bytes(*b"uzig");
+        if type_id != uzig {
+            continue;
+        }
+        let Some(hall) = super::ai_town_halls(state, owner)
+            .into_iter()
+            .next()
+            .and_then(|h| state.unit(Some(h)).map(|u| [u.x, u.y]))
+        else {
+            continue;
+        };
+        let site = [
+            add(hall[0], 544.0f32.to_bits()),
+            add(hall[1], (-224.0f32).to_bits()),
+        ];
+        let Some(worker) = state.ai_released_builders.iter().copied().find(|&h| {
+            state.unit(Some(h)).is_some_and(|u| {
+                u.owner == owner
+                    && u.alive
+                    && state.data.units.get(&u.type_id).is_some_and(|t| t.worker)
+            })
+        }) else {
+            continue;
+        };
+        if !order(state, worker, Order::Build { type_id }, type_id, site) {
+            continue;
+        }
+        ai_reassigned(state, worker);
+        set_attack_move(state, worker, None);
+
+        // The retained harvest agent is committed at this boundary. Its
+        // observed pose is offset from the Ziggurat site; the general layout
+        // of later AI supply plans remains to be specified.
+        let pose = [
+            add(site[0], (-515.931640625f32).to_bits()),
+            add(site[1], (-415.431640625f32).to_bits()),
+        ];
+        let facing = 5.510496616f32.to_bits();
+        let min = [state.world_bounds[0], state.world_bounds[1]];
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+            (u.x, u.y, u.facing) = (pose[0], pose[1], facing);
+            u.entries.walk_ready = true;
+            if let Some(m) = u.movement.as_mut() {
+                m.origin = relative(pose, min);
+                m.velocity = [0, 0];
+                m.walking = false;
+                // The released builder's public facing trails its walking
+                // heading by one facing-interpolation step at this boundary.
+                m.heading = add(facing, 0.15f32.to_bits());
+                m.facing_step = 0;
+                m.since = at;
+            }
+        }
+        state.ai_released_builders.remove(&worker);
+        state.ai_pending_supply.remove(&owner);
+    }
+}
+
 /// Unit `h` stops where it is with a commit, walking or not (a creep
 /// giving up its chase, SPEC-0030; c-RXD-1: creeps 6 and 7 at 7788).
 pub(super) fn stop_commit(state: &mut State, h: u32) {
@@ -3408,7 +3500,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             w.2 += 1;
         }
         // Still in the reaction delay: the unit stands.
-        let waiting = m.reaction_end.is_some()
+        let waiting = m.ai_held
+            || m.reaction_end.is_some()
             || m.reaction.is_some_and(|(from, delay, earliest)| {
                 let waited = mul(i2r(tick as i32 - from as i32), crate::timers::TICK);
                 tick < earliest || real_of(waited) < real_of(delay)

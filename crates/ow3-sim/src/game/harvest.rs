@@ -1931,7 +1931,7 @@ pub(super) fn computer_mine(state: &State, h: u32) -> Option<u32> {
         })
     });
     let at = hall.and_then(|b| state.unit(Some(b))).map(|u| (u.x, u.y))?;
-    let mines = [*b"ngol", *b"ugol", *b"egol"].map(i32::from_be_bytes);
+    let mine = i32::from_be_bytes(*b"ngol");
     let distance = |u: &super::Unit| {
         let (dx, dy) = (
             f32::from_bits(u.x) - f32::from_bits(at.0),
@@ -1946,7 +1946,7 @@ pub(super) fn computer_mine(state: &State, h: u32) -> Option<u32> {
         .filter(|&m| {
             state
                 .unit(Some(m))
-                .is_some_and(|u| u.alive && mines.contains(&u.type_id))
+                .is_some_and(|u| u.alive && u.type_id == mine)
         })
         .min_by(|&a, &b| {
             let (da, db) = (

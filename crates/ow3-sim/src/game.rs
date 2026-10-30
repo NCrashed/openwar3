@@ -3958,7 +3958,15 @@ fn register_ai_natives(
             let later_temporary_worker = worker
                 && qty == 1
                 && planned_at.is_some_and(|(_, at, temporary)| temporary && state.ticks > at);
-            if accepted || temporary {
+            let repeated_single_worker = worker
+                && qty == 1
+                && planned_at.is_some_and(|(_, at, temporary)| {
+                    !temporary && state.ticks >= at.saturating_add(600)
+                });
+            if repeated_single_worker {
+                let at = ow3_math::add(state.timers.time(), 0.13f32.to_bits());
+                state.table.ai_produce_at_clock(at);
+            } else if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {
                     let made = state.table.take_n(tick, 17, "SetProduce");
@@ -3970,7 +3978,10 @@ fn register_ai_natives(
                         state.table.defer(entry, "SetProduce");
                     }
                     let hall = ai_town_halls(&state, player).into_iter().next();
-                    if let Some(hall) = hall {
+                    if accepted
+                        && building
+                        && let Some(hall) = hall
+                    {
                         movement::ai_build_order(
                             &mut state,
                             player,
@@ -3995,6 +4006,10 @@ fn register_ai_natives(
                 }
             }
             if accepted {
+                production_plans
+                    .borrow_mut()
+                    .insert(type_id, (qty, state.ticks, false));
+            } else if repeated_single_worker {
                 production_plans
                     .borrow_mut()
                     .insert(type_id, (qty, state.ticks, false));

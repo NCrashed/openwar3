@@ -1455,9 +1455,11 @@ pub(super) fn start_buildings(state: &mut State) {
                 .unit(Some(h))
                 .and_then(|u| state.data.units.get(&u.type_id))
                 .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
-        if ai_supply {
-            super::table::ai_supply_construction_started(state);
-        }
+        let supply_release = if ai_supply {
+            super::table::ai_supply_construction_started(state)
+        } else {
+            Vec::new()
+        };
         state.table.ai_constructing = ai_supply;
         state.table.ai_supply_constructing = ai_supply;
         let building = start_construction(state, h, type_id, site);
@@ -1470,6 +1472,9 @@ pub(super) fn start_buildings(state: &mut State) {
         // has one final worker update seven ticks before the one-second
         // build-order release (c-SEA-1, turn 72, hub #15).
         if undead_supply {
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.entries.ai_build_release = supply_release;
+            }
             state
                 .ai_worker_updates
                 .push(state.ticks + RELEASE_TICKS - 7);

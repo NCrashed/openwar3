@@ -442,7 +442,7 @@ impl ObjectTable {
     fn ai_produce(&mut self, tick: u64) {
         let made = self.take_n(tick, 17, "SetProduce");
         self.free(tick, made[14], "SetProduce");
-        self.take(tick, "SetProduce");
+        let final_record = self.take(tick, "SetProduce");
         self.defer(made[1], "SetProduce");
         for entry in std::mem::take(&mut self.ai_harvest_cleanup) {
             self.defer(entry, "AI harvest: plan cleanup");
@@ -451,7 +451,18 @@ impl ObjectTable {
         for &entry in made[8..14].iter().rev() {
             self.defer(entry, "SetProduce");
         }
-        self.ai_supply_records = vec![made[7], made[16], made[15]];
+        self.ai_supply_records = vec![
+            made[7],
+            made[16],
+            made[15],
+            made[6],
+            made[5],
+            made[4],
+            made[3],
+            made[2],
+            made[0],
+            final_record,
+        ];
     }
 
     /// The later phase of a repeated single-worker melee-AI production
@@ -7160,10 +7171,16 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
 }
 
 /// Starts the cleanup of a retained Undead supply plan. One plan record is
-/// released with the construction start; its final pair follows one movement
-/// update later (c-SEA-1, turn 63, hub #15).
-pub(super) fn ai_supply_construction_started(state: &mut super::State) {
-    let records = std::mem::take(&mut state.table.ai_supply_records);
+/// released with the construction start; its next pair follows one movement
+/// update later, and the returned records stay with the builder until its
+/// one-second construction order ends (c-SEA-1, turns 63 and 73, hub #15).
+pub(super) fn ai_supply_construction_started(state: &mut super::State) -> Vec<u32> {
+    let mut records = std::mem::take(&mut state.table.ai_supply_records);
+    let retained = if records.len() > 3 {
+        records.split_off(3)
+    } else {
+        Vec::new()
+    };
     if let Some(&entry) = records.first() {
         state
             .table
@@ -7175,6 +7192,7 @@ pub(super) fn ai_supply_construction_started(state: &mut super::State) {
             .table
             .free_at_clock(release, entry, "AI supply construction: retained plan");
     }
+    retained
 }
 
 /// Worker `h` faces `building` and its work begins (c-SCA-1: 6.959734, two

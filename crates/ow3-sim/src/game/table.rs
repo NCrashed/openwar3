@@ -455,9 +455,10 @@ impl ObjectTable {
     }
 
     /// The later phase of a repeated single-worker melee-AI production
-    /// plan. It replaces the retained return-order state of that player's
-    /// worker and keeps five parts of the new plan until the next phase.
-    fn ai_produce_followup(&mut self, tick: u64, clock: u32, cleanup: Vec<u32>) {
+    /// plan. It replaces the return-order state of that player's worker,
+    /// returning the nine parts retained until the worker leaves its mine;
+    /// the other retained pairs have their independently observed releases.
+    fn ai_produce_followup(&mut self, tick: u64, clock: u32, cleanup: Vec<u32>) -> Vec<u32> {
         let made = self.take_n(tick, 19, "AI production: followup");
         self.free(tick, made[16], "AI production: followup");
         for entry in cleanup {
@@ -474,6 +475,7 @@ impl ObjectTable {
         for &entry in [made[18], made[17]].iter() {
             self.free_at_clock(late_release, entry, "AI production: retained record");
         }
+        made[..9].iter().rev().copied().collect()
     }
 
     /// Whether a timer's free of `entry` may join the 0.0001 s frees: not
@@ -683,9 +685,14 @@ pub(super) fn ai_produce_followups_due(state: &mut super::State, limit: u32) {
                 _ => None,
             })
             .unwrap_or_default();
-        state
+        let retained = state
             .table
             .ai_produce_followup(state.table.now, at, cleanup);
+        if let Some(h) = worker
+            && let Some(super::Object::Unit(u)) = state.objects.get_mut(&h)
+        {
+            u.entries.ai_harvest_cycle = retained;
+        }
     }
 }
 

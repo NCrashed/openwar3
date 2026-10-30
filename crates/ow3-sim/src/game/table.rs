@@ -437,7 +437,7 @@ impl ObjectTable {
     /// The later phase of a repeated single-worker melee-AI production
     /// plan. It replaces the retained return-order state of that player's
     /// worker and keeps five parts of the new plan until the next phase.
-    fn ai_produce_followup(&mut self, tick: u64, cleanup: Vec<u32>) {
+    fn ai_produce_followup(&mut self, tick: u64, clock: u32, cleanup: Vec<u32>) {
         let made = self.take_n(tick, 19, "AI production: followup");
         self.free(tick, made[16], "AI production: followup");
         for entry in cleanup {
@@ -445,6 +445,14 @@ impl ObjectTable {
         }
         for &entry in made[11..16].iter().rev() {
             self.defer(entry, "AI production: followup");
+        }
+        let early_release = ow3_math::add(clock, 1.47f32.to_bits());
+        for &entry in [made[10], made[9]].iter() {
+            self.free_at_clock(early_release, entry, "AI production: retained record");
+        }
+        let late_release = ow3_math::add(clock, 1.5f32.to_bits());
+        for &entry in [made[18], made[17]].iter() {
+            self.free_at_clock(late_release, entry, "AI production: retained record");
         }
     }
 
@@ -633,7 +641,7 @@ pub(super) fn ai_produce_followups_due(state: &mut super::State, limit: u32) {
         .into_iter()
         .partition(|&(at, _)| f32::from_bits(at) <= f32::from_bits(limit));
     state.ai_produce_followups = later;
-    for (_, owner) in due {
+    for (at, owner) in due {
         let worker = state.units.iter().copied().find(|&h| {
             state.objects.get(&h).is_some_and(|object| match object {
                 super::Object::Unit(u) => {
@@ -652,7 +660,9 @@ pub(super) fn ai_produce_followups_due(state: &mut super::State, limit: u32) {
                 _ => None,
             })
             .unwrap_or_default();
-        state.table.ai_produce_followup(state.table.now, cleanup);
+        state
+            .table
+            .ai_produce_followup(state.table.now, at, cleanup);
     }
 }
 

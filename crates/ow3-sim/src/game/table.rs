@@ -567,6 +567,9 @@ pub struct UnitEntries {
     pub build_order: Vec<u32>,
     /// A worker's work on a building: its order and kept parts.
     pub work: Vec<u32>,
+    /// Records of an accepted melee-AI Undead building plan that stay with
+    /// its acolyte until the one-second build order expires.
+    pub ai_build_release: Vec<u32>,
     /// A building under construction: its progress pair, its dispel's
     /// five (from its completion) and the work's part kept to the end.
     pub construction: Vec<u32>,

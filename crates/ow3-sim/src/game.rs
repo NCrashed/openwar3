@@ -481,6 +481,28 @@ fn construction(state: &mut State, tick: u64) {
     state.released = later;
     for (h, _) in due {
         movement::stop(state, h);
+        let release = match state.objects.get_mut(&h) {
+            Some(Object::Unit(u)) => {
+                u.shown_order = None;
+                std::mem::take(&mut u.entries.ai_build_release)
+            }
+            _ => Vec::new(),
+        };
+        if !release.is_empty() {
+            // The acolyte's one-second construction order ends in an engine
+            // update. Its retained plan records surround that update's
+            // transient record in their observed cleanup order (c-SEA-1,
+            // turn 25, hub #15).
+            let update = state
+                .table
+                .take(state.table.now, "AI build: release update");
+            let last = release.len() - 1;
+            for &entry in &release[..last] {
+                state.table.defer(entry, "AI build: released plan");
+            }
+            state.table.defer(update, "AI build: release update");
+            state.table.defer(release[last], "AI build: released plan");
+        }
     }
     movement::entangling(state);
     // The buildings a worker builds now.
@@ -3937,7 +3959,7 @@ fn register_ai_natives(
                 if accepted && building {
                     let made = state.table.take_n(tick, 17, "SetProduce");
                     state.table.free(tick, made[14], "SetProduce");
-                    state.table.take(tick, "SetProduce");
+                    let last = state.table.take(tick, "SetProduce");
                     state.table.defer(made[1], "SetProduce");
                     table::ai_harvest_cleanup(&mut state);
                     for &entry in made[8..14].iter().rev() {
@@ -3952,6 +3974,7 @@ fn register_ai_natives(
                             type_id,
                             made[7],
                             vec![made[16], made[15]],
+                            vec![made[6], made[5], made[4], made[3], made[2], made[0], last],
                         );
                     }
                 } else {

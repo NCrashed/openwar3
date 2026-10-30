@@ -1150,6 +1150,7 @@ pub(super) fn ai_build_order(
     type_id: i32,
     build_order: u32,
     followup: Vec<u32>,
+    release: Vec<u32>,
 ) {
     let Some(hall) = state.unit(Some(hall)) else {
         return;
@@ -1223,6 +1224,7 @@ pub(super) fn ai_build_order(
     };
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
         u.shown_order = Some((type_id, u64::MAX));
+        u.entries.ai_build_release = release;
     }
     state.ai_builds.push((
         state.ticks + delay,
@@ -1356,6 +1358,15 @@ pub(super) fn start_buildings(state: &mut State) {
         state.table.ai_constructing = false;
         state.table.ai_other_constructing = false;
         if building.is_some() {
+            if undead {
+                // The accepted plan has one last engine update at the
+                // update-cycle boundary seven ticks before its acolyte's
+                // one-second build order expires (c-SEA-1, turn 25, hub
+                // #15).
+                state
+                    .ai_worker_updates
+                    .push(state.ticks + RELEASE_TICKS - 7);
+            }
             for object in state.objects.values_mut() {
                 if let Object::Unit(u) = object {
                     u.entries.walk.retain(|entry| !cleanup.contains(entry));

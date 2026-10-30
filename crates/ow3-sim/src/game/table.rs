@@ -2885,9 +2885,9 @@ pub(super) fn late_entangled_records_updated(state: &mut super::State) {
     state.table.late_entangled_records = new;
 }
 
-/// Advances the three observed cleanup updates of a late wisp arrival.
-/// The batches use only records already retained by the workers and by the
-/// current AI harvesting pass; the two takes are transient update records.
+/// Advances the two observed cleanup updates of a late wisp arrival. The
+/// retained walk is cleared on the following shared update; later harvest
+/// arrivals have their own ordinary lifecycle (c-SEA-1, turns 14 and 16).
 pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
     let tick = state.table.now;
     let mut due = Vec::new();
@@ -2920,7 +2920,7 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
                 }
                 state.table.late_wisp_cleanup.push((tick + 6, h, 1));
             }
-            1 => {
+            _ => {
                 let stale = entries(state, h)
                     .map(|e| {
                         e.retained_late_wisp_walk = false;
@@ -2930,48 +2930,6 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
                     .unwrap_or_default();
                 for (_, entry) in stale {
                     state.table.free(tick, entry, "late wisp: walk");
-                }
-                state.table.late_wisp_cleanup.push((tick + 6, h, 2));
-            }
-            2 => {
-                state.table.take(tick, "late wisp: update record");
-                let worker = state
-                    .objects
-                    .iter()
-                    .filter_map(|(&worker, object)| match object {
-                        super::Object::Unit(u) if !u.entries.harvest_arrive.is_empty() => {
-                            let newest = u
-                                .entries
-                                .harvest_arrive
-                                .iter()
-                                .map(|&entry| state.table.creation_of(entry))
-                                .max()
-                                .unwrap_or(0);
-                            Some((newest, worker))
-                        }
-                        _ => None,
-                    })
-                    .max()
-                    .map(|(_, worker)| worker);
-                let arrival = worker
-                    .and_then(|worker| entries(state, worker))
-                    .map(|e| std::mem::take(&mut e.harvest_arrive))
-                    .unwrap_or_default();
-                for entry in arrival {
-                    state.table.defer(entry, "late wisp: retained arrival");
-                }
-                if let Some(worker) = worker {
-                    state.table.late_wisp_cleanup.push((tick + 6, worker, 3));
-                }
-            }
-            _ => {
-                let walk = entries(state, h)
-                    .map(|e| std::mem::take(&mut e.walk))
-                    .unwrap_or_default();
-                for entry in walk {
-                    state
-                        .table
-                        .free(tick, entry, "late wisp: retained worker walk");
                 }
             }
         }

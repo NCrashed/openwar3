@@ -234,6 +234,12 @@ pub struct Moving {
     restart: bool,
     /// The first tick of motion after a restart is lost.
     skip: bool,
+    /// A standing initial melee-AI reassignment tests propulsion after its
+    /// turn at the next update.
+    ai_standing: bool,
+    /// A moving initial melee-AI reassignment stands for the whole next
+    /// update, not merely the lost movement tick of an ordinary restart.
+    ai_restart: bool,
     /// A point order of a player stopped it: it stops after the motion
     /// of the next tick (SPEC-0019).
     stop_after_step: bool,
@@ -553,6 +559,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         return false;
     };
     let busy = u.movement.filter(|m| m.ordered());
+    let same_ai_target =
+        state.table.ai_harvest_reassigning && u.movement.is_some_and(|m| m.target == target);
     state.quiet_paths.remove(&h);
     let given = state.orders_given + 1;
     let moving = match busy {
@@ -603,6 +611,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             arrived: false,
             restart: false,
             skip: false,
+            ai_standing: false,
+            ai_restart: false,
             stop_after_step: false,
             halt_next: false,
             reaction: None,
@@ -649,7 +659,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     // A new path is searched at the next update (SPEC-0020); in the new
     // layout of a queued group the members keep theirs until their places
     // are laid out (SPEC-0025, "When a member searches again").
-    if !state.regrouping {
+    if !state.regrouping && !same_ai_target {
         state.drop_path(h);
         state.member_places.remove(&h);
     }
@@ -1222,6 +1232,22 @@ pub(super) fn ai_build_order(
     } else {
         Vec::new()
     };
+    // Orc and Night Elf builders walk to their accepted plan with the build
+    // order replacing the harvest order at its next movement update. Undead
+    // construction keeps the acolyte at its assignment pose until the
+    // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
+    if matches!(&type_id.to_be_bytes(), b"oalt" | b"eate") {
+        order(state, worker, Order::Build { type_id }, type_id, site);
+        ai_reassigned(state, worker);
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.restart = false;
+            m.ai_restart = false;
+        }
+        state.ai_path_priority.insert(worker);
+        set_attack_move(state, worker, None);
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
         u.shown_order = Some((type_id, u64::MAX));
         u.entries.ai_build_release = release;
@@ -1366,6 +1392,11 @@ pub(super) fn start_buildings(state: &mut State) {
                 state
                     .ai_worker_updates
                     .push(state.ticks + RELEASE_TICKS - 7);
+            } else if type_id == i32::from_be_bytes(*b"eate") {
+                // The accepted Night Elf altar plan has one silent engine
+                // update 0.05 s after its construction start (c-SEA-1,
+                // turn 18).
+                state.ai_worker_updates.push(state.ticks + 10);
             }
             for object in state.objects.values_mut() {
                 if let Object::Unit(u) = object {
@@ -2589,6 +2620,25 @@ fn stop_at(state: &mut State, h: u32, at: u32) {
     }
 }
 
+/// A melee-AI worker whose assignment is replaced at a script timer commits
+/// its old motion at that timer. A worker that was only turning may propel
+/// after its next turn; one that was walking keeps the ordinary restart
+/// stand (c-SEA-1, starting Orc peons, hub #15).
+pub(super) fn ai_reassigned(state: &mut State, h: u32) {
+    stop_at(state, h, state.timers.time());
+    let mut repath = false;
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.ai_standing = !m.restart;
+        m.ai_restart = m.restart;
+        repath = true;
+    }
+    if repath {
+        follow::reassign_local(state, h);
+    }
+}
+
 /// Unit `h` stops where it is with a commit, walking or not (a creep
 /// giving up its chase, SPEC-0030; c-RXD-1: creeps 6 and 7 at 7788).
 pub(super) fn stop_commit(state: &mut State, h: u32) {
@@ -3231,6 +3281,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         m.next_update = tick + UPDATE;
         // The position is committed first (SPEC-0018).
         m.commit(state.move_clock);
+        let ai_standing = std::mem::take(&mut m.ai_standing);
+        let ai_restart = std::mem::take(&mut m.ai_restart);
         // The regions are tested at the commit (SPEC-0049).
         super::regions::committed(state, h, m.origin);
         // The walk objects it gave up are freed at its update (SPEC-0024).
@@ -3372,9 +3424,14 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         // at the end of this tick's updates (SPEC-0026; `start_buildings`);
         // one near but facing away turns on the spot first.
         let mut turning_to_site = false;
+        let ai_plan_pending = state
+            .ai_builds
+            .iter()
+            .any(|(_, worker, _, _, _, _, _, _)| *worker == h);
         if let Order::Build { type_id } = m.order
             && !m.arrived
             && !waiting
+            && !ai_plan_pending
         {
             let site = relative(m.target, min);
             let (dx, dy) = (sub(site[0], here[0]), sub(site[1], here[1]));
@@ -3618,7 +3675,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             if std::mem::take(&mut m.restart) {
                 m.walking = false;
                 m.velocity = [0, 0];
-                m.skip = true;
+                m.skip = !ai_restart;
             }
             // An attacker walks to its goal point, where the target stood
             // when the goal was last renewed, and is in reach when the
@@ -4319,7 +4376,12 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     }
                     match steer {
                         follow::Steer::Walk(to) => {
-                            motion(&mut m, to, true, speed, limit, turn_rate, window);
+                            let window = if ai_standing {
+                                add(window, turn_rate)
+                            } else {
+                                window
+                            };
+                            motion(&mut m, to, !ai_restart, speed, limit, turn_rate, window);
                         }
                         // No motion, but the heading turns (SPEC-0020).
                         follow::Steer::Stand(to) => {
@@ -4335,6 +4397,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             motion(&mut m, goal, false, speed, limit, turn_rate, window);
                         }
                         follow::Steer::Arrived => {}
+                    }
+                    if ai_restart {
+                        follow::reassign_local(state, h);
                     }
                 }
             }

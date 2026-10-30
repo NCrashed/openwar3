@@ -943,6 +943,128 @@ fn melee_ai_worker_movements() {
     }
 }
 
+/// Every observed 30-ms movement state of the five starting Orc peons,
+/// from their automatic orders through the first melee-AI reassignment and
+/// each first arrival or construction placement.
+#[test]
+fn melee_ai_orc_peon_movements() {
+    type PeonRow = (u64, String, u32, f32, f32, f32, i32);
+
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.orc-peons-30ms.tsv")) else {
+        return;
+    };
+    let expected: Vec<PeonRow> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .map(|words| {
+            let clock: f64 = words[0].parse().unwrap();
+            (
+                (clock * 200.0).round() as u64,
+                words[2].to_owned(),
+                words[3].parse().unwrap(),
+                words[6].parse().unwrap(),
+                words[7].parse().unwrap(),
+                words[8].parse().unwrap(),
+                words[9].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    playback.game.state.borrow_mut().agent_trace = Some(Vec::new());
+
+    let units = playback.game.units();
+    let mut handles = BTreeMap::new();
+    for &(_, ref phase, entry, x, y, _, _) in &expected {
+        if phase != "automatic-update" || handles.contains_key(&entry) {
+            continue;
+        }
+        let handle = units
+            .iter()
+            .find(|unit| {
+                unit.type_id == i32::from_be_bytes(*b"opeo")
+                    && unit.x.to_bits() == x.to_bits()
+                    && unit.y.to_bits() == y.to_bits()
+            })
+            .unwrap_or_else(|| panic!("no starting Orc peon at ({x}, {y}) for entry {entry}"))
+            .handle;
+        handles.insert(entry, handle);
+    }
+
+    let last_tick = expected.iter().map(|row| row.0).max().unwrap();
+    let mut snapshots = BTreeMap::new();
+    let mut positions = BTreeMap::new();
+    while playback.game.ticks() <= last_tick + 1 {
+        let tick = playback.game.ticks();
+        for unit in playback
+            .game
+            .units()
+            .into_iter()
+            .filter(|unit| handles.values().any(|&handle| handle == unit.handle))
+        {
+            snapshots.insert(
+                (tick, unit.handle),
+                (unit.x, unit.y, unit.facing, unit.order),
+            );
+        }
+        assert!(playback.step_tick());
+        let state = playback.game.state.borrow();
+        let [min_x, min_y] = state.world_bounds[..2].try_into().unwrap();
+        for &(_, handle, position, _, _, _) in
+            state
+                .agent_trace
+                .as_deref()
+                .unwrap()
+                .iter()
+                .filter(|&&(at, handle, ..)| {
+                    at == tick + 1 && handles.values().any(|&wanted| wanted == handle)
+                })
+        {
+            positions.insert(
+                (tick + 1, handle),
+                (
+                    f32::from_bits(ow3_math::sub(position[0], min_x ^ 0x8000_0000)),
+                    f32::from_bits(ow3_math::sub(position[1], min_y ^ 0x8000_0000)),
+                ),
+            );
+        }
+    }
+
+    for (tick, phase, entry, x, y, facing, order) in expected {
+        // These two rows are intra-tick boundaries on either side of work
+        // which Playback intentionally exposes only as a completed tick.
+        if phase == "AI-reassignment-complete" || phase == "construction-arrival" {
+            continue;
+        }
+        let handle = handles[&entry];
+        let &(snapshot_x, snapshot_y, observed_facing, observed_order) =
+            &snapshots[&(tick, handle)];
+        let (observed_x, observed_y) = positions
+            .get(&(tick + 1, handle))
+            .copied()
+            .unwrap_or((snapshot_x, snapshot_y));
+        assert_eq!(
+            (
+                observed_x.to_bits(),
+                observed_y.to_bits(),
+                observed_facing.to_bits(),
+                observed_order,
+            ),
+            (x.to_bits(), y.to_bits(), facing.to_bits(), order),
+            "entry {entry} at tick {tick}: expected ({x}, {y}), facing {facing}, order {order}; got ({observed_x}, {observed_y}), facing {observed_facing}, order {observed_order}",
+        );
+    }
+}
+
 /// The main-table activity of the three AI batches at world clock 0.100,
 /// from the first `StartThread` object through the turn-3 checksum.
 #[test]

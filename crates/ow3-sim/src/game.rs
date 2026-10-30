@@ -1182,6 +1182,9 @@ pub struct State {
     cooldowns_done: Option<u32>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
+    /// Accepted melee-AI builders whose replacement order gets its first
+    /// high-level path in the next update even after the shared budget.
+    pub(super) ai_path_priority: BTreeSet<u32>,
     /// The hits of weapons without a missile, when a test asks for them:
     /// tick, the queue time of the hit (its damage point timer's expiry),
     /// the queue time at the end of the tick and the target.
@@ -1439,6 +1442,7 @@ impl State {
             pending_exits: std::collections::BTreeSet::new(),
             cooldowns_done: None,
             path_trace: None,
+            ai_path_priority: BTreeSet::new(),
             hit_trace: None,
             agent_trace: None,
             member_places: BTreeMap::new(),
@@ -4154,6 +4158,7 @@ fn register_ai_natives(
                 state.table.ai_harvest_extra = usize::from(!paid) * 3;
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
+                    movement::ai_reassigned(&mut state, worker);
                     // The second ordinary-mine worker of the first melee-AI
                     // pass reaches the occupied mine at 1.470 s on
                     // IceCrown. Preserve that local-path result until the
@@ -4227,6 +4232,7 @@ fn register_ai_natives(
                             usize::from(!harvest::wisp_tree(&state, worker, tree)) * 7;
                         table::ai_harvest_reassigning(&mut state, worker);
                         if harvest::order_harvest(&mut state, worker, tree) {
+                            movement::ai_reassigned(&mut state, worker);
                             wood_workers.borrow_mut().insert(worker);
                         } else {
                             state.table.ai_harvest_reassigning = false;
@@ -4249,6 +4255,8 @@ fn register_ai_natives(
                             state.table.ai_harvest_extra = 4;
                             table::ai_harvest_reassigning(&mut state, worker);
                             table::harvest_ordered(&mut state, worker, false);
+                            state.ai_path_priority.insert(worker);
+                            follow::reassign_local(&mut state, worker);
                         }
                         wood_workers.borrow_mut().insert(worker);
                     }

@@ -2583,7 +2583,11 @@ pub(super) fn wisp_tree(state: &State, h: u32, tree: u32) -> bool {
 pub(super) fn is_wisp(state: &State, h: u32) -> bool {
     state
         .unit(Some(h))
-        .is_some_and(|u| ability_of(state, u.type_id, code(b"Awha")).is_some())
+        .is_some_and(|u| is_wisp_type(state, u.type_id))
+}
+
+pub(super) fn is_wisp_type(state: &State, type_id: i32) -> bool {
+    ability_of(state, type_id, code(b"Awha")).is_some()
 }
 
 /// The wisp sitting on `tree`, if any.

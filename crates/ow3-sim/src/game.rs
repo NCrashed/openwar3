@@ -3979,6 +3979,7 @@ fn register_ai_natives(
                 && planned_at.is_some_and(|(_, at, temporary)| temporary && state.ticks > at);
             let repeated_single_worker = worker
                 && qty == 1
+                && !harvest::is_wisp_type(&state, type_id)
                 && planned_at.is_some_and(|(_, at, temporary)| {
                     !temporary && state.ticks >= at.saturating_add(600)
                 });

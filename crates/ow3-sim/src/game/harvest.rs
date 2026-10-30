@@ -784,9 +784,13 @@ fn ai_mine_waits(state: &mut State) {
         }
         let entry = state.mines.entry(mine).or_default();
         entry.waiting.push(worker);
-        // This boundary exposes the wait reference and the two arrival
-        // records only. Its walk cleanup starts at the following checkpoint
-        // boundary and is handled when that interval is specified.
+        // A worker in the ordinary waiting queue stands with its harvest
+        // order still shown. The retained table records keep their own
+        // lifetimes after its local path is no longer active.
+        state.paths.remove(&worker);
+        if let Some(Object::Unit(unit)) = state.objects.get_mut(&worker) {
+            unit.movement = None;
+        }
         super::table::harvest_waits(state, worker);
         super::table::harvest_arrived(state, worker);
     }

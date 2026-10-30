@@ -1243,7 +1243,7 @@ pub(super) fn ai_build_order(
     // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
     if matches!(&type_id.to_be_bytes(), b"oalt" | b"eate") {
         order(state, worker, Order::Build { type_id }, type_id, site);
-        ai_reassigned(state, worker);
+        ai_reassigned(state, worker, false);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             && let Some(m) = u.movement.as_mut()
         {
@@ -2632,7 +2632,20 @@ fn stop_at(state: &mut State, h: u32, at: u32) {
 /// its old motion at that timer. A worker that was only turning may propel
 /// after its next turn; one that was walking keeps the ordinary restart
 /// stand (c-SEA-1, starting Orc peons, hub #15).
-pub(super) fn ai_reassigned(state: &mut State, h: u32) {
+pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
+    // A repeated harvest order to the same target keeps the old path and
+    // motion even though its table records are replaced (c-SEA-1 at
+    // 3.099971, second starting Orc peon, hub #15). `order` keeps the path
+    // only for that same-target case.
+    if repeated && state.paths.contains_key(&h) {
+        if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+            && let Some(m) = u.movement.as_mut()
+        {
+            m.restart = false;
+        }
+        follow::reassign_local(state, h);
+        return;
+    }
     stop_at(state, h, state.timers.time());
     let mut repath = false;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
@@ -2700,7 +2713,7 @@ pub(super) fn ai_supply_orders_due(state: &mut State, limit: u32) {
         if !order(state, worker, Order::Build { type_id }, type_id, site) {
             continue;
         }
-        ai_reassigned(state, worker);
+        ai_reassigned(state, worker, false);
         set_attack_move(state, worker, None);
 
         // The retained harvest agent is committed at this boundary. Its

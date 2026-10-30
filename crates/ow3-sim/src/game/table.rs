@@ -849,6 +849,9 @@ pub struct UnitEntries {
     pub blizzard_buff: Option<(u32, u32)>,
     /// The parts of a harvest order freed when the walk to the mine ends.
     pub harvest_arrive: Vec<u32>,
+    /// Its automatic computer-worker harvest order remains the owner of the
+    /// cycle's retained records until a melee-AI assignment replaces it.
+    pub computer_harvest: bool,
     /// Its place in a common starting-worker arrival group, until that
     /// arrival's cleanup is emitted in placement order.
     pub starting_arrival_order: Option<usize>,
@@ -2765,11 +2768,15 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
     state.table.defer(record, "order record");
     let ai_reassignment = std::mem::take(&mut state.table.ai_harvest_reassigning);
     if ai_reassignment {
+        let starting_computer = super::harvest::starting_computer_harvest(state, h);
         let arrived = entries(state, h)
             .map(|e| std::mem::take(&mut e.harvest_arrive))
             .unwrap_or_default();
         for entry in arrived {
             state.table.defer(entry, "AI harvest: old arrival");
+        }
+        if starting_computer && let Some(e) = entries(state, h) {
+            e.computer_harvest = true;
         }
     }
     order_ended(state, h);
@@ -2893,46 +2900,6 @@ pub(super) fn retain_repeated_harvest_walk(state: &mut super::State, h: u32) {
         e.walk = pair.into_iter().map(|(_, entry)| entry).collect();
         e.walk_ready = true;
         e.ai_repeated_walk = true;
-    }
-}
-
-/// Moves the retained object records of a repeated AI assignment from its
-/// previous worker slot to the carrying worker that receives the replacement
-/// world order. The displaced return-order records remain with the old slot
-/// (c-SEA-1, turn 33).
-pub(super) fn ai_harvest_slot_reassigned(state: &mut super::State, old: u32, new: u32) {
-    let old_records = entries(state, old).map(|e| {
-        (
-            std::mem::take(&mut e.harvest_arrive),
-            std::mem::take(&mut e.order),
-            std::mem::take(&mut e.walk),
-            std::mem::take(&mut e.stale),
-            e.stale_update.take(),
-            std::mem::take(&mut e.walk_ready),
-        )
-    });
-    let Some(old_records) = old_records else {
-        return;
-    };
-    let new_records = entries(state, new).map(|e| {
-        (
-            std::mem::replace(&mut e.harvest_arrive, old_records.0),
-            std::mem::replace(&mut e.order, old_records.1),
-            std::mem::replace(&mut e.walk, old_records.2),
-            std::mem::replace(&mut e.stale, old_records.3),
-            std::mem::replace(&mut e.stale_update, old_records.4),
-            std::mem::replace(&mut e.walk_ready, old_records.5),
-        )
-    });
-    if let (Some(e), Some(records)) = (entries(state, old), new_records) {
-        e.harvest_arrive = records.0;
-        e.order = records.1;
-        e.walk = records.2;
-        e.stale = records.3;
-        e.stale_update = records.4;
-        // The displaced return walk has already completed its search. Its
-        // next update consumes that ready state without replacing the walk.
-        e.walk_ready = true;
     }
 }
 
@@ -3577,6 +3544,16 @@ pub(super) fn harvest_turned_back(state: &mut super::State, h: u32) {
 /// 10 .. 14 0.0001 s later (8 and 9 at the arrival, 0 .. 7 and the object
 /// kept).
 pub(super) fn gold_delivered(state: &mut super::State, h: u32) {
+    // The automatic computer-worker order owns records retained for its
+    // whole harvesting cycle. The replacement path consumes that retained
+    // walk state without allocating another order or walk (c-SEA-1,
+    // 3.989949 through 4.019947, hub #15).
+    if entries(state, h).is_some_and(|e| e.computer_harvest) {
+        if let Some(e) = entries(state, h) {
+            e.walk_ready = true;
+        }
+        return;
+    }
     let tick = state.table.now;
     let order = state.table.take(tick, "harvest: order");
     let parts = state.table.take_n(tick, 15, "harvest: order start");

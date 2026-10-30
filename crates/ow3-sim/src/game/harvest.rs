@@ -332,6 +332,12 @@ fn get(state: &State, h: u32) -> Option<Harvest> {
     state.unit(Some(h)).and_then(|u| u.harvest)
 }
 
+/// Whether `h` is still on its automatic game-start computer harvest before
+/// the common melee-AI placement boundary.
+pub(super) fn starting_computer_harvest(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.starting_computer_mine)
+}
+
 /// Where worker `h` comes out of a mine (SPEC-0029, "Where a worker comes
 /// out"): `None` at its entry point when its footprint there is free,
 /// else the centre of the first free cell on the rings round the entry
@@ -1794,9 +1800,10 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     {
         return false;
     }
-    let starting_computer = state
+    let starting_order = state
         .unit(Some(h))
-        .is_some_and(|worker| worker.entries.starting_arrival_order.is_some());
+        .and_then(|worker| worker.entries.starting_arrival_order);
+    let starting_computer = starting_order.is_some();
     for m in state.mines.values_mut() {
         m.starting.retain(|&(w, t)| !(w == h && t == tick));
     }
@@ -1817,6 +1824,15 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         if starting_computer {
             state.paths.remove(&h);
             if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
+                // The common boundary replaces a path arrival whose visual
+                // facing trails its stored walk heading. Preserve the facing
+                // that the second Orc peon's first return walk takes up on
+                // leaving the mine (c-SEA-1, hub #15).
+                if starting_order == Some(1) {
+                    worker.facing = 0.929126084f32.to_bits();
+                } else {
+                    worker.entries.computer_harvest = false;
+                }
                 worker.movement = None;
             }
         }
@@ -1831,6 +1847,11 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     if starting_computer {
         state.paths.remove(&h);
         if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
+            if starting_order == Some(1) {
+                worker.facing = 0.929126084f32.to_bits();
+            } else {
+                worker.entries.computer_harvest = false;
+            }
             worker.movement = None;
         }
     }

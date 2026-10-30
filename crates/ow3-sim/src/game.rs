@@ -4217,6 +4217,7 @@ fn register_ai_natives(
                 });
             let mut assigned_now = already;
             for worker in workers {
+                let mut worker = worker;
                 if repeat && harvest::carried(&state, worker).is_some() {
                     let slot = state.units.iter().rev().copied().find(|&h| {
                         !gold_workers.borrow().contains(&h)
@@ -4229,8 +4230,8 @@ fn register_ai_natives(
                             })
                     });
                     if let Some(slot) = slot {
-                        table::ai_harvest_slot_reassigned(&mut state, slot, worker);
                         gold_workers.borrow_mut().insert(slot);
+                        worker = slot;
                     }
                 }
                 let paid = harvest::pays_for(&state, worker, mine);
@@ -4243,7 +4244,7 @@ fn register_ai_natives(
                     if repeat && !paid {
                         table::retain_repeated_harvest_walk(&mut state, worker);
                     }
-                    movement::ai_reassigned(&mut state, worker);
+                    movement::ai_reassigned(&mut state, worker, repeat);
                     let reserved_undead_builder =
                         state.ai_builds.iter().any(|(_, h, type_id, ..)| {
                             *h == worker && type_id.to_be_bytes() == *b"usep"
@@ -4344,7 +4345,7 @@ fn register_ai_natives(
                             if repeat {
                                 table::retain_repeated_harvest_walk(&mut state, worker);
                             }
-                            movement::ai_reassigned(&mut state, worker);
+                            movement::ai_reassigned(&mut state, worker, repeat);
                             wood_workers.borrow_mut().insert(worker);
                         } else {
                             state.table.ai_harvest_reassigning = false;

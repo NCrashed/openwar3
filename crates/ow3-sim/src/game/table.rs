@@ -109,6 +109,8 @@ pub struct ObjectTable {
     pub starting_harvest_cleanup: Vec<(usize, Vec<u32>)>,
     /// The rooting computer town hall's production-plan object, by hall.
     pub ai_production: std::collections::BTreeMap<u32, u32>,
+    /// Placement records retained by the initial paid mine assignment.
+    pub ai_paid_records: Vec<u32>,
     /// Starting ghouls whose guard positions were recycled: the tick of
     /// the delayed return, the unit, the old order objects and its walk.
     pub recycled_guards: Vec<(u64, u32, Vec<u32>, Vec<u32>)>,
@@ -248,6 +250,7 @@ impl ObjectTable {
             starting_harvest_left: 0,
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
+            ai_paid_records: Vec::new(),
             recycled_guards: Vec::new(),
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
@@ -381,6 +384,15 @@ impl ObjectTable {
         key
     }
 
+    /// An object made by a world-clock timer at `clock`, retained under a
+    /// key for a later timer.
+    pub fn take_at_clock(&mut self, clock: u32, tag: &'static str) -> u32 {
+        let key = MADE_KEY | self.made_next;
+        self.made_next += 1;
+        self.timed_w.push((clock, key | MADE_NOW, tag));
+        key
+    }
+
     /// Whether a timer's free of `entry` may join the 0.0001 s frees: not
     /// one making an object, nor the free of one not made yet.
     fn movable(&self, entry: u32) -> bool {
@@ -456,12 +468,19 @@ impl ObjectTable {
             .into_iter()
             .partition(|&(c, _, _)| f32::from_bits(c) <= f32::from_bits(limit));
         self.timed_w = later;
+        let mut frees = Vec::new();
         for d in &mut due {
             if d.1 == TAKE_AT {
                 d.1 = self.take(tick, d.2);
+            } else if d.1 & MADE_NOW != 0 {
+                let e = self.take(tick, d.2);
+                self.made.insert(d.1 & !MADE_NOW, e);
+                continue;
             }
+            frees.push(*d);
         }
-        for (_, entry, tag) in due {
+        for (_, entry, tag) in frees {
+            let entry = self.made.remove(&entry).unwrap_or(entry);
             self.free(tick, entry, tag);
         }
     }
@@ -639,6 +658,9 @@ pub struct UnitEntries {
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
+    /// A repeated melee-AI harvest assignment keeps its newly made walk
+    /// through the replacement update.
+    pub ai_repeated_walk: bool,
     /// It walks on its group's walk (`group_move_ordered`): its searches
     /// take none of their own.
     pub group_walk: bool,
@@ -2776,6 +2798,61 @@ pub(super) fn ai_harvest_reassigning(state: &mut super::State, _h: u32) {
     state.table.ai_harvest_reassigning = true;
 }
 
+/// A repeated AI pass keeps the new walk made by its replacement harvest
+/// order. The ordinary first-assignment capture has just placed that pair at
+/// the end of the worker's stale list (c-SEA-1, turn 33).
+pub(super) fn retain_repeated_harvest_walk(state: &mut super::State, h: u32) {
+    if let Some(e) = entries(state, h)
+        && e.walk.is_empty()
+        && e.stale.len() >= 2
+    {
+        let pair = e.stale.split_off(e.stale.len() - 2);
+        e.walk = pair.into_iter().map(|(_, entry)| entry).collect();
+        e.walk_ready = true;
+        e.ai_repeated_walk = true;
+    }
+}
+
+/// Moves the retained object records of a repeated AI assignment from its
+/// previous worker slot to the carrying worker that receives the replacement
+/// world order. The displaced return-order records remain with the old slot
+/// (c-SEA-1, turn 33).
+pub(super) fn ai_harvest_slot_reassigned(state: &mut super::State, old: u32, new: u32) {
+    let old_records = entries(state, old).map(|e| {
+        (
+            std::mem::take(&mut e.harvest_arrive),
+            std::mem::take(&mut e.order),
+            std::mem::take(&mut e.walk),
+            std::mem::take(&mut e.stale),
+            e.stale_update.take(),
+            std::mem::take(&mut e.walk_ready),
+        )
+    });
+    let Some(old_records) = old_records else {
+        return;
+    };
+    let new_records = entries(state, new).map(|e| {
+        (
+            std::mem::replace(&mut e.harvest_arrive, old_records.0),
+            std::mem::replace(&mut e.order, old_records.1),
+            std::mem::replace(&mut e.walk, old_records.2),
+            std::mem::replace(&mut e.stale, old_records.3),
+            std::mem::replace(&mut e.stale_update, old_records.4),
+            std::mem::replace(&mut e.walk_ready, old_records.5),
+        )
+    });
+    if let (Some(e), Some(records)) = (entries(state, old), new_records) {
+        e.harvest_arrive = records.0;
+        e.order = records.1;
+        e.walk = records.2;
+        e.stale = records.3;
+        e.stale_update = records.4;
+        // The displaced return walk has already completed its search. Its
+        // next update consumes that ready state without replacing the walk.
+        e.walk_ready = true;
+    }
+}
+
 /// Starts a fresh AI harvesting pass. The first assignment's temporary
 /// state is released when that pass records its accepted building plan.
 pub(super) fn ai_harvest_cleared(state: &mut super::State) {
@@ -2941,10 +3018,35 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
 /// the placement update's queue boundary; two replacement records take
 /// their entries at the worker's join boundary and stay live (c-SEA-1:
 /// 0.275000 and 0.280000, hub #15).
-pub(super) fn ai_paid_placement(state: &mut super::State, h: u32) {
+pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) {
     let now = state.timers.time();
-    let placed = ow3_math::add(now, 0.18f32.to_bits());
-    let placement_tick = state.ticks + (0.18 / f32::from_bits(crate::timers::TICK)).round() as u64;
+    if repeat {
+        let placed = ow3_math::add(now, 0.085028f32.to_bits());
+        let released = ow3_math::add(placed, 0.0001f32.to_bits());
+        let walk_release = ow3_math::add(now, 0.34999f32.to_bits());
+        let walk = entries(state, h)
+            .map(|e| std::mem::take(&mut e.walk))
+            .unwrap_or_default();
+        for entry in walk {
+            state
+                .table
+                .free_at_clock(walk_release, entry, "paid worker: retained walk");
+        }
+        let new = vec![
+            state.table.take_at_clock(placed, "paid worker: placement"),
+            state.table.take_at_clock(placed, "paid worker: placement"),
+        ];
+        for old in std::mem::take(&mut state.table.ai_paid_records) {
+            state
+                .table
+                .free_at_clock(released, old, "paid worker: old placement");
+        }
+        state.table.ai_paid_records = new;
+        return;
+    }
+    let delay = 0.18f32;
+    let placed = ow3_math::add(now, delay.to_bits());
+    let placement_tick = state.ticks + (delay / f32::from_bits(crate::timers::TICK)).round() as u64;
     let records = entries(state, h).and_then(|e| {
         (e.order.len() >= 2).then(|| {
             let records = e.order.drain(..2).collect::<Vec<_>>();
@@ -2969,8 +3071,11 @@ pub(super) fn ai_paid_placement(state: &mut super::State, h: u32) {
             .table
             .free_at_q(release, entry, "paid worker: old placement");
     }
-    state.table.take_at_q(placed, "paid worker: placement");
-    state.table.take_at_q(placed, "paid worker: placement");
+    let new = vec![
+        state.table.take_at_q(placed, "paid worker: placement"),
+        state.table.take_at_q(placed, "paid worker: placement"),
+    ];
+    state.table.ai_paid_records = new;
 }
 
 /// Releases a rooting computer town hall's plan object on its first
@@ -3769,6 +3874,12 @@ pub(super) fn walk_dropped_at_update(state: &mut super::State, h: u32) {
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     // The walk of a follow leg or of a group stays to the order's end.
     if entries(state, h).is_some_and(|e| e.follow_walk || e.group_walk) {
+        return;
+    }
+    if entries(state, h).is_some_and(|e| e.ai_repeated_walk)
+        && let Some(e) = entries(state, h)
+    {
+        e.ai_repeated_walk = false;
         return;
     }
     // A walk made early for a chase to come stays through its order.

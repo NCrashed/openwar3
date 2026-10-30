@@ -4126,7 +4126,16 @@ fn register_ai_natives(
                 .filter(|h| !gold_workers.borrow().contains(h))
                 .filter(|&h| {
                     state.unit(Some(h)).is_some_and(|u| {
-                        u.owner == player && u.alive && (!repeat || u.movement.is_none())
+                        // A repeated pass may replace a moving worker's
+                        // return order while it carries resources, but does
+                        // not take other walkers or a worker hidden in its
+                        // accepted construction (c-SEA-1, turn 33).
+                        u.owner == player
+                            && u.alive
+                            && (!repeat
+                                || !u.hidden
+                                    && (u.movement.is_none()
+                                        || harvest::carried(&state, h).is_some()))
                     }) && harvest::can_harvest(&state, h, mine)
                 })
                 .take(remaining)
@@ -4151,6 +4160,22 @@ fn register_ai_natives(
                 });
             let mut assigned_now = already;
             for worker in workers {
+                if repeat && harvest::carried(&state, worker).is_some() {
+                    let slot = state.units.iter().rev().copied().find(|&h| {
+                        !gold_workers.borrow().contains(&h)
+                            && state.unit(Some(h)).is_some_and(|u| {
+                                u.owner == player
+                                    && u.alive
+                                    && !u.hidden
+                                    && u.movement.is_some()
+                                    && harvest::carried(&state, h).is_none()
+                            })
+                    });
+                    if let Some(slot) = slot {
+                        table::ai_harvest_slot_reassigned(&mut state, slot, worker);
+                        gold_workers.borrow_mut().insert(slot);
+                    }
+                }
                 let paid = harvest::pays_for(&state, worker, mine);
                 let retain_walk = paid
                     && harvest::is_wisp(&state, worker)
@@ -4158,6 +4183,9 @@ fn register_ai_natives(
                 state.table.ai_harvest_extra = usize::from(!paid) * 3;
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
+                    if repeat && !paid {
+                        table::retain_repeated_harvest_walk(&mut state, worker);
+                    }
                     movement::ai_reassigned(&mut state, worker);
                     // The second ordinary-mine worker of the first melee-AI
                     // pass reaches the occupied mine at 1.470 s on
@@ -4171,9 +4199,12 @@ fn register_ai_natives(
                         state.table.ai_harvest_fewer =
                             usize::from(!harvest::is_wisp(&state, worker));
                         table::harvest_ordered(&mut state, worker, false);
+                        if repeat && !harvest::is_wisp(&state, worker) {
+                            table::retain_repeated_harvest_walk(&mut state, worker);
+                        }
                         state.table.ai_harvest_fewer = 0;
                         if Some(worker) == paid_placement {
-                            table::ai_paid_placement(&mut state, worker);
+                            table::ai_paid_placement(&mut state, worker, repeat);
                         }
                         if retain_walk {
                             table::retain_late_wisp_walk(&mut state, worker);
@@ -4215,10 +4246,24 @@ fn register_ai_natives(
                                 || !harvest::is_wisp(&state, h)
                                 || u.movement.is_none() && u.shown_order.is_none())
                             && (data_worker
-                                || harvest::ai_wood_harvester(&state, h) && u.movement.is_none())
+                                && (!repeat || u.movement.is_none() && u.shown_order.is_none())
+                                || !data_worker
+                                    && harvest::ai_wood_harvester(&state, h)
+                                    && (u.movement.is_none() || repeat))
                     });
                     worker.then(|| {
-                        let tree = ai_nearest_tree(&state, h)
+                        // A starting lumber harvester revisited by a later
+                        // AI pass records the assignment without receiving
+                        // another world order (c-SEA-1, turn 33).
+                        let retained = repeat
+                            && state
+                                .unit(Some(h))
+                                .and_then(|u| state.data.units.get(&u.type_id))
+                                .is_some_and(|t| !t.worker)
+                            && harvest::ai_wood_harvester(&state, h);
+                        let tree = (!retained)
+                            .then(|| ai_nearest_tree(&state, h))
+                            .flatten()
                             .filter(|&tree| harvest::can_harvest(&state, h, tree));
                         (h, tree)
                     })
@@ -4232,6 +4277,9 @@ fn register_ai_natives(
                             usize::from(!harvest::wisp_tree(&state, worker, tree)) * 7;
                         table::ai_harvest_reassigning(&mut state, worker);
                         if harvest::order_harvest(&mut state, worker, tree) {
+                            if repeat {
+                                table::retain_repeated_harvest_walk(&mut state, worker);
+                            }
                             movement::ai_reassigned(&mut state, worker);
                             wood_workers.borrow_mut().insert(worker);
                         } else {

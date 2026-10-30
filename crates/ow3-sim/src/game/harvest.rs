@@ -266,6 +266,15 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
     g.target = Some(target);
     g.next_hit = None;
     g.back_at = None;
+    // A melee-AI replacement starts a new paced-gathering history. The
+    // first Orc peon reassigned after its automatic opening cycle therefore
+    // makes its next return at ordinary speed (c-SEA-1, turn 72, hub #15).
+    if state.table.ai_harvest_reassigning && is_mine(state, target) {
+        g.pace_timer = 0;
+        g.bonus = 0;
+        g.last_trip = 0;
+        g.last_bonus = 0;
+    }
     set(state, h, Some(g));
     let taken = walk_to_work(state, h);
     // The order makes the objects of the walk (SPEC-0024).

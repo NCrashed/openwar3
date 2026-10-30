@@ -1450,6 +1450,11 @@ pub(super) fn start_buildings(state: &mut State) {
             continue;
         }
         let ai_supply = state.ai_supply_builders.remove(&h);
+        let undead_supply = ai_supply
+            && state
+                .unit(Some(h))
+                .and_then(|u| state.data.units.get(&u.type_id))
+                .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
         if ai_supply {
             super::table::ai_supply_construction_started(state);
         }
@@ -1461,6 +1466,14 @@ pub(super) fn start_buildings(state: &mut State) {
         let Some(building) = building else {
             continue;
         };
+        // Like any other accepted Undead AI construction, a supply plan
+        // has one final worker update seven ticks before the one-second
+        // build-order release (c-SEA-1, turn 72, hub #15).
+        if undead_supply {
+            state
+                .ai_worker_updates
+                .push(state.ticks + RELEASE_TICKS - 7);
+        }
         // The other races keep showing their build order (c-SDD-1).
         let other = state
             .unit(Some(building))

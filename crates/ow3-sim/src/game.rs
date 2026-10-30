@@ -4243,6 +4243,7 @@ fn register_ai_natives(
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
                     if repeat && !paid {
+                        table::retain_repeated_harvest_arrival(&mut state, worker);
                         table::retain_repeated_harvest_walk(&mut state, worker);
                     }
                     movement::ai_reassigned(&mut state, worker, repeat);

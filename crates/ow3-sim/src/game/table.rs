@@ -741,9 +741,6 @@ pub struct UnitEntries {
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
-    /// A repeated melee-AI harvest assignment keeps its newly made walk
-    /// through the replacement update.
-    pub ai_repeated_walk: bool,
     /// It walks on its group's walk (`group_move_ordered`): its searches
     /// take none of their own.
     pub group_walk: bool,
@@ -2899,7 +2896,20 @@ pub(super) fn retain_repeated_harvest_walk(state: &mut super::State, h: u32) {
         let pair = e.stale.split_off(e.stale.len() - 2);
         e.walk = pair.into_iter().map(|(_, entry)| entry).collect();
         e.walk_ready = true;
-        e.ai_repeated_walk = true;
+    }
+}
+
+/// A repeated melee-AI gold assignment keeps the two arrival records of its
+/// first worker with that worker. The per-pass temporary cleanup otherwise
+/// gives way to the next player's pass before this worker reaches the mine
+/// (c-SEA-1, turns 33 and 48, hub #15).
+pub(super) fn retain_repeated_harvest_arrival(state: &mut super::State, h: u32) {
+    if state.table.ai_harvest_cleanup.len() < 2 {
+        return;
+    }
+    let arrival: Vec<u32> = state.table.ai_harvest_cleanup.drain(..2).collect();
+    if let Some(e) = entries(state, h) {
+        e.harvest_arrive = arrival;
     }
 }
 
@@ -3933,12 +3943,6 @@ pub(super) fn walk_dropped_at_update(state: &mut super::State, h: u32) {
 pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     // The walk of a follow leg or of a group stays to the order's end.
     if entries(state, h).is_some_and(|e| e.follow_walk || e.group_walk) {
-        return;
-    }
-    if entries(state, h).is_some_and(|e| e.ai_repeated_walk)
-        && let Some(e) = entries(state, h)
-    {
-        e.ai_repeated_walk = false;
         return;
     }
     // A walk made early for a chase to come stays through its order.

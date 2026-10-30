@@ -792,6 +792,36 @@ fn ai_mine_waits(state: &mut State) {
     }
 }
 
+/// A worker that starts an accepted building plan leaves every harvesting
+/// queue and pending arrival. Its already retained table records keep their
+/// own lifetimes (c-SEA-1, Night Elf Altar at turn 17).
+pub(super) fn builder_started(state: &mut State, worker: u32) {
+    for mine in state.mines.values_mut() {
+        mine.waiting.retain(|&h| h != worker);
+        mine.starting.retain(|&(h, _)| h != worker);
+        if mine.inside.is_some_and(|(h, _, _)| h == worker) {
+            mine.inside = None;
+        }
+    }
+    for mine in state.paying.values_mut() {
+        mine.working.retain(|&h| h != worker);
+        mine.joining.retain(|&(h, _)| h != worker);
+        for place in &mut mine.places {
+            if *place == Some(worker) {
+                *place = None;
+            }
+        }
+    }
+    state.harvest_reached.retain(|&(h, _, _)| h != worker);
+    state.harvest_waiters.retain(|&h| h != worker);
+    state.deliveries.retain(|&(h, _)| h != worker);
+    state.mine_arrivals.remove(&worker);
+    state
+        .table
+        .late_wisp_cleanup
+        .retain(|&(_, h, _)| h != worker);
+}
+
 /// Workers whose order is no longer one of gathering keep their load and
 /// leave the queues of the mines.
 fn forget_others(state: &mut State) {

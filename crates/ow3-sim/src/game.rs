@@ -1247,6 +1247,9 @@ pub struct State {
     ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>)>,
     /// Retained production records released by later build updates.
     ai_build_followups: Vec<(u64, Vec<u32>)>,
+    /// Compact engine records due after a later check of a pending worker
+    /// production plan.
+    ai_worker_updates: Vec<u64>,
     /// Initial melee-AI miners whose local path reaches an occupied mine at
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
@@ -1444,6 +1447,7 @@ impl State {
             starting: Vec::new(),
             ai_builds: Vec::new(),
             ai_build_followups: Vec::new(),
+            ai_worker_updates: Vec::new(),
             ai_mine_waits: Vec::new(),
             starting_mine_first: BTreeMap::new(),
             marked: std::collections::BTreeSet::new(),
@@ -3779,7 +3783,8 @@ fn register_ai_natives(
         "native MeleeDifficulty takes nothing returns integer",
         Rc::new(move |_, _| Ok(Some(Value::Integer(difficulty)))),
     );
-    let planned = Rc::new(RefCell::new(BTreeMap::<i32, i32>::new()));
+    // Requested count and the tick of the first accepted production plan.
+    let planned = Rc::new(RefCell::new(BTreeMap::<i32, (i32, u64, bool)>::new()));
     let counted = state.clone();
     let counted_plans = planned.clone();
     add(
@@ -3788,7 +3793,10 @@ fn register_ai_natives(
             let type_id = integer(&args[0]);
             Ok(Some(Value::Integer(
                 ai_unit_count(&counted.borrow(), player, type_id, false)
-                    + counted_plans.borrow().get(&type_id).copied().unwrap_or(0),
+                    + counted_plans
+                        .borrow()
+                        .get(&type_id)
+                        .map_or(0, |&(qty, _, _)| qty),
             )))
         }),
     );
@@ -3913,9 +3921,13 @@ fn register_ai_natives(
                 .map_or((false, false, false), |t| {
                     (t.worker, t.building, t.food_made > 0)
                 });
-            let already = production_plans.borrow().contains_key(&type_id);
+            let planned_at = production_plans.borrow().get(&type_id).copied();
+            let already = planned_at.is_some();
             let accepted = !already && qty > 0 && (worker && qty == 1 || building && !supply);
             let temporary = !accepted && worker && qty > 1;
+            let later_temporary_worker = worker
+                && qty == 1
+                && planned_at.is_some_and(|(_, at, temporary)| temporary && state.ticks > at);
             if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {
@@ -3952,7 +3964,17 @@ fn register_ai_natives(
                 }
             }
             if accepted {
-                production_plans.borrow_mut().insert(type_id, qty);
+                production_plans
+                    .borrow_mut()
+                    .insert(type_id, (qty, state.ticks, false));
+            } else if temporary {
+                production_plans
+                    .borrow_mut()
+                    .entry(type_id)
+                    .or_insert((1, state.ticks, true));
+            } else if later_temporary_worker {
+                let update_at = state.ticks + 1;
+                state.ai_worker_updates.push(update_at);
             }
             if worker && (accepted || temporary) {
                 widgets::type_record(&mut state, player, type_id, |q| {

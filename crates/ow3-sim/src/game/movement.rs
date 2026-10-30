@@ -1312,6 +1312,16 @@ pub(super) fn place_allowed(state: &State, owner: i32, type_id: i32, target: [u3
 /// PROVISIONAL: in c-RTI-1 two buildings were started before the timers
 /// of their tick; what decides is SPEC-0026 open question 6.
 pub(super) fn start_buildings(state: &mut State) {
+    let (updates, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_worker_updates)
+        .into_iter()
+        .partition(|&at| at <= state.ticks);
+    state.ai_worker_updates = later;
+    for _ in updates {
+        state
+            .table
+            .take(state.table.now, "AI production: worker update");
+    }
+
     let (followups, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.ai_build_followups)
         .into_iter()
         .partition(|(at, _)| *at <= state.ticks);
@@ -1329,6 +1339,7 @@ pub(super) fn start_buildings(state: &mut State) {
         .partition(|(at, _, _, _, _, _, _, _)| *at <= state.ticks);
     state.ai_builds = later;
     for (_, worker, type_id, site, start, build_order, followup, cleanup) in plans {
+        super::harvest::builder_started(state, worker);
         state.moving.retain(|&h| h != worker);
         state.paths.remove(&worker);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {

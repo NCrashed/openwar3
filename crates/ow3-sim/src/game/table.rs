@@ -420,6 +420,17 @@ impl ObjectTable {
         self.late_entangled_records_at_clock(next);
     }
 
+    /// Replaces the retained placement pair made by a repeated paid-worker
+    /// assignment 2.5001 s after that pair takes its entries.
+    fn ai_paid_records_update(&mut self, tick: u64, clock: u32) {
+        let new = self.take_n(tick, 2, "paid worker: scheduled placement update");
+        let release = ow3_math::add(clock, 0.0001f32.to_bits());
+        for entry in std::mem::take(&mut self.ai_paid_records) {
+            self.free_at_clock(release, entry, "paid worker: old scheduled placement");
+        }
+        self.ai_paid_records = new;
+    }
+
     fn ai_produce(&mut self, tick: u64) {
         let made = self.take_n(tick, 17, "SetProduce");
         self.free(tick, made[14], "SetProduce");
@@ -538,6 +549,9 @@ impl ObjectTable {
                 continue;
             } else if d.1 == LATE_ENTANGLED_UPDATE_AT {
                 self.late_entangled_records_update(tick, d.0);
+                continue;
+            } else if d.1 == AI_PAID_UPDATE_AT {
+                self.ai_paid_records_update(tick, d.0);
                 continue;
             } else if d.1 == TAKE_AT {
                 d.1 = self.take(tick, d.2);
@@ -865,6 +879,9 @@ pub struct UnitEntries {
     pub blizzard_buff: Option<(u32, u32)>,
     /// The parts of a harvest order freed when the walk to the mine ends.
     pub harvest_arrive: Vec<u32>,
+    /// A melee-AI assignment's retained order layout, released when that
+    /// worker first leaves the mine with its gold.
+    pub ai_harvest_cycle: Vec<u32>,
     /// Its automatic computer-worker harvest order remains the owner of the
     /// cycle's retained records until a melee-AI assignment replaces it.
     pub computer_harvest: bool,
@@ -2857,6 +2874,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                     .collect();
             }
             if capture_cleanup {
+                e.ai_harvest_cycle = e.order.clone();
                 cleanup = std::mem::take(&mut e.harvest_arrive);
                 cleanup.extend(std::mem::take(&mut e.order));
             }
@@ -3122,6 +3140,12 @@ pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) 
                 .free_at_clock(released, old, "paid worker: old placement");
         }
         state.table.ai_paid_records = new;
+        let refresh = ow3_math::add(placed, 2.5001f32.to_bits());
+        state.table.free_at_clock(
+            refresh,
+            AI_PAID_UPDATE_AT,
+            "paid worker: scheduled placement update",
+        );
         return;
     }
     let delay = 0.18f32;
@@ -3404,9 +3428,17 @@ pub(super) fn harvest_left(state: &mut super::State, h: u32, next: Option<u32>) 
     if let Some(n) = next {
         harvest_waited(state, n);
     }
-    let old = entries(state, h)
-        .map(|e| std::mem::take(&mut e.order))
+    let (retained, old) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.ai_harvest_cycle),
+                std::mem::take(&mut e.order),
+            )
+        })
         .unwrap_or_default();
+    for o in retained {
+        state.table.defer(o, "AI harvest: retained order");
+    }
     for o in old {
         state.table.defer(o, "harvest: order");
     }
@@ -6299,6 +6331,7 @@ const TAKE_AT: u32 = u32::MAX;
 /// A repeated single-worker AI production plan due on the world clock.
 const AI_PRODUCE_AT: u32 = u32::MAX - 1;
 const LATE_ENTANGLED_UPDATE_AT: u32 = u32::MAX - 2;
+const AI_PAID_UPDATE_AT: u32 = u32::MAX - 3;
 /// The keys of `ObjectTable::take_at_q`, and its mark for the making.
 const MADE_KEY: u32 = 0x2000_0000;
 const MADE_NOW: u32 = 0x4000_0000;

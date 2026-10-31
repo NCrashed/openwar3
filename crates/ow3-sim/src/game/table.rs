@@ -429,14 +429,23 @@ impl ObjectTable {
     }
 
     /// Replaces the retained placement pair made by a repeated paid-worker
-    /// assignment 2.5001 s after that pair takes its entries.
+    /// assignment 2.5001 s after that pair takes its entries, repeating at
+    /// the same interval while the pair remains retained.
     fn ai_paid_records_update(&mut self, tick: u64, clock: u32) {
         let new = self.take_n(tick, 2, "paid worker: scheduled placement update");
-        let release = ow3_math::add(clock, 0.0001f32.to_bits());
         for entry in std::mem::take(&mut self.ai_paid_records) {
-            self.free_at_clock(release, entry, "paid worker: old scheduled placement");
+            // The 0.0001 s release is still inside this simulation tick and
+            // precedes later movement updates in it.
+            let entry = self.made.remove(&entry).unwrap_or(entry);
+            self.free(tick, entry, "paid worker: old scheduled placement");
         }
         self.ai_paid_records = new;
+        let next = ow3_math::add(clock, 2.5001f32.to_bits());
+        self.free_at_clock(
+            next,
+            AI_PAID_UPDATE_AT,
+            "paid worker: scheduled placement update",
+        );
     }
 
     fn ai_produce(&mut self, tick: u64) {

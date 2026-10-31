@@ -111,6 +111,10 @@ pub struct ObjectTable {
     pub ai_production: std::collections::BTreeMap<u32, u32>,
     /// Placement records retained by the initial paid mine assignment.
     pub ai_paid_records: Vec<u32>,
+    /// Whether that pair has already made its one assignment-boundary
+    /// replacement. Later paid-worker assignments retain the pair while its
+    /// periodic update continues (c-SEA-1, turns 33, 83 and 92-93, hub #15).
+    pub ai_paid_replaced: bool,
     /// Starting ghouls whose guard positions were recycled: the tick of
     /// the delayed return, the unit, the old order objects and its walk.
     pub recycled_guards: Vec<(u64, u32, Vec<u32>, Vec<u32>)>,
@@ -256,6 +260,7 @@ impl ObjectTable {
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
             ai_paid_records: Vec::new(),
+            ai_paid_replaced: false,
             recycled_guards: Vec::new(),
             destructable_paths: std::collections::BTreeMap::new(),
             early: Vec::new(),
@@ -3169,6 +3174,10 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
 pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) {
     let now = state.timers.time();
     if repeat {
+        if state.table.ai_paid_replaced {
+            return;
+        }
+        state.table.ai_paid_replaced = true;
         let placed = ow3_math::add(now, 0.085028f32.to_bits());
         let released = ow3_math::add(placed, 0.0001f32.to_bits());
         let walk_release = ow3_math::add(now, 0.34999f32.to_bits());

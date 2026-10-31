@@ -4187,7 +4187,9 @@ fn register_ai_natives(
                 return Ok(None);
             };
             harvest::ai_gold_started(&mut state, player, mine);
-            let repeat = *gold_cycle.borrow() > 1;
+            let cycle = *gold_cycle.borrow();
+            let repeat = cycle > 1;
+            let settled = cycle > 2;
             let existing: Vec<u32> = if repeat {
                 state
                     .units
@@ -4198,7 +4200,7 @@ fn register_ai_natives(
                         state
                             .unit(Some(h))
                             .is_some_and(|u| u.owner == player && u.alive)
-                            && harvest::ai_gold_assigned(&state, h, mine)
+                            && harvest::ai_gold_assigned(&state, h, mine, settled)
                     })
                     .take(wanted)
                     .collect()

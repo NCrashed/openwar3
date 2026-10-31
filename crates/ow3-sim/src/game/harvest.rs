@@ -2445,11 +2445,16 @@ pub(super) fn paid_working(state: &State, h: u32) -> bool {
         || state.wisp_trees.values().any(|&(w, _)| w == h)
 }
 
-/// Whether an AI worker is already assigned and active at `mine`. A later
-/// `HarvestGold` call counts it toward the requested total without issuing a
-/// replacement world order (c-SEA-1, turn 13).
-pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32) -> bool {
-    get(state, h).is_some_and(|g| g.target == Some(mine)) && paid_working(state, h)
+/// Whether an AI worker is already assigned at `mine`. The first replacement
+/// pass counts workers already working there; once that pass has settled,
+/// their retained mine target continues to satisfy later `HarvestGold` calls
+/// while they walk or return resources (c-SEA-1, turns 33 and 92, hub #15).
+pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32, settled: bool) -> bool {
+    ai_gold_targeted(state, h, mine) && (settled || paid_working(state, h))
+}
+
+fn ai_gold_targeted(state: &State, h: u32, mine: u32) -> bool {
+    get(state, h).is_some_and(|g| g.target == Some(mine))
 }
 
 /// Whether the worker's active world order already takes it to `mine`.
@@ -2457,7 +2462,8 @@ pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32) -> bool {
 /// replacing it again (c-SEA-1, turn 43).
 pub(super) fn ai_gold_ordered(state: &State, h: u32, mine: u32) -> bool {
     let occupied = state.units.iter().copied().any(|worker| {
-        ai_gold_assigned(state, worker, mine)
+        ai_gold_targeted(state, worker, mine)
+            && paid_working(state, worker)
             && state
                 .unit(Some(worker))
                 .is_some_and(|unit| unit.hidden && unit.movement.is_none())

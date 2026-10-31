@@ -462,6 +462,7 @@ pub(super) fn create_unit(
         orient_interp: data.orient_interp,
         life,
         mana,
+        blight_regen_active: false,
         alive: true,
         died_at: None,
         hidden: false,
@@ -521,9 +522,18 @@ pub(super) fn create_unit(
     if let Some(at) = wander {
         state.critters.insert(h, (at, false));
     }
-    // A unit (not a building) with blight regeneration checks the ground
-    // 2.0 s on (hub #15).
+    // Every non-building with blight regeneration checks the ground 2.0 s
+    // after it is made. A later unit born on existing blight already starts
+    // its continuous rate during completion; the check then observes no
+    // inactive-to-active transition and makes no second rate part (hub #15,
+    // c-SEA-1 turn 172). The map's initial units precede the starting blight
+    // and activate at their delayed checks instead.
     if data.regen_type == crate::data::RegenType::Blight && !data.building {
+        let active_at_birth = state.ticks != 0 && on_blight(state, h);
+        if active_at_birth && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.life.show(data.life_regen);
+            u.blight_regen_active = true;
+        }
         let at = add(state.timers.time(), 2.0f32.to_bits());
         state.blight_checks.push((at, h));
     }
@@ -2839,12 +2849,11 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
 
 /// The blight checks due in this tick before queue time `before` (all
 /// without it), in order of their times: a unit with blight regeneration
-/// on blight starts its life regeneration, a rate part kept (hub #15,
-/// c-SCC-1: the ghoul and the three acolytes at 2.0 s, in the order made).
-///
-/// PROVISIONAL: the ground is not read (no blight on the ground is kept
-/// yet), so every such unit is taken to stand on blight; the life it
-/// regenerates is not built.
+/// on blight whose blight-only rate is not active starts its life
+/// regeneration, with a rate part kept (hub #15, c-SCC-1: the ghoul and the
+/// three acolytes at 2.0 s, in the order made). A unit whose completion
+/// already activated the rate still performs the check but makes no table
+/// operation (c-SEA-1 turn 172).
 pub(super) fn blight_checks_before(state: &mut State, before: Option<u32>) {
     let now = add(state.move_clock, crate::timers::TICK);
     let due = |at: u32| {
@@ -2863,9 +2872,25 @@ pub(super) fn blight_checks_before(state: &mut State, before: Option<u32>) {
     state.blight_checks.retain(|&(at, _)| !due(at));
     checks.sort_by(|a, b| f32::from_bits(a.0).total_cmp(&f32::from_bits(b.0)));
     for (_, h) in checks {
-        if state.unit(Some(h)).is_some_and(|u| u.alive) && on_blight(state, h) {
+        let Some(type_id) = state
+            .unit(Some(h))
+            .filter(|u| u.alive && !u.blight_regen_active)
+            .map(|u| u.type_id)
+        else {
+            continue;
+        };
+        if on_blight(state, h) {
             let tick = state.table.now;
             state.table.take(tick, "unit state: rate part");
+            let rate = state
+                .data
+                .units
+                .get(&type_id)
+                .map_or(0, |data| data.life_regen);
+            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                u.life.show(rate);
+                u.blight_regen_active = true;
+            }
         }
     }
 }

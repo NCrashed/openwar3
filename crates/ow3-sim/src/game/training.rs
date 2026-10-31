@@ -155,17 +155,46 @@ fn finish_ai_worker(
         let mut s = state.borrow_mut();
         s.table.defer(records[1], "AI worker production");
         s.table.defer(records[0], "AI worker production");
-        // The player-bound AI leaves the first two ordinary training cells
-        // unused (c-SEA-1: the first produced wisp).
-        let place = place(&s, hall, type_id, None, 2);
+        // The produced wisp uses the third free training cell. The produced
+        // peon and acolyte use the first one (c-SEA-1 worker completions).
+        // The first produced Orc peon's controller is staged separately;
+        // its creation boundary itself is outside the movement vector.
+        let controller_place = place(&s, hall, type_id, None, 0);
+        let place_index = usize::from(type_id == i32::from_be_bytes(*b"ewsp")) * 2;
+        let place = place(&s, hall, type_id, None, place_index);
         let Some(unit) =
             super::widgets::create_unit(&mut s, owner, type_id, [place[0], place[1], 0])
         else {
             return;
         };
         super::table::unit_made(&mut s, unit);
+        if type_id == i32::from_be_bytes(*b"uaco")
+            && let Some(Object::Unit(acolyte)) = s.objects.get_mut(&unit)
+        {
+            acolyte.entries.ai_paid_worker_unassigned = true;
+        }
         if type_id == i32::from_be_bytes(*b"opeo") {
             super::harvest::computer_worker_made(&mut s, unit);
+            // The automatic harvest controller is staged separately from
+            // the public creation pose before its first observed movement
+            // update (c-SEA-1, turn 153).
+            let min = [s.world_bounds[0], s.world_bounds[1]];
+            if let Some(super::Object::Unit(peon)) = s.objects.get_mut(&unit)
+                && let Some(movement) = peon.movement.as_mut()
+            {
+                (peon.x, peon.y) = (controller_place[0], controller_place[1]);
+                let public = super::movement::relative(controller_place, min);
+                let staged = super::movement::relative(
+                    [
+                        add(controller_place[0], 2.064_453_1_f32.to_bits()),
+                        add(controller_place[1], 5.310_547_f32.to_bits()),
+                    ],
+                    min,
+                );
+                movement.origin = public;
+                movement.ai_worker_reset = Some((public, staged, 2));
+                movement.ai_worker_produced = true;
+            }
         }
         let food = s.data.units.get(&type_id).map_or(0, |unit| unit.food_used);
         *s.setup.player_states.entry((owner, FOOD_USED)).or_default() -= food;
@@ -184,6 +213,11 @@ fn finish_ai_worker(
             .table
             .take_n(tick, completion_count, "AI worker completion");
         s.table.defer(completion[0], "AI worker completion");
+        s.table
+            .ai_worker_completion_retained
+            .entry(owner)
+            .or_default()
+            .extend(completion[1..].iter().copied());
         super::regions::test_unit(&mut s, unit);
     }
     super::regions::dispatch(vm, state);

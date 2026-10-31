@@ -228,6 +228,13 @@ pub struct Moving {
     pub(super) heading: u32,
     /// The tick of the next update.
     pub(super) next_update: u64,
+    /// The first produced Orc peon's public pose and the number of updates
+    /// until its controller is rebased there. That rebase has a two-tick
+    /// interval to the next update.
+    pub(super) ai_worker_reset: Option<([u32; 2], [u32; 2], u8)>,
+    /// A newly produced melee-AI worker whose first reassignment commits
+    /// on the preceding movement tick.
+    pub(super) ai_worker_produced: bool,
     /// Moving since the heading came within the propulsion window.
     walking: bool,
     /// The committed position, relative to the world's lower left corner,
@@ -618,6 +625,8 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             // phase (c-RXD-1: creep 7, an order at 7081, its first update
             // at 7082).
             next_update: tick + 1,
+            ai_worker_reset: None,
+            ai_worker_produced: false,
             walking: false,
             origin: relative([u.x, u.y], min),
             velocity: [0, 0],
@@ -1177,13 +1186,15 @@ pub(super) fn ai_build_order(
     build_order: u32,
     followup: Vec<u32>,
     release: Vec<u32>,
-) {
+) -> Vec<u32> {
     let Some(hall) = state.unit(Some(hall)) else {
-        return;
+        return Vec::new();
     };
     let usep = i32::from_be_bytes(*b"usep");
     let oalt = i32::from_be_bytes(*b"oalt");
     let eate = i32::from_be_bytes(*b"eate");
+    let emow = i32::from_be_bytes(*b"emow");
+    let otrb = i32::from_be_bytes(*b"otrb");
     let (delay, site) = if type_id == usep {
         (
             250,
@@ -1208,8 +1219,24 @@ pub(super) fn ai_build_order(
                 add(hall.y, (-96.0f32).to_bits()),
             ],
         )
+    } else if type_id == emow {
+        (
+            462,
+            [
+                add(hall.x, (-224.0f32).to_bits()),
+                add(hall.y, 480.0f32.to_bits()),
+            ],
+        )
+    } else if type_id == otrb {
+        (
+            900,
+            [
+                add(hall.x, (-32.0f32).to_bits()),
+                add(hall.y, 544.0f32.to_bits()),
+            ],
+        )
     } else {
-        return;
+        return Vec::new();
     };
     let candidates = || {
         state.units.iter().filter_map(|&h| {
@@ -1227,14 +1254,41 @@ pub(super) fn ai_build_order(
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, h)| h)
     } else {
-        candidates().last().map(|(_, h)| h)
+        candidates().next_back().map(|(_, h)| h)
     };
     let Some(worker) = worker else {
-        return;
+        return Vec::new();
     };
     let Some(start) = state.unit(Some(worker)).map(|u| [u.x, u.y, u.facing]) else {
-        return;
+        return Vec::new();
     };
+    let (worker_cleanup, worker_walk) = if type_id == otrb || type_id == emow {
+        match state.objects.get_mut(&worker) {
+            Some(Object::Unit(unit)) => {
+                let mut cleanup = Vec::new();
+                if type_id == otrb {
+                    cleanup = std::mem::take(&mut unit.entries.harvest_arrive);
+                    cleanup.extend(std::mem::take(&mut unit.entries.order));
+                }
+                (cleanup, std::mem::take(&mut unit.entries.walk))
+            }
+            _ => (Vec::new(), Vec::new()),
+        }
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let tick = state.ticks;
+    if let Some(Object::Unit(unit)) = state.objects.get_mut(&worker) {
+        unit.entries
+            .stale
+            .extend(worker_walk.into_iter().map(|entry| (tick, entry)));
+        if type_id == emow {
+            // The accepted order reuses the produced wisp's walk state for
+            // its first search; the old pair itself is released by that
+            // update (c-SEA-1, turn 157).
+            unit.entries.walk_ready = true;
+        }
+    }
     let cleanup = if type_id == oalt {
         let path_owner = state.units.iter().rev().copied().find(|&h| {
             state
@@ -1252,7 +1306,10 @@ pub(super) fn ai_build_order(
     // order replacing the harvest order at its next movement update. Undead
     // construction keeps the acolyte at its assignment pose until the
     // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
-    if matches!(&type_id.to_be_bytes(), b"oalt" | b"eate") {
+    if matches!(
+        &type_id.to_be_bytes(),
+        b"oalt" | b"eate" | b"emow" | b"otrb"
+    ) {
         order(state, worker, Order::Build { type_id }, type_id, site);
         ai_reassigned(state, worker, false);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
@@ -1260,13 +1317,32 @@ pub(super) fn ai_build_order(
         {
             m.restart = false;
             m.ai_restart = false;
+            if type_id == emow {
+                // The accepted Moon Well order is public immediately, but
+                // its produced wisp's first path/update batch is six ticks
+                // after the assignment boundary (c-SEA-1, turn 157).
+                m.next_update = state.ticks + 6;
+                // Unlike a reassigned starting worker, the produced wisp
+                // does not widen its propulsion window on that first path
+                // update: it turns in place before beginning the north leg.
+                m.ai_standing = false;
+            }
         }
-        state.ai_path_priority.insert(worker);
+        let lead_in = if type_id == emow {
+            // The wisp's route to this Moon Well starts one cell north.
+            Some([0, 1])
+        } else {
+            Some([1, -1])
+        };
+        state.ai_path_priority.insert(worker, lead_in);
         set_attack_move(state, worker, None);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
         u.shown_order = Some((type_id, u64::MAX));
         u.entries.ai_build_release = release;
+    }
+    if type_id == emow {
+        super::table::reserve_ai_build_assignment_cleanup(state, worker, state.ticks + delay);
     }
     state.ai_builds.push((
         state.ticks + delay,
@@ -1281,6 +1357,7 @@ pub(super) fn ai_build_order(
     if type_id == usep {
         hold_ai_order(state, worker);
     }
+    worker_cleanup
 }
 
 /// A town hall may not stand this near a gold mine, centre to centre
@@ -1399,12 +1476,15 @@ pub(super) fn start_buildings(state: &mut State) {
             .unit(Some(worker))
             .and_then(|u| state.data.units.get(&u.type_id))
             .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
-        let other = matches!(&type_id.to_be_bytes(), b"oalt" | b"eate");
+        let other = matches!(&type_id.to_be_bytes(), b"oalt" | b"eate" | b"emow");
+        let wisp = type_id == i32::from_be_bytes(*b"emow");
         state.table.ai_constructing = undead;
         state.table.ai_other_constructing = other;
+        state.table.ai_wisp_constructing = wisp;
         let building = start_construction(state, worker, type_id, site);
         state.table.ai_constructing = false;
         state.table.ai_other_constructing = false;
+        state.table.ai_wisp_constructing = false;
         if building.is_some() {
             if undead {
                 // The accepted plan has one last engine update at the
@@ -1435,15 +1515,15 @@ pub(super) fn start_buildings(state: &mut State) {
             {
                 u.x = add(site[0], 176.0f32.to_bits());
                 u.y = add(site[1], (-48.0f32).to_bits());
-                u.facing = 3.500498533f32.to_bits();
+                u.facing = 3.500_498_5_f32.to_bits();
             } else if type_id == i32::from_be_bytes(*b"oalt")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {
-                u.facing = 5.581044197f32.to_bits();
+                u.facing = 5.581_044_f32.to_bits();
             } else if type_id == i32::from_be_bytes(*b"eate")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {
-                u.facing = 5.585423470f32.to_bits();
+                u.facing = 5.585_423_5_f32.to_bits();
             }
             state
                 .ai_build_followups
@@ -2687,11 +2767,21 @@ pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
         follow::reassign_local(state, h);
         return;
     }
-    stop_at(state, h, state.timers.time());
+    let produced = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| m.ai_worker_produced);
+    let at = if produced {
+        add(state.last_move_clock, crate::timers::TICK)
+    } else {
+        state.timers.time()
+    };
+    stop_at(state, h, at);
     let mut repath = false;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(m) = u.movement.as_mut()
     {
+        m.ai_worker_produced = false;
         m.ai_standing = !m.restart;
         m.ai_restart = m.restart;
         repath = true;
@@ -2772,10 +2862,10 @@ pub(super) fn ai_supply_orders_due(state: &mut State, limit: u32) {
         // observed pose is offset from the Ziggurat site; the general layout
         // of later AI supply plans remains to be specified.
         let pose = [
-            add(site[0], (-515.931640625f32).to_bits()),
-            add(site[1], (-415.431640625f32).to_bits()),
+            add(site[0], (-515.931_64_f32).to_bits()),
+            add(site[1], (-415.431_64_f32).to_bits()),
         ];
-        let facing = 5.510496616f32.to_bits();
+        let facing = 5.510_496_6_f32.to_bits();
         let min = [state.world_bounds[0], state.world_bounds[1]];
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
             (u.x, u.y, u.facing) = (pose[0], pose[1], facing);
@@ -3436,7 +3526,18 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
             continue;
         }
-        m.next_update = tick + UPDATE;
+        let ai_worker_reset = match m.ai_worker_reset {
+            Some((public, staged, 1)) => {
+                m.ai_worker_reset = None;
+                Some((public, staged))
+            }
+            Some((public, staged, remaining)) => {
+                m.ai_worker_reset = Some((public, staged, remaining - 1));
+                None
+            }
+            None => None,
+        };
+        m.next_update = tick + if ai_worker_reset.is_some() { 2 } else { UPDATE };
         // The position is committed first (SPEC-0018).
         m.commit(state.move_clock);
         let ai_standing = std::mem::take(&mut m.ai_standing);
@@ -4606,10 +4707,25 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 });
             }
         }
+        // The produced peon's creation layout and controller pose differ.
+        // Its second update has performed the ordinary walk cleanup, then
+        // the public controller is rebased for its observed first moving
+        // update two ticks later (c-SEA-1, turn 153).
+        if let Some((_, staged)) = ai_worker_reset {
+            m.origin = staged;
+            m.velocity = [0, 0];
+            m.walking = false;
+            m.since = state.move_clock;
+            m.facing_step = 0;
+        }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
+        if let Some((public, _)) = ai_worker_reset {
+            let [x, y] = absolute(public, min);
+            (u.x, u.y, u.facing) = (x, y, 0);
+        }
         // A unit in its reaction delay stands, its facing too (SPEC-0019).
         let heading = normal(m.heading);
         if !waiting {
@@ -4684,16 +4800,22 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         u.creep.return_time =
                             Some(add(state.update_time, state.combat.guard_return_time));
                     }
-                    // A critter that gave its wander up short of its point (hub
-                    // #15, c-SCC-1: nsea 9516 at 9.209455, 46.9 short).
-                    let far = {
+                    // The three-object replacement is present 46.817723
+                    // units short (c-SCC-1) but absent for the blocked
+                    // give-up 65.105185 units short (c-SEA-1, turn 157).
+                    // PROVISIONAL: the public observations put the boundary
+                    // at two cells; they do not establish equality.
+                    let short_replacement = {
                         let (dx, dy) = (sub(m.target[0], u.x), sub(m.target[1], u.y));
-                        f32::from_bits(add(mul(dx, dx), mul(dy, dy))) > 32.0 * 32.0
+                        let distance = f32::from_bits(add(mul(dx, dx), mul(dy, dy)));
+                        distance > 32.0 * 32.0 && distance < 64.0 * 64.0
                     };
                     let flight = super::table::creep_flight_arriving(state, h);
-                    let short = far && state.critters.contains_key(&h);
-                    if short {
-                        super::table::critter_wander_given_up(state, h);
+                    let replaced = short_replacement && state.critters.contains_key(&h);
+                    if replaced {
+                        super::table::critter_wander_replaced(state, h);
+                    } else if state.critters.contains_key(&h) {
+                        super::table::critter_wander_ended(state, h);
                     } else {
                         super::table::order_ended(state, h);
                     }

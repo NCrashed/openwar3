@@ -802,10 +802,11 @@ fn melee_ai_checksums() {
 /// Acolyte's later haunted-mine placement and the resulting periodic ability
 /// refresh at checkpoint 106, its continued three-worker cadence through
 /// checkpoint 131, the on-boundary critter update before checkpoint 132,
-/// and the first AI-produced workers' completion at checkpoint 152.
+/// the first AI-produced workers' completion, and their first follow-up AI
+/// assignments and retained-record lifecycles through checkpoint 184.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(152)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(184)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -1943,7 +1944,7 @@ fn melee_ai_turn15_objects() {
         (
             8576.0f32.to_bits(),
             4224.0f32.to_bits(),
-            4.712388515f32.to_bits(),
+            4.712_388_5_f32.to_bits(),
             0,
             true,
         )
@@ -1965,7 +1966,7 @@ fn melee_ai_turn15_objects() {
         (
             8752.0f32.to_bits(),
             4176.0f32.to_bits(),
-            3.500498533f32.to_bits(),
+            3.500_498_5_f32.to_bits(),
         )
     );
 }
@@ -2075,7 +2076,7 @@ fn melee_ai_turn17_objects() {
                 building.order,
                 building.constructing,
             ),
-            (x.to_bits(), y.to_bits(), 4.712388515f32.to_bits(), 0, true,)
+            (x.to_bits(), y.to_bits(), 4.712_388_5_f32.to_bits(), 0, true,)
         );
     }
 }
@@ -3014,7 +3015,18 @@ fn melee_ai_turn62_objects() {
         events
             .iter()
             .filter(|event| event.new && event.creation >= 13_003)
-            .all(|event| event.call_name == "HarvestWood")
+            .all(|event| event.call_name == "HarvestWood"),
+        "unexpected call attribution: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
     );
     let ours: Vec<_> = events
         .iter()
@@ -4059,6 +4071,494 @@ fn melee_ai_uaco_retained_cleanup() {
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
     assert_eq!(ours, expected);
+}
+
+/// The next Orc build-loop pass accepts a worker and a barracks, rejects a
+/// second worker, and redirects the newly completed peon to the build site.
+#[test]
+fn melee_ai_turn153_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn153-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..151 {
+        assert!(playback.step_slot());
+    }
+    let peon_before_assignment = playback
+        .game
+        .units()
+        .into_iter()
+        .rev()
+        .find(|unit| unit.owner == 1 && unit.type_id == i32::from_be_bytes(*b"opeo"))
+        .expect("the newly completed Orc peon before its build assignment");
+    assert_eq!(
+        (
+            peon_before_assignment.x,
+            peon_before_assignment.y,
+            peon_before_assignment.order
+        ),
+        (8528.0, 8368.0, 852_018)
+    );
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2961, 0x3789));
+    assert_eq!(playback.game.generator_sums(), (0x01e6_514c, 0x4ee9_e4c0));
+    assert_eq!(playback.game.game_sum(), 0x0f14_2d5d);
+    let peon = playback
+        .game
+        .units()
+        .into_iter()
+        .find(|unit| {
+            unit.owner == 1
+                && unit.type_id == i32::from_be_bytes(*b"opeo")
+                && unit.order == 1_869_902_434
+        })
+        .expect("the newly completed Orc peon");
+    assert_eq!(
+        (peon.order, peon.x, peon.y),
+        (1_869_902_434, 8_529.477, 8_389.412)
+    );
+}
+
+/// The Night Elf production pass accepts a new wisp and its Moon Well,
+/// reserves the just-produced wisp as builder, and commits its build order.
+#[test]
+fn melee_ai_wisp_emow_assignment() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.wisp-emow-assignment.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| {
+            words[2] == "main-table-assignment" && (words[4] == "take" || words[4] == "free")
+        })
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..155 {
+        assert!(playback.step_slot());
+    }
+    playback.game.state.borrow_mut().agent_trace = Some(Vec::new());
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    let wisps: Vec<_> = playback
+        .game
+        .units()
+        .into_iter()
+        .filter(|unit| unit.owner == 3 && unit.type_id == i32::from_be_bytes(*b"ewsp"))
+        .collect();
+    let builder = wisps
+        .iter()
+        .max_by_key(|unit| unit.handle)
+        .unwrap_or_else(|| panic!("the produced Night Elf wisp: {wisps:#?}"));
+    assert_eq!(
+        (builder.order, builder.walking),
+        (i32::from_be_bytes(*b"emow"), true)
+    );
+    let builder_trace = playback
+        .game
+        .state
+        .borrow()
+        .agent_trace
+        .as_deref()
+        .unwrap()
+        .iter()
+        .filter(|record| record.1 == builder.handle)
+        .map(|record| (record.0, record.2, record.3))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        builder_trace,
+        vec![
+            (3127, [1185062912, 1169653760], [0, 0]),
+            (3133, [1185062912, 1169653760], [1120119697, 1132176785]),
+        ]
+    );
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2916, 0x37c8));
+    assert_eq!(playback.game.generator_sums(), (0x01d8_01e4, 0x4f27_7494));
+    assert_eq!(playback.game.game_sum(), 0x0f54_2d5d);
+}
+
+/// The periodic harvest/planning pass before turn 162 allocates exactly the
+/// observed main-table batch. The three following lifecycle records belong to
+/// a later engine boundary and must not advance this checkpoint's creation id.
+#[test]
+fn melee_ai_turn162_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn162-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..160 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x294a, 0x3806));
+    assert_eq!(playback.game.generator_sums(), (0x0126_75bc, 0x4f12_eed8));
+    assert_eq!(playback.game.game_sum(), 0x0f54_2d5d);
+}
+
+/// Checkpoint 172 follows an AI/JASS pass and a blocked peon update without
+/// any main-table lifecycle operation. In particular, the blocked update must
+/// not retain a fresh record from the free-list head.
+#[test]
+fn melee_ai_turn172_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn172-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..170 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x27b1, 0x3882));
+    assert_eq!(playback.game.generator_sums(), (0x0155_3b0c, 0x4f1f_57c8));
+    assert_eq!(playback.game.game_sum(), 0x0f54_2d5d);
+}
+
+/// Checkpoint 179 first releases four records retained by the earlier
+/// wisp-to-moon-well assignment follow-up, then releases all eight deferred
+/// records of the nsea wander assignment.
+#[test]
+fn melee_ai_turn179_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn179-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..177 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x297c, 0x3909));
+    assert_eq!(playback.game.generator_sums(), (0x018f_efe8, 0x4f56_3b5c));
+    assert_eq!(playback.game.game_sum(), 0x1f54_2d5d);
+}
+
+/// The produced wisp reaches its accepted Moon Well plan. Starting the
+/// computer building allocates the full building and construction layouts,
+/// then releases the observed temporary records in their strict order.
+#[test]
+fn melee_ai_turn180_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn180-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..178 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2849, 0x3938));
+    assert_eq!(playback.game.generator_sums(), (0x018f_efe8, 0x4fa5_74fc));
+    assert_eq!(playback.game.game_sum(), 0x21a5_3bb0);
+}
+
+/// A newly completed AI-paid worker's first gold assignment retains a pair
+/// until the ordinary update that stops it at the mine.
+#[test]
+fn melee_ai_turn182_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn182-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..180 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2955, 0x393c));
+    assert_eq!(playback.game.generator_sums(), (0x01f2_3ff0, 0x4fa5_74fc));
+    assert_eq!(playback.game.game_sum(), 0x21a5_3bb0);
 }
 
 /// `c-SCC-1`'s object table.

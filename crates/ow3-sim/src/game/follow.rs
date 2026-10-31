@@ -138,9 +138,9 @@ pub struct Follow {
     /// this initial assignment path.
     ai_blocker: Option<u32>,
     ai_passed: Option<u32>,
-    /// An accepted initial AI building plan still needs its first diagonal
-    /// cell before ordinary path shortcuts.
-    ai_builder: bool,
+    /// An accepted initial AI building plan still needs this first local
+    /// cell offset before ordinary path shortcuts.
+    ai_lead_in: Option<[i32; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -657,12 +657,14 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         f.take_segment(order_cells);
     }
     let fresh = !state.paths.contains_key(&walker.handle);
-    let priority = state.ai_path_priority.remove(&walker.handle);
-    let ai_builder = priority
-        && state.unit(Some(walker.handle)).is_some_and(|u| {
+    let lead_in = state.ai_path_priority.remove(&walker.handle);
+    let priority = lead_in.is_some();
+    let ai_lead_in = lead_in.flatten().filter(|_| {
+        state.unit(Some(walker.handle)).is_some_and(|u| {
             u.movement
                 .is_some_and(|m| matches!(m.order, super::movement::Order::Build { .. }))
-        });
+        })
+    });
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
     if fresh && state.budget.high > HIGH_BUDGET && !priority {
@@ -785,7 +787,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             ai_detour_end: 0,
             ai_blocker: None,
             ai_passed: None,
-            ai_builder,
+            ai_lead_in,
         };
         follow.take_segment(order_cells);
         follow
@@ -1026,25 +1028,24 @@ fn decide(
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;
-        if detour.is_some() {
+        if let Some(detour) = detour {
             follow.local.insert(0, at);
             if detour_after.is_some() {
-                follow.local.insert(1, detour.unwrap());
+                follow.local.insert(1, detour);
             }
             if let Some(first) = detour_first
-                && Some(first) != detour
+                && first != detour
             {
                 follow.local.insert(1, first);
             }
             follow.ai_detour_end =
-                usize::from(detour_first != detour) + usize::from(detour_after.is_some()) + 1;
+                usize::from(detour_first != Some(detour)) + usize::from(detour_after.is_some()) + 1;
         }
-        let builder_first = follow.ai_builder;
-        if builder_first {
+        let lead_in = follow.ai_lead_in.take();
+        if let Some([dx, dy]) = lead_in {
             let (x, y) = path::cell_of(at);
             let centre = |c: i32| (c as f32 + 0.5).to_bits();
-            follow.local.insert(1, [centre(x + 1), centre(y - 1)]);
-            follow.ai_builder = false;
+            follow.local.insert(1, [centre(x + dx), centre(y + dy)]);
             follow.ai_detouring = true;
             follow.ai_detour_end = 1;
         }
@@ -1053,7 +1054,7 @@ fn decide(
         // One from its mine's entry walks to the path's next point, from
         // where it came out (c-SDE-1: unit 4 from (112, -208) towards
         // (48, -176) at 41.398857, hub #15).
-        follow.target = if detour.is_some() || builder_first {
+        follow.target = if detour.is_some() || lead_in.is_some() {
             1.min(follow.local.len() - 1)
         } else if found.clear && entry.is_none() {
             follow.local.len() - 1
@@ -1670,7 +1671,7 @@ pub(super) fn reassign_local(state: &mut State, h: u32) {
         f.ai_detour_end = 0;
         f.ai_blocker = None;
         f.ai_passed = None;
-        f.ai_builder = false;
+        f.ai_lead_in = None;
     }
 }
 /// Whether unit `h`'s last search found no point nearer to its goal than

@@ -1851,7 +1851,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
                 // that the second Orc peon's first return walk takes up on
                 // leaving the mine (c-SEA-1, hub #15).
                 if starting_order == Some(1) {
-                    worker.facing = 0.929126084f32.to_bits();
+                    worker.facing = 0.929_126_1_f32.to_bits();
                 } else {
                     worker.entries.computer_harvest = false;
                 }
@@ -1870,7 +1870,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         state.paths.remove(&h);
         if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {
             if starting_order == Some(1) {
-                worker.facing = 0.929126084f32.to_bits();
+                worker.facing = 0.929_126_1_f32.to_bits();
             } else {
                 worker.entries.computer_harvest = false;
             }
@@ -2195,6 +2195,25 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     } else {
         state.drop_path(h);
         super::table::walk_dropped(state, h);
+    }
+    produced_paid_harvest_arrived(state, h);
+}
+
+/// Releases the first gold assignment's retained pair for a newly completed
+/// AI-paid worker after its stopping update at the mine.
+fn produced_paid_harvest_arrived(state: &mut State, h: u32) {
+    let retained = match state.objects.get_mut(&h) {
+        Some(Object::Unit(unit)) => {
+            let retained = std::mem::take(&mut unit.entries.ai_paid_arrival);
+            unit.entries.order.retain(|entry| !retained.contains(entry));
+            retained
+        }
+        _ => Vec::new(),
+    };
+    for entry in retained {
+        state
+            .table
+            .defer(entry, "AI paid worker: retained arrival cleanup");
     }
 }
 

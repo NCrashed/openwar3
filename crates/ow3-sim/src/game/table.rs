@@ -86,6 +86,12 @@ pub struct ObjectTable {
     /// building plan (c-SEA-1, hub #15).
     pub ai_harvest_cleanup_armed: bool,
     pub ai_harvest_cleanup: Vec<u32>,
+    /// Non-transient completion records of AI-produced workers, by player,
+    /// retained until that worker accepts its building plan.
+    pub ai_worker_completion_retained: std::collections::BTreeMap<i32, Vec<u32>>,
+    /// Start of the produced wisp's deferred building cleanup: tick and
+    /// index in `deferred`.
+    wisp_build_cleanup: Option<(u64, usize)>,
     /// Two retained records created by an initial paid-worker assignment and
     /// released in the mixed cleanup following a terminal-wait arrival. The
     /// worker identifies where the records remain retained; it does not imply
@@ -151,10 +157,15 @@ pub struct ObjectTable {
     /// Unlike the Undead plan it keeps the construction event and its
     /// compact progress state, without making a worker work order.
     pub ai_other_constructing: bool,
+    /// An accepted plan whose wisp is consumed by the construction is
+    /// starting. Its construction layout includes a retained work order in
+    /// addition to the compact layouts of the earlier AI building plans.
+    pub ai_wisp_constructing: bool,
     /// Parts retained between that building's unit layout and construction
     /// layout: a computer-tail part, then the start and event objects.
     ai_construction_tail: Option<u32>,
     ai_construction_start: Option<[u32; 2]>,
+    ai_wisp_construction_tail: Vec<u32>,
     ai_supply_construction_tail: Vec<u32>,
     ai_supply_records: Vec<u32>,
     /// Work on finished buildings that ends at a tick: the building and
@@ -256,6 +267,8 @@ impl ObjectTable {
             ai_harvest_reassigning: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
+            ai_worker_completion_retained: std::collections::BTreeMap::new(),
+            wisp_build_cleanup: None,
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
             late_wisp_cleanup: Vec::new(),
@@ -280,8 +293,10 @@ impl ObjectTable {
             ai_constructing: false,
             ai_supply_constructing: false,
             ai_other_constructing: false,
+            ai_wisp_constructing: false,
             ai_construction_tail: None,
             ai_construction_start: None,
+            ai_wisp_construction_tail: Vec::new(),
             ai_supply_construction_tail: Vec::new(),
             ai_supply_records: Vec::new(),
             work_ends: Vec::new(),
@@ -387,6 +402,37 @@ impl ObjectTable {
 
     pub fn defer(&mut self, entry: u32, tag: &'static str) {
         self.deferred.push((self.now, entry, tag));
+    }
+
+    /// Frees an object in a specified tick's 0.0001 s batch.
+    pub fn defer_at(&mut self, tick: u64, entry: u32, tag: &'static str) {
+        self.deferred.push((tick, entry, tag));
+    }
+
+    /// Marks the first deferred record of the produced wisp's accepted
+    /// building-plan cleanup.
+    pub fn begin_wisp_build_cleanup(&mut self, tick: u64) {
+        self.wisp_build_cleanup = Some((tick, self.deferred.len()));
+    }
+
+    /// Interleaves a critter order ending at the assignment boundary with
+    /// the staged wisp cleanup: the first old record precedes the
+    /// three-record prefix and the rest follow that prefix.
+    fn interleave_wisp_critter_order(&mut self, old: &[u32], tag: &'static str) -> bool {
+        let Some((tick, start)) = self.wisp_build_cleanup.take() else {
+            return false;
+        };
+        if old.is_empty() || self.deferred.len() < start + 3 {
+            return false;
+        }
+        let staged = self.deferred.split_off(start);
+        self.defer_at(tick, old[0], tag);
+        self.deferred.extend(staged[..3].iter().copied());
+        for &entry in &old[1..] {
+            self.defer_at(tick, entry, tag);
+        }
+        self.deferred.extend(staged[3..].iter().copied());
+        true
     }
 
     /// The object holding `entry` is freed by a timer of the queue expiring
@@ -783,6 +829,9 @@ pub struct UnitEntries {
     /// Records of an accepted melee-AI Undead building plan that stay with
     /// its acolyte until the one-second build order expires.
     pub ai_build_release: Vec<u32>,
+    /// Parts of a later AI assignment retained by an already accepted build
+    /// plan, grouped by the builder update that releases them.
+    ai_build_update_cleanup: Vec<(u64, Vec<u32>)>,
     /// A building under construction: its progress pair, its dispel's
     /// five (from its completion) and the work's part kept to the end.
     pub construction: Vec<u32>,
@@ -960,6 +1009,12 @@ pub struct UnitEntries {
     /// A melee-AI assignment's retained order layout, released when that
     /// worker first leaves the mine with its gold.
     pub ai_harvest_cycle: Vec<u32>,
+    /// A newly completed AI-paid worker has not yet accepted its first gold
+    /// assignment.
+    pub ai_paid_worker_unassigned: bool,
+    /// The two records of that first assignment released immediately after
+    /// the ordinary update that stops the worker at its mine.
+    pub ai_paid_arrival: Vec<u32>,
     /// Its automatic computer-worker harvest order remains the owner of the
     /// cycle's retained records until a melee-AI assignment replaces it.
     pub computer_harvest: bool,
@@ -1475,6 +1530,20 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     let tail = state
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
+    if state.table.ai_wisp_constructing {
+        for &k in &[5, 4, 9] {
+            if let Some(&entry) = tail.get(k) {
+                state
+                    .table
+                    .defer(entry, "AI wisp construction: computer unit");
+            }
+        }
+        state.table.ai_wisp_construction_tail = [10, 8, 1]
+            .into_iter()
+            .filter_map(|k| tail.get(k).copied())
+            .collect();
+        return;
+    }
     if state.table.ai_constructing {
         if state.table.ai_supply_constructing {
             for &k in &[6, 5, 10] {
@@ -1834,7 +1903,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .table
             .defer(entries[14 + shift + i], "unit state: limit watch");
     }
-    if !state.table.ai_constructing {
+    if !state.table.ai_constructing && !state.table.ai_wisp_constructing {
         for &k in making.deferred {
             state.table.defer(entries[at(k)], "map start: unit");
         }
@@ -1850,8 +1919,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         if after == -2.0 {
             state.table.defer(entries[at + 3], "map start: unit");
         }
-        state.table.defer(entries[count - 1], "map start: unit");
-        state.table.defer(entries[count - 2], "map start: unit");
+        if !state.table.ai_wisp_constructing {
+            state.table.defer(entries[count - 1], "map start: unit");
+            state.table.defer(entries[count - 2], "map start: unit");
+        }
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
         if after == -2.0 {
@@ -2564,13 +2635,13 @@ pub(super) fn critter_wander_ordered(state: &mut super::State, h: u32) {
     walk_made_at_order(state, h);
 }
 
-/// A critter gave its wander up short of the point, blocked twice: the old
-/// order's first part goes, a three-object order replacing it is made and
-/// dropped, then the old order's other parts (c-SCC-1: nsea 9516 at
-/// 9.209455, hub #15).
+/// A critter ends a wander in the short replacement band: the old order's
+/// first part goes, a three-object order replacing it is made and dropped,
+/// then the old order's other parts (c-SCC-1: nsea 9516 at 9.209455, 46.9
+/// units short, hub #15).
 ///
 /// PROVISIONAL: the three are not read one by one.
-pub(super) fn critter_wander_given_up(state: &mut super::State, h: u32) {
+pub(super) fn critter_wander_replaced(state: &mut super::State, h: u32) {
     let old = entries(state, h)
         .map(|e| std::mem::take(&mut e.order))
         .unwrap_or_default();
@@ -2585,6 +2656,27 @@ pub(super) fn critter_wander_given_up(state: &mut super::State, h: u32) {
     }
     for &e in rest {
         state.table.defer(e, "critter wander: order");
+    }
+}
+
+/// A critter gives an inaccessible wander remainder up without making a
+/// replacement order. At the wisp assignment boundary its order cleanup is
+/// interleaved with the already staged three-record wisp prefix.
+pub(super) fn critter_wander_ended(state: &mut super::State, h: u32) {
+    let old = entries(state, h)
+        .map(|e| std::mem::take(&mut e.order))
+        .unwrap_or_default();
+    if state
+        .table
+        .interleave_wisp_critter_order(&old, "critter wander: order end")
+    {
+        return;
+    }
+    let tick = state.table.now;
+    for entry in old {
+        state
+            .table
+            .defer_at(tick, entry, "critter wander: order end");
     }
 }
 
@@ -2940,6 +3032,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         }
         let capture_cleanup = std::mem::take(&mut state.table.ai_harvest_cleanup_armed);
         let mut cleanup = Vec::new();
+        let produced_paid = entries(state, h).is_some_and(|e| e.ai_paid_worker_unassigned);
         if let Some(e) = entries(state, h) {
             if paid {
                 e.harvest_arrive.clear();
@@ -2948,6 +3041,14 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                     .rev()
                     .copied()
                     .collect();
+                if produced_paid {
+                    e.ai_paid_worker_unassigned = false;
+                    e.ai_paid_arrival = parts[kept_end - 2..kept_end]
+                        .iter()
+                        .rev()
+                        .copied()
+                        .collect();
+                }
             } else {
                 e.harvest_arrive = parts[kept_end - 2..kept_end]
                     .iter()
@@ -2971,7 +3072,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                 cleanup.extend(std::mem::take(&mut e.order));
             }
         }
-        if paid && !super::harvest::is_wisp(state, h) {
+        if paid && !produced_paid && !super::harvest::is_wisp(state, h) {
             state.table.retained_harvest_cleanup = Some((
                 h,
                 parts[kept_end - 2..kept_end]
@@ -3014,6 +3115,43 @@ pub(super) fn ai_harvest_reassigning(state: &mut super::State, _h: u32) {
     state.table.ai_harvest_reassigning = true;
 }
 
+/// Reserves the last two approach updates of a produced wisp's accepted Moon
+/// Well plan for the retained pairs of its intervening AI assignment.
+pub(super) fn reserve_ai_build_assignment_cleanup(state: &mut super::State, h: u32, build_at: u64) {
+    if let Some(e) = entries(state, h) {
+        e.ai_build_update_cleanup = vec![
+            (build_at.saturating_sub(18), Vec::new()),
+            (build_at.saturating_sub(12), Vec::new()),
+        ];
+    }
+}
+
+/// Gives the outstanding Moon Well plan the two pairs made at the next gold
+/// delivery boundary. Their table ownership is independent of the worker
+/// state whose public order supplies the coincident allocation stream
+/// (c-SEA-1, turns 157 and 179, hub #15).
+fn fill_ai_build_assignment_cleanup(state: &mut super::State, h: u32, arrival: Vec<u32>) {
+    let walk = entries(state, h)
+        .map(|e| e.walk.clone())
+        .unwrap_or_default();
+    let plan = state.objects.values_mut().find_map(|object| match object {
+        super::Object::Unit(u)
+            if u.entries.ai_build_update_cleanup.len() == 2
+                && u.entries
+                    .ai_build_update_cleanup
+                    .iter()
+                    .all(|(_, entries)| entries.is_empty()) =>
+        {
+            Some(&mut u.entries.ai_build_update_cleanup)
+        }
+        _ => None,
+    });
+    if let Some(plan) = plan {
+        plan[0].1 = arrival;
+        plan[1].1 = walk;
+    }
+}
+
 /// A repeated AI pass keeps the new walk made by its replacement harvest
 /// order. The ordinary first-assignment capture has just placed that pair at
 /// the end of the worker's stale list (c-SEA-1, turn 33).
@@ -3050,17 +3188,15 @@ pub(super) fn ai_harvest_cleared(state: &mut super::State) {
 
 /// Releases the first assignment's temporary state at the observed point
 /// within an accepted building plan's cleanup (c-SEA-1, hub #15).
-pub(super) fn ai_harvest_cleanup(state: &mut super::State) {
+pub(super) fn ai_harvest_cleanup(state: &mut super::State, defer_tick: u64) {
     state.table.ai_harvest_cleanup_armed = false;
     for entry in std::mem::take(&mut state.table.ai_harvest_cleanup) {
-        state.table.defer(entry, "AI harvest: plan cleanup");
+        state
+            .table
+            .defer_at(defer_tick, entry, "AI harvest: plan cleanup");
     }
 }
 
-/// Records a repeated melee-AI wood assignment for a lumber harvester when
-/// no tree can be selected. The observed boundary has only four allocations;
-/// its cleanup is interleaved with records retained by the preceding guard
-/// transition (c-SEA-1, turn 13, hub #15).
 pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
@@ -3737,6 +3873,7 @@ pub(super) fn gold_delivered(state: &mut super::State, h: u32) {
         e.harvest_arrive = vec![parts[9], parts[8]];
         e.order = parts[..8].iter().rev().copied().chain([order]).collect();
     }
+    fill_ai_build_assignment_cleanup(state, h, vec![parts[9], parts[8]]);
 }
 
 /// Worker `h` delivers its lumber and goes back to its tree (c-RYP-1:
@@ -4147,6 +4284,33 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
 /// Unit `h` updates: the walks it gave up in earlier ticks are freed.
 pub(super) fn unit_updated(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    let sim_tick = state.ticks;
+    let scheduled = entries(state, h)
+        .map(|e| {
+            let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut e.ai_build_update_cleanup)
+                .into_iter()
+                .partition(|(at, _)| *at <= sim_tick);
+            e.ai_build_update_cleanup = later;
+            due.into_iter()
+                .flat_map(|(_, entries)| entries)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for entry in scheduled {
+        for object in state.objects.values_mut() {
+            let super::Object::Unit(u) = object else {
+                continue;
+            };
+            u.entries.order.retain(|&held| held != entry);
+            u.entries.harvest_arrive.retain(|&held| held != entry);
+            u.entries.walk.retain(|&held| held != entry);
+            u.entries.stale.retain(|&(_, held)| held != entry);
+            u.entries.ai_harvest_cycle.retain(|&held| held != entry);
+        }
+        state
+            .table
+            .defer(entry, "AI build: retained assignment state");
+    }
     let due = entries(state, h).map(|e| {
         if e.retained_late_wisp_walk {
             return Vec::new();
@@ -7102,7 +7266,7 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     state.table.constructing = false;
     let one = state.table.take(tick, "construction: start");
     let event = state.table.take(tick, "construction: event");
-    if state.table.ai_constructing {
+    if state.table.ai_constructing || state.table.ai_wisp_constructing {
         state.table.ai_construction_start = Some([one, event]);
     } else if state.table.ai_other_constructing {
         // Both stay with the compact AI construction state.
@@ -7123,6 +7287,51 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     let order = entries(state, h)
         .map(|e| std::mem::take(&mut e.build_order))
         .unwrap_or_default();
+    if state.table.ai_wisp_constructing {
+        let progress = state.table.take_n(tick, 2, "construction: progress");
+        let timer = state.table.take_n(tick, 3, "construction: timer");
+        let work = state.table.take(tick, "work order");
+        let parts = state.table.take_n(tick, 4, "work order: order start");
+        for entry in order {
+            state.table.defer(entry, "build order");
+        }
+        state
+            .table
+            .defer(progress[1], "AI wisp construction: progress");
+        state
+            .table
+            .defer(progress[0], "AI wisp construction: progress");
+        if let Some([one, event]) = state.table.ai_construction_start.take() {
+            state.table.defer(event, "construction: event");
+            state.table.defer(one, "construction: start");
+        }
+        let tail = std::mem::take(&mut state.table.ai_wisp_construction_tail);
+        for &entry in tail.iter().take(2) {
+            state
+                .table
+                .defer(entry, "AI wisp construction: computer unit");
+        }
+        state.table.defer(timer[1], "AI wisp construction: timer");
+        state.table.defer(timer[0], "AI wisp construction: timer");
+        if let Some(entry) = entries(state, building)
+            .and_then(|e| e.made.get(11))
+            .copied()
+        {
+            state
+                .table
+                .defer(entry, "AI wisp construction: building unit");
+        }
+        if let Some(&entry) = tail.get(2) {
+            state
+                .table
+                .defer(entry, "AI wisp construction: computer unit");
+        }
+        state.table.defer(timer[2], "AI wisp construction: timer");
+        if let Some(e) = entries(state, h) {
+            e.work = std::iter::once(work).chain(parts).collect();
+        }
+        return;
+    }
     if state.table.ai_constructing {
         let progress = state.table.take_n(tick, 2, "construction: progress");
         let timer = state.table.take_n(tick, 3, "construction: timer");

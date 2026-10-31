@@ -326,6 +326,10 @@ pub struct Unit {
     orient_interp: u8,
     life: Regenerating,
     mana: Regenerating,
+    /// Its blight-only life regeneration has already been activated. The
+    /// later ground check only makes a rate part on an inactive-to-active
+    /// transition (hub #15, c-SEA-1 turn 172).
+    blight_regen_active: bool,
     alive: bool,
     hidden: bool,
     user_data: i32,
@@ -992,6 +996,8 @@ enum Task {
 pub type AgentRecord = (u64, u32, [u32; 2], [u32; 2], u32, [u32; 2]);
 
 /// Game state shared with the natives.
+type AiBuild = (u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>);
+
 pub struct State {
     pub clock: FrameClock,
     pub timers: TimerQueue<Slot>,
@@ -1183,9 +1189,10 @@ pub struct State {
     cooldowns_done: Option<u32>,
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
-    /// Accepted melee-AI builders whose replacement order gets its first
-    /// high-level path in the next update even after the shared budget.
-    pub(super) ai_path_priority: BTreeSet<u32>,
+    /// Accepted melee-AI workers whose replacement order gets its first
+    /// high-level path in the next update even after the shared budget. The
+    /// value is an optional cell offset for a mandatory local lead-in.
+    pub(super) ai_path_priority: BTreeMap<u32, Option<[i32; 2]>>,
     /// The hits of weapons without a missile, when a test asks for them:
     /// tick, the queue time of the hit (its damage point timer's expiry),
     /// the queue time at the end of the tick and the target.
@@ -1270,7 +1277,7 @@ pub struct State {
     /// Accepted melee-AI building plans waiting for their observed engine
     /// start: tick, worker, type, site, its pose when accepted, the build
     /// order record and retained production records.
-    ai_builds: Vec<(u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>)>,
+    ai_builds: Vec<AiBuild>,
     /// Retained production records released by later build updates.
     ai_build_followups: Vec<(u64, Vec<u32>)>,
     /// Compact engine records due after a later check of a pending worker
@@ -1458,7 +1465,7 @@ impl State {
             pending_exits: std::collections::BTreeSet::new(),
             cooldowns_done: None,
             path_trace: None,
-            ai_path_priority: BTreeSet::new(),
+            ai_path_priority: BTreeMap::new(),
             hit_trace: None,
             agent_trace: None,
             member_places: BTreeMap::new(),
@@ -1647,7 +1654,10 @@ impl State {
         self.table.flush_q(tick, limit);
         // The world clock's timers of the tick (a corpse's end).
         let clock = add(self.move_clock, crate::timers::TICK);
-        movement::ai_supply_orders_due(self, clock);
+        // Retained AI supply orders cross their world-clock boundary in the
+        // following 5-ms slice, before the next public tick snapshot
+        // (c-SEA-1: the first Ziggurat order at 3.429962635..3.434962511).
+        movement::ai_supply_orders_due(self, add(clock, crate::timers::TICK));
         table::ai_produce_followups_due(self, clock);
         self.table.flush_clock(tick, clock);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
@@ -1852,8 +1862,8 @@ impl AiSleepQueue {
         let seconds = f64::from(f32::from_bits(duration)).max(0.0);
         let units = (seconds * crate::sleep::UNITS_PER_SECOND as f64).round() as u64;
         let target = start.saturating_add(units);
-        let interval = crate::sleep::CHECK_INTERVAL;
-        let check = target.div_ceil(interval).max(start / interval + 1) * interval;
+        let tick = crate::sleep::UNITS_PER_SECOND / 200;
+        let check = target.div_ceil(tick).max(start / tick + 1) * tick;
         self.sleepers.insert((check, order), thread);
     }
 
@@ -2273,13 +2283,15 @@ impl<'a> Game<'a> {
     }
 
     fn tick(&mut self) {
-        // AI Sleep follows the world clock, not TriggerSleepAction's real
-        // sleep clock. A context due at 0.100 resumes after the checksum at
-        // that boundary and before the next world tick (c-SEA-1).
+        // AI Sleep follows the world ticks, not TriggerSleepAction's 0.1 s
+        // checks. A context due at 0.100 resumes after the checksum at that
+        // boundary; fractional stagger sleeps resume on their first later
+        // tick (c-SEA-1).
         let elapsed = self.state.borrow().ticks;
-        if elapsed > 0 && elapsed % 20 == 0 {
-            let time = elapsed / 20 * crate::sleep::CHECK_INTERVAL;
+        if elapsed > 0 {
+            let time = elapsed * crate::sleep::UNITS_PER_SECOND / 200;
             self.ai.borrow_mut().resume_due(&self.state, time);
+            self.state.borrow_mut().table.flush(elapsed);
         }
         // The hours before and after the clock's step, for its events.
         let clock_step;
@@ -3879,6 +3891,7 @@ fn register_ai_natives(
     // Requested count, acceptance tick and update phase of each production
     // plan in this player's isolated AI context.
     let planned = Rc::new(RefCell::new(BTreeMap::<i32, ProductionPlan>::new()));
+    let builder_available = Rc::new(RefCell::new(false));
     let counted = state.clone();
     add(
         "native GetUnitCount takes integer unitid returns integer",
@@ -4000,6 +4013,7 @@ fn register_ai_natives(
     );
     let production = state.clone();
     let production_plans = planned.clone();
+    let production_builder_available = builder_available.clone();
     add(
         "native SetProduce takes integer qty, integer id, integer town returns boolean",
         Rc::new(move |_, args| {
@@ -4014,14 +4028,36 @@ fn register_ai_natives(
                     (t.worker, t.building, t.food_made > 0)
                 });
             let planned_at = production_plans.borrow().get(&type_id).copied();
-            let already = planned_at.is_some();
-            let accepted = !already && qty > 0 && (worker && qty == 1 || building && !supply);
+            let worker_pending = worker
+                && ai_unit_count(&state, player, type_id, false)
+                    > ai_unit_count(&state, player, type_id, true);
+            let building_pending = building
+                && state
+                    .ai_builds
+                    .iter()
+                    .any(|(_, builder, _, _, _, _, _, _)| {
+                        state
+                            .unit(Some(*builder))
+                            .is_some_and(|unit| unit.owner == player)
+                    });
+            let already = if worker {
+                worker_pending
+            } else {
+                planned_at.is_some()
+            };
+            let accepted = !already
+                && qty > 0
+                && (worker && qty == 1
+                    || building
+                        && !building_pending
+                        && (!supply || *production_builder_available.borrow()));
             let temporary = !accepted && worker && qty > 1;
             let later_temporary_worker = worker
                 && qty == 1
                 && planned_at.is_some_and(|plan| plan.temporary && state.ticks > plan.at);
             let repeated_single_worker = worker
                 && qty == 1
+                && already
                 && !harvest::is_wisp_type(&state, type_id)
                 && planned_at.is_some_and(|plan| {
                     !plan.temporary && !plan.repeated && state.ticks >= plan.at.saturating_add(600)
@@ -4032,11 +4068,11 @@ fn register_ai_natives(
                 state.ai_pending_supply.entry(player).or_insert(type_id);
             }
             if repeated_single_worker {
-                let at = ow3_math::add(state.timers.time(), 0.13f32.to_bits());
+                let at = ow3_math::add(state.timers.time(), 0.165f32.to_bits());
                 state.table.ai_produce_at_clock(at);
                 state
                     .ai_produce_followups
-                    .push((ow3_math::add(at, 0.56f32.to_bits()), player));
+                    .push((ow3_math::add(at, 0.5599f32.to_bits()), player));
                 let pending: Vec<_> = state
                     .ai_pending_supply
                     .iter()
@@ -4046,19 +4082,12 @@ fn register_ai_natives(
             } else if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {
+                    let defer_tick = tick + u64::from(type_id == i32::from_be_bytes(*b"emow"));
                     let made = state.table.take_n(tick, 17, "SetProduce");
                     state.table.free(tick, made[14], "SetProduce");
                     let last = state.table.take(tick, "SetProduce");
-                    state.table.defer(made[1], "SetProduce");
-                    table::ai_harvest_cleanup(&mut state);
-                    for &entry in made[8..14].iter().rev() {
-                        state.table.defer(entry, "SetProduce");
-                    }
                     let hall = ai_town_halls(&state, player).into_iter().next();
-                    if accepted
-                        && building
-                        && let Some(hall) = hall
-                    {
+                    let worker_cleanup = if let Some(hall) = hall {
                         movement::ai_build_order(
                             &mut state,
                             player,
@@ -4067,11 +4096,63 @@ fn register_ai_natives(
                             made[7],
                             vec![made[16], made[15]],
                             vec![made[6], made[5], made[4], made[3], made[2], made[0], last],
-                        );
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    state.table.defer_at(defer_tick, made[1], "SetProduce");
+                    if type_id == i32::from_be_bytes(*b"otrb") {
+                        for entry in worker_cleanup {
+                            state.table.defer(entry, "AI build: old worker order");
+                        }
+                    } else if type_id == i32::from_be_bytes(*b"emow") {
+                        // This boundary reuses the pending assignment state;
+                        // its releases are the coincident critter lifecycle,
+                        // not a second copy of the same entries.
+                        state.table.ai_harvest_cleanup_armed = false;
+                        state.table.ai_harvest_cleanup.clear();
+                    } else {
+                        table::ai_harvest_cleanup(&mut state, defer_tick);
+                    }
+                    for &entry in made[8..14].iter().rev() {
+                        state.table.defer_at(defer_tick, entry, "SetProduce");
                     }
                 } else {
+                    // A produced wisp reserved by the next production pass
+                    // contributes three preliminary records before the
+                    // ordinary six-record worker request. They are transient;
+                    // the ordinary request's two middle records remain the
+                    // worker-production timer payload (c-SEA-1, turn 157).
+                    let wisp_prefix = if accepted
+                        && worker
+                        && planned_at.is_some()
+                        && harvest::is_wisp_type(&state, type_id)
+                    {
+                        state.table.take_n(tick, 3, "SetProduce")
+                    } else {
+                        Vec::new()
+                    };
+                    let defer_tick = tick + u64::from(!wisp_prefix.is_empty());
+                    if !wisp_prefix.is_empty() {
+                        state.table.begin_wisp_build_cleanup(defer_tick);
+                    }
                     let made = state.table.take_n(tick, 6, "SetProduce");
-                    state.table.defer(made[1], "SetProduce");
+                    for &entry in wisp_prefix.iter().rev() {
+                        state.table.defer_at(defer_tick, entry, "SetProduce");
+                    }
+                    state.table.defer_at(defer_tick, made[1], "SetProduce");
+                    if !wisp_prefix.is_empty() {
+                        for entry in state
+                            .table
+                            .ai_worker_completion_retained
+                            .remove(&player)
+                            .unwrap_or_default()
+                        {
+                            state
+                                .table
+                                .defer_at(defer_tick, entry, "AI worker completion");
+                        }
+                    }
                     if starts_worker {
                         worker_records = Some([made[2], made[3]]);
                     }
@@ -4081,11 +4162,16 @@ fn register_ai_natives(
                         }
                     }
                     for &entry in [made[0], made[5], made[4]].iter() {
-                        state.table.defer(entry, "SetProduce");
+                        state.table.defer_at(defer_tick, entry, "SetProduce");
                     }
                 }
             }
             if accepted {
+                if worker && planned_at.is_some() && !worker_pending {
+                    *production_builder_available.borrow_mut() = true;
+                } else if building {
+                    *production_builder_available.borrow_mut() = false;
+                }
                 if !starts_worker {
                     let (gold, lumber) = state
                         .data
@@ -4489,7 +4575,7 @@ fn register_ai_natives(
                             state.table.ai_harvest_extra = 4;
                             table::ai_harvest_reassigning(&mut state, worker);
                             table::harvest_ordered(&mut state, worker, false);
-                            state.ai_path_priority.insert(worker);
+                            state.ai_path_priority.insert(worker, None);
                             follow::reassign_local(&mut state, worker);
                         }
                         wood_workers.borrow_mut().insert(worker);

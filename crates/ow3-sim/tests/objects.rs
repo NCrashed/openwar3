@@ -14,7 +14,10 @@ use ow3_sim::map::Map;
 use ow3_sim::replay::Playback;
 
 fn game_data() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b")
+    std::env::var_os("OPENWAR3_GAME_DATA").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../game-data/1.27b"),
+        PathBuf::from,
+    )
 }
 
 /// (tick, new, entry, creation, tag, world clock); the creation is `None`
@@ -798,10 +801,11 @@ fn melee_ai_checksums() {
 /// delivery after its occupied-mine pace interval, through the released
 /// Acolyte's later haunted-mine placement and the resulting periodic ability
 /// refresh at checkpoint 106, its continued three-worker cadence through
-/// checkpoint 131, and the on-boundary critter update before checkpoint 132.
+/// checkpoint 131, the on-boundary critter update before checkpoint 132,
+/// and the first AI-produced workers' completion at checkpoint 152.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(132)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(152)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -3823,6 +3827,238 @@ fn melee_ai_turn132_freechain() {
             ))
             .collect::<Vec<_>>()
     );
+}
+
+/// A Night Elf wisp finishes training before checkpoint 142, including its
+/// complete creation cluster and cleanup.
+#[test]
+fn melee_ai_turn142_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn142-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..140 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (event.new, event.entry, event.creation, event.tag))
+            .collect::<Vec<_>>()
+    );
+    let wisps: Vec<_> = playback
+        .game
+        .units()
+        .into_iter()
+        .filter(|unit| unit.owner == 3 && unit.type_id == i32::from_be_bytes(*b"ewsp"))
+        .collect();
+    let wisp = wisps
+        .iter()
+        .find(|unit| unit.x == 8528.0 && unit.y == -6416.0)
+        .unwrap_or_else(|| panic!("the completed Night Elf wisp: {wisps:#?}"));
+    assert_eq!((wisp.facing, wisp.order, wisp.alive), (0.0, 0, true));
+    assert_eq!(playback.game.table_next(), (0x2933, 0x366d));
+    assert_eq!(playback.game.generator_sums(), (0x01f6_896c, 0x4f57_a960));
+    assert_eq!(playback.game.game_sum(), 0x1f14_2d5d);
+    assert_eq!(
+        [1, 2, 3].map(|player| playback.game.player_state(player, 1)),
+        [355, 135, 360]
+    );
+    assert_eq!(
+        [1, 2, 3].map(|player| playback.game.player_state(player, 5)),
+        [6, 6, 6]
+    );
+}
+
+/// The first AI-produced peon and acolyte complete together before
+/// checkpoint 152, preserving each completion stream's observed order.
+#[test]
+fn melee_ai_initial_worker_completions() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-worker-completions.tsv")) else {
+        return;
+    };
+    let mut rows: Vec<(f64, u8, u32, bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| {
+            words[2] == "main-table" && (words[3].starts_with('p') || words[3].starts_with('a'))
+        })
+        .map(|words| {
+            (
+                words[0].parse().unwrap(),
+                u8::from(words[3].starts_with('a')),
+                words[3][1..].parse().unwrap(),
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    let expected: Vec<_> = rows
+        .into_iter()
+        .map(|(_, _, _, new, entry, creation)| (new, entry, creation))
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..150 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event.tick <= 3_024
+                && ((14_061..=14_175).contains(&event.creation)
+                    || [12_219, 12_220, 12_301, 12_302].contains(&event.creation))
+        })
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    let mismatch = ours.iter().zip(&expected).position(|(a, b)| a != b);
+    let around = mismatch
+        .unwrap_or(ours.len().min(expected.len()))
+        .saturating_sub(4);
+    assert!(
+        mismatch.is_none() && ours.len() == expected.len(),
+        "lengths ours/expected: {}/{}; first mismatch: {mismatch:?}; first relevant events: {:#?}",
+        ours.len(),
+        expected.len(),
+        events
+            .iter()
+            .filter(|event| {
+                event.tick <= 3_024
+                    && ((14_061..=14_175).contains(&event.creation)
+                        || [12_219, 12_220, 12_301, 12_302].contains(&event.creation))
+            })
+            .skip(around)
+            .take(16)
+            .map(|event| {
+                (
+                    event.new,
+                    event.entry,
+                    event.creation,
+                    event.call_name,
+                    event.tag,
+                )
+            })
+            .collect::<Vec<_>>()
+    );
+    for (owner, type_id, order) in [(1, *b"opeo", 852_018), (2, *b"uaco", 0)] {
+        let type_id = i32::from_be_bytes(type_id);
+        let workers: Vec<_> = playback
+            .game
+            .units()
+            .into_iter()
+            .filter(|unit| unit.owner == owner && unit.type_id == type_id)
+            .collect();
+        let unit = workers
+            .iter()
+            .max_by_key(|unit| unit.handle)
+            .unwrap_or_else(|| panic!("completed worker {owner}/{type_id}: {workers:#?}"));
+        assert_eq!((unit.order, unit.alive), (order, true));
+        if owner == 2 {
+            assert_eq!(unit.facing, 0.0);
+        }
+    }
+}
+
+/// The initial Undead gold assignment retains ten order records. Four are
+/// released in two observed pairs when the acolyte enters its haunted mine;
+/// the other six remain live through the first produced-worker completion.
+#[test]
+fn melee_ai_uaco_retained_cleanup() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-uaco-retained-cleanup.tsv")) else {
+        return;
+    };
+    let rows: Vec<_> = text
+        .lines()
+        .skip(1)
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect();
+    let creations: Vec<u32> = rows
+        .iter()
+        .filter(|words| words[3] == "take")
+        .map(|words| words[5].parse().unwrap())
+        .collect();
+    let expected: Vec<(bool, u32, u32)> = rows
+        .iter()
+        .filter(|words| words[3] == "take" || words[3] == "first-free")
+        .map(|words| {
+            (
+                words[3] == "take",
+                words[4].parse().unwrap(),
+                words[5].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..151 {
+        assert!(playback.step_slot());
+    }
+    let ours: Vec<_> = playback
+        .game
+        .table_log()
+        .iter()
+        .filter(|event| creations.contains(&event.creation))
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(ours, expected);
 }
 
 /// `c-SCC-1`'s object table.

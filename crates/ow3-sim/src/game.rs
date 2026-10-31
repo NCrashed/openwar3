@@ -1832,6 +1832,7 @@ struct AiTemplate {
 struct AiEngine {
     templates: BTreeMap<String, AiTemplate>,
     contexts: Vec<AiContext>,
+    next_sleep: u64,
 }
 
 struct AiContext {
@@ -1843,25 +1844,23 @@ struct AiContext {
 
 #[derive(Default)]
 struct AiSleepQueue {
-    next_sleep: u64,
     sleepers: BTreeMap<(u64, u64), Thread>,
 }
 
 impl AiSleepQueue {
-    fn sleep(&mut self, start: u64, duration: u32, thread: Thread) {
+    fn sleep(&mut self, start: u64, duration: u32, order: u64, thread: Thread) {
         let seconds = f64::from(f32::from_bits(duration)).max(0.0);
         let units = (seconds * crate::sleep::UNITS_PER_SECOND as f64).round() as u64;
         let target = start.saturating_add(units);
         let interval = crate::sleep::CHECK_INTERVAL;
         let check = target.div_ceil(interval).max(start / interval + 1) * interval;
-        self.sleepers.insert((check, self.next_sleep), thread);
-        self.next_sleep += 1;
+        self.sleepers.insert((check, order), thread);
     }
 
-    fn due(&mut self, time: u64) -> Vec<Thread> {
+    fn due(&mut self, time: u64) -> Vec<((u64, u64), Thread)> {
         let later = self.sleepers.split_off(&(time + 1, 0));
         std::mem::replace(&mut self.sleepers, later)
-            .into_values()
+            .into_iter()
             .collect()
     }
 }
@@ -1885,6 +1884,7 @@ impl AiEngine {
         Ok(AiEngine {
             templates,
             contexts: Vec::new(),
+            next_sleep: 0,
         })
     }
 
@@ -1927,51 +1927,74 @@ impl AiEngine {
         }));
         let refs: Vec<&Script> = template.scripts.iter().collect();
         let mut vm = Vm::load(&template.program, &refs, &natives)?;
-        let mut sleeps = AiSleepQueue::default();
         let now = state.borrow().ticks * crate::sleep::UNITS_PER_SECOND / 200;
-        if let Some(main) = vm.program().function_index("main") {
+        let main_sleep = if let Some(main) = vm.program().function_index("main") {
             match vm.start_thread(main, Vec::new()) {
-                Ok((Outcome::Sleep(duration), thread)) => {
-                    sleeps.sleep(now, duration, thread);
+                Ok((Outcome::Sleep(duration), thread)) => Some((duration, thread)),
+                Ok((Outcome::Finished(_), _)) => None,
+                Err(error) => {
+                    state.borrow_mut().errors.push(error);
+                    None
                 }
-                Ok((Outcome::Finished(_), _)) => {}
-                Err(error) => state.borrow_mut().errors.push(error),
             }
-        }
+        } else {
+            None
+        };
         let mut context = AiContext {
             player,
             vm,
-            sleeps,
+            sleeps: AiSleepQueue::default(),
             parked,
         };
-        context.park(now);
+        context.park(now, &mut self.next_sleep);
+        if let Some((duration, thread)) = main_sleep {
+            context.sleeps.sleep(now, duration, self.next_sleep, thread);
+            self.next_sleep += 1;
+        }
         self.contexts.push(context);
         self.contexts.sort_by_key(|c| c.player);
         Ok(())
     }
 
     fn resume_due(&mut self, state: &Rc<RefCell<State>>, time: u64) {
-        // Contexts are kept in player order. Within one context the sleep
-        // queue preserves the order in which its cooperative threads slept.
-        for context in &mut self.contexts {
-            for mut thread in context.sleeps.due(time) {
-                match context.vm.resume(&mut thread) {
-                    Ok(Outcome::Sleep(duration)) => {
-                        context.sleeps.sleep(time, duration, thread);
-                    }
-                    Ok(Outcome::Finished(_)) => {}
-                    Err(error) => state.borrow_mut().errors.push(error),
+        // Sleeping strands from all player contexts share one ordering. A
+        // strand started synchronously reaches Sleep before its caller.
+        let mut due = Vec::new();
+        for (context, ai) in self.contexts.iter_mut().enumerate() {
+            due.extend(
+                ai.sleeps
+                    .due(time)
+                    .into_iter()
+                    .map(|((check, order), thread)| (check, order, context, thread)),
+            );
+        }
+        due.sort_by_key(|&(check, order, ..)| (check, order));
+        let mut next_sleep = self.next_sleep;
+        for (_, _, context, mut thread) in due {
+            let context = &mut self.contexts[context];
+            let sleep = match context.vm.resume(&mut thread) {
+                Ok(Outcome::Sleep(duration)) => Some((duration, thread)),
+                Ok(Outcome::Finished(_)) => None,
+                Err(error) => {
+                    state.borrow_mut().errors.push(error);
+                    None
                 }
-                context.park(time);
+            };
+            context.park(time, &mut next_sleep);
+            if let Some((duration, thread)) = sleep {
+                context.sleeps.sleep(time, duration, next_sleep, thread);
+                next_sleep += 1;
             }
         }
+        self.next_sleep = next_sleep;
     }
 }
 
 impl AiContext {
-    fn park(&mut self, now: u64) {
+    fn park(&mut self, now: u64, next_sleep: &mut u64) {
         for (thread, duration) in self.parked.borrow_mut().drain(..) {
-            self.sleeps.sleep(now, duration, thread);
+            self.sleeps.sleep(now, duration, *next_sleep, thread);
+            *next_sleep += 1;
         }
     }
 }
@@ -3722,7 +3745,16 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
             .map(|q| q.types().iter().filter(|&&id| id == type_id).count())
             .sum()
     };
-    (present + queued) as i32
+    let pending = if done {
+        0
+    } else {
+        state
+            .type_records
+            .get(&player)
+            .and_then(|records| records.iter().find(|(id, _)| *id == type_id))
+            .map_or(0, |(_, record)| record[2] as usize)
+    };
+    (present + queued + pending) as i32
 }
 
 fn ai_town_halls(state: &State, player: i32) -> Vec<u32> {
@@ -3848,18 +3880,16 @@ fn register_ai_natives(
     // plan in this player's isolated AI context.
     let planned = Rc::new(RefCell::new(BTreeMap::<i32, ProductionPlan>::new()));
     let counted = state.clone();
-    let counted_plans = planned.clone();
     add(
         "native GetUnitCount takes integer unitid returns integer",
         Rc::new(move |_, args| {
             let type_id = integer(&args[0]);
-            Ok(Some(Value::Integer(
-                ai_unit_count(&counted.borrow(), player, type_id, false)
-                    + counted_plans
-                        .borrow()
-                        .get(&type_id)
-                        .map_or(0, |plan| plan.qty),
-            )))
+            Ok(Some(Value::Integer(ai_unit_count(
+                &counted.borrow(),
+                player,
+                type_id,
+                false,
+            ))))
         }),
     );
     let counted = state.clone();
@@ -3996,6 +4026,8 @@ fn register_ai_natives(
                 && planned_at.is_some_and(|plan| {
                     !plan.temporary && !plan.repeated && state.ticks >= plan.at.saturating_add(600)
                 });
+            let starts_worker = worker && (accepted || temporary && !already);
+            let mut worker_records = None;
             if building && supply && qty > 0 {
                 state.ai_pending_supply.entry(player).or_insert(type_id);
             }
@@ -4040,6 +4072,9 @@ fn register_ai_natives(
                 } else {
                     let made = state.table.take_n(tick, 6, "SetProduce");
                     state.table.defer(made[1], "SetProduce");
+                    if starts_worker {
+                        worker_records = Some([made[2], made[3]]);
+                    }
                     if temporary {
                         if let Some(hall) = ai_town_halls(&state, player).into_iter().next() {
                             table::ai_production_cleanup(&mut state, hall);
@@ -4051,13 +4086,15 @@ fn register_ai_natives(
                 }
             }
             if accepted {
-                let (gold, lumber) = state
-                    .data
-                    .units
-                    .get(&type_id)
-                    .map_or((0, 0), |unit| (unit.gold_cost, unit.lumber_cost));
-                *state.setup.player_states.entry((player, 1)).or_default() -= gold;
-                *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
+                if !starts_worker {
+                    let (gold, lumber) = state
+                        .data
+                        .units
+                        .get(&type_id)
+                        .map_or((0, 0), |unit| (unit.gold_cost, unit.lumber_cost));
+                    *state.setup.player_states.entry((player, 1)).or_default() -= gold;
+                    *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
+                }
                 production_plans.borrow_mut().insert(
                     type_id,
                     ProductionPlan {
@@ -4103,6 +4140,35 @@ fn register_ai_natives(
                 widgets::type_record(&mut state, player, type_id, |q| {
                     q[2] = q[2].wrapping_add(1);
                 });
+            }
+            if starts_worker {
+                let (gold, lumber, food) =
+                    state.data.units.get(&type_id).map_or((0, 0, 0), |unit| {
+                        (unit.gold_cost, unit.lumber_cost, unit.food_used)
+                    });
+                *state.setup.player_states.entry((player, 1)).or_default() -= gold;
+                *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
+                *state.setup.player_states.entry((player, 5)).or_default() += food;
+            }
+            if let Some(records) = worker_records
+                && let Some(hall) = ai_town_halls(&state, player).into_iter().next()
+            {
+                let build_time = state
+                    .data
+                    .units
+                    .get(&type_id)
+                    .map_or(0, |unit| unit.build_time);
+                let expiry = ow3_math::add(state.timers.time(), build_time);
+                training::start_timer(
+                    &mut state,
+                    expiry,
+                    training::EngineTimer::AiWorker {
+                        owner: player,
+                        hall,
+                        type_id,
+                        records,
+                    },
+                );
             }
             Ok(Some(Value::Boolean(accepted)))
         }),

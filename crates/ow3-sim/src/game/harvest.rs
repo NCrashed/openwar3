@@ -2014,6 +2014,7 @@ pub(super) fn idle_workers(state: &State, owner: i32) -> usize {
                     && !u.hidden
                     && u.movement.is_none()
                     && u.attack.is_none()
+                    && !paid_working(state, w)
                     && state
                         .data
                         .units
@@ -2177,15 +2178,23 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     p.places[k] = Some(h);
     let at = add(state.timers.time(), JOIN_DELAY);
     p.joining.push((h, at));
+    let retained_builder = state.ai_released_builders.contains(&h);
+    // A builder released by the AI retains its arrival records until this
+    // placement and needs the moving unit's next update preserved. Ordinary
+    // paid workers release their walk immediately at arrival.
+    if retained_builder {
+        state.drop_path(h);
+    }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.x = points[k][0];
         u.y = points[k][1];
         u.movement = None;
     }
-    state.drop_path(h);
-    super::table::walk_dropped(state, h);
-    if state.ai_released_builders.contains(&h) {
+    if retained_builder {
         retained_harvest_arrived(state, h);
+    } else {
+        state.drop_path(h);
+        super::table::walk_dropped(state, h);
     }
 }
 

@@ -45,6 +45,13 @@ pub enum EngineTimer {
     Training(u32),
     /// A dead hero's revive ends (`revive`).
     Revive(u32),
+    /// A worker requested by a player-bound melee AI becomes active.
+    AiWorker {
+        owner: i32,
+        hall: u32,
+        type_id: i32,
+        records: [u32; 2],
+    },
 }
 
 /// The queue of a building.
@@ -123,9 +130,63 @@ pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             EngineTimer::Construction(h) => super::finish_construction(vm, state, h),
             EngineTimer::Training(h) => end_training(vm, state, h),
             EngineTimer::Revive(h) => super::revive::finish(vm, state, h),
+            EngineTimer::AiWorker {
+                owner,
+                hall,
+                type_id,
+                records,
+            } => finish_ai_worker(vm, state, owner, hall, type_id, records),
         }
         state.borrow_mut().move_clock = clock;
     }
+}
+
+/// Completes a worker request owned by a player-bound melee AI. Such a
+/// request is not a visible building queue before completion.
+fn finish_ai_worker(
+    vm: &mut Vm,
+    state: &Rc<RefCell<State>>,
+    owner: i32,
+    hall: u32,
+    type_id: i32,
+    records: [u32; 2],
+) {
+    {
+        let mut s = state.borrow_mut();
+        s.table.defer(records[1], "AI worker production");
+        s.table.defer(records[0], "AI worker production");
+        // The player-bound AI leaves the first two ordinary training cells
+        // unused (c-SEA-1: the first produced wisp).
+        let place = place(&s, hall, type_id, None, 2);
+        let Some(unit) =
+            super::widgets::create_unit(&mut s, owner, type_id, [place[0], place[1], 0])
+        else {
+            return;
+        };
+        super::table::unit_made(&mut s, unit);
+        if type_id == i32::from_be_bytes(*b"opeo") {
+            super::harvest::computer_worker_made(&mut s, unit);
+        }
+        let food = s.data.units.get(&type_id).map_or(0, |unit| unit.food_used);
+        *s.setup.player_states.entry((owner, FOOD_USED)).or_default() -= food;
+        super::widgets::type_record(&mut s, owner, type_id, |record| {
+            record[2] = record[2].saturating_sub(1);
+        });
+        let tick = s.table.now;
+        // The paid Undead worker has one completion record; the other
+        // observed melee workers have two (c-SEA-1 worker completions).
+        let completion_count = if type_id == i32::from_be_bytes(*b"uaco") {
+            1
+        } else {
+            2
+        };
+        let completion = s
+            .table
+            .take_n(tick, completion_count, "AI worker completion");
+        s.table.defer(completion[0], "AI worker completion");
+        super::regions::test_unit(&mut s, unit);
+    }
+    super::regions::dispatch(vm, state);
 }
 
 fn player_state(state: &State, player: i32, which: i32) -> i32 {
@@ -365,7 +426,7 @@ fn end_training(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) {
             return;
         };
         let type_id = q.types.remove(0);
-        let place = place(&s, building, type_id, rally);
+        let place = place(&s, building, type_id, rally, 0);
         // The food taken at the start is the new unit's, which counts it
         // again when made.
         let food = s.data.units.get(&type_id).map_or(0, |t| t.food_used);
@@ -508,7 +569,13 @@ pub(super) fn food_freed(vm: &mut Vm, state: &Rc<RefCell<State>>, player: i32) {
 /// PROVISIONAL: measured for units of size class 1; a building without a
 /// pathing texture, or no free cell within 16 rings, puts the unit at the
 /// building's position.
-fn place(state: &State, building: u32, type_id: i32, rally: Option<[u32; 2]>) -> [u32; 2] {
+fn place(
+    state: &State,
+    building: u32,
+    type_id: i32,
+    rally: Option<[u32; 2]>,
+    skip: usize,
+) -> [u32; 2] {
     let Some(Object::Unit(b)) = state.objects.get(&building) else {
         return [0, 0];
     };
@@ -537,6 +604,25 @@ fn place(state: &State, building: u32, type_id: i32, rally: Option<[u32; 2]>) ->
         None => 2,
     };
     let (x0, x1, y0, y1) = footprint.rect;
+    let Some((x, y)) = free_ring_cell((x0, x1, y0, y1), first, skip, free) else {
+        return [bx, by];
+    };
+    let cell = |c: i32, m: u32| add(mul(add(i2r(c), HALF), WORLD), m);
+    [
+        cell(x, state.world_bounds[0]),
+        cell(y, state.world_bounds[1]),
+    ]
+}
+
+/// The first free cell on the expanding rings around a building footprint,
+/// after `skip` otherwise suitable cells.
+fn free_ring_cell(
+    (x0, x1, y0, y1): (i32, i32, i32, i32),
+    first: usize,
+    skip: usize,
+    free: impl Fn(i32, i32) -> bool,
+) -> Option<(i32, i32)> {
+    let mut skipped = 0;
     for n in 1..=16 {
         let (l, r, bottom, top) = (x0 - n, x1 + 1 + n, y0 - n, y1 + 1 + n);
         let sides: [Vec<(i32, i32)>; 4] = [
@@ -548,16 +634,16 @@ fn place(state: &State, building: u32, type_id: i32, rally: Option<[u32; 2]>) ->
         for side in 0..4 {
             for &(x, y) in &sides[(first + side) % 4] {
                 if free(x, y) {
-                    let cell = |c: i32, m: u32| add(mul(add(i2r(c), HALF), WORLD), m);
-                    return [
-                        cell(x, state.world_bounds[0]),
-                        cell(y, state.world_bounds[1]),
-                    ];
+                    if skipped < skip {
+                        skipped += 1;
+                        continue;
+                    }
+                    return Some((x, y));
                 }
             }
         }
     }
-    [bx, by]
+    None
 }
 
 /// 0.5 and 32.

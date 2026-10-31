@@ -3664,6 +3664,9 @@ pub(super) fn gold_delivered(state: &mut super::State, h: u32) {
     if entries(state, h).is_some_and(|e| e.computer_harvest) {
         if let Some(e) = entries(state, h) {
             e.walk_ready = true;
+            // Only the first delivery belongs to the automatic game-start
+            // assignment. Later cycles use the ordinary delivery lifecycle.
+            e.computer_harvest = false;
         }
         return;
     }

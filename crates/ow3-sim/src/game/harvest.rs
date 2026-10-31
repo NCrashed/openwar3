@@ -816,6 +816,11 @@ fn ai_mine_waits(state: &mut State) {
         }
         super::table::harvest_waits(state, worker);
         super::table::harvest_arrived(state, worker);
+        // This occupied-mine wait starts the same pace interval as an
+        // ordinary queue arrival. The first eventual entry can therefore
+        // accelerate the next return trip (c-SEA-1, turns 20 and 97,
+        // hub #15).
+        pace(state, worker);
     }
 }
 

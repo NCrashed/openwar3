@@ -2943,6 +2943,9 @@ pub(super) fn critters_before(state: &mut State, before: Option<u32>) {
         let (dx, dy) = (offset(), offset());
         let point = [add(centre[0], dx), add(centre[1], dy)];
         super::movement::point_order(state, h, "move", point);
+        if before == Some(state.update_time) {
+            super::movement::ordered_before_update(state, h);
+        }
         super::table::critter_wander_ordered(state, h);
         let next = add(at, critter_wait(state));
         state.critters.insert(h, (next, true));

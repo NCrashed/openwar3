@@ -99,6 +99,17 @@ pub(super) fn next_update_after(tick: u64) -> u64 {
     next.max(FIRST_UPDATE)
 }
 
+/// Makes a newly accepted order eligible for the update whose queue boundary
+/// has not run yet in this tick. Scheduled critter wanders can become due
+/// immediately before that boundary (c-SEA-1: nsea 9596 at 9.509405).
+pub(super) fn ordered_before_update(state: &mut State, h: u32) {
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(movement) = u.movement.as_mut()
+    {
+        movement.next_update = state.ticks;
+    }
+}
+
 /// 1/32: distances of the movement are taken in cells of 32 (SPEC-0018).
 pub(super) const CELL: u32 = 0x3D00_0000;
 /// The arrival radius of a walk back to an acquisition's point in cells

@@ -2179,6 +2179,29 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     }
     state.drop_path(h);
     super::table::walk_dropped(state, h);
+    if state.ai_released_builders.contains(&h) {
+        retained_harvest_arrived(state, h);
+    }
+}
+
+/// Releases the retained arrival records of a paid worker when that same
+/// worker reaches its final mine placement.
+fn retained_harvest_arrived(state: &mut State, h: u32) {
+    let Some((worker, entries)) = state.table.retained_harvest_cleanup.take() else {
+        return;
+    };
+    if worker != h {
+        state.table.retained_harvest_cleanup = Some((worker, entries));
+        return;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+        u.entries.order.retain(|entry| !entries.contains(entry));
+    }
+    for entry in entries {
+        state
+            .table
+            .defer(entry, "harvest: retained arrival cleanup");
+    }
 }
 
 /// Wisp `h` reached entangled mine `mine` (SPEC-0029): it goes in, hidden

@@ -4302,7 +4302,9 @@ fn register_ai_natives(
                         state.ai_builds.iter().any(|(_, h, type_id, ..)| {
                             *h == worker && type_id.to_be_bytes() == *b"usep"
                         });
-                    if reserved_undead_builder || state.ai_released_builders.contains(&worker) {
+                    let reserved_supply_builder = state.ai_released_builders.contains(&worker)
+                        && state.ai_pending_supply.contains_key(&player);
+                    if reserved_undead_builder || reserved_supply_builder {
                         movement::hold_ai_order(&mut state, worker);
                     }
                     // The second ordinary-mine worker of the first melee-AI

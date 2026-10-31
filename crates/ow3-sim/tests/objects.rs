@@ -796,10 +796,12 @@ fn melee_ai_checksums() {
 /// first ordinary delivery, and the settled harvest plans' next idle-acolyte
 /// assignment, the next critter wander completion, and the following Orc
 /// delivery after its occupied-mine pace interval, through the released
-/// Acolyte's later haunted-mine placement at checkpoint 103.
+/// Acolyte's later haunted-mine placement and the resulting periodic ability
+/// refresh at checkpoint 106 and its continued three-worker cadence through
+/// checkpoint 131.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(103)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(131)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -3637,6 +3639,58 @@ fn melee_ai_turn103_objects() {
     let table = ObjectTable::new(640, Vec::new(), 640);
     let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
     for _ in 0..101 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (event.new, event.entry, event.creation, event.tag))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Two sea critters finish their walks while an Orc peon retries its mine
+/// route and the Haunted Gold Mine replaces its periodic ability pair before
+/// checkpoint 106.
+#[test]
+fn melee_ai_turn106_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn106-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..104 {
         assert!(playback.step_slot());
     }
     let start = playback.game.table_log().len();

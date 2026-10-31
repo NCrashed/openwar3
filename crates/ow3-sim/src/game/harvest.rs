@@ -2059,6 +2059,11 @@ pub(super) fn pays_for(state: &State, h: u32, mine: u32) -> bool {
     m.alive && !m.hidden && (haunted || entangled_for(state, h, mine))
 }
 
+/// Workers currently contributing to a paying mine's periodic ability.
+pub(super) fn paying_workers(state: &State, mine: u32) -> usize {
+    state.paying.get(&mine).map_or(0, |p| p.working.len())
+}
+
 /// Whether `h` is a wisp (`Awha`) and `mine` an entangled mine (`Aegm`):
 /// the wisps go in (SPEC-0029, "Night Elf: wisps on an entangled mine").
 fn entangled_for(state: &State, h: u32, mine: u32) -> bool {
@@ -2526,30 +2531,38 @@ pub(super) fn late_wisp_assignment(state: &State, mine: u32) -> bool {
 /// (`join` comes, `leave` goes): the part of the period already done is
 /// kept, the rest runs at the new rate.
 fn count_change(state: &mut State, mine: u32, now: u32, join: Option<u32>, leave: Option<u32>) {
-    let Some(p) = state.paying.get_mut(&mine) else {
-        return;
+    let (old_count, new_count) = {
+        let Some(p) = state.paying.get_mut(&mine) else {
+            return;
+        };
+        let old_count = p.working.len();
+        let old = old_count as f32;
+        // The time one worker still needs for the next payment.
+        let left = match (p.expiry, p.left) {
+            (Some(e), _) => (f32::from_bits(e) - f32::from_bits(now)).max(0.0) * old,
+            (None, Some(l)) => f32::from_bits(l),
+            (None, None) => 5.0,
+        };
+        if let Some(w) = join {
+            p.working.push(w);
+        }
+        if let Some(w) = leave {
+            p.working.retain(|&x| x != w);
+        }
+        let new_count = p.working.len();
+        let n = new_count as f32;
+        if n > 0.0 {
+            p.expiry = Some(add(now, (left / n).to_bits()));
+            p.left = None;
+        } else {
+            p.expiry = None;
+            p.left = Some(left.to_bits());
+        }
+        (old_count, new_count)
     };
-    let old = p.working.len() as f32;
-    // The time one worker still needs for the next payment.
-    let left = match (p.expiry, p.left) {
-        (Some(e), _) => (f32::from_bits(e) - f32::from_bits(now)).max(0.0) * old,
-        (None, Some(l)) => f32::from_bits(l),
-        (None, None) => 5.0,
-    };
-    if let Some(w) = join {
-        p.working.push(w);
-    }
-    if let Some(w) = leave {
-        p.working.retain(|&x| x != w);
-    }
-    let n = p.working.len() as f32;
-    if n > 0.0 {
-        p.expiry = Some(add(now, (left / n).to_bits()));
-        p.left = None;
-    } else {
-        p.expiry = None;
-        p.left = Some(left.to_bits());
-    }
+    state
+        .table
+        .ai_paid_records_rate_changed(mine, now, old_count, new_count);
 }
 
 /// The paying mines of this tick: workers that start to count, and the

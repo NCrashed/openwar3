@@ -4324,7 +4324,7 @@ fn register_ai_natives(
                         }
                         state.table.ai_harvest_fewer = 0;
                         if Some(worker) == paid_placement {
-                            table::ai_paid_placement(&mut state, worker, repeat);
+                            table::ai_paid_placement(&mut state, worker, mine, repeat);
                         }
                         if retain_walk {
                             table::retain_late_wisp_walk(&mut state, worker);

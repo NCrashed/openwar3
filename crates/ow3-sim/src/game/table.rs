@@ -109,8 +109,13 @@ pub struct ObjectTable {
     pub starting_harvest_cleanup: Vec<(usize, Vec<u32>)>,
     /// The rooting computer town hall's production-plan object, by hall.
     pub ai_production: std::collections::BTreeMap<u32, u32>,
-    /// Placement records retained by the initial paid mine assignment.
+    /// The continuous-value modifier and threshold listener of a paying
+    /// mine's periodic ability refresh.
     pub ai_paid_records: Vec<u32>,
+    /// The paying mine whose periodic ability retains those records, and
+    /// the number of workers determining its refresh cadence.
+    pub ai_paid_records_mine: Option<u32>,
+    pub ai_paid_record_workers: usize,
     /// Whether that pair has already made its one assignment-boundary
     /// replacement. Later paid-worker assignments retain the pair while its
     /// periodic update continues (c-SEA-1, turns 33, 83 and 92-93, hub #15).
@@ -260,6 +265,8 @@ impl ObjectTable {
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
             ai_paid_records: Vec::new(),
+            ai_paid_records_mine: None,
+            ai_paid_record_workers: 0,
             ai_paid_replaced: false,
             recycled_guards: Vec::new(),
             destructable_paths: std::collections::BTreeMap::new(),
@@ -433,24 +440,54 @@ impl ObjectTable {
         self.late_entangled_records_at_clock(next);
     }
 
-    /// Replaces the retained placement pair made by a repeated paid-worker
-    /// assignment 2.5001 s after that pair takes its entries, repeating at
-    /// the same interval while the pair remains retained.
+    /// Replaces a paying mine's periodic ability pair. Its cadence is five
+    /// seconds divided by the workers contributing to the ability, plus the
+    /// observed 0.0001 s replacement boundary.
     fn ai_paid_records_update(&mut self, tick: u64, clock: u32) {
-        let new = self.take_n(tick, 2, "paid worker: scheduled placement update");
+        let new = self.take_n(tick, 2, "paying mine: periodic ability refresh");
         for entry in std::mem::take(&mut self.ai_paid_records) {
             // The 0.0001 s release is still inside this simulation tick and
             // precedes later movement updates in it.
             let entry = self.made.remove(&entry).unwrap_or(entry);
-            self.free(tick, entry, "paid worker: old scheduled placement");
+            self.free(tick, entry, "paying mine: old periodic ability pair");
         }
         self.ai_paid_records = new;
-        let next = ow3_math::add(clock, 2.5001f32.to_bits());
+        let workers = self.ai_paid_record_workers as f32;
+        let period = 5.0 / workers + 0.0001;
+        let next = ow3_math::add(clock, period.to_bits());
         self.free_at_clock(
             next,
             AI_PAID_UPDATE_AT,
-            "paid worker: scheduled placement update",
+            "paying mine: periodic ability refresh",
         );
+    }
+
+    /// Preserves the completed fraction of a paying mine ability's current
+    /// refresh period when its contributing worker count changes.
+    pub(super) fn ai_paid_records_rate_changed(
+        &mut self,
+        mine: u32,
+        now: u32,
+        old: usize,
+        new: usize,
+    ) {
+        if self.ai_paid_records_mine != Some(mine) {
+            return;
+        }
+        self.ai_paid_record_workers = new;
+        if old == 0 || new == 0 {
+            return;
+        }
+        let Some((clock, _, _)) = self
+            .timed_w
+            .iter_mut()
+            .find(|(_, entry, _)| *entry == AI_PAID_UPDATE_AT)
+        else {
+            return;
+        };
+        let remaining = (f32::from_bits(*clock) - f32::from_bits(now)).max(0.0);
+        let adjusted = remaining * old as f32 / new as f32;
+        *clock = ow3_math::add(now, adjusted.to_bits());
     }
 
     fn ai_produce(&mut self, tick: u64) {
@@ -3171,7 +3208,7 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
 /// the placement update's queue boundary; two replacement records take
 /// their entries at the worker's join boundary and stay live (c-SEA-1:
 /// 0.275000 and 0.280000, hub #15).
-pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) {
+pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, mine: u32, repeat: bool) {
     let now = state.timers.time();
     if repeat {
         if state.table.ai_paid_replaced {
@@ -3199,11 +3236,14 @@ pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) 
                 .free_at_clock(released, old, "paid worker: old placement");
         }
         state.table.ai_paid_records = new;
-        let refresh = ow3_math::add(placed, 2.5001f32.to_bits());
+        state.table.ai_paid_records_mine = Some(mine);
+        state.table.ai_paid_record_workers = super::harvest::paying_workers(state, mine);
+        let workers = state.table.ai_paid_record_workers.max(1) as f32;
+        let refresh = ow3_math::add(placed, (5.0 / workers + 0.0001).to_bits());
         state.table.free_at_clock(
             refresh,
             AI_PAID_UPDATE_AT,
-            "paid worker: scheduled placement update",
+            "paying mine: periodic ability refresh",
         );
         return;
     }
@@ -3239,6 +3279,7 @@ pub(super) fn ai_paid_placement(state: &mut super::State, h: u32, repeat: bool) 
         state.table.take_at_q(placed, "paid worker: placement"),
     ];
     state.table.ai_paid_records = new;
+    state.table.ai_paid_records_mine = Some(mine);
 }
 
 /// Releases a rooting computer town hall's plan object on its first

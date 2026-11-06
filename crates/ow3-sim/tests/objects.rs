@@ -5072,7 +5072,7 @@ fn melee_ai_turn200_objects() {
 /// the script generator, and frees them with seven older records in the
 /// next tick.
 #[test]
-#[ignore = "not matched yet: the blocked wander move does not give up"]
+#[ignore = "not matched yet: the three objects at the end of a given-up wander"]
 fn melee_ai_turn217_objects() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn217-events.tsv")) else {

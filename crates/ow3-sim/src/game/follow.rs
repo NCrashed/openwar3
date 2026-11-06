@@ -39,6 +39,9 @@ const SEGMENT: f32 = 10.0;
 const SEGMENT_END: u32 = 0x3EFA_E148;
 /// The iteration limit of a local search.
 const LOCAL_LIMIT: u32 = 700;
+/// The iteration limit of the local search of a critter's wander move
+/// (SPEC-0020, "Local search").
+const WANDER_LOCAL_LIMIT: u32 = 32;
 /// When the iterations of the window reach this many, the searching unit
 /// cannot search again for `HOLD` ticks.
 const LONG_SEARCH: u32 = 64;
@@ -846,7 +849,16 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         group,
         kind,
     };
-    let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick);
+    let wander = state
+        .critters
+        .get(&walker.handle)
+        .is_some_and(|&(_, walking)| walking);
+    let limit = if wander {
+        WANDER_LOCAL_LIMIT
+    } else {
+        LOCAL_LIMIT
+    };
+    let decided = decide(&mut follow, grid, &others, &mut shared, walker, tick, limit);
     let events = shared.events;
     // An arrived unit searches a new path at its next update.
     // A worker at its gold mine gives its walk up as it goes in or starts
@@ -872,6 +884,7 @@ fn decide(
     shared: &mut Shared,
     walker: &Walker,
     tick: u64,
+    limit: u32,
 ) -> Steer {
     if follow.waypoints.is_empty() {
         return Steer::Walk(walker.order);
@@ -1003,7 +1016,7 @@ fn decide(
                 search_at,
                 follow.goal,
                 class,
-                LOCAL_LIMIT,
+                limit,
                 &path::occupied_cells(to_cells(chase.target), chase.target_class),
             ),
             // A walk to a building: the same, touching its footprint
@@ -1013,14 +1026,14 @@ fn decide(
                 search_at,
                 follow.goal,
                 class,
-                LOCAL_LIMIT,
+                limit,
                 &shared.building,
             ),
-            _ => path::local(&seen, search_at, follow.goal, class, LOCAL_LIMIT),
+            _ => path::local(&seen, search_at, follow.goal, class, limit),
         };
         // A search that hits the limit costs one more.
-        shared.budget.used[usize::from(shared.kind & 0xF)] += if found.iterations >= LOCAL_LIMIT {
-            LOCAL_LIMIT + 1
+        shared.budget.used[usize::from(shared.kind & 0xF)] += if found.iterations >= limit {
+            limit + 1
         } else {
             found.iterations
         };

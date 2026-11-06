@@ -4229,12 +4229,10 @@ fn register_ai_natives(
                         repeated: false,
                     });
             } else if later_temporary_worker {
-                let update_at = state.ticks + 1;
-                state.ai_worker_updates.push(update_at);
                 // The first retry advances the partial worker reservation
-                // to its stable phase. Later retries are silent until the
-                // plan reaches another observed transition (c-SEA-1,
-                // turns 18 and 38, hub #15).
+                // to its stable phase. It takes no object (c-SEA-1, turns
+                // 18 and 38, hub #15; the take of turn 18 is the Crypt's
+                // first alarm check, SPEC-0026).
                 production_plans.borrow_mut().insert(
                     type_id,
                     ProductionPlan {

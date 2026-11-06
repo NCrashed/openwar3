@@ -887,15 +887,12 @@ fn forget_others(state: &mut State) {
     }
 }
 
-/// The first steps of the buildings due in this tick before queue time
-/// `before` (all without it), in order of their times: each comes at the
-/// building's making plus the delay it drew from game generator 21. A
-/// computer's building that returns resources or is a gold mine takes an
-/// r there (hub #15, c-SCC-1: the five of 0.601838 .. 0.881501; the user's
-/// town hall and the neutral mines take none).
-///
-/// PROVISIONAL: what the r is for is not read; it is freed at 11.149229
-/// in c-SCC-1, which is not built.
+/// The first alarm checks of the buildings due in this tick before queue
+/// time `before` (all without it), in order of their times: each comes at
+/// the building's making plus the delay it drew from game generator 21
+/// (SPEC-0026, "First alarm check"). The check of a computer player's
+/// building takes one object, kept until the game is torn down; the user's
+/// and the neutral players' buildings take none.
 pub(super) fn building_steps_before(state: &mut State, before: Option<u32>) {
     let now = add(state.move_clock, crate::timers::TICK);
     let due = |at: u32| {
@@ -922,12 +919,9 @@ pub(super) fn building_steps_before(state: &mut State, before: Option<u32>) {
             .slots
             .get(u.owner as usize)
             .is_some_and(|s| s.controller == super::players::CONTROL_COMPUTER);
-        let resources = [b"Artn", b"Agld", b"Abgm", b"Aegm"]
-            .iter()
-            .any(|c| ability_of(state, u.type_id, code(c)).is_some());
-        if computer && resources {
+        if computer {
             let tick = state.table.now;
-            state.table.take(tick, "building: resource step");
+            state.table.take(tick, "building: first alarm check");
         }
     }
 }

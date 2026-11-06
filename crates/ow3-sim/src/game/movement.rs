@@ -1490,24 +1490,6 @@ pub(super) fn start_buildings(state: &mut State) {
         state.table.ai_other_constructing = false;
         state.table.ai_wisp_constructing = false;
         if building.is_some() {
-            if undead {
-                // The accepted plan has one last engine update at the
-                // update-cycle boundary seven ticks before its acolyte's
-                // one-second build order expires (c-SEA-1, turn 25, hub
-                // #15).
-                state
-                    .ai_worker_updates
-                    .push(state.ticks + RELEASE_TICKS - 7);
-            } else if type_id == i32::from_be_bytes(*b"eate") {
-                // The accepted Night Elf altar plan has one silent engine
-                // update 0.05 s after its construction start (c-SEA-1,
-                // turn 18).
-                state.ai_worker_updates.push(state.ticks + 10);
-            } else if type_id == i32::from_be_bytes(*b"emow") {
-                state
-                    .ai_worker_updates
-                    .push(state.ticks + AI_MOON_WELL_UPDATE_TICKS);
-            }
             for object in state.objects.values_mut() {
                 if let Object::Unit(u) = object {
                     u.entries.walk.retain(|entry| !cleanup.contains(entry));
@@ -1567,16 +1549,8 @@ pub(super) fn start_buildings(state: &mut State) {
         let Some(building) = building else {
             continue;
         };
-        // Like any other accepted Undead AI construction, a supply plan
-        // has one final worker update seven ticks before the one-second
-        // build-order release (c-SEA-1, turn 72, hub #15).
-        if undead_supply {
-            if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-                u.entries.ai_build_release = supply_release;
-            }
-            state
-                .ai_worker_updates
-                .push(state.ticks + RELEASE_TICKS - 7);
+        if undead_supply && let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+            u.entries.ai_build_release = supply_release;
         }
         // The other races keep showing their build order (c-SDD-1).
         let other = state
@@ -1670,10 +1644,6 @@ pub(super) fn worked(state: &State) -> std::collections::BTreeSet<u32> {
 const WORK_DELAY_MOVED: u64 = 12;
 /// Ticks an acolyte keeps its build order after the start (SPEC-0026).
 pub(super) const RELEASE_TICKS: u64 = 200;
-/// Loaded construction-update cadence from an accepted Moon Well start to
-/// its retained worker-update record. The record is made once and survives
-/// ordinary gameplay (c-SEA-1, turn 185, hub #15).
-const AI_MOON_WELL_UPDATE_TICKS: u64 = 104;
 
 /// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
 /// building appears there with a tenth of its life, its alarm draws game

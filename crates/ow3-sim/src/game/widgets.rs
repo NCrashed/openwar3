@@ -375,9 +375,9 @@ pub(super) fn create_unit(
     // PROVISIONAL: measured for a farm started by a worker; every building
     // made is taken to have the ability (c-RTP-1, whose script makes a
     // barracks and farms, matches only so).
-    // Its output also delays the building's first step from its making
-    // (hub #15, c-SCC-1: the gold mine of call 692 drew 0xFC638E2B, its
-    // step at 0.777776).
+    // Its output is the delay from the making to the first alarm check
+    // (SPEC-0026, "First alarm check"; c-SCC-1: the gold mine of call 692
+    // drew 0xFC638E2B, its check at 0.777776).
     let step = data
         .building
         .then(|| add(state.timers.time(), state.game_random[ALARM].fraction()));

@@ -374,6 +374,15 @@ and turned the rest, heading 5.3902. At 1309 angle 0: arrived (speed 0,
 path dropped, mark cleared). At 1315, 4.4925 > 4.125 and no mark: a
 new search to the tree's point, local path to (358.5, 393.5).
 
+A critter's wander move to an unreachable point ends this way too.
+`c-SEA-1` sea turtle 9516 (a cluster of one), moving to a point in
+unwalkable cells: its local path (limit 32) ended at (622.5, 419.5)
+cells. At 21.597376 its step left it 0.4050 cells from that end:
+blocked, squared distance to the goal 50.18, so `P = 2`, lowered to 1,
+local path dropped. At 21.627371 the new search ended where it stood:
+blocked with `P = 1`, marked; heading 5.5224 -> 5.0224, at 21.657366
+4.8093 (turned), at 21.687361 arrived (order 0).
+
 A partial path ends the same way. `c-RXD-1` creep 9 walking home to
 (387.125, 402.75): its local path of 4561 had failed at the iteration
 limit and ended at its closest cell (388.5, 402.5). At 5713 its position

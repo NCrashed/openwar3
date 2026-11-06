@@ -81,7 +81,11 @@ itself are not checked again.
 ### Local search
 
 Input: start point `s`, goal point `g` (cell coordinates), size class,
-an iteration limit (700 for the local search of a moving unit).
+an iteration limit (700 for the local search of a moving unit; 32 for
+the wander moves of a critter, whose high-level limit is 400: `c-SEA-1`
+sea turtle 9516 at 21.447401 and 21.627371, each search expanded 32
+cells, the start included, and ended at the closest cell reached; see
+`c-SEA-1.turtle9516-report.md`).
 
 - The start cell is the cell of `s`, the goal cell that of `g`. If they
   are the same, the path is `s -> g` at once.

@@ -381,7 +381,13 @@ cells. At 21.597376 its step left it 0.4050 cells from that end:
 blocked, squared distance to the goal 50.18, so `P = 2`, lowered to 1,
 local path dropped. At 21.627371 the new search ended where it stood:
 blocked with `P = 1`, marked; heading 5.5224 -> 5.0224, at 21.657366
-4.8093 (turned), at 21.687361 arrived (order 0).
+4.8093 (turned), at 21.687361 arrived (order 0). The same sequence
+ended its moves at 15.598 (c-SEA-1; the heading already pointed at the
+goal at the mark, so it arrived at the next update) and at 9.209
+(c-SCC-1). At every such arrival the critter takes three objects and
+then draws the script generator once; the three are freed in the next
+tick after the first of the move's remaining objects and before the
+others (`c-SEA-1.wander-ends-report.md`).
 
 A partial path ends the same way. `c-RXD-1` creep 9 walking home to
 (387.125, 402.75): its local path of 4561 had failed at the iteration

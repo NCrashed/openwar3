@@ -250,16 +250,60 @@ tick.
 
 When the building is created, its alarm ability (the ability buildings
 use to warn of attacks) draws **game generator 21** (SPEC-0007) once:
-one step, mapped to a real in `[0, 1)` (read from the code: the same
-mapping as `GetRandomReal(0.0, 1.0)`, SPEC-0007, "Natives"; the value
-itself was not checked). The value is the delay until the first run
-of the ability's periodic check. Nothing else was drawn when the farm
+one step, mapped to a real `x` in `[0, 1)` with the mapping of
+`GetRandomReal(0.0, 1.0)` (SPEC-0007, "Natives": the low 23 bits of
+the output over 2^23). `x` is the delay until the first run of the
+ability's periodic check (below). Nothing else was drawn when the farm
 was placed. (The worker itself drew game generator 2 when it was
 created, as every unit with a weapon does, SPEC-0007 and SPEC-0019.)
 The draw belongs to the creation of any building with the alarm
 ability, not only one placed by a worker: in test RTS a farm and two
 barracks created by `CreateUnit` from the script drew game generator
 21 three times, in the tick of their creation.
+
+### First alarm check
+
+The first check is a timer of the engine (SPEC-0027, "Timers of the
+engine") with expiry `e = q + x`, where `q` is the time at which the
+building was created as the queue-time column of the replay
+observations reads it (when the building is made inside another engine
+timer, such as a construction start, `q` is that timer's expiry). In
+`c-SEA-1` the check ran with queue time `e` in every case:
+
+| Building (owner) | Created at `q` | Draw | `x` | Check at |
+|---|---|---|---|---|
+| Crypt `usep` (Undead) | 1.349999 | 6020D62A | 0.256536 | 1.606535 |
+| Altar of Storms `oalt` (Orc) | 1.499999 | D4930899 | 0.148700 | 1.648699 |
+| Altar of Elders `eate` (Night Elf) | 1.589999 | 945D4BCC | 0.728876 | 2.318875 |
+| Orc Burrow `otrb` (Orc) | 19.199760 | F8A3A097 | 0.278338 | 19.478098 |
+
+The burrow's check came in the tick of world clock 19.477732, while
+the burrow was still under construction with its peon hidden inside.
+
+**Object of the first check.** If the building's owner is a player
+with controller computer (`MAP_CONTROL_COMPUTER`), the first check
+takes one entry of the object table (SPEC-0024, "Objects by
+mechanic"). The object watches the area around the building for the
+alarm. It is kept as long as the building stands and is freed only
+when the game is torn down after its end. The check of a building
+owned by the user's player, or by a neutral player, takes nothing.
+Measured:
+
+- `c-SEA-1` (players 1 .. 3 computers running the melee AI, player 0
+  the user): every computer building (Great Hall, Tree of Life,
+  Necropolis, Haunted and Entangled Gold Mines at the start; Crypt,
+  Altar of Storms, Altar of Elders, Ziggurat, Moon Well and Orc Burrow
+  when built) took one object at its first check; the user's Town Hall
+  and all neutral buildings (gold mines, way gates, fountains of
+  health, the goblin merchant and the mercenary camps) took none.
+- `c-SCC-1` (the same map and players, without the AI started): the
+  same five start buildings of the computers took one object each at
+  the same checks. So the rule depends on the controller of the
+  player, not on a running AI.
+
+The checks after the first take nothing that has been seen.
+Not tested: a building of a user-controlled player in a network game
+seen from another computer.
 
 ### Checksum (SPEC-0024)
 
@@ -269,6 +313,9 @@ barracks created by `CreateUnit` from the script drew game generator
   together: `R` through the draw of generator 21, `G` through the
   player's type record of the building (below), `C` and `D` through the
   new building's objects.
+- The turn of the first alarm check of a computer player's building:
+  `D` grows by 1 and `C` changes through the check's one object
+  ("First alarm check" above).
 
 ### The player's type record of the building
 

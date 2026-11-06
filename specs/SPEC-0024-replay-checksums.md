@@ -382,6 +382,16 @@ freed deferred. An event with no registration takes nothing. So a hit
 on a unit with one `EVENT_UNIT_DAMAGED` registration takes 2 objects,
 and a hit on a unit without any takes none (c-SBA).
 
+**Alarm of a building.** A building owned by a computer player takes
+one more object at the first check of its alarm, less than 1 s after
+its creation (SPEC-0026, "First alarm check"). The object is kept
+while the building stands and freed in the teardown after the end of
+the game. Buildings of the user's player and of neutral players take
+none. In `c-SEA-1` the Orc Burrow 10353/14786, created at queue time
+19.199760, took entry 10599 with creation 14852 at queue time
+19.478098 (turn 196). In `c-SCC-1` the five start buildings of the
+computers took creations 12106, 12107, 12108, 12110 and 12111 this way.
+
 **Orders given by the script.**
 
 | Order | Taken (in order) | Freed deferred | Freed when the order ends |

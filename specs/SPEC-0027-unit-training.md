@@ -83,6 +83,17 @@ footmen one after the other from 1.5 s: the ends had the clock values
 121.5004883 and 141.5005798, in ticks 4302, 8303, 12306, 16308, 20310,
 24312 and 28319).
 
+A timer started while the actions of another engine timer run counts
+from that timer's `e`, the value the clock reads then. A deferred
+freeing (timeout 0, expiry `e + 0.0001`) started there fires in the
+same tick when `e + 0.0001 <= clock(k)`, still before the units'
+updates of the tick. Started from an update of the tick it counts from
+`clock(k)` and fires in the next tick. Read in `c-SEA-1`, tick with
+clock 19.942653656: the haunted mine's payment fired at 19.942424774,
+its deferred freeing at 19.942523956, then the updates of the tick ran
+(a critter's new wander move at 19.942653656); that move's deferred
+freeing came at 19.942752838, in the next tick.
+
 ### End of training
 
 When the timer fires:

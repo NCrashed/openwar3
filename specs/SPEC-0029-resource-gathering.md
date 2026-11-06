@@ -603,6 +603,11 @@ owner directly. Read in `c-SDA-1`.
 7. No carrying, so the necropolis takes nothing from the acolytes in
    this cycle; `c-SDA-1` does not test a haunted mine without a
    necropolis.
+8. Each payment is a timer of the engine on the world clock and fires
+   between ticks (SPEC-0027). It replaces two objects of the mine
+   (SPEC-0024, "Objects by mechanic", Harvest). In `c-SEA-1` four
+   acolytes were on the places of mine 11433/11455 and the payments
+   came 1.25 s apart (18.692325592, 19.942424774).
 
 ### Night Elf: entangling a gold mine
 

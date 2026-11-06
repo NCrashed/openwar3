@@ -216,8 +216,10 @@ The construction creates and frees entries of the object table
 test RTI (`c-RTI-1.objects.tsv` lists every creation and freeing with
 its tick, entry, creation number and the kind of object, in order) and
 RSY. Offsets are in ticks; "deferred" means a freeing done by an engine
-timer started with timeout 0, which expires 0.0001 later and so runs
-in the next tick (SPEC-0027, "Timers of the engine").
+timer started with timeout 0, which expires 0.0001 later. Started by
+an action of the tick it runs in the next tick; started by another
+engine timer that fired between two ticks it can still run in the same
+tick (SPEC-0027, "Timers of the engine").
 
 Worker not moved (RTI, four farms, the same each time):
 
@@ -263,11 +265,12 @@ barracks created by `CreateUnit` from the script drew game generator
 
 ### First alarm check
 
-The first check is a timer of the engine (SPEC-0027, "Timers of the
-engine") with expiry `e = q + x`, where `q` is the time at which the
-building was created as the queue-time column of the replay
-observations reads it (when the building is made inside another engine
-timer, such as a construction start, `q` is that timer's expiry). In
+The first check is a timer on the queue clock (the clock of the
+queue-time column of the replay observations, the clock of the missile
+timers in SPEC-0024, "Missiles"), with expiry `e = q + x`, where `q` is
+the queue time at which the building was created. While the check
+runs the queue clock reads `e`; the world clock reads that of the tick.
+In
 `c-SEA-1` the check ran with queue time `e` in every case:
 
 | Building (owner) | Created at `q` | Draw | `x` | Check at |

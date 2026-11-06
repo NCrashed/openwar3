@@ -426,6 +426,15 @@ worker:
   the first hit on a tree (`c-RYP-1` 1089): an ability object with three
   parts in the second pool. At the mine one more main-table object comes
   with it. All are kept;
+- a haunted mine's payment (SPEC-0029, "Undead: acolytes on a haunted
+  mine"): at each payment the mine takes 2 objects, a rate part and a
+  threshold object, then frees deferred the 2 of the previous payment
+  (SPEC-0027, "Timers of the engine": the payment fires between ticks,
+  so this freeing can come in the same tick). `c-SEA-1`, four acolytes
+  (a payment every 1.25 s): payment at 18.692325592 took 10632/14728
+  and 1996/14729; payment at 19.942424774 took 10154/14907 and
+  10151/14908, and at 19.942523956 freed 10632/14728, then 1996/14729.
+  The first payment of a mine and the entangled mine were not read;
 - a mine's queue timer: at the exit of a worker with which the next
   worker goes in while at least one more is still waiting, the mine
   makes (the first time) a rate part (a value of -1.0 per second over

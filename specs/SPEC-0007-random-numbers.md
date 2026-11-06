@@ -87,8 +87,17 @@ generators, and the game generators do not advance the script generator.
 Generator 2 rolls the damage dice of unit attacks (SPEC-0016), and each
 unit with a weapon draws one output of it when it is created (the phase
 of its acquisition checks, SPEC-0019); generator 9 draws the reaction
-delay of attack orders and of acquisitions (SPEC-0019). The other uses
+delay of attack orders and of acquisitions (SPEC-0019); generator 21
+gives the delay of a building's first alarm check (SPEC-0026);
+generator 8 is drawn twice for each new wander move of a neutral
+critter (sea turtles `nsea` in `c-SEA-1`, both draws before the move's
+objects are made). The other uses
 are not known yet.
+
+The game itself also draws the script generator: each new wander move
+of a critter draws it once, among the move's objects (after 15 of
+them, before the last 3). `c-SEA-1` turn 200: two moves, two draws,
+`E` from 025399E0 to 020649E0 with no script call in the interval.
 
 ### State at game start
 
@@ -136,7 +145,7 @@ member of that class.
    57869864 as the first `GetRandomInt(0, 2147483647)` in single player;
    that map drew random numbers during its initialisation. On a map that
    does not, the first value is 371411726, see "State at game start".)
-2. What the game generators other than numbers 2 and 9 are used for.
+2. What the game generators other than numbers 2, 8, 9 and 21 are used for.
 
 ## Sources
 

@@ -203,13 +203,21 @@ fn a_peasant_builds_a_farm_and_the_town_hall_trains_one() {
             .iter()
             .any(|b| b.command == Command::Train(hpea) && b.place == (0, 0))
     );
-    let before = sim.units().iter().filter(|u| u.type_id == hpea).count();
+    let before = sim
+        .units()
+        .iter()
+        .filter(|u| u.type_id == hpea && u.owner == 0)
+        .count();
     let line = sim.run(hall, Command::Train(hpea), None).unwrap();
     assert!(line.ends_with("taken"), "{line}");
     for _ in 0..170 {
         sim.advance(100_000);
     }
-    let after = sim.units().iter().filter(|u| u.type_id == hpea).count();
+    let after = sim
+        .units()
+        .iter()
+        .filter(|u| u.type_id == hpea && u.owner == 0)
+        .count();
     assert_eq!(after, before + 1);
 }
 

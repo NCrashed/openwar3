@@ -2228,7 +2228,10 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
         return;
     };
     p.places[k] = Some(h);
-    let at = add(state.timers.time(), JOIN_DELAY);
+    // The payment is a timer on the world clock (SPEC-0029, item 8), so the
+    // worker starts to count on that clock too (c-SEA-1: the payments at
+    // 10.536625862 and 19.942424774, hub #15).
+    let at = add(state.move_clock, JOIN_DELAY);
     p.joining.push((h, at));
     let retained_builder = state.ai_released_builders.contains(&h);
     let produced_paid = state

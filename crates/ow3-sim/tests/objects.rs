@@ -809,10 +809,11 @@ fn melee_ai_checksums() {
 /// Orc Burrow construction start and the concurrent gold delivery through
 /// checkpoint 193, then the retained construction state and its movement-only
 /// continuation through checkpoint 195, then the Burrow's first alarm check
-/// through checkpoint 199.
+/// through checkpoint 199, then the haunted mine's payment on the world clock
+/// through checkpoint 216.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(199)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(216)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -5003,6 +5004,67 @@ fn melee_ai_turn196_objects() {
     assert_eq!(events[0].tag, "building: first alarm check");
     assert_eq!(playback.game.table_next(), (0x28b0, 0x3a05));
     assert_eq!(playback.game.generator_sums(), (0x01f7_8024, 0x5022_f6f8));
+    assert_eq!(playback.game.game_sum(), 0x4521_8cd9);
+}
+
+/// A haunted mine pays between two ticks; the deferred freeing of its
+/// previous payment objects comes in the same tick, before a sea turtle's
+/// new wander move reuses those entries (SPEC-0027, "Timers of the engine").
+#[test]
+fn melee_ai_turn200_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn200-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..198 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2987, 0x3a4f));
+    assert_eq!(playback.game.generator_sums(), (0x0206_49e0, 0x4f63_1dd0));
     assert_eq!(playback.game.game_sum(), 0x4521_8cd9);
 }
 

@@ -608,6 +608,28 @@ owner directly. Read in `c-SDA-1`.
    (SPEC-0024, "Objects by mechanic", Harvest). In `c-SEA-1` four
    acolytes were on the places of mine 11433/11455 and the payments
    came 1.25 s apart (18.692325592, 19.942424774).
+9. **Time of the next payment.** All operations are those of
+   SPEC-0004 (`add` truncates toward minus infinity; it is not IEEE
+   addition). Let `P` be the mine's current period, `5 / n` as a
+   32-bit value (`0x3FD55555` for 3 acolytes, `0x3FA00000` for 4).
+   When a payment runs at world clock `e` (the value the clock reads
+   during it), the mine starts a new countdown from 1.0 to 0 at rate
+   `r = recip(P)` per second. The time it needs is
+   `t = recip(r)` (`(0 - 1.0) / -r` with `div`, which is exactly
+   `recip(r)` here). It is counted from `e`: the countdown reaches 0 at
+   `c = add(e, t)`. That runs the payment through an engine timer with
+   timeout 0, so the payment itself is at
+   `e' = add(c, 0.0001)` = `add(add(e, t), 0.0001)`.
+   The order matters: `add(e, add(t, 0.0001))` and IEEE
+   `e + 5/3 + 0.0001` both come out 1 to 2 units of the last place
+   later. Measured in `c-SEA-1`: three acolytes 10.536625862,
+   12.203391075, 13.870156288 (steps of `0x1AAB12 * 2^-20` =
+   1.666765213); four acolytes 18.692325592, 19.942424774. In
+   `c-SDA-1`, five acolytes, `P = 1.0` and the step is about 1.0001 s,
+   so the payments come every 200 ticks with an occasional 201.
+   When `n` changes between payments the countdown keeps its value
+   and runs on at the new rate (item 5); that case was not checked at
+   this precision.
 
 ### Night Elf: entangling a gold mine
 

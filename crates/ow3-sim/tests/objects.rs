@@ -593,9 +593,10 @@ fn turn_checksums(name: &str, through: Option<usize>) -> Option<Option<usize>> {
         let ours = turn_checksum(&ICECROWN_TEST, &parts);
         if ours != turn.recorded {
             eprintln!(
-                "{name}: turn {} differs at {} ms\n  ours {ours:08x}\n  game {:08x}\n  parts {parts:x?}",
+                "{name}: turn {} differs over recorded slot {}..{} ms\n  ours {ours:08x}\n  game {:08x}\n  parts {parts:x?}",
                 k + 1,
                 turn.before,
+                turn.after,
                 turn.recorded,
             );
             for error in playback.game.state.borrow().errors.iter().take(8) {
@@ -803,10 +804,14 @@ fn melee_ai_checksums() {
 /// refresh at checkpoint 106, its continued three-worker cadence through
 /// checkpoint 131, the on-boundary critter update before checkpoint 132,
 /// the first AI-produced workers' completion, and their first follow-up AI
-/// assignments and retained-record lifecycles through checkpoint 184.
+/// assignments and retained-record lifecycles, then the first retained
+/// construction-update record and the fourth Orc gold cycle, then the first
+/// Orc Burrow construction start and the concurrent gold delivery through
+/// checkpoint 193, then the retained construction state and its movement-only
+/// continuation through checkpoint 195.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(184)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(195)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -1614,11 +1619,26 @@ fn melee_ai_turn7_objects() {
     }
     let start = playback.game.table_log().len();
     assert!(playback.step_slot());
-    let ours: Vec<_> = playback.game.table_log()[start..]
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
         .iter()
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
-    assert_eq!(ours, expected);
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
     let start = playback.game.table_log().len();
     assert!(playback.step_tick());
     let ours: Vec<_> = playback.game.table_log()[start..]
@@ -1677,11 +1697,26 @@ fn melee_ai_turn10_objects() {
     }
     let start = playback.game.table_log().len();
     assert!(playback.step_slot());
-    let ours: Vec<_> = playback.game.table_log()[start..]
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
         .iter()
         .map(|event| (event.new, event.entry, event.creation))
         .collect();
-    assert_eq!(ours, expected);
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
     let start = playback.game.table_log().len();
     assert!(playback.step_tick());
     let ours: Vec<_> = playback.game.table_log()[start..]
@@ -4559,6 +4594,353 @@ fn melee_ai_turn182_objects() {
     assert_eq!(playback.game.table_next(), (0x2955, 0x393c));
     assert_eq!(playback.game.generator_sums(), (0x01f2_3ff0, 0x4fa5_74fc));
     assert_eq!(playback.game.game_sum(), 0x21a5_3bb0);
+}
+
+/// Two sea critters finish their old point orders while a third begins its
+/// next wander. After their observed lifecycles, one otherwise unattributed
+/// record is retained through checkpoint 185 and ordinary gameplay.
+#[test]
+fn melee_ai_turn185_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn185-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..183 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x27b0, 0x3986));
+    assert_eq!(playback.game.generator_sums(), (0x01cc_11e8, 0x4f50_7fa4));
+    assert_eq!(playback.game.game_sum(), 0x21a5_3bb0);
+}
+
+/// An Orc peon leaves its gold mine with a full load and starts its return
+/// order. Its old route records and the new return-order records are released
+/// on their independently observed lifetimes.
+#[test]
+fn melee_ai_turn189_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn189-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..187 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2843, 0x39ac));
+    assert_eq!(playback.game.generator_sums(), (0x01d1_527c, 0x4f64_8b44));
+    assert_eq!(playback.game.game_sum(), 0x21a5_3bb0);
+}
+
+/// An Orc peon reaches its Burrow site and enters the new construction.
+/// The computer building allocates its unit and construction layouts before
+/// the next gold delivery resumes harvesting later in the same interval.
+#[test]
+fn melee_ai_turn193_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn193-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..191 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x286b, 0x3a04));
+    assert_eq!(playback.game.generator_sums(), (0x01c0_24c4, 0x5022_f6f8));
+    assert_eq!(
+        playback.game.type_record(1, i32::from_be_bytes(*b"otrb")),
+        Some([2_147_483_647, 0, 1, 0, 0, 0, 4])
+    );
+    assert_eq!(playback.game.game_sum(), 0x4521_8cd9);
+
+    let units = playback.game.units();
+    let burrow = units
+        .iter()
+        .find(|unit| unit.type_id == i32::from_be_bytes(*b"otrb"))
+        .expect("the AI Orc Burrow");
+    assert_eq!(
+        (
+            burrow.x.to_bits(),
+            burrow.y.to_bits(),
+            burrow.facing.to_bits(),
+            burrow.order,
+            burrow.constructing,
+        ),
+        (
+            8736.0f32.to_bits(),
+            9184.0f32.to_bits(),
+            4.712_388_5_f32.to_bits(),
+            0,
+            true,
+        )
+    );
+}
+
+/// Killing an unfinished building consumes its construction count, without
+/// removing a completed building of the same type (SPEC-0026, type records).
+fn unfinished_burrow_death(existing_finished: bool) {
+    use ow3_jass::semantics::Value;
+
+    let dir = game_data();
+    let Ok(data) = std::fs::read(dir.join("replays/c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = dir.join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&dir, &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..192 {
+        assert!(playback.step_slot());
+    }
+    let kind = i32::from_be_bytes(*b"otrb");
+    let building = playback
+        .game
+        .units()
+        .into_iter()
+        .find(|unit| unit.type_id == kind && unit.constructing)
+        .expect("an unfinished Orc Burrow at checkpoint 193");
+    if existing_finished {
+        let player = playback
+            .game
+            .vm
+            .call_by_name("Player", vec![Value::Integer(1)])
+            .unwrap()
+            .unwrap();
+        playback
+            .game
+            .vm
+            .call_by_name(
+                "CreateUnit",
+                vec![
+                    player,
+                    Value::Integer(kind),
+                    Value::Real(0),
+                    Value::Real(0),
+                    Value::Real(0),
+                ],
+            )
+            .unwrap();
+    }
+    let before = playback.game.type_record(1, kind).unwrap();
+    assert_eq!(before[2], 1);
+    assert_eq!(before[4], u32::from(existing_finished));
+    let mut expected = before;
+    expected[2] -= 1;
+    // A repeated kill must leave both counts unchanged after the first.
+    for _ in 0..2 {
+        playback
+            .game
+            .vm
+            .call_by_name("KillUnit", vec![Value::Handle(Some(building.handle))])
+            .unwrap();
+        assert_eq!(playback.game.type_record(1, kind), Some(expected));
+    }
+}
+
+#[test]
+fn unfinished_burrow_death_without_finished_peer() {
+    unfinished_burrow_death(false);
+}
+
+#[test]
+fn unfinished_burrow_death_preserves_finished_peer() {
+    unfinished_burrow_death(true);
+}
+
+/// Between checkpoints 194 and 195 the retained Orc Burrow and every
+/// computer plan stay unchanged. The main table only releases nine existing
+/// records; in particular, this interval creates no replacement records.
+#[test]
+fn melee_ai_turn195_objects() {
+    let dir = game_data().join("replays");
+    let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn195-events.tsv")) else {
+        return;
+    };
+    let expected: Vec<(bool, u32, u32)> = text
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("world_clock"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|words| words[2] == "main-table" && (words[4] == "take" || words[4] == "free"))
+        .map(|words| {
+            (
+                words[4] == "take",
+                words[5].parse().unwrap(),
+                words[6].parse().unwrap(),
+            )
+        })
+        .collect();
+    let Ok(data) = std::fs::read(dir.join("c-SEA-1.w3g")) else {
+        return;
+    };
+    let replay = Replay::parse(&data).unwrap();
+    let map_path = game_data().join(replay.settings.map_path.replace('\\', "/"));
+    let map = Map::load(&game_data(), &map_path).unwrap();
+    let program = map.check().unwrap();
+    let table = ObjectTable::new(640, Vec::new(), 640);
+    let mut playback = Playback::with_table(&program, &map, &replay, Some(table)).unwrap();
+    for _ in 0..193 {
+        assert!(playback.step_slot());
+    }
+    let start = playback.game.table_log().len();
+    assert!(playback.step_slot());
+    let events = &playback.game.table_log()[start..];
+    let ours: Vec<_> = events
+        .iter()
+        .map(|event| (event.new, event.entry, event.creation))
+        .collect();
+    assert_eq!(
+        ours,
+        expected,
+        "our unexpected events: {:#?}",
+        events
+            .iter()
+            .map(|event| (
+                event.new,
+                event.entry,
+                event.creation,
+                event.call_name,
+                event.tag
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(playback.game.table_next(), (0x2967, 0x3a04));
+    assert_eq!(playback.game.generator_sums(), (0x01c6_5720, 0x5022_f6f8));
+    assert_eq!(
+        playback.game.type_record(1, i32::from_be_bytes(*b"otrb")),
+        Some([2_147_483_647, 0, 1, 0, 0, 0, 4])
+    );
+    assert_eq!(playback.game.game_sum(), 0x4521_8cd9);
 }
 
 /// `c-SCC-1`'s object table.

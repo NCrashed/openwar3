@@ -733,9 +733,9 @@ fn cancel_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, building: u32) -
             .map_or((0, 0), |t| (t.gold_cost, t.lumber_cost));
         *s.setup.player_states.entry((owner, GOLD)).or_default() += gold * 3 / 4;
         *s.setup.player_states.entry((owner, 2)).or_default() += lumber * 3 / 4;
-        // Made and alive never; under construction no more (q1 here, as
-        // `movement::start_construction` counts it).
-        super::widgets::type_record(s, owner, type_id, |q| q[1] -= 1);
+        // Made and alive never; under construction no more
+        // (`movement::start_construction`).
+        super::widgets::type_record(s, owner, type_id, |q| q[2] -= 1);
         cancel_timer(s, EngineTimer::Construction(building));
         super::obstacles::died(s, building);
         if let Some(Object::Unit(u)) = s.objects.get_mut(&building) {

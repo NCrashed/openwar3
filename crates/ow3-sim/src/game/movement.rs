@@ -1229,7 +1229,8 @@ pub(super) fn ai_build_order(
         )
     } else if type_id == otrb {
         (
-            900,
+            // Accepted at 15.263439 and active at 19.197779 in c-SEA-1.
+            787,
             [
                 add(hall.x, (-32.0f32).to_bits()),
                 add(hall.y, 544.0f32.to_bits()),
@@ -1476,7 +1477,10 @@ pub(super) fn start_buildings(state: &mut State) {
             .unit(Some(worker))
             .and_then(|u| state.data.units.get(&u.type_id))
             .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
-        let other = matches!(&type_id.to_be_bytes(), b"oalt" | b"eate" | b"emow");
+        let other = matches!(
+            &type_id.to_be_bytes(),
+            b"oalt" | b"eate" | b"emow" | b"otrb"
+        );
         let wisp = type_id == i32::from_be_bytes(*b"emow");
         state.table.ai_constructing = undead;
         state.table.ai_other_constructing = other;
@@ -1499,6 +1503,10 @@ pub(super) fn start_buildings(state: &mut State) {
                 // update 0.05 s after its construction start (c-SEA-1,
                 // turn 18).
                 state.ai_worker_updates.push(state.ticks + 10);
+            } else if type_id == i32::from_be_bytes(*b"emow") {
+                state
+                    .ai_worker_updates
+                    .push(state.ticks + AI_MOON_WELL_UPDATE_TICKS);
             }
             for object in state.objects.values_mut() {
                 if let Object::Unit(u) = object {
@@ -1662,6 +1670,10 @@ pub(super) fn worked(state: &State) -> std::collections::BTreeSet<u32> {
 const WORK_DELAY_MOVED: u64 = 12;
 /// Ticks an acolyte keeps its build order after the start (SPEC-0026).
 pub(super) const RELEASE_TICKS: u64 = 200;
+/// Loaded construction-update cadence from an accepted Moon Well start to
+/// its retained worker-update record. The record is made once and survives
+/// ordinary gameplay (c-SEA-1, turn 185, hub #15).
+const AI_MOON_WELL_UPDATE_TICKS: u64 = 104;
 
 /// Worker `h` starts a building of `type_id` at `site` (SPEC-0026): the
 /// building appears there with a tenth of its life, its alarm draws game
@@ -1674,11 +1686,14 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
     let owner = state.unit(Some(h)).map(|u| u.owner)?;
     let facing = 270f32.to_bits();
     let building = super::widgets::create_unit(state, owner, type_id, [site[0], site[1], facing])?;
-    // Its type record counts it alive (`q4`) only from its completion
-    // (c-SBZ-1: G at turns 29 and 258).
-    // PROVISIONAL: `q2` up by one here, down at the completion, gives the
-    // same sums; a building lost under construction would tell them apart.
-    super::widgets::type_record(state, owner, type_id, |q| q[4] -= 1);
+    // Creation first counted it as made and alive. While it is under
+    // construction it instead occupies `q2`; completion transfers it to
+    // `q1` and `q4` (c-SEA-1: the first two Orc Burrows, hub #15).
+    super::widgets::type_record(state, owner, type_id, |q| {
+        q[1] -= 1;
+        q[2] += 1;
+        q[4] -= 1;
+    });
     super::table::construction_begun(state, h, building);
     // It enters its regions where it stands (SPEC-0049).
     super::regions::test_unit(state, building);

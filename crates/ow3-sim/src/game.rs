@@ -585,8 +585,13 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
         });
         u.life = Regenerating::full(max, regen);
         let (owner, type_id) = (u.owner, u.type_id);
-        // Alive in its type record from now (`movement::start_construction`).
-        widgets::type_record(s, owner, type_id, |q| q[4] += 1);
+        // It leaves the under-construction count and is made and alive from
+        // now (`movement::start_construction`; c-SEA-1, hub #15).
+        widgets::type_record(s, owner, type_id, |q| {
+            q[1] += 1;
+            q[2] -= 1;
+            q[4] += 1;
+        });
         *s.setup
             .player_states
             .entry((owner, PLAYER_STATE_RESOURCE_FOOD_CAP))
@@ -3321,6 +3326,17 @@ impl<'a> Game<'a> {
         self.game_sum_with(&[ow3_formats::replay::fold(0, u32::MAX); 12])
     }
 
+    /// Player `player`'s public record for `type_id`, when one exists
+    /// (SPEC-0024, "Game sum G").
+    pub fn type_record(&self, player: i32, type_id: i32) -> Option<[u32; 7]> {
+        self.state
+            .borrow()
+            .type_records
+            .get(&player)?
+            .iter()
+            .find_map(|(record_type, values)| (*record_type == type_id).then_some(*values))
+    }
+
     /// `game_sum` with the players' selection sums `Y` (SPEC-0024).
     pub fn game_sum_with(&self, ys: &[u32; 12]) -> u32 {
         use ow3_formats::replay::fold;
@@ -3891,6 +3907,10 @@ fn register_ai_natives(
     // Requested count, acceptance tick and update phase of each production
     // plan in this player's isolated AI context.
     let planned = Rc::new(RefCell::new(BTreeMap::<i32, ProductionPlan>::new()));
+    // Worker types whose accepted plan has already reached its later
+    // production update in this AI context. A newly accepted plan replaces
+    // the request state, but does not make that one-time update repeat.
+    let updated_worker_plans = Rc::new(RefCell::new(BTreeSet::<i32>::new()));
     let builder_available = Rc::new(RefCell::new(false));
     let counted = state.clone();
     add(
@@ -4013,6 +4033,7 @@ fn register_ai_natives(
     );
     let production = state.clone();
     let production_plans = planned.clone();
+    let production_updated_worker_plans = updated_worker_plans.clone();
     let production_builder_available = builder_available.clone();
     add(
         "native SetProduce takes integer qty, integer id, integer town returns boolean",
@@ -4059,6 +4080,7 @@ fn register_ai_natives(
                 && qty == 1
                 && already
                 && !harvest::is_wisp_type(&state, type_id)
+                && !production_updated_worker_plans.borrow().contains(&type_id)
                 && planned_at.is_some_and(|plan| {
                     !plan.temporary && !plan.repeated && state.ticks >= plan.at.saturating_add(600)
                 });
@@ -4068,6 +4090,7 @@ fn register_ai_natives(
                 state.ai_pending_supply.entry(player).or_insert(type_id);
             }
             if repeated_single_worker {
+                production_updated_worker_plans.borrow_mut().insert(type_id);
                 let at = ow3_math::add(state.timers.time(), 0.165f32.to_bits());
                 state.table.ai_produce_at_clock(at);
                 state

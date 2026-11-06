@@ -1044,18 +1044,21 @@ pub(super) fn kill_unit(
                 && s.unit(killer)
                     .is_some_and(|k| k.owner != super::creeps::CREEPS)
         };
-        // The records of the game sum: one alive less for the owner, one
-        // killed more for the killer's player (SPEC-0024, "Game sum G";
-        // c-SAK-1). Mirror Image copies change none.
+        // An unfinished building leaves the construction count; a finished
+        // unit leaves the alive count (SPEC-0026, type records). The killer's
+        // player gains a kill (SPEC-0024, "Game sum G"). Mirror Image copies
+        // change none.
         {
             let mut s = state.borrow_mut();
             let dead = s
                 .unit(Some(h))
                 .filter(|u| u.illusion.is_none() && !u.raised)
-                .map(|u| (u.owner, u.type_id));
+                .map(|u| (u.owner, u.type_id, u.construction.is_some()));
             let by = s.unit(killer).map(|k| k.owner);
-            if let Some((owner, type_id)) = dead {
-                type_record(&mut s, owner, type_id, |q| q[4] -= 1);
+            if let Some((owner, type_id, constructing)) = dead {
+                type_record(&mut s, owner, type_id, |q| {
+                    q[if constructing { 2 } else { 4 }] -= 1;
+                });
                 if let Some(p) = by.filter(|&p| p < 12 && p != owner) {
                     type_record(&mut s, p, type_id, |q| q[5] += 1);
                 }

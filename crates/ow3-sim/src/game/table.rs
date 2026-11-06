@@ -722,6 +722,13 @@ impl ObjectTable {
             .partition(|&(t, e, _)| t <= tick && early.contains(&e));
         self.deferred = later;
         for (_, entry, tag) in due {
+            // A retained AI-build reference can expire in a later flush
+            // phase of the same tick as the object's ordinary lifetime.
+            // Only the first lifetime owns the observed free (c-SEA-1,
+            // turn 179, hub #15).
+            if tag == "AI build: retained assignment state" && !self.live.contains_key(&entry) {
+                continue;
+            }
             self.free(tick, entry, tag);
         }
     }
@@ -735,6 +742,9 @@ impl ObjectTable {
             .partition(|&(t, _, _)| t <= tick);
         self.deferred = later;
         for (_, entry, tag) in due {
+            if tag == "AI build: retained assignment state" && !self.live.contains_key(&entry) {
+                continue;
+            }
             self.free(tick, entry, tag);
         }
         // PROVISIONAL: taken as the end of the executed trigger's thread.
@@ -1694,9 +1704,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         return;
     };
     let (owner, type_id) = (u.owner, u.type_id);
+    // The Orc Burrow has two additional one-shot threshold records in its
+    // construction-start layout (c-SEA-1, turn 193, hub #15).
+    let burrow = type_id == i32::from_be_bytes(*b"otrb");
     let building = (owner != super::creeps::CREEPS)
         .then(|| building_layout(state, type_id))
-        .flatten();
+        .flatten()
+        .map(|(count, at, after)| (count + 2 * usize::from(burrow), at, after));
     let neutral = (building.is_none() && owner == NEUTRAL_PASSIVE)
         .then(|| neutral_building_count(state, type_id))
         .flatten();
@@ -1951,6 +1965,15 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     // A computer's tail after the building's pair (c-SCC-1: the great hall's
     // 11007, 11006, then its tail; hub #15).
     computer_tail(state, h, owner, type_id, building.is_some());
+    if burrow && state.table.ai_other_constructing {
+        // They leave after the computer tail, in reverse layout order.
+        state
+            .table
+            .defer(entries[25], "Orc Burrow: start threshold");
+        state
+            .table
+            .defer(entries[23], "Orc Burrow: start threshold");
+    }
     let death: Vec<u32> = making.death.iter().map(|&k| entries[at(k)]).collect();
     let death_mana = mana.then(|| entries[12]);
     let (mut death_first, mut death_late) = (Vec::new(), Vec::new());

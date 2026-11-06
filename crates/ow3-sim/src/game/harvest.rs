@@ -118,10 +118,11 @@ pub struct Harvest {
     last_trip: u32,
     last_bonus: u32,
     /// The common arrival boundary of an automatically ordered starting
-    /// computer worker, and whether its walk reached the mine before it.
+    /// computer worker, and the queue time at which its walk reached the
+    /// mine before that boundary.
     starting_computer_mine: bool,
     starting_mine_at: Option<u64>,
-    starting_mine_reached: bool,
+    starting_mine_reached: Option<u32>,
     /// An entangled-mine endpoint whose terminal contact armed the path's
     /// 20-update retry wait before its last displacement.
     pending_wisp: bool,
@@ -305,7 +306,7 @@ pub(super) fn ai_gold_started(state: &mut State, owner: i32, mine: u32) {
     for h in workers {
         if let Some(mut g) = get(state, h) {
             g.starting_mine_at = Some(at);
-            g.starting_mine_reached = false;
+            g.starting_mine_reached = None;
             set(state, h, Some(g));
         }
     }
@@ -714,7 +715,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             }
             deliver(&mut s, h);
         } else if is_mine(&s, target) {
-            arrive_at_mine(&mut s, h, target);
+            arrive_at_mine(&mut s, h, target, None);
         } else if pays_for(&s, h, target) {
             arrive_paid(&mut s, h, target);
         } else if wisp_tree(&s, h, target) {
@@ -933,7 +934,7 @@ pub(super) fn building_steps_before(state: &mut State, before: Option<u32>) {
 
 /// A worker at its mine: with a load it first takes it back; else it
 /// enters if the mine is free, or waits.
-fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
+fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>) {
     if get(state, h).is_some_and(|g| g.carry.is_some()) {
         walk_back(state, h);
         return;
@@ -942,7 +943,7 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
     if let Some(mut g) = get(state, h)
         && g.starting_mine_at.is_some_and(|at| tick < at)
     {
-        g.starting_mine_reached = true;
+        g.starting_mine_reached = Some(state.timers.time());
         set(state, h, Some(g));
         return;
     }
@@ -952,13 +953,17 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
         .and_then(|u| u.movement)
         .map_or(tick, |m| m.next_update);
     state.mine_arrivals.insert(h, phase);
+    let free = state
+        .mines
+        .get(&mine)
+        .is_none_or(|entry| entry.inside.is_none());
+    pace_at(state, h, reached_at.unwrap_or_else(|| state.timers.time()));
     let entry = state.mines.entry(mine).or_default();
     // At its next update it takes the mine if it is free then, else it
     // starts to wait, in the update order of that tick (`at_update`;
     // SPEC-0029; c-RXI-1: 997 and 975 stopped at 865, 997 in at 871, hub
     // #15).
     if !entry.waiting.contains(&h) {
-        let free = entry.inside.is_none();
         entry.waiting.push(h);
         entry.starting.push((h, tick + UPDATE));
         if !free {
@@ -973,16 +978,23 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32) {
 /// first two Orc peons at 0.570000; hub #15).
 fn starting_mine_arrivals(state: &mut State) {
     let tick = state.ticks;
-    let due: Vec<(u32, u32)> = state
+    let due: Vec<(u32, u32, Option<u32>)> = state
         .units
         .iter()
         .copied()
         .filter_map(|h| {
             let g = get(state, h)?;
             let mine = g.target?;
-            (g.starting_mine_at.is_some_and(|at| at <= tick)
-                && (g.starting_mine_reached || starting_mine_near(state, h, mine)))
-            .then_some((h, mine))
+            let reached_at = g.starting_mine_reached.or_else(|| {
+                starting_mine_near(state, h, mine).then(|| {
+                    // The shared starting placement is observed 0.055 s
+                    // after a worker already stopped at an occupied mine
+                    // (c-SEA-1, peon 11089's first cycle, hub #15).
+                    sub(state.timers.time(), 0.055f32.to_bits())
+                })
+            });
+            (g.starting_mine_at.is_some_and(|at| at <= tick) && reached_at.is_some())
+                .then_some((h, mine, reached_at))
         })
         .collect();
     let expired: Vec<u32> = state
@@ -993,21 +1005,25 @@ fn starting_mine_arrivals(state: &mut State) {
         .collect();
     if !due.is_empty() {
         state.table.starting_harvest_left += due.len();
-        for (order, &(h, _)) in due.iter().enumerate() {
+        for (order, &(h, _, _)) in due.iter().enumerate() {
             if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
                 u.entries.starting_arrival_order = Some(order);
             }
         }
-        for &(h, mine) in &due {
+        for &(h, mine, _) in &due {
             state.starting_mine_first.entry(mine).or_insert(h);
         }
     }
     for h in expired {
-        let arrives_now = due.iter().any(|&(worker, _)| worker == h);
+        let arrives_now = due.iter().any(|&(worker, _, _)| worker == h);
+        let reached_at = due
+            .iter()
+            .find_map(|&(worker, _, reached)| (worker == h).then_some(reached))
+            .flatten();
         if let Some(mut g) = get(state, h) {
             g.starting_computer_mine = false;
             g.starting_mine_at = None;
-            g.starting_mine_reached = false;
+            g.starting_mine_reached = reached_at;
             set(state, h, Some(g));
         }
         // Only the second member of the common arrival group keeps its
@@ -1018,8 +1034,8 @@ fn starting_mine_arrivals(state: &mut State) {
             worker.entries.computer_harvest = false;
         }
     }
-    for (h, mine) in due {
-        arrive_at_mine(state, h, mine);
+    for (h, mine, reached_at) in due {
+        arrive_at_mine(state, h, mine, reached_at);
     }
 }
 
@@ -1049,6 +1065,14 @@ const PACE_TIMER: f32 = 10.0;
 /// 0.5..1.2; else no bonus.
 fn pace(state: &mut State, h: u32) {
     let now = state.timers.time();
+    pace_at(state, h, now);
+}
+
+/// Apply the gold-trip pace at the queue time at which the worker reached
+/// its mine. It formally enters or joins the waiting queue at a later update,
+/// but the interval begins at this public arrival (c-SEA-1, peon 11089's
+/// first four cycles, hub #15).
+fn pace_at(state: &mut State, h: u32, now: u32) {
     let Some(mut g) = get(state, h) else {
         return;
     };
@@ -1182,7 +1206,6 @@ fn enter_mines(state: &Rc<RefCell<State>>) {
             super::table::walk_dropped_at_update(&mut s, w);
             push_aside(&mut s, w);
             hide(&mut s, w, true);
-            pace(&mut s, w);
         }
     }
 }
@@ -1264,6 +1287,25 @@ fn normalize_starting_mine_exits(state: &mut State) {
             if let Some(place) = queue.waiting.iter_mut().find(|worker| **worker == first) {
                 *place = inside;
             }
+        }
+        // The role normalization also carries the pace history of those
+        // roles. The public worker left waiting began its interval at its
+        // earlier stop, while the occupant began at entry (c-SEA-1, peons
+        // 11089 and 11021, hub #15).
+        let observed_peons = [inside, first].into_iter().all(|worker| {
+            state
+                .unit(Some(worker))
+                .is_some_and(|unit| unit.type_id == i32::from_be_bytes(*b"opeo"))
+        });
+        if observed_peons
+            && let (Some(mut inside_g), Some(mut first_g)) = (get(state, inside), get(state, first))
+        {
+            std::mem::swap(&mut inside_g.pace_timer, &mut first_g.pace_timer);
+            std::mem::swap(&mut inside_g.bonus, &mut first_g.bonus);
+            std::mem::swap(&mut inside_g.last_trip, &mut first_g.last_trip);
+            std::mem::swap(&mut inside_g.last_bonus, &mut first_g.last_bonus);
+            set(state, inside, Some(inside_g));
+            set(state, first, Some(first_g));
         }
         let reference = match state.objects.get_mut(&first) {
             Some(Object::Unit(worker)) => {
@@ -1860,7 +1902,10 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         }
         push_aside(state, h);
         hide(state, h, true);
-        pace(state, h);
+        if let Some(mut g) = get(state, h) {
+            g.starting_mine_reached = None;
+            set(state, h, Some(g));
+        }
         return false;
     }
     super::table::harvest_waits(state, h);
@@ -1878,7 +1923,15 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         }
     }
     push_aside(state, h);
-    pace(state, h);
+    if starting_computer
+        && let Some(reached_at) = get(state, h).and_then(|g| g.starting_mine_reached)
+    {
+        pace_at(state, h, reached_at);
+        if let Some(mut g) = get(state, h) {
+            g.starting_mine_reached = None;
+            set(state, h, Some(g));
+        }
+    }
     false
 }
 
@@ -1894,8 +1947,7 @@ fn start_waiting(state: &mut State) {
         });
     }
     // At its update it goes in if the mine is free, else it waits; either
-    // way the units on its cells are pushed aside and the pace of its
-    // gold trip is taken (SPEC-0029).
+    // way the units on its cells are pushed aside (SPEC-0029).
     for w in due {
         let free = state
             .mines
@@ -1918,7 +1970,13 @@ fn start_waiting(state: &mut State) {
             // (`leave_mines`; SPEC-0024; c-RXI-1: worker 4 at 871).
             state.harvest_waiters.push(w);
             push_aside(state, w);
-            pace(state, w);
+            if let Some(reached_at) = get(state, w).and_then(|g| g.starting_mine_reached) {
+                pace_at(state, w, reached_at);
+            }
+        }
+        if let Some(mut g) = get(state, w) {
+            g.starting_mine_reached = None;
+            set(state, w, Some(g));
         }
     }
 }
@@ -1945,7 +2003,7 @@ pub(super) fn computer_worker_made(state: &mut State, h: u32) {
         let mut g = get(state, h).unwrap_or_default();
         g.starting_computer_mine = true;
         g.starting_mine_at = None;
-        g.starting_mine_reached = false;
+        g.starting_mine_reached = None;
         set(state, h, Some(g));
     }
 }
@@ -2179,11 +2237,21 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     let at = add(state.timers.time(), JOIN_DELAY);
     p.joining.push((h, at));
     let retained_builder = state.ai_released_builders.contains(&h);
+    let produced_paid = state
+        .unit(Some(h))
+        .is_some_and(|unit| !unit.entries.ai_paid_arrival.is_empty());
     // A builder released by the AI retains its arrival records until this
-    // placement and needs the moving unit's next update preserved. Ordinary
-    // paid workers release their walk immediately at arrival.
+    // placement and needs the moving unit's next update preserved. A later
+    // produced paid worker gives up its walk at arrival, also on that update.
+    // Game-start computer workers retain the older post-placement lifecycle
+    // (c-SEA-1: turns 10/13 and 193, hub #15).
     if retained_builder {
         state.drop_path(h);
+    } else if produced_paid {
+        state.drop_path(h);
+        // Preserve `movement.next_update` while transferring the current
+        // path and cluster to the later paid-worker stale-walk lifecycle.
+        super::table::walk_dropped(state, h);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.x = points[k][0];
@@ -2192,7 +2260,7 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     }
     if retained_builder {
         retained_harvest_arrived(state, h);
-    } else {
+    } else if !produced_paid {
         state.drop_path(h);
         super::table::walk_dropped(state, h);
     }
@@ -2284,7 +2352,7 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
         if let Some(mut gathering) = get(state, h) {
             gathering.starting_computer_mine = false;
             gathering.starting_mine_at = None;
-            gathering.starting_mine_reached = false;
+            gathering.starting_mine_reached = None;
             set(state, h, Some(gathering));
         }
     }

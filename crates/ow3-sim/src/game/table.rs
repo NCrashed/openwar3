@@ -486,9 +486,8 @@ impl ObjectTable {
         self.late_entangled_records_at_clock(next);
     }
 
-    /// Replaces a paying mine's periodic ability pair. Its cadence is five
-    /// seconds divided by the workers contributing to the ability, plus the
-    /// observed 0.0001 s replacement boundary.
+    /// Replaces a paying mine's periodic ability pair at its payment and
+    /// schedules the next payment (SPEC-0029, items 8 and 9).
     fn ai_paid_records_update(&mut self, tick: u64, clock: u32) {
         let new = self.take_n(tick, 2, "paying mine: periodic ability refresh");
         for entry in std::mem::take(&mut self.ai_paid_records) {
@@ -498,9 +497,11 @@ impl ObjectTable {
             self.free(tick, entry, "paying mine: old periodic ability pair");
         }
         self.ai_paid_records = new;
-        let workers = self.ai_paid_record_workers as f32;
-        let period = 5.0 / workers + 0.0001;
-        let next = ow3_math::add(clock, period.to_bits());
+        // A countdown from 1.0 at rate 1/P, counted from this payment's
+        // clock, then the payment's own timeout-0 timer (SPEC-0029, item 9).
+        let period = (5.0 / self.ai_paid_record_workers as f32).to_bits();
+        let countdown = ow3_math::recip(ow3_math::recip(period));
+        let next = ow3_math::add(ow3_math::add(clock, countdown), 0.0001f32.to_bits());
         self.free_at_clock(
             next,
             AI_PAID_UPDATE_AT,

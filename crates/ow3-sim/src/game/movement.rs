@@ -92,6 +92,27 @@ pub(super) fn update_time(state: &mut State) -> Option<u32> {
     Some(next)
 }
 
+/// The time `U` of the update cycle of the coming tick, if it has one, as
+/// [`update_time`] will find it there (SPEC-0018).
+pub(super) fn coming_update_time(state: &State) -> Option<u32> {
+    let ticks = state.ticks + 1;
+    if ticks < FIRST_UPDATE {
+        return None;
+    }
+    let next = if state.update_time == 0 {
+        UPDATE_STEP
+    } else {
+        add(state.update_time, UPDATE_STEP)
+    };
+    let clock = if ticks > 1 {
+        add(state.move_clock, crate::timers::TICK)
+    } else {
+        state.move_clock
+    };
+    let end = add(clock, crate::timers::TICK);
+    (real_of(next) <= real_of(end)).then_some(next)
+}
+
 /// The first update after `tick`: updates come before the script's timers
 /// in a tick, so an order given at an update tick waits for the next.
 pub(super) fn next_update_after(tick: u64) -> u64 {
@@ -247,6 +268,9 @@ pub struct Moving {
     pub(super) facing_step: u32,
     /// Done: only the facing still turns towards the heading.
     arrived: bool,
+    /// It arrived by giving up, with the mark of reach (SPEC-0025,
+    /// "Blocked units").
+    gave_up: bool,
     /// A new order came while the unit was moving: it starts again from
     /// standing at the next update.
     restart: bool,
@@ -633,6 +657,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             since: clock,
             facing_step: 0,
             arrived: false,
+            gave_up: false,
             restart: false,
             skip: false,
             ai_standing: false,
@@ -1205,7 +1230,7 @@ pub(super) fn ai_build_order(
         )
     } else if type_id == oalt {
         (
-            281,
+            280,
             [
                 add(hall.x, 544.0f32.to_bits()),
                 add(hall.y, 32.0f32.to_bits()),
@@ -1221,7 +1246,7 @@ pub(super) fn ai_build_order(
         )
     } else if type_id == emow {
         (
-            462,
+            461,
             [
                 add(hall.x, (-224.0f32).to_bits()),
                 add(hall.y, 480.0f32.to_bits()),
@@ -4607,6 +4632,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             m.velocity = [0, 0];
                         } else {
                             m.arrived = true;
+                            m.gave_up = follow::touching(state, h);
                             m.walking = false;
                             m.velocity = [0, 0];
                             // A worker at its gold mine keeps its walk to its going
@@ -4785,18 +4811,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         u.creep.return_time =
                             Some(add(state.update_time, state.combat.guard_return_time));
                     }
-                    // The three-object replacement is present 46.817723
-                    // units short (c-SCC-1) but absent for the blocked
-                    // give-up 65.105185 units short (c-SEA-1, turn 157).
-                    // PROVISIONAL: the public observations put the boundary
-                    // at two cells; they do not establish equality.
-                    let short_replacement = {
-                        let (dx, dy) = (sub(m.target[0], u.x), sub(m.target[1], u.y));
-                        let distance = f32::from_bits(add(mul(dx, dx), mul(dy, dy)));
-                        distance > 32.0 * 32.0 && distance < 64.0 * 64.0
-                    };
+                    // A wander move that ends by giving up, with the mark
+                    // of reach, makes the three-object order; an arrival at
+                    // the point makes none (SPEC-0025, "Blocked units";
+                    // c-SEA-1: sea turtle 9516 at 9.209, 15.598 and
+                    // 21.687, hub #15).
                     let flight = super::table::creep_flight_arriving(state, h);
-                    let replaced = short_replacement && state.critters.contains_key(&h);
+                    let replaced = m.gave_up && state.critters.contains_key(&h);
                     if replaced {
                         super::table::critter_wander_replaced(state, h);
                     } else if state.critters.contains_key(&h) {

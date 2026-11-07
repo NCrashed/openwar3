@@ -810,10 +810,11 @@ fn melee_ai_checksums() {
 /// checkpoint 193, then the retained construction state and its movement-only
 /// continuation through checkpoint 195, then the Burrow's first alarm check
 /// through checkpoint 199, then the haunted mine's payment on the world clock
-/// through checkpoint 216.
+/// through checkpoint 216, then the critters' given-up wander moves and the AI
+/// threads at their timer expiries through checkpoint 237.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(216)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(237)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -5072,7 +5073,6 @@ fn melee_ai_turn200_objects() {
 /// the script generator, and frees them with seven older records in the
 /// next tick.
 #[test]
-#[ignore = "not matched yet: the three objects at the end of a given-up wander"]
 fn melee_ai_turn217_objects() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn217-events.tsv")) else {

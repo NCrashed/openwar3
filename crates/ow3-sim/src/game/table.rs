@@ -89,9 +89,6 @@ pub struct ObjectTable {
     /// Non-transient completion records of AI-produced workers, by player,
     /// retained until that worker accepts its building plan.
     pub ai_worker_completion_retained: std::collections::BTreeMap<i32, Vec<u32>>,
-    /// Start of the produced wisp's deferred building cleanup: tick and
-    /// index in `deferred`.
-    wisp_build_cleanup: Option<(u64, usize)>,
     /// Two retained records created by an initial paid-worker assignment and
     /// released in the mixed cleanup following a terminal-wait arrival. The
     /// worker identifies where the records remain retained; it does not imply
@@ -268,7 +265,6 @@ impl ObjectTable {
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
             ai_worker_completion_retained: std::collections::BTreeMap::new(),
-            wisp_build_cleanup: None,
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
             late_wisp_cleanup: Vec::new(),
@@ -407,32 +403,6 @@ impl ObjectTable {
     /// Frees an object in a specified tick's 0.0001 s batch.
     pub fn defer_at(&mut self, tick: u64, entry: u32, tag: &'static str) {
         self.deferred.push((tick, entry, tag));
-    }
-
-    /// Marks the first deferred record of the produced wisp's accepted
-    /// building-plan cleanup.
-    pub fn begin_wisp_build_cleanup(&mut self, tick: u64) {
-        self.wisp_build_cleanup = Some((tick, self.deferred.len()));
-    }
-
-    /// Interleaves a critter order ending at the assignment boundary with
-    /// the staged wisp cleanup: the first old record precedes the
-    /// three-record prefix and the rest follow that prefix.
-    fn interleave_wisp_critter_order(&mut self, old: &[u32], tag: &'static str) -> bool {
-        let Some((tick, start)) = self.wisp_build_cleanup.take() else {
-            return false;
-        };
-        if old.is_empty() || self.deferred.len() < start + 3 {
-            return false;
-        }
-        let staged = self.deferred.split_off(start);
-        self.defer_at(tick, old[0], tag);
-        self.deferred.extend(staged[..3].iter().copied());
-        for &entry in &old[1..] {
-            self.defer_at(tick, entry, tag);
-        }
-        self.deferred.extend(staged[3..].iter().copied());
-        true
     }
 
     /// The object holding `entry` is freed by a timer of the queue expiring
@@ -2683,19 +2653,12 @@ pub(super) fn critter_wander_replaced(state: &mut super::State, h: u32) {
     }
 }
 
-/// A critter gives an inaccessible wander remainder up without making a
-/// replacement order. At the wisp assignment boundary its order cleanup is
-/// interleaved with the already staged three-record wisp prefix.
+/// A critter's wander move ends at its point: its order's objects go in
+/// the next tick.
 pub(super) fn critter_wander_ended(state: &mut super::State, h: u32) {
     let old = entries(state, h)
         .map(|e| std::mem::take(&mut e.order))
         .unwrap_or_default();
-    if state
-        .table
-        .interleave_wisp_critter_order(&old, "critter wander: order end")
-    {
-        return;
-    }
     let tick = state.table.now;
     for entry in old {
         state
@@ -3631,6 +3594,14 @@ pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
 /// 1071; 1162 .. 1165).
 pub(super) fn harvest_waits(state: &mut super::State, h: u32) {
     let tick = state.table.now;
+    if tick < 400 {
+        eprintln!(
+            "WAITS tick {tick} h {h} type {:?}",
+            state
+                .unit(Some(h))
+                .map(|u| String::from_utf8_lossy(&u.type_id.to_be_bytes()).into_owned())
+        );
+    }
     let reference = state.table.take(tick, "gold mine: waiting worker");
     if let Some(e) = entries(state, h) {
         e.harvest_inside = Some(reference);

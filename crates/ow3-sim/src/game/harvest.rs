@@ -293,7 +293,7 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
 /// placement boundary of that player's automatically ordered starting
 /// workers (c-SEA-1: assignment at 0.100000, arrivals at 0.570000; hub #15).
 pub(super) fn ai_gold_started(state: &mut State, owner: i32, mine: u32) {
-    let at = state.ticks + 94;
+    let at = state.ticks + 93;
     let workers: Vec<u32> = state
         .units
         .iter()

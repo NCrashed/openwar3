@@ -1659,10 +1659,10 @@ impl State {
         self.table.flush_q(tick, limit);
         // The world clock's timers of the tick (a corpse's end).
         let clock = add(self.move_clock, crate::timers::TICK);
-        // Retained AI supply orders cross their world-clock boundary in the
-        // following 5-ms slice, before the next public tick snapshot
-        // (c-SEA-1: the first Ziggurat order at 3.429962635..3.434962511).
-        movement::ai_supply_orders_due(self, add(clock, crate::timers::TICK));
+        // Retained AI supply orders are timers on the world clock (c-SEA-1:
+        // the first Ziggurat order at 3.431666, between the samples at
+        // 3.429962635 and 3.434962511).
+        movement::ai_supply_orders_due(self, clock);
         table::ai_produce_followups_due(self, clock);
         self.table.flush_clock(tick, clock);
         let next = f32::from_bits(add(self.move_clock, crate::timers::TICK));
@@ -1857,25 +1857,40 @@ struct AiContext {
     parked: Rc<RefCell<Vec<(Thread, u32)>>>,
 }
 
+/// The sleeping threads of an AI context, by expiry on the timer queue
+/// (a positive real's bits, so in the order of the reals) and the order
+/// of sleeping.
 #[derive(Default)]
 struct AiSleepQueue {
-    sleepers: BTreeMap<(u64, u64), Thread>,
+    sleepers: BTreeMap<(u32, u64), Thread>,
 }
 
 impl AiSleepQueue {
-    fn sleep(&mut self, start: u64, duration: u32, order: u64, thread: Thread) {
-        let seconds = f64::from(f32::from_bits(duration)).max(0.0);
-        let units = (seconds * crate::sleep::UNITS_PER_SECOND as f64).round() as u64;
-        let target = start.saturating_add(units);
-        let tick = crate::sleep::UNITS_PER_SECOND / 200;
-        let check = target.div_ceil(tick).max(start / tick + 1) * tick;
-        self.sleepers.insert((check, order), thread);
+    /// A thread sleeps `duration` from queue time `q`: a timer of the queue
+    /// expiring at `add(q, max(fmod(duration, 120.0), 0.0001))` (SPEC-0002,
+    /// "AI threads").
+    fn sleep(&mut self, q: u32, duration: u32, order: u64, thread: Thread) {
+        const MIN_TIMEOUT: f32 = 0.0001;
+        let reduced = ow3_math::fmod(duration, 120.0f32.to_bits());
+        let timeout = if f32::from_bits(reduced) < MIN_TIMEOUT {
+            MIN_TIMEOUT.to_bits()
+        } else {
+            reduced
+        };
+        self.sleepers
+            .insert((ow3_math::add(q, timeout), order), thread);
     }
 
-    fn due(&mut self, time: u64) -> Vec<((u64, u64), Thread)> {
-        let later = self.sleepers.split_off(&(time + 1, 0));
-        std::mem::replace(&mut self.sleepers, later)
-            .into_iter()
+    /// The threads whose expiry satisfies `due`, taken out.
+    fn due(&mut self, due: impl Fn(u32) -> bool) -> Vec<((u32, u64), Thread)> {
+        let keys: Vec<(u32, u64)> = self
+            .sleepers
+            .keys()
+            .copied()
+            .filter(|&(expiry, _)| due(expiry))
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.sleepers.remove(&key).map(|thread| (key, thread)))
             .collect()
     }
 }
@@ -1942,7 +1957,8 @@ impl AiEngine {
         }));
         let refs: Vec<&Script> = template.scripts.iter().collect();
         let mut vm = Vm::load(&template.program, &refs, &natives)?;
-        let now = state.borrow().ticks * crate::sleep::UNITS_PER_SECOND / 200;
+        // The queue's time now, from which its threads sleep.
+        let now = state.borrow().timers.time();
         let main_sleep = if let Some(main) = vm.program().function_index("main") {
             match vm.start_thread(main, Vec::new()) {
                 Ok((Outcome::Sleep(duration), thread)) => Some((duration, thread)),
@@ -1971,21 +1987,33 @@ impl AiEngine {
         Ok(())
     }
 
-    fn resume_due(&mut self, state: &Rc<RefCell<State>>, time: u64) {
+    /// Resumes the threads whose expiry satisfies `due_at`, in the order of
+    /// their expiries; each sleeps on from its own expiry (SPEC-0002, "AI
+    /// threads").
+    /// threads"). Whether any thread woke.
+    fn resume_due(
+        &mut self,
+        state: &Rc<RefCell<State>>,
+        due_at: impl Fn(u32) -> bool + Copy,
+    ) -> bool {
         // Sleeping strands from all player contexts share one ordering. A
         // strand started synchronously reaches Sleep before its caller.
         let mut due = Vec::new();
         for (context, ai) in self.contexts.iter_mut().enumerate() {
             due.extend(
                 ai.sleeps
-                    .due(time)
+                    .due(due_at)
                     .into_iter()
-                    .map(|((check, order), thread)| (check, order, context, thread)),
+                    .map(|((expiry, order), thread)| (expiry, order, context, thread)),
             );
         }
-        due.sort_by_key(|&(check, order, ..)| (check, order));
+        due.sort_by_key(|&(expiry, order, ..)| (expiry, order));
+        let woke = !due.is_empty();
         let mut next_sleep = self.next_sleep;
-        for (_, _, context, mut thread) in due {
+        for (time, _, context, mut thread) in due {
+            // Its natives see the queue at its expiry (SPEC-0027, "Timers of
+            // the engine").
+            let outer = state.borrow_mut().timers.enter(time);
             let context = &mut self.contexts[context];
             let sleep = match context.vm.resume(&mut thread) {
                 Ok(Outcome::Sleep(duration)) => Some((duration, thread)),
@@ -2000,13 +2028,15 @@ impl AiEngine {
                 context.sleeps.sleep(time, duration, next_sleep, thread);
                 next_sleep += 1;
             }
+            state.borrow_mut().timers.enter(outer);
         }
         self.next_sleep = next_sleep;
+        woke
     }
 }
 
 impl AiContext {
-    fn park(&mut self, now: u64, next_sleep: &mut u64) {
+    fn park(&mut self, now: u32, next_sleep: &mut u64) {
         for (thread, duration) in self.parked.borrow_mut().drain(..) {
             self.sleeps.sleep(now, duration, *next_sleep, thread);
             *next_sleep += 1;
@@ -2288,21 +2318,22 @@ impl<'a> Game<'a> {
     }
 
     fn tick(&mut self) {
-        // AI Sleep follows the world ticks, not TriggerSleepAction's 0.1 s
-        // checks. A context due at 0.100 resumes after the checksum at that
-        // boundary; fractional stagger sleeps resume on their first later
-        // tick (c-SEA-1).
+        // A sleeping AI thread is a timer of the queue: it wakes in the tick
+        // whose step covers its expiry, before that tick's update cycle if
+        // its expiry is below the cycle's `U`, else after it (SPEC-0002,
+        // "AI threads"; SPEC-0018, "Order within an update tick").
         let elapsed = self.state.borrow().ticks;
+        let (step_end, update) = {
+            let state = self.state.borrow();
+            let end = add(state.timers.time(), crate::timers::TICK);
+            (end, movement::coming_update_time(&state))
+        };
+        let in_step = move |expiry: u32| f32::from_bits(expiry) <= f32::from_bits(step_end);
         if elapsed > 0 {
-            let time = elapsed * crate::sleep::UNITS_PER_SECOND / 200;
-            self.ai.borrow_mut().resume_due(&self.state, time);
             self.state.borrow_mut().table.flush(elapsed);
         }
-        // The hours before and after the clock's step, for its events.
-        let clock_step;
         {
             let mut state = self.state.borrow_mut();
-            let state = &mut *state;
             state.ticks += 1;
             state.in_tick = true;
             state.table.boundary = None;
@@ -2313,6 +2344,13 @@ impl<'a> Game<'a> {
             if let Some(c) = state.table.clocks.as_mut() {
                 c.push((tick, clock));
             }
+        }
+        // The hours before and after the clock's step, for its events.
+        let clock_step;
+        {
+            let mut state = self.state.borrow_mut();
+            let state = &mut *state;
+            let tick = state.ticks;
             table::unpause_starts(state);
             // The clock (SPEC-0017): the hours set last plus 0.05 per second
             // of game time since, with the game time summed tick by tick.
@@ -2413,6 +2451,16 @@ impl<'a> Game<'a> {
                 going
             });
         }
+        // The AI threads due before the update cycle, once the units stand
+        // at this tick's clock; their frees 0.0001 s later come before the
+        // rest of the tick (SPEC-0027, "Timers of the engine").
+        if elapsed > 0
+            && self.ai.borrow_mut().resume_due(&self.state, move |expiry| {
+                in_step(expiry) && update.is_none_or(|u| f32::from_bits(expiry) < f32::from_bits(u))
+            })
+        {
+            self.state.borrow_mut().table.flush(elapsed + 1);
+        }
         // Timers of the engine come before the script's (SPEC-0027): the
         // ends of trainings and constructions.
         training::fire_engine_timers(&mut self.vm, &self.state);
@@ -2503,6 +2551,10 @@ impl<'a> Game<'a> {
             widgets::critters_before(&mut self.state.borrow_mut(), Some(at));
         }
         movement::updates(&mut self.vm, &mut self.state.borrow_mut());
+        // The AI threads due after the update cycle of this tick.
+        if elapsed > 0 && update.is_some() {
+            self.ai.borrow_mut().resume_due(&self.state, in_step);
+        }
         // Workers out of their mines put at their exit points (hub #15).
         harvest::exits_at_updates(&mut self.state.borrow_mut());
         widgets::critter_walks_ended(&mut self.state.borrow_mut());
@@ -4105,7 +4157,6 @@ fn register_ai_natives(
             } else if accepted || temporary {
                 let tick = state.table.now;
                 if accepted && building {
-                    let defer_tick = tick + u64::from(type_id == i32::from_be_bytes(*b"emow"));
                     let made = state.table.take_n(tick, 17, "SetProduce");
                     state.table.free(tick, made[14], "SetProduce");
                     let last = state.table.take(tick, "SetProduce");
@@ -4123,7 +4174,7 @@ fn register_ai_natives(
                     } else {
                         Vec::new()
                     };
-                    state.table.defer_at(defer_tick, made[1], "SetProduce");
+                    state.table.defer_at(tick, made[1], "SetProduce");
                     if type_id == i32::from_be_bytes(*b"otrb") {
                         for entry in worker_cleanup {
                             state.table.defer(entry, "AI build: old worker order");
@@ -4135,45 +4186,29 @@ fn register_ai_natives(
                         state.table.ai_harvest_cleanup_armed = false;
                         state.table.ai_harvest_cleanup.clear();
                     } else {
-                        table::ai_harvest_cleanup(&mut state, defer_tick);
+                        table::ai_harvest_cleanup(&mut state, tick);
                     }
                     for &entry in made[8..14].iter().rev() {
-                        state.table.defer_at(defer_tick, entry, "SetProduce");
+                        state.table.defer_at(tick, entry, "SetProduce");
                     }
                 } else {
-                    // A produced wisp reserved by the next production pass
-                    // contributes three preliminary records before the
-                    // ordinary six-record worker request. They are transient;
+                    // A produced wisp reserved by the next production pass:
                     // the ordinary request's two middle records remain the
                     // worker-production timer payload (c-SEA-1, turn 157).
-                    let wisp_prefix = if accepted
+                    let wisp_reserved = accepted
                         && worker
                         && planned_at.is_some()
-                        && harvest::is_wisp_type(&state, type_id)
-                    {
-                        state.table.take_n(tick, 3, "SetProduce")
-                    } else {
-                        Vec::new()
-                    };
-                    let defer_tick = tick + u64::from(!wisp_prefix.is_empty());
-                    if !wisp_prefix.is_empty() {
-                        state.table.begin_wisp_build_cleanup(defer_tick);
-                    }
+                        && harvest::is_wisp_type(&state, type_id);
                     let made = state.table.take_n(tick, 6, "SetProduce");
-                    for &entry in wisp_prefix.iter().rev() {
-                        state.table.defer_at(defer_tick, entry, "SetProduce");
-                    }
-                    state.table.defer_at(defer_tick, made[1], "SetProduce");
-                    if !wisp_prefix.is_empty() {
+                    state.table.defer_at(tick, made[1], "SetProduce");
+                    if wisp_reserved {
                         for entry in state
                             .table
                             .ai_worker_completion_retained
                             .remove(&player)
                             .unwrap_or_default()
                         {
-                            state
-                                .table
-                                .defer_at(defer_tick, entry, "AI worker completion");
+                            state.table.defer_at(tick, entry, "AI worker completion");
                         }
                     }
                     if starts_worker {
@@ -4185,7 +4220,7 @@ fn register_ai_natives(
                         }
                     }
                     for &entry in [made[0], made[5], made[4]].iter() {
-                        state.table.defer_at(defer_tick, entry, "SetProduce");
+                        state.table.defer_at(tick, entry, "SetProduce");
                     }
                 }
             }
@@ -4485,7 +4520,7 @@ fn register_ai_natives(
                     // IceCrown. Preserve that local-path result until the
                     // path search itself is reproduced (c-SEA-1, hub #15).
                     if !repeat && !paid && assigned_now == 1 {
-                        let at = state.ticks + 274;
+                        let at = state.ticks + 273;
                         state.ai_mine_waits.push((at, worker, mine));
                     }
                     if paid {

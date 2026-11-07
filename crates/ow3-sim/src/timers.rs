@@ -245,6 +245,12 @@ impl<T> TimerQueue<T> {
         }
     }
 
+    /// Sets the queue time for what runs at `time` and returns the time it
+    /// had, to be set back after it.
+    pub fn enter(&mut self, time: u32) -> u32 {
+        std::mem::replace(&mut self.time, time)
+    }
+
     pub fn end_tick(&mut self, tick: Tick) {
         debug_assert!(tick.after_wrap.is_none(), "next_due was not drained");
         self.time = tick.limit;

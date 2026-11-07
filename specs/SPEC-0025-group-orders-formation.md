@@ -374,6 +374,16 @@ and turned the rest, heading 5.3902. At 1309 angle 0: arrived (speed 0,
 path dropped, mark cleared). At 1315, 4.4925 > 4.125 and no mark: a
 new search to the tree's point, local path to (358.5, 393.5).
 
+The 0.49-cell test is made on the position after the step of the same
+update: the step that brings the unit there is the last one, the unit
+stands at that update, and what follows (entering a mine, the next
+search) comes at its next update. `c-SEA-1` peon 11089/11093 walking to
+gold mine 699/699: at 23.757013321 its step ended at
+(9157.207031, 9061.164062), 0.4779 cells from its path's last point
+(9168, 9072); it stood, went into the mine at 23.787008286, and the two
+kept records of its harvest order were freed in the next tick
+(`c-SEA-1.peon11089-mine-trip-report.md`).
+
 A critter's wander move to an unreachable point ends this way too.
 `c-SEA-1` sea turtle 9516 (a cluster of one), moving to a point in
 unwalkable cells: its local path (limit 32) ended at (622.5, 419.5)

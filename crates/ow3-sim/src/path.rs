@@ -1108,6 +1108,18 @@ pub fn high_level_cost(grid: &Grid, s: [u32; 2], g: [u32; 2], class: u8) -> u32 
     high_level_limited(grid, s, g, class, 5000).map_or(0, |f| f.iterations)
 }
 
+/// The cost of a high-level search with the limit `limit` of its table
+/// (SPEC-0021, "High-level budgets"): its removals.
+pub fn high_level_cost_limited(
+    grid: &Grid,
+    s: [u32; 2],
+    g: [u32; 2],
+    class: u8,
+    limit: u32,
+) -> u32 {
+    high_level_limited(grid, s, g, class, limit).map_or(0, |f| f.iterations)
+}
+
 /// The cost of a high-level path from `s` to `g` (cells) for choosing
 /// among targets (SPEC-0029, "Another tree"): the search with iteration
 /// limit `limit`; `None` when it fails or hits the limit, else its

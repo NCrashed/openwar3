@@ -1,4 +1,4 @@
-//! How a ground unit follows its path round obstacles (SPEC-0020,
+//! How a ground unit                     path::high_level_cost_limited(grid, search_at, order_cells, class, WANDER_HIGH_LIMIT)ollows its path round obstacles (SPEC-0020,
 //! "Following the path", and SPEC-0021).
 //!
 //! At its first update after an order the unit searches the high-level
@@ -51,6 +51,10 @@ const BUDGET: u32 = 1100;
 /// Iterations of the first high-level searches of new paths per update
 /// cycle (SPEC-0021, "High-level budgets": the 2000 / 300 table).
 const HIGH_BUDGET: u32 = 300;
+/// The budget and the limit of the high-level table of critters' wander
+/// moves (SPEC-0021, "High-level budgets"; SPEC-0020, "Local search").
+const WANDER_HIGH_BUDGET: u32 = 900;
+const WANDER_HIGH_LIMIT: u32 = 400;
 /// Updates a unit waits for a moving one, and makes a slower one wait.
 const WAIT: u32 = 5;
 const MADE_TO_WAIT: u32 = 20;
@@ -179,6 +183,10 @@ pub struct Budget {
     used: [u32; 16],
     /// The iterations of high-level searches this update cycle.
     high: u32,
+    /// Those of the high-level searches of critters' wander moves, which
+    /// keep a table of their own (limit 400, budget 900; SPEC-0021,
+    /// "High-level budgets").
+    high_wander: u32,
 }
 
 impl Budget {
@@ -186,6 +194,7 @@ impl Budget {
     /// with an odd number (SPEC-0021, "The window is two update cycles").
     pub(super) fn cycle(&mut self, number: u64) {
         self.high = 0;
+        self.high_wander = 0;
         if number % 2 == 1 {
             self.window = number;
             self.used = [0; 16];
@@ -670,7 +679,16 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     });
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
-    if fresh && state.budget.high > HIGH_BUDGET && !priority {
+    let wander = state
+        .critters
+        .get(&walker.handle)
+        .is_some_and(|&(_, walking)| walking);
+    let high_used = if wander {
+        state.budget.high_wander > WANDER_HIGH_BUDGET
+    } else {
+        state.budget.high > HIGH_BUDGET
+    };
+    if fresh && high_used && !priority {
         return Steer::Hold;
     }
     // Out of its mine at its own update with none waiting, a worker's
@@ -701,8 +719,19 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             let (cost, cluster) = if tree {
                 path::high_level_to_target(grid, search_at, order_cells, class)
             } else {
+                let cost = if wander {
+                    path::high_level_cost_limited(
+                        grid,
+                        search_at,
+                        order_cells,
+                        class,
+                        WANDER_HIGH_LIMIT,
+                    )
+                } else {
+                    path::high_level_cost(grid, search_at, order_cells, class)
+                };
                 (
-                    path::high_level_cost(grid, search_at, order_cells, class),
+                    cost,
                     path::high_level_cluster(grid, search_at, order_cells, class),
                 )
             };
@@ -720,7 +749,11 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
                 path::high_level(grid, search_at, order_cells, class),
             )
         };
-        state.budget.high += cost;
+        if wander {
+            state.budget.high_wander += cost;
+        } else {
+            state.budget.high += cost;
+        }
         found
     });
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
@@ -849,10 +882,6 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         group,
         kind,
     };
-    let wander = state
-        .critters
-        .get(&walker.handle)
-        .is_some_and(|&(_, walking)| walking);
     let limit = if wander {
         WANDER_LOCAL_LIMIT
     } else {

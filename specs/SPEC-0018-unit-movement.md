@@ -100,6 +100,21 @@ expiry of the reference timer) give exactly the values printed,
 0.529901504, 4.219886768, 8.719846720 and 13.609804096 (`R2SW` with 9
 decimals); the period and the expiry `U(m)` were read from the timer's
 entry in memory.
+The threads of AI scripts are timers of the same queue: a thread
+woken from `Sleep` runs at its expiry, and so before the updates of
+its tick when that expiry is below `U(m)` and after them when it is
+above. In `c-SEA-1` (computer players running the melee AI) the
+threads woke at queue times 0.1, 1.0, 1.1, 1.2666, 1.4333, 1.6, 2.1,
+then every second at x.1 and every two seconds at x.2666, x.4333 and
+x.6 (for example 15.599999428); none woke between 0.1 and 1.0. From 10
+to 25 s eight wakes fell into update ticks, and every time `U(m)` was
+the lower expiry, so the updates ran first: tick of clock 15.598382950,
+updates at 15.599893570, then the Night Elf thread at 15.599999428
+(its `SetProduce` takes after the takes of the updates), then a
+critter's wander timer at 15.600973129. Which unit an update belongs to,
+or what kind of update it is, plays no part: all units update in the
+one batch at `U(m)`.
+
 The orders of the tables above were given early in the game, where the
 updates still come first. How the cycle goes on once `U` has moved by
 a whole tick (after roughly 200 s at this rate) was not tested.

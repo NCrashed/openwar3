@@ -49,15 +49,36 @@ All arithmetic on timer times below is the engine arithmetic of SPEC-0004
 
 - `q` starts at 0.0 when the game starts.
 - **Start.** `TimerStart(t, timeout, periodic, func)` takes `timeout`,
-  replaces it by 0.0001 if it is less than 0.0001 (this includes 0 and
-  negative values), and sets the expiry `e = add(q, timeout)`. Each start
-  also takes the next number of a start counter.
+  first reduces it to `R = fmod(timeout, 120.0)` (SPEC-0004; see "Long
+  timers"), replaces `R` by 0.0001 if it is less than 0.0001 (this
+  includes 0 and negative values), and sets the expiry `e = add(q, R)`.
+  Each start also takes the next number of a start counter. The
+  reduction is made for every timeout, also below 120 s, and `fmod`
+  can change such a timeout in its last bit: `fmod(0x3F955555, 120.0)`
+  (1.166666627) is `0x3F955554`, while 1.0, 1.333333254, 1.5, 2.0,
+  3.0, 100.0 and 0.100000009 come out unchanged. (Measured on the
+  timers of AI threads below, which start through the same rule; a
+  script `TimerStart` with such a timeout was not tested.)
+- **AI threads.** `Sleep(d)` in an AI script is a timer of this queue,
+  started when `Sleep` is called with the rule above: the thread wakes
+  at `e = add(q, max(fmod(d, 120.0), 0.0001))`, `q` being the queue's
+  time at the call (inside a wake, that wake's own expiry). In `c-SEA-1`
+  (93 of 93 sleeps up to 16 s): the threads started at `q` = 0 call
+  `Sleep(0.1)` with the literal's value `0x3DCCCCCE` (SPEC-0005) and wake
+  at `0x3DCCCCCE`, which lies above the clock `0x3DCCCCC7` of the tick in
+  which they run (rule "Tick" below); from there `Sleep(1.0)` gives
+  `0x3F8CCCCC` (1.099999905), `Sleep(1.166666627)` gives `0x3FA22220`
+  (1.266666412, through the reduced `0x3F955554`), `Sleep(1.333333254)`
+  `0x3FB77776` (1.433333158), `Sleep(1.5)` `0x3FCCCCCC` (1.599999905),
+  and so on: one thread sleeping 2.0 at a time goes `0x3FCCCCCC`,
+  `0x40666666` (3.599999905), ..., `0x41599999` (13.599999428),
+  `0x41799999` (15.599999428).
 - **Long timers.** The queue itself holds only timeouts below 300 s (a
   larger value given to it directly becomes `sub(300.0, 0.001)`), so a
   timer started with `timeout` is split:
   `n = trunc(timeout) / 120` (integer division of the integer parts) and
   `R = fmod(timeout, 120.0)` (SPEC-0004). If `n = 0` the timer is an
-  ordinary entry with `timeout`. Otherwise it runs `n` parts of 120.0 s,
+  ordinary entry with `R` (as under "Start"). Otherwise it runs `n` parts of 120.0 s,
   each started from the expiry of the previous one (`add(e, 120.0)`), and
   then a last part of `R` s (at least 0.0001), after which it fires. A
   periodic long timer starts the same sequence again. Because `fmod` is

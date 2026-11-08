@@ -2610,6 +2610,10 @@ pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32, settled: bool) 
     ai_gold_targeted(state, h, mine) && (settled || paid_working(state, h))
 }
 
+pub(super) fn ai_gold_targeted_mine(state: &State, h: u32, mine: u32) -> bool {
+    ai_gold_targeted(state, h, mine)
+}
+
 fn ai_gold_targeted(state: &State, h: u32, mine: u32) -> bool {
     get(state, h).is_some_and(|g| g.target == Some(mine))
 }

@@ -4399,10 +4399,14 @@ fn register_ai_natives(
                     .rev()
                     .copied()
                     .filter(|&h| {
-                        state
-                            .unit(Some(h))
-                            .is_some_and(|u| u.owner == player && u.alive)
-                            && harvest::ai_gold_assigned(&state, h, mine, settled)
+                        // A newly trained worker walking with its training's
+                        // order is given a new one (SPEC-0027, "End of
+                        // training").
+                        state.unit(Some(h)).is_some_and(|u| {
+                            u.owner == player
+                                && u.alive
+                                && !u.movement.is_some_and(|m| m.ai_worker_produced)
+                        }) && harvest::ai_gold_assigned(&state, h, mine, settled)
                     })
                     .take(wanted)
                     .collect()
@@ -4437,6 +4441,31 @@ fn register_ai_natives(
                 })
                 .take(remaining)
                 .collect();
+            // It also renews the order of a newly trained worker walking to
+            // this mine with its training's order, outside the count
+            // (SPEC-0027, "End of training"; c-SEA-1 at 31.095781).
+            let mut workers = workers;
+            let mut renewed = Vec::new();
+            if repeat {
+                let trained: Vec<u32> = state
+                    .units
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|&h| {
+                        !workers.contains(&h)
+                            && state.unit(Some(h)).is_some_and(|u| {
+                                u.owner == player
+                                    && u.alive
+                                    && !u.hidden
+                                    && u.movement.is_some_and(|m| m.ai_worker_produced)
+                            })
+                            && harvest::ai_gold_targeted_mine(&state, h, mine)
+                    })
+                    .collect();
+                renewed.clone_from(&trained);
+                workers.splice(0..0, trained);
+            }
             let paid_placement = workers
                 .iter()
                 .copied()
@@ -4492,7 +4521,11 @@ fn register_ai_natives(
                 let retain_walk = paid
                     && harvest::is_wisp(&state, worker)
                     && harvest::late_wisp_assignment(&state, mine);
-                state.table.ai_harvest_extra = usize::from(!paid) * 3;
+                // PROVISIONAL: a renewed trained worker's order has one record
+                // more (c-SEA-1 at 31.095781: 20 before its walk); which one
+                // was not read.
+                state.table.ai_harvest_extra =
+                    usize::from(!paid) * (3 + usize::from(renewed.contains(&worker)));
                 table::ai_harvest_reassigning(&mut state, worker);
                 if harvest::order_harvest(&mut state, worker, mine) {
                     if repeat && !paid {
@@ -4500,6 +4533,12 @@ fn register_ai_natives(
                         table::retain_repeated_harvest_walk(&mut state, worker);
                     }
                     movement::ai_reassigned(&mut state, worker, repeat);
+                    if renewed.contains(&worker)
+                        && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+                        && let Some(m) = u.movement.as_mut()
+                    {
+                        m.ai_worker_produced = false;
+                    }
                     let reserved_undead_builder =
                         state.ai_builds.iter().any(|(_, h, type_id, ..)| {
                             *h == worker && type_id.to_be_bytes() == *b"usep"

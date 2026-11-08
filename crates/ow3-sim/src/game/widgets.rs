@@ -2980,6 +2980,14 @@ pub(super) fn critters_before(state: &mut State, before: Option<u32>) {
     }
 }
 
+/// Critter `h` arrived from a wander in its update: its wait to the next
+/// one is drawn now and runs from the update (hub #15, c-SCC-1: nsea 9468
+/// stopped at 7.709964, its wait drawn there, to 15.127618).
+pub(super) fn critter_arrived(state: &mut State, h: u32) {
+    let next = add(state.update_time, critter_wait(state));
+    state.critters.insert(h, (next, false));
+}
+
 /// The critters whose walk of a wander ended at this tick's updates wait
 /// anew from then (hub #15, c-SCC-1: nsea 9468 stopped at 7.709964, its
 /// wait drawn there, to 15.127618).

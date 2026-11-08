@@ -4825,6 +4825,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     } else {
                         super::table::order_ended(state, h);
                     }
+                    // The critter draws its wait to the next wander in this
+                    // update, among the other draws of the update batch
+                    // (SPEC-0025, "Blocked units"; c-SEA-1: critter 9468 at
+                    // 19.527723).
+                    if state.critters.contains_key(&h) {
+                        super::widgets::critter_arrived(state, h);
+                    }
                     super::table::creep_flight_arrived(state, flight);
                     super::table::buff_end_carried_out(state, h);
                     super::table::walk_dropped(state, h);

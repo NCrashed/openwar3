@@ -608,28 +608,59 @@ owner directly. Read in `c-SDA-1`.
    (SPEC-0024, "Objects by mechanic", Harvest). In `c-SEA-1` four
    acolytes were on the places of mine 11433/11455 and the payments
    came 1.25 s apart (18.692325592, 19.942424774).
-9. **Time of the next payment.** All operations are those of
-   SPEC-0004 (`add` truncates toward minus infinity; it is not IEEE
-   addition). Let `P` be the mine's current period, `5 / n` as a
-   32-bit value (`0x3FD55555` for 3 acolytes, `0x3FA00000` for 4).
-   When a payment runs at world clock `e` (the value the clock reads
-   during it), the mine starts a new countdown from 1.0 to 0 at rate
-   `r = recip(P)` per second. The time it needs is
-   `t = recip(r)` (`(0 - 1.0) / -r` with `div`, which is exactly
-   `recip(r)` here). It is counted from `e`: the countdown reaches 0 at
-   `c = add(e, t)`. That runs the payment through an engine timer with
-   timeout 0, so the payment itself is at
-   `e' = add(c, 0.0001)` = `add(add(e, t), 0.0001)`.
-   The order matters: `add(e, add(t, 0.0001))` and IEEE
-   `e + 5/3 + 0.0001` both come out 1 to 2 units of the last place
-   later. Measured in `c-SEA-1`: three acolytes 10.536625862,
-   12.203391075, 13.870156288 (steps of `0x1AAB12 * 2^-20` =
-   1.666765213); four acolytes 18.692325592, 19.942424774. In
-   `c-SDA-1`, five acolytes, `P = 1.0` and the step is about 1.0001 s,
-   so the payments come every 200 ticks with an occasional 201.
-   When `n` changes between payments the countdown keeps its value
-   and runs on at the new rate (item 5); that case was not checked at
-   this precision.
+9. **Time of the payments.** All operations are those of SPEC-0004
+   (`add` truncates toward minus infinity; it is not IEEE addition).
+   The rule is the same for the haunted mine and the entangled mine
+   (`c-SEA-1` mine 781/11747, read from the first wisp on).
+   - **Period.** With `n` workers counted, `P = recip(div(i2r(n), 5.0))`:
+     `0x40A00001`, `0x40200001`, `0x3FD55556`, `0x3FA00001` for 1 to 4.
+     The rate of the countdown is `r = -recip(P)` per second.
+   - **Countdown.** The mine keeps a value `v` with a base time `t0`;
+     its value at time `t` is `add(v, mul(r, sub(t, t0)))`. A payment is
+     due when it reaches 0: from a time `t` with value `v` the time left
+     is `d = div(sub(0, v), r)`, and the crossing is `add(t, d)`. (The
+     game checks at most 4.0 s ahead: a longer `d` is re-evaluated at
+     `add(t, 4.0)` with the same rule.)
+   - **First worker.** When the first worker is counted the countdown
+     starts at `v = 1.0`, `t0` = that time, rate `-recip(P_1)`.
+   - **Count change.** When `n` changes, the value is first carried to
+     the time `T` of the change, `v = add(v, mul(r_old, sub(T, t0)))`,
+     `t0 = T`, then the rate becomes `add(r_old, sub(r_new, r_old))`
+     (`r_new = -recip(P_new)`; in the cases read this equals `r_new`),
+     and the crossing is computed again from `T` as above. So the time
+     left is not `remaining * old / new`: it is `div(sub(0, v), r_new)`
+     with `v` the value carried to `T`.
+   - **Payment.** The payment runs at the crossing `e` (the world clock
+     reads `e`), takes the mine's two new objects and starts a new
+     countdown at 1.0. In the deferred step 0.0001 later (when the two
+     old objects are freed) the countdown is counted from
+     `add(e, 0.0001)`, so the next payment is at
+     `e' = add(add(e, 0.0001), t)` with `t = div(sub(0, 1.0), r)`
+     (equal to `P` for 3 and 4 workers).
+   Measured, `c-SEA-1` mine 781 (bits of the world clock):
+
+   | Time | Event | Value / rate after |
+   |---|---|---|
+   | `0x3F6147A0` 0.879999161 | 1st wisp counted, countdown starts | 1.0, -0.2 (`0xBE4CCCCD`) |
+   | `0x3F7851DC` 0.969999075 | 2nd wisp | `0x3F7B645A` 0.981999993, -0.4 |
+   | `0x3F8B8516` 1.089998960 | 3rd wisp | `0x3F6F1AA0` 0.934000015, -0.6 |
+   | `0x3F9EB848` 1.239998817 | 4th wisp; time left `0x3F870A3F` 1.055000186 | `0x3F581064` 0.844000101, -0.8 (`0xBF4CCCCD`) |
+   | `0x4012E143` 2.294998884 | 1st payment (the crossing) | 1.0, restarted |
+   | `0x4062E2E6` 3.545098782 | 2nd payment | |
+   | `0x40997244` 4.795198441 | 3rd payment | |
+
+   Each wisp is counted 0.01 s (two ticks) after the update at which
+   it arrives at the mine (arrivals 0.869999 and 0.959999 for the first
+   two), with the clock of that tick as `T`. The chain then goes on with
+   the rule above to 22.296586990, 23.546686172 and 24.796785355 (four
+   wisps throughout). The same rule gives the haunted mine's payments
+   18.692325592 -> 19.942424774 (four acolytes) and the three-acolyte
+   chain 10.536625862 -> 12.203391075 -> 13.870156288 (steps of
+   1.666765213). In `c-SDA-1`, five acolytes, `P = 1.0` and the step is
+   about 1.0001 s, so the payments come every 200 ticks with an
+   occasional 201. A payment and its deferred step are the "two-record
+   replacement" seen in `c-SEA-1` turns 24, 37 and 49 (SPEC-0024,
+   Harvest).
 
 ### Night Elf: entangling a gold mine
 

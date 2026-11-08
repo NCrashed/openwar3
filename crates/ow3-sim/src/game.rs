@@ -1990,12 +1990,8 @@ impl AiEngine {
     /// Resumes the threads whose expiry satisfies `due_at`, in the order of
     /// their expiries; each sleeps on from its own expiry (SPEC-0002, "AI
     /// threads").
-    /// threads"). Whether any thread woke.
-    fn resume_due(
-        &mut self,
-        state: &Rc<RefCell<State>>,
-        due_at: impl Fn(u32) -> bool + Copy,
-    ) -> bool {
+    /// threads").
+    fn resume_due(&mut self, state: &Rc<RefCell<State>>, due_at: impl Fn(u32) -> bool + Copy) {
         // Sleeping strands from all player contexts share one ordering. A
         // strand started synchronously reaches Sleep before its caller.
         let mut due = Vec::new();
@@ -2008,7 +2004,6 @@ impl AiEngine {
             );
         }
         due.sort_by_key(|&(expiry, order, ..)| (expiry, order));
-        let woke = !due.is_empty();
         let mut next_sleep = self.next_sleep;
         for (time, _, context, mut thread) in due {
             // Its natives see the queue at its expiry (SPEC-0027, "Timers of
@@ -2031,7 +2026,6 @@ impl AiEngine {
             state.borrow_mut().timers.enter(outer);
         }
         self.next_sleep = next_sleep;
-        woke
     }
 }
 
@@ -2452,14 +2446,12 @@ impl<'a> Game<'a> {
             });
         }
         // The AI threads due before the update cycle, once the units stand
-        // at this tick's clock; their frees 0.0001 s later come before the
-        // rest of the tick (SPEC-0027, "Timers of the engine").
-        if elapsed > 0
-            && self.ai.borrow_mut().resume_due(&self.state, move |expiry| {
+        // at this tick's clock. Their deferred frees come with the tick's
+        // others (c-SEA-1, turn 301: after a critter's wander at 30.100189).
+        if elapsed > 0 {
+            self.ai.borrow_mut().resume_due(&self.state, move |expiry| {
                 in_step(expiry) && update.is_none_or(|u| f32::from_bits(expiry) < f32::from_bits(u))
-            })
-        {
-            self.state.borrow_mut().table.flush(elapsed + 1);
+            });
         }
         // Timers of the engine come before the script's (SPEC-0027): the
         // ends of trainings and constructions.

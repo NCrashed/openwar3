@@ -102,10 +102,10 @@ pub struct ObjectTable {
     /// three following unit-update batches: next update tick, wisp and phase.
     pub late_wisp_cleanup: Vec<(u64, u32, u8)>,
     /// The two records made after the second initial wisp enters an
-    /// entangled mine, and their later common engine-update boundary.
-    /// Their owner is deliberately not inferred from that later batch.
+    /// entangled mine, replaced at each payment of that mine (SPEC-0029,
+    /// items 8 and 9).
     pub late_entangled_records: Vec<u32>,
-    pub late_entangled_update: Option<u64>,
+    pub late_entangled_mine: Option<u32>,
     /// Arrival-order cleanup of a common starting-worker group. Unit updates
     /// may visit that group in the reverse order of their startup placement.
     pub starting_harvest_left: usize,
@@ -269,7 +269,7 @@ impl ObjectTable {
             recycled_guard_cleanup: Vec::new(),
             late_wisp_cleanup: Vec::new(),
             late_entangled_records: Vec::new(),
-            late_entangled_update: None,
+            late_entangled_mine: None,
             starting_harvest_left: 0,
             starting_harvest_cleanup: Vec::new(),
             ai_production: Default::default(),
@@ -433,27 +433,6 @@ impl ObjectTable {
     /// production plan at its observed engine-update boundary.
     pub fn ai_produce_at_clock(&mut self, clock: u32) {
         self.timed_w.push((clock, AI_PRODUCE_AT, "SetProduce"));
-    }
-
-    /// Schedules the next periodic replacement of the retained pair made
-    /// after the second initial wisp enters an entangled mine.
-    pub fn late_entangled_records_at_clock(&mut self, clock: u32) {
-        self.timed_w
-            .push((clock, LATE_ENTANGLED_UPDATE_AT, "scheduled unit update"));
-    }
-
-    /// Replaces that pair at its world-clock update. The replacement repeats
-    /// every 1.2501 s; each old pair is released 0.0001 s after the new pair
-    /// is made (c-SEA-1, turns 24, 37 and 49, hub #15).
-    fn late_entangled_records_update(&mut self, tick: u64, clock: u32) {
-        let new = self.take_n(tick, 2, "scheduled unit update");
-        let release = ow3_math::add(clock, 0.0001f32.to_bits());
-        for entry in std::mem::take(&mut self.late_entangled_records) {
-            self.free_at_clock(release, entry, "scheduled unit update");
-        }
-        self.late_entangled_records = new;
-        let next = ow3_math::add(clock, 1.2501f32.to_bits());
-        self.late_entangled_records_at_clock(next);
     }
 
     /// Replaces a paying mine's periodic ability pair at its payment and
@@ -636,9 +615,6 @@ impl ObjectTable {
         for d in &mut due {
             if d.1 == AI_PRODUCE_AT {
                 self.ai_produce(tick);
-                continue;
-            } else if d.1 == LATE_ENTANGLED_UPDATE_AT {
-                self.late_entangled_records_update(tick, d.0);
                 continue;
             } else if d.1 == AI_PAID_UPDATE_AT {
                 self.ai_paid_records_update(tick, d.0);
@@ -3248,31 +3224,25 @@ pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {
     }
 }
 
-/// Replaces the retained pair made after the second initial wisp's arrival.
-/// The later batch has no outward unit change and is observed independently
-/// of script calls (c-SEA-1, turn 24, hub #15).
-pub(super) fn late_entangled_records_updated(state: &mut super::State) {
-    if !state
-        .table
-        .late_entangled_update
-        .is_some_and(|at| at <= state.ticks)
+/// A payment of entangled mine `mine` at world clock `e` replaces its two
+/// records: the new pair is taken at the payment, the old one freed
+/// 0.0001 s later (SPEC-0024, "Objects by mechanic"; SPEC-0029, items 8
+/// and 9; c-SEA-1: 2.294999, 3.545099, 4.795198).
+pub(super) fn entangled_mine_paid(state: &mut super::State, mine: u32, e: u32) {
+    if state.table.late_entangled_mine != Some(mine)
+        || state.table.late_entangled_records.is_empty()
     {
         return;
     }
-    state.table.late_entangled_update = None;
     let tick = state.table.now;
-    let new = state
-        .table
-        .take_n(tick, 2, "entangled mine: retained-record update");
-    for key in std::mem::take(&mut state.table.late_entangled_records) {
-        let entry = state.table.made.remove(&key).unwrap_or(key);
+    let new = state.table.take_n(tick, 2, "entangled mine: payment");
+    let release = ow3_math::add(e, 0.0001f32.to_bits());
+    for entry in std::mem::take(&mut state.table.late_entangled_records) {
         state
             .table
-            .defer(entry, "entangled mine: retained-record update");
+            .free_at_clock(release, entry, "entangled mine: old payment pair");
     }
     state.table.late_entangled_records = new;
-    let next = ow3_math::add(state.move_clock, 1.2501f32.to_bits());
-    state.table.late_entangled_records_at_clock(next);
 }
 
 /// Advances the two observed cleanup updates of a late wisp arrival. The
@@ -3293,6 +3263,7 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
         match phase {
             0 => {
                 state.table.take(tick, "late wisp: update record");
+                super::harvest::wisp_counts(state, h, ow3_math::add(state.move_clock, 0x3C23_D70A));
                 let count = state.table.ai_harvest_cleanup.len().min(2);
                 let old_arrival = state
                     .table
@@ -3594,14 +3565,6 @@ pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
 /// 1071; 1162 .. 1165).
 pub(super) fn harvest_waits(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    if tick < 400 {
-        eprintln!(
-            "WAITS tick {tick} h {h} type {:?}",
-            state
-                .unit(Some(h))
-                .map(|u| String::from_utf8_lossy(&u.type_id.to_be_bytes()).into_owned())
-        );
-    }
     let reference = state.table.take(tick, "gold mine: waiting worker");
     if let Some(e) = entries(state, h) {
         e.harvest_inside = Some(reference);
@@ -6592,7 +6555,6 @@ pub(super) fn unit_died(state: &mut super::State, h: u32) {
 const TAKE_AT: u32 = u32::MAX;
 /// A repeated single-worker AI production plan due on the world clock.
 const AI_PRODUCE_AT: u32 = u32::MAX - 1;
-const LATE_ENTANGLED_UPDATE_AT: u32 = u32::MAX - 2;
 const AI_PAID_UPDATE_AT: u32 = u32::MAX - 3;
 /// The keys of `ObjectTable::take_at_q`, and its mark for the making.
 const MADE_KEY: u32 = 0x2000_0000;

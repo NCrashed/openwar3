@@ -674,7 +674,6 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
-    super::table::late_entangled_records_updated(&mut state.borrow_mut());
     pending_wisp_arrivals(&mut state.borrow_mut());
     starting_mine_arrivals(&mut state.borrow_mut());
     ai_mine_waits(&mut state.borrow_mut());
@@ -2088,11 +2087,17 @@ pub struct PayingMine {
     working: Vec<u32>,
     /// Workers that start to count at a queue time.
     joining: Vec<(u32, u32)>,
-    /// The queue time of the next payment, while any worker counts.
+    /// The countdown to the next payment (SPEC-0029, item 9): its value at
+    /// `base`, falling at `rate` per second while workers count.
+    value: u32,
+    base: u32,
+    rate: u32,
+    started: bool,
+    /// The next time the countdown is looked at, on the world clock, and
+    /// whether it reaches 0 then (a payment) or is only checked again
+    /// (the 4.0 s look-ahead).
     expiry: Option<u32>,
-    /// The time left to the next payment for one worker (seconds), while
-    /// none counts.
-    left: Option<u32>,
+    crossing: bool,
 }
 
 /// Places round a haunted mine (`Abgm` `DataC`).
@@ -2314,7 +2319,12 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     };
     p.places[k] = Some(h);
     let at = add(state.move_clock, JOIN_DELAY);
-    p.joining.push((h, at));
+    // The first wisp arrives at the end of its terminal wait, a late one at
+    // its revisit; each counts from then (SPEC-0029, item 9: c-SEA-1 mine
+    // 781, wisps counted at 0.879999161 .. 1.239998817).
+    if (1..3).contains(&occupants) {
+        p.joining.push((h, at));
+    }
     if occupants == 0 {
         // The terminal contact is observed one update before the final
         // displacement: count 20 at 0.420 and 19 after 0.450. This hook is
@@ -2407,9 +2417,25 @@ fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32, te
             state.table.take_at_q(at, "wisp: entangled-mine record"),
             state.table.take_at_q(at, "wisp: entangled-mine record"),
         ];
-        // PROVISIONAL: the observed update is 284 ticks after this arrival
-        // call (the records themselves materialize one tick later).
-        state.table.late_entangled_update = Some(state.ticks + 284);
+        // The mine's payments replace the pair (`table::entangled_mine_paid`).
+        state.table.late_entangled_mine = state
+            .paying
+            .iter()
+            .find(|(_, p)| p.places.contains(&Some(h)))
+            .map(|(&mine, _)| mine);
+    }
+}
+
+/// Wisp `h` inside its entangled mine starts to count at world clock `at`.
+pub(super) fn wisp_counts(state: &mut State, h: u32, at: u32) {
+    if let Some(p) = state
+        .paying
+        .values_mut()
+        .find(|p| p.places.contains(&Some(h)))
+        && !p.working.contains(&h)
+        && !p.joining.iter().any(|&(w, _)| w == h)
+    {
+        p.joining.push((h, at));
     }
 }
 
@@ -2428,6 +2454,7 @@ fn pending_wisp_arrivals(state: &mut State) {
         .filter(|&h| get(state, h).is_some_and(|g| g.pending_wisp))
         .collect();
     let mut finished = Vec::new();
+    let mut counted = Vec::new();
     for h in pending {
         let Some(mut gathering) = get(state, h) else {
             continue;
@@ -2481,6 +2508,7 @@ fn pending_wisp_arrivals(state: &mut State) {
         } else if gathering.pending_wisp_zero_seen {
             gathering.pending_wisp = false;
             gathering.pending_wisp_zero_seen = false;
+            counted.push(h);
             if let Some(mine) = gathering.target {
                 finished.push((h, mine));
             }
@@ -2488,6 +2516,10 @@ fn pending_wisp_arrivals(state: &mut State) {
             gathering.pending_wisp_zero_seen = true;
         }
         set(state, h, Some(gathering));
+    }
+    // It arrives at the end of its wait and counts 0.01 s later.
+    for h in counted {
+        wisp_counts(state, h, add(state.move_clock, JOIN_DELAY));
     }
     for (h, mine) in finished {
         let occupants = state.paying.get(&mine).map_or(0, |p| {
@@ -2561,14 +2593,13 @@ pub(super) fn paid_order_given(state: &mut State, h: u32, keeps_place: bool) {
 /// Whether worker `h` gathers at a paying mine now (its order reads
 /// `harvest`).
 pub(super) fn paid_working(state: &State, h: u32) -> bool {
-    state
-        .paying
-        .values()
-        .any(|p| p.working.contains(&h) || p.joining.iter().any(|&(w, _)| w == h))
-        || state.mines.values().any(|mine| {
-            mine.waiting.contains(&h) || mine.inside.is_some_and(|(worker, _, _)| worker == h)
-        })
-        || state.wisp_trees.values().any(|&(w, _)| w == h)
+    state.paying.values().any(|p| {
+        p.working.contains(&h)
+            || p.joining.iter().any(|&(w, _)| w == h)
+            || p.places.contains(&Some(h))
+    }) || state.mines.values().any(|mine| {
+        mine.waiting.contains(&h) || mine.inside.is_some_and(|(worker, _, _)| worker == h)
+    }) || state.wisp_trees.values().any(|&(w, _)| w == h)
 }
 
 /// Whether an AI worker is already assigned at `mine`. The first replacement
@@ -2620,22 +2651,59 @@ pub(super) fn late_wisp_assignment(state: &State, mine: u32) -> bool {
         .is_some_and(|p| p.places.iter().filter(|place| place.is_some()).count() >= 3)
 }
 
-/// The number of workers counting at `mine` changes at queue time `now`
-/// (`join` comes, `leave` goes): the part of the period already done is
-/// kept, the rest runs at the new rate.
+/// The rate of a paying mine's countdown with `n` workers counting:
+/// `-recip(P)`, `P = recip(div(n, 5.0))` (SPEC-0029, item 9).
+fn payment_rate(n: usize) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    let period = ow3_math::recip(div(ow3_math::i2r(n as i32), 5.0f32.to_bits()));
+    sub(0, ow3_math::recip(period))
+}
+
+impl PayingMine {
+    /// The countdown carried to time `t` (SPEC-0029, item 9).
+    fn carry(&mut self, t: u32) {
+        if self.rate != 0 {
+            self.value = add(self.value, mul(self.rate, sub(t, self.base)));
+        }
+        self.base = t;
+    }
+
+    /// The next look at the countdown from `base`: its crossing of 0, or a
+    /// check again 4.0 s on when that is further away.
+    fn schedule(&mut self) {
+        if self.rate == 0 {
+            self.expiry = None;
+            return;
+        }
+        let left = div(sub(0, self.value), self.rate);
+        self.crossing = f32::from_bits(left) <= 4.0;
+        self.expiry = Some(add(
+            self.base,
+            if self.crossing {
+                left
+            } else {
+                4.0f32.to_bits()
+            },
+        ));
+    }
+}
+
+/// The number of workers counting at `mine` changes at world clock `now`
+/// (`join` comes, `leave` goes): the countdown is carried to `now` and goes
+/// on at the new rate (SPEC-0029, item 9).
 fn count_change(state: &mut State, mine: u32, now: u32, join: Option<u32>, leave: Option<u32>) {
     let (old_count, new_count) = {
         let Some(p) = state.paying.get_mut(&mine) else {
             return;
         };
         let old_count = p.working.len();
-        let old = old_count as f32;
-        // The time one worker still needs for the next payment.
-        let left = match (p.expiry, p.left) {
-            (Some(e), _) => (f32::from_bits(e) - f32::from_bits(now)).max(0.0) * old,
-            (None, Some(l)) => f32::from_bits(l),
-            (None, None) => 5.0,
-        };
+        if !p.started {
+            p.started = true;
+            p.value = 1.0f32.to_bits();
+        }
+        p.carry(now);
         if let Some(w) = join {
             p.working.push(w);
         }
@@ -2643,14 +2711,9 @@ fn count_change(state: &mut State, mine: u32, now: u32, join: Option<u32>, leave
             p.working.retain(|&x| x != w);
         }
         let new_count = p.working.len();
-        let n = new_count as f32;
-        if n > 0.0 {
-            p.expiry = Some(add(now, (left / n).to_bits()));
-            p.left = None;
-        } else {
-            p.expiry = None;
-            p.left = Some(left.to_bits());
-        }
+        let old_rate = p.rate;
+        p.rate = add(old_rate, sub(payment_rate(new_count), old_rate));
+        p.schedule();
         (old_count, new_count)
     };
     state
@@ -2684,10 +2747,21 @@ fn pay_mines(state: &mut State) {
                     count_change(state, mine, at, Some(w), None);
                 }
                 (_, Some(e)) => {
-                    paid(state, mine);
+                    let crossing = state.paying.get(&mine).is_some_and(|p| p.crossing);
+                    if crossing {
+                        paid(state, mine);
+                        super::table::entangled_mine_paid(state, mine, e);
+                    }
                     if let Some(p) = state.paying.get_mut(&mine) {
-                        let n = p.working.len() as f32;
-                        p.expiry = Some(add(e, (5.0 / n).to_bits()));
+                        if crossing {
+                            // A new countdown at 1.0, counted from the
+                            // payment's deferred step 0.0001 s later.
+                            p.value = 1.0f32.to_bits();
+                            p.base = add(e, 0.0001f32.to_bits());
+                        } else {
+                            p.carry(e);
+                        }
+                        p.schedule();
                     }
                 }
                 _ => break,

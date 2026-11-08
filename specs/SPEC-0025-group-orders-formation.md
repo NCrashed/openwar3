@@ -394,10 +394,16 @@ blocked with `P = 1`, marked; heading 5.5224 -> 5.0224, at 21.657366
 4.8093 (turned), at 21.687361 arrived (order 0). The same sequence
 ended its moves at 15.598 (c-SEA-1; the heading already pointed at the
 goal at the mark, so it arrived at the next update) and at 9.209
-(c-SCC-1). At every such arrival the critter takes three objects and
-then draws the script generator once; the three are freed in the next
+(c-SCC-1). At every such arrival (by the mark) the critter takes three
+objects and then draws the script generator once; the three are freed in the next
 tick after the first of the move's remaining objects and before the
-others (`c-SEA-1.wander-ends-report.md`).
+others (`c-SEA-1.wander-ends-report.md`). A wander move that ends by
+an ordinary arrival at its point (within 0.49 cells of the last point
+of a complete path, tested after the step) draws the script generator
+once and takes nothing; its remaining objects are freed in the next
+tick. `c-SEA-1` critter 9468: arrivals at 19.527723312 and at
+28.256258011 (0.4031 cells after the step; 0.4969 after the step of the
+update before, so no arrival there).
 
 A partial path ends the same way. `c-RXD-1` creep 9 walking home to
 (387.125, 402.75): its local path of 4561 had failed at the iteration

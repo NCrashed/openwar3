@@ -649,9 +649,25 @@ owner directly. Read in `c-SDA-1`.
    | `0x4062E2E6` 3.545098782 | 2nd payment | |
    | `0x40997244` 4.795198441 | 3rd payment | |
 
-   Each wisp is counted 0.01 s (two ticks) after the update at which
-   it arrives at the mine (arrivals 0.869999 and 0.959999 for the first
-   two), with the clock of that tick as `T`. The chain then goes on with
+   Each worker is counted 0.01 s (two ticks) after the update at which
+   it arrives at the mine (a wisp) or is put on its place (an acolyte),
+   with the clock of that tick as `T`: the wisps arrived at the updates
+   0.869999 and 0.959999 and were counted at 0.879999161 and
+   0.969999075. The count `n` (and so `P`) already changes at the
+   update itself; only the countdown waits for `T`.
+
+   Haunted mine 11433/11455 of `c-SEA-1`, from its first acolyte:
+
+   | Time | Event | Countdown after |
+   |---|---|---|
+   | `0x3E8F5C21` 0.279999763 | 1st acolyte counted (on its place at the update of 0.27), countdown starts | 1.0, -0.2 |
+   | `0x3F8B8516` 1.089998960 | 2nd acolyte counted (update of 1.08); time left `0x4006147D` 2.095000505 | `0x3F56872E`, -0.4 |
+   | `0x404BD708` 3.184999466 | 1st payment (the crossing) | 1.0 |
+   | `0x40B5EC56` 5.685099602 | 2nd payment | |
+   | `0x4102F693` 8.185198784 | 3rd payment; base time `0x4102F6FB` 8.185297966 | |
+   | `0x4123D41A` 10.239282608 | 3rd acolyte counted | `0x3E36B01C`, -0.6 |
+   | `0x41289605` 10.536625862 | 4th payment | |
+   | 12.203391075, 13.870156288 | next payments (three acolytes) | | The chain then goes on with
    the rule above to 22.296586990, 23.546686172 and 24.796785355 (four
    wisps throughout). The same rule gives the haunted mine's payments
    18.692325592 -> 19.942424774 (four acolytes) and the three-acolyte

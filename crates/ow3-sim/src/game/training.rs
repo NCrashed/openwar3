@@ -101,6 +101,8 @@ pub(super) fn cancel_timer(state: &mut State, timer: EngineTimer) {
 /// runs, the movement clock reads its expiry (SPEC-0027, "Timers of the
 /// engine").
 pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
+    // Where the deferred frees of the first worker completion start.
+    let mut worker_frees = None;
     loop {
         // A revive ends on the world clock (c-SBQ-1, c-SBU-1: its start's
         // time plus the revive time, to the bit).
@@ -126,6 +128,9 @@ pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         if !matches!(timer, EngineTimer::Revive(_)) {
             state.borrow_mut().move_clock = key.0;
         }
+        if matches!(timer, EngineTimer::AiWorker { .. }) && worker_frees.is_none() {
+            worker_frees = Some(state.borrow().table.deferred_count());
+        }
         match timer {
             EngineTimer::Construction(h) => super::finish_construction(vm, state, h),
             EngineTimer::Training(h) => end_training(vm, state, h),
@@ -138,6 +143,16 @@ pub(super) fn fire_engine_timers(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             } => finish_ai_worker(vm, state, owner, hall, type_id, records),
         }
         state.borrow_mut().move_clock = clock;
+    }
+    // The workers' deferred frees come 0.0001 s after their completions, in
+    // this tick, before the later timers of the queue (SPEC-0027; c-SEA-1:
+    // the three workers of 15.1 and their frees at 15.100099; the peon of
+    // 30.263439, its frees at 30.263538 before a critter's wander at
+    // 30.265921).
+    if let Some(start) = worker_frees {
+        let mut s = state.borrow_mut();
+        let tick = s.table.now;
+        s.table.flush_since(start, tick);
     }
 }
 
@@ -203,8 +218,12 @@ fn finish_ai_worker(
         });
         let tick = s.table.now;
         // The paid Undead worker has one completion record; the other
-        // observed melee workers have two (c-SEA-1 worker completions).
-        let completion_count = if type_id == i32::from_be_bytes(*b"uaco") {
+        // observed melee workers have two at their player's first completion
+        // (c-SEA-1 worker completions at 15.1) and one later (the peon of
+        // 30.263439).
+        // PROVISIONAL: what the second record is was not read.
+        let first = !s.table.ai_worker_completion_retained.contains_key(&owner);
+        let completion_count = if type_id == i32::from_be_bytes(*b"uaco") || !first {
             1
         } else {
             2

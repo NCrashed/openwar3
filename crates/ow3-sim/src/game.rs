@@ -4292,7 +4292,9 @@ fn register_ai_natives(
                     .units
                     .get(&type_id)
                     .map_or(0, |unit| unit.build_time);
-                let expiry = ow3_math::add(state.timers.time(), build_time);
+                // A timer of the engine, on the movement clock (SPEC-0027; c-SEA-1:
+                // the peon started at 15.263439, finished at 30.263439).
+                let expiry = ow3_math::add(state.move_clock, build_time);
                 training::start_timer(
                     &mut state,
                     expiry,

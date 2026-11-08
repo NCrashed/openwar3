@@ -682,6 +682,19 @@ impl ObjectTable {
 
     /// The 0.0001 s timers of the tick expire: their objects are freed in
     /// the order they were given up.
+    /// Frees the records deferred since the list held `start` of them, as
+    /// a timer started inside an engine timer frees them 0.0001 s later in
+    /// the same tick (SPEC-0027, "Timers of the engine").
+    pub fn flush_since(&mut self, start: usize, tick: u64) {
+        if self.deferred.len() <= start {
+            return;
+        }
+        let due = self.deferred.split_off(start);
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
+    }
+
     pub fn flush(&mut self, tick: u64) {
         self.early.clear();
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)

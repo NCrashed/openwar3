@@ -109,6 +109,35 @@ When the timer fires:
 4. the next unit of the queue starts training at once (its start event
    comes right after the finish event), if the food allows it.
 
+**A worker trained by a computer player (`c-SEA-1`, Orc peons from
+the Great Hall, whose rally point is the gold mine).** Both peons read
+(10494/14061 at world 15.100000381, 10609/15923 at 30.263439178) take
+73 objects in the same groups: 9 (the unit; its first take is the
+unit itself), 18 (more parts; game generator 2 is drawn after the 7th
+of them), 18 (a harvest order on the mine: 15 records, then a walk's
+three, whose first, the helper, is freed at once), 9, 18 (a second
+harvest order on the mine, the same way), and 1 more, freed in the
+next tick. There is no further record. The last two of the first
+order's walk (its path and cluster) stay until the unit's first
+update, which searches the path of the second order and frees them.
+That first update is the first update batch whose queue time `U(m)`
+(SPEC-0018) is above the training end's expiry: for the peon of 30.26
+the batch of the same tick (expiry 30.265920639, batch 30.269309998);
+for the peon of 15.10 the batch of a later tick (expiry 15.103466034,
+batch of its tick 15.089898109, next batch 15.119897842), so the two
+records were freed 18 ms after the completion there. From their first
+update on, both peons walked the same path with the same velocities
+and positions (start (8528, 8368)).
+
+A computer player's harvest pass (AI natives `HarvestGold`) gives such a
+worker, already walking to the mine with the order of its training, a
+new harvest order on the same mine: `c-SEA-1` 31.095781326, peon
+10609/15923: 20 records and a walk's three (helper freed at once); the
+replaced order's records are freed in the next tick, its walk's path
+and cluster at the worker's next update, which searches again. A wisp
+already harvesting took only three objects in the same pass, freed in
+the next tick.
+
 ### Cancelling
 
 The order 851976 (`cancel`; from the interface key Escape: replay

@@ -3798,11 +3798,11 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
         .units
         .iter()
         .filter_map(|&h| state.unit(Some(h)))
+        // A building under construction counts once, through `q2` of the
+        // type record below (SPEC-0026; c-SEA-1 at 31.266666: one Altar of
+        // Storms and one Orc Burrow under construction count 1 each).
         .filter(|u| {
-            u.owner == player
-                && u.type_id == type_id
-                && u.alive
-                && (!done || u.construction.is_none())
+            u.owner == player && u.type_id == type_id && u.alive && u.construction.is_none()
         })
         .count();
     let queued = if done {
@@ -4105,10 +4105,13 @@ fn register_ai_natives(
                             .unit(Some(*builder))
                             .is_some_and(|unit| unit.owner == player)
                     });
+            // A building is refused while an earlier plan of the player has
+            // not started; once it has, the script may ask for another
+            // (c-SEA-1: a second Orc Burrow at 31.266666).
             let already = if worker {
                 worker_pending
             } else {
-                planned_at.is_some()
+                building_pending
             };
             let accepted = !already
                 && qty > 0

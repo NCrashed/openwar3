@@ -86,6 +86,8 @@ pub struct ObjectTable {
     /// building plan (c-SEA-1, hub #15).
     pub ai_harvest_cleanup_armed: bool,
     pub ai_harvest_cleanup: Vec<u32>,
+    /// The worker whose repeated assignment left those records.
+    pub ai_harvest_cleanup_owner: Option<u32>,
     /// Non-transient completion records of AI-produced workers, by player,
     /// retained until that worker accepts its building plan.
     pub ai_worker_completion_retained: std::collections::BTreeMap<i32, Vec<u32>>,
@@ -264,6 +266,7 @@ impl ObjectTable {
             ai_harvest_reassigning: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
+            ai_harvest_cleanup_owner: None,
             ai_worker_completion_retained: std::collections::BTreeMap::new(),
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
@@ -3151,6 +3154,7 @@ pub(super) fn retain_repeated_harvest_arrival(state: &mut super::State, h: u32) 
         return;
     }
     let arrival: Vec<u32> = state.table.ai_harvest_cleanup.drain(..2).collect();
+    state.table.ai_harvest_cleanup_owner = Some(h);
     if let Some(e) = entries(state, h) {
         e.harvest_arrive = arrival;
     }

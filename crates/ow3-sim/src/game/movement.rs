@@ -1303,6 +1303,13 @@ pub(super) fn ai_build_order(
     } else {
         (Vec::new(), Vec::new())
     };
+    // The other kept records of a repeated assignment of this worker go
+    // with its old order (c-SEA-1 at 31.266666: 16052 .. 16042).
+    let mut worker_cleanup = worker_cleanup;
+    if type_id == otrb && state.table.ai_harvest_cleanup_owner == Some(worker) {
+        state.table.ai_harvest_cleanup_owner = None;
+        worker_cleanup.append(&mut state.table.ai_harvest_cleanup);
+    }
     let tick = state.ticks;
     if let Some(Object::Unit(unit)) = state.objects.get_mut(&worker) {
         unit.entries

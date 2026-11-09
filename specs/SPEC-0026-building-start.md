@@ -331,6 +331,11 @@ eight existing peasants was `q0` = 2147483647, `q1` = 8, `q2` = 0,
 `q3` = 0, `q4` = 8, `q5` = 0, `q6` = 8. So `q2` counts buildings under
 construction, `q1` and `q4` count finished units (their difference is
 not known), and `q6` is 4 for a building type and 8 for a unit type.
+`q2` also counts a unit queued for training: in `c-SEA-1` the Orc
+player's peon record went from (2147483647, 7, 0, 0, 7, 0, 8) to
+(2147483647, 7, 1, 0, 7, 0, 8) in the tick of the AI's
+`SetProduce(1, opeo, -1)` (world 31.265752792), which queued a peon at
+the Great Hall, and G changed with it (C7218CD9 -> 47218CD9).
 
 ### Other races
 

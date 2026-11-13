@@ -381,6 +381,29 @@ tick from 256 north of their sites; a second peon is ordered to
 6. The burrow's own abilities (workers going in to fight) are not
    covered here.
 
+**Buildings ordered by a computer player (`SetProduce` of a building
+type, `c-SEA-1`, Undead).** The worker that gets the build order is the
+player's most recently created worker: acolyte 11618/11634 for the
+Crypt (0.100000) and the Ziggurat (3.429963), acolyte 10269/14134 for
+the Altar of Darkness (31.430725). The distance to the site does not
+decide: at 3.43 and at 31.43 the chosen acolyte was the farthest of the
+player's acolytes. The sites, relative to the Necropolis at
+(8768, 4800): Crypt (8576, 4224), Ziggurat (9312, 4576), Altar
+(9312, 5152); how the game chooses them is not specified here.
+The order is the build order of this section (17 takes, the 15th freed
+at once, then one more). Altar of Darkness: the acolyte walked from
+(8986.44, 3950.20): a search at 31.435724 to a first segment goal at
+(9008, 4656), past the west side of the gold mine; one block and a new
+search to the same goal at 32.455379 / 32.485363; a search to the site
+at 34.919025;
+and started the construction at its update of 37.527592, the first at
+which the distance from its position after the step to the site was at
+most 100 (96.06; 102.70 at the update before). It was put at
+(9264, 5040), kept its build order to 38.547031 and then stood with
+order 0; the AI's harvest pass sent it back to the mine at 40.096180.
+The start took 42 objects of the main table and the building's first
+alarm check one more at 38.052303 (SPEC-0026, "First alarm check").
+
 ## Edge cases
 
 - In one test five of twenty script build orders were not executed at

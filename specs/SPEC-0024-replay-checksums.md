@@ -420,6 +420,14 @@ worker:
 - a drop of the tree (failed arrival check): a stop's set of 3, freed
   deferred, two kept parts of the harvest order freed, and one wait
   object kept 0.5 s, to the moment another tree is taken;
+- an acolyte's harvest order on a haunted mine (`c-SEA-1` acolyte
+  10269, order at 16.098299): 15 records and the walk's three. Of the
+  15, the first three and the last four are freed in the next tick,
+  the 10th and 11th when it is put on its place at the mine (18.148054),
+  and the 4th to 9th (six records) stay as long as the order: they were
+  freed in the next tick after the order was replaced by a build order
+  at 31.430725, the last made first. The walk's helper is freed at
+  once, its path and cluster at the update after the arrival;
 - at a mine: one object per worker that has to wait, made when it starts
   to wait and freed when it goes in;
 - once, at the first worker's entry into a mine (`c-RXI-1` 871) and at

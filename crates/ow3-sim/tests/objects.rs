@@ -818,10 +818,11 @@ fn melee_ai_checksums() {
 /// threads' deferred frees with the tick's others through checkpoint 302, then the
 /// AI peon's training on the movement clock through checkpoint 310, then the
 /// renewed order of a newly trained worker through checkpoint 312, then a
-/// building under construction counted once by the AI through checkpoint 314.
+/// building under construction counted once by the AI through checkpoint 314,
+/// then the Undead AI's Altar of Darkness through checkpoint 323.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(314)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(323)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -5566,7 +5567,6 @@ fn melee_ai_turn313_objects() {
 /// The Undead AI orders an acolyte to build an Altar of Darkness; a sea
 /// turtle starts a wander move and frees its parts deferred.
 #[test]
-#[ignore = "not matched yet: the AI does not build an Altar of Darkness"]
 fn melee_ai_turn315_objects() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn315-events.tsv")) else {

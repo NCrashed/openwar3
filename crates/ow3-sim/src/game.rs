@@ -4170,7 +4170,7 @@ fn register_ai_natives(
                         Vec::new()
                     };
                     state.table.defer_at(tick, made[1], "SetProduce");
-                    if type_id == i32::from_be_bytes(*b"otrb") {
+                    if matches!(&type_id.to_be_bytes(), b"otrb" | b"uaod") {
                         for entry in worker_cleanup {
                             state.table.defer(entry, "AI build: old worker order");
                         }

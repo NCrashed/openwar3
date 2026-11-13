@@ -1220,6 +1220,7 @@ pub(super) fn ai_build_order(
     let eate = i32::from_be_bytes(*b"eate");
     let emow = i32::from_be_bytes(*b"emow");
     let otrb = i32::from_be_bytes(*b"otrb");
+    let uaod = i32::from_be_bytes(*b"uaod");
     let (delay, site) = if type_id == usep {
         (
             250,
@@ -1261,6 +1262,16 @@ pub(super) fn ai_build_order(
                 add(hall.y, 544.0f32.to_bits()),
             ],
         )
+    } else if type_id == uaod {
+        (
+            // Accepted at 31.430725 and started at 37.527592 in c-SEA-1
+            // (SPEC-0026, "Buildings ordered by a computer player").
+            1220,
+            [
+                add(hall.x, 544.0f32.to_bits()),
+                add(hall.y, 352.0f32.to_bits()),
+            ],
+        )
     } else {
         return Vec::new();
     };
@@ -1288,11 +1299,15 @@ pub(super) fn ai_build_order(
     let Some(start) = state.unit(Some(worker)).map(|u| [u.x, u.y, u.facing]) else {
         return Vec::new();
     };
-    let (worker_cleanup, worker_walk) = if type_id == otrb || type_id == emow {
+    let (worker_cleanup, worker_walk) = if type_id == otrb || type_id == emow || type_id == uaod {
         match state.objects.get_mut(&worker) {
             Some(Object::Unit(unit)) => {
                 let mut cleanup = Vec::new();
-                if type_id == otrb {
+                if type_id == uaod {
+                    // The kept records of its harvest order go with it, the
+                    // last made first (SPEC-0024).
+                    cleanup = std::mem::take(&mut unit.entries.order);
+                } else if type_id == otrb {
                     cleanup = std::mem::take(&mut unit.entries.harvest_arrive);
                     cleanup.extend(std::mem::take(&mut unit.entries.order));
                 }
@@ -1341,7 +1356,7 @@ pub(super) fn ai_build_order(
     // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
     if matches!(
         &type_id.to_be_bytes(),
-        b"oalt" | b"eate" | b"emow" | b"otrb"
+        b"oalt" | b"eate" | b"emow" | b"otrb" | b"uaod"
     ) {
         order(state, worker, Order::Build { type_id }, type_id, site);
         ai_reassigned(state, worker, false);
@@ -1538,6 +1553,12 @@ pub(super) fn start_buildings(state: &mut State) {
                 u.x = add(site[0], 176.0f32.to_bits());
                 u.y = add(site[1], (-48.0f32).to_bits());
                 u.facing = 3.500_498_5_f32.to_bits();
+            } else if type_id == i32::from_be_bytes(*b"uaod")
+                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+            {
+                // c-SEA-1: put at (9264, 5040) at the start of 37.527592.
+                u.x = add(site[0], (-48.0f32).to_bits());
+                u.y = add(site[1], (-112.0f32).to_bits());
             } else if type_id == i32::from_be_bytes(*b"oalt")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {

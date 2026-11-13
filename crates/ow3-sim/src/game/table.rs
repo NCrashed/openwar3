@@ -3048,7 +3048,12 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
             if capture_cleanup {
                 e.ai_harvest_cycle = e.order.clone();
                 cleanup = std::mem::take(&mut e.harvest_arrive);
-                cleanup.extend(std::mem::take(&mut e.order));
+                // A produced acolyte's kept records belong to its harvest
+                // order and last as long as it (SPEC-0024; c-SEA-1:
+                // acolyte 10269's 14323 .. 14328 to 31.430725).
+                if !produced_paid {
+                    cleanup.extend(std::mem::take(&mut e.order));
+                }
             }
         }
         if paid && !produced_paid && !super::harvest::is_wisp(state, h) {

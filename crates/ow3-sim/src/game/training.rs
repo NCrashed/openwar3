@@ -182,7 +182,9 @@ fn finish_ai_worker(
         else {
             return;
         };
+        s.table.training_made = true;
         super::table::unit_made(&mut s, unit);
+        s.table.training_made = false;
         if type_id == i32::from_be_bytes(*b"uaco")
             && let Some(Object::Unit(acolyte)) = s.objects.get_mut(&unit)
         {
@@ -190,24 +192,17 @@ fn finish_ai_worker(
         }
         if type_id == i32::from_be_bytes(*b"opeo") {
             super::harvest::computer_worker_made(&mut s, unit);
-            // The automatic harvest controller is staged separately from
-            // the public creation pose before its first observed movement
-            // update (c-SEA-1, turn 153).
+            // Its first update is the first update batch after the end of
+            // its training: in this tick if it has one (SPEC-0027, "End of
+            // training"; c-SEA-1: the peons of 15.100 and 30.263).
             let min = [s.world_bounds[0], s.world_bounds[1]];
+            let tick = s.ticks;
             if let Some(super::Object::Unit(peon)) = s.objects.get_mut(&unit)
                 && let Some(movement) = peon.movement.as_mut()
             {
                 (peon.x, peon.y) = (controller_place[0], controller_place[1]);
-                let public = super::movement::relative(controller_place, min);
-                let staged = super::movement::relative(
-                    [
-                        add(controller_place[0], 2.064_453_1_f32.to_bits()),
-                        add(controller_place[1], 5.310_547_f32.to_bits()),
-                    ],
-                    min,
-                );
-                movement.origin = public;
-                movement.ai_worker_reset = Some((public, staged, 2));
+                movement.origin = super::movement::relative(controller_place, min);
+                movement.next_update = tick;
                 movement.ai_worker_produced = true;
             }
         }
@@ -217,16 +212,16 @@ fn finish_ai_worker(
             record[2] = record[2].saturating_sub(1);
         });
         let tick = s.table.now;
-        // The paid Undead worker has one completion record; the other
-        // observed melee workers have two at their player's first completion
-        // (c-SEA-1 worker completions at 15.1) and one later (the peon of
-        // 30.263439).
-        // PROVISIONAL: what the second record is was not read.
+        // A trained worker has one completion record (SPEC-0027, "End of
+        // training": the peons of 15.100 and 30.263). The first wisp has a
+        // second one, kept until its player's next production pass
+        // (c-SEA-1, turn 157).
+        // PROVISIONAL: what the wisp's second record is was not read.
         let first = !s.table.ai_worker_completion_retained.contains_key(&owner);
-        let completion_count = if type_id == i32::from_be_bytes(*b"uaco") || !first {
-            1
-        } else {
+        let completion_count = if type_id == i32::from_be_bytes(*b"ewsp") && first {
             2
+        } else {
+            1
         };
         let completion = s
             .table
@@ -237,6 +232,17 @@ fn finish_ai_worker(
             .entry(owner)
             .or_default()
             .extend(completion[1..].iter().copied());
+        // The walk its first order gave up is freed at that first update,
+        // even in the tick of the training's end (c-SEA-1: 15966, 15967 at
+        // 30.269310).
+        if type_id == i32::from_be_bytes(*b"opeo") {
+            let earlier = s.ticks.saturating_sub(1);
+            if let Some(super::Object::Unit(u)) = s.objects.get_mut(&unit) {
+                for (at, _) in &mut u.entries.stale {
+                    *at = (*at).min(earlier);
+                }
+            }
+        }
         super::regions::test_unit(&mut s, unit);
     }
     super::regions::dispatch(vm, state);

@@ -249,10 +249,6 @@ pub struct Moving {
     pub(super) heading: u32,
     /// The tick of the next update.
     pub(super) next_update: u64,
-    /// The first produced Orc peon's public pose and the number of updates
-    /// until its controller is rebased there. That rebase has a two-tick
-    /// interval to the next update.
-    pub(super) ai_worker_reset: Option<([u32; 2], [u32; 2], u8)>,
     /// A newly produced melee-AI worker whose first reassignment commits
     /// on the preceding movement tick.
     pub(super) ai_worker_produced: bool,
@@ -649,7 +645,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             // phase (c-RXD-1: creep 7, an order at 7081, its first update
             // at 7082).
             next_update: tick + 1,
-            ai_worker_reset: None,
             ai_worker_produced: false,
             walking: false,
             origin: relative([u.x, u.y], min),
@@ -1358,6 +1353,9 @@ pub(super) fn ai_build_order(
         &type_id.to_be_bytes(),
         b"oalt" | b"eate" | b"emow" | b"otrb" | b"uaod"
     ) {
+        // A builder taken from its place at a haunted mine stops counting
+        // there (SPEC-0029; c-SEA-1: acolyte 10269 at 31.430725).
+        super::harvest::paid_order_given(state, worker, false);
         order(state, worker, Order::Build { type_id }, type_id, site);
         ai_reassigned(state, worker, false);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
@@ -3564,18 +3562,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             still.push(h);
             continue;
         }
-        let ai_worker_reset = match m.ai_worker_reset {
-            Some((public, staged, 1)) => {
-                m.ai_worker_reset = None;
-                Some((public, staged))
-            }
-            Some((public, staged, remaining)) => {
-                m.ai_worker_reset = Some((public, staged, remaining - 1));
-                None
-            }
-            None => None,
-        };
-        m.next_update = tick + if ai_worker_reset.is_some() { 2 } else { UPDATE };
+        m.next_update = tick + UPDATE;
         // The position is committed first (SPEC-0018).
         m.commit(state.move_clock);
         let ai_standing = std::mem::take(&mut m.ai_standing);
@@ -4746,25 +4733,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 });
             }
         }
-        // The produced peon's creation layout and controller pose differ.
-        // Its second update has performed the ordinary walk cleanup, then
-        // the public controller is rebased for its observed first moving
-        // update two ticks later (c-SEA-1, turn 153).
-        if let Some((_, staged)) = ai_worker_reset {
-            m.origin = staged;
-            m.velocity = [0, 0];
-            m.walking = false;
-            m.since = state.move_clock;
-            m.facing_step = 0;
-        }
         // The facing follows the heading (SPEC-0018).
         let Some(Object::Unit(u)) = state.objects.get_mut(&h) else {
             continue;
         };
-        if let Some((public, _)) = ai_worker_reset {
-            let [x, y] = absolute(public, min);
-            (u.x, u.y, u.facing) = (x, y, 0);
-        }
         // A unit in its reaction delay stands, its facing too (SPEC-0019).
         let heading = normal(m.heading);
         if !waiting {

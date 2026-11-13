@@ -160,6 +160,8 @@ pub struct ObjectTable {
     /// starting. Its construction layout includes a retained work order in
     /// addition to the compact layouts of the earlier AI building plans.
     pub ai_wisp_constructing: bool,
+    /// A unit is being made by the end of its training (`unit_made`).
+    pub training_made: bool,
     /// Parts retained between that building's unit layout and construction
     /// layout: a computer-tail part, then the start and event objects.
     ai_construction_tail: Option<u32>,
@@ -293,6 +295,7 @@ impl ObjectTable {
             ai_supply_constructing: false,
             ai_other_constructing: false,
             ai_wisp_constructing: false,
+            training_made: false,
             ai_construction_tail: None,
             ai_construction_start: None,
             ai_wisp_construction_tail: Vec::new(),
@@ -1821,8 +1824,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .units
             .get(&type_id)
             .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Ashm")));
+        // A trained acolyte has one more than one made at the map's start
+        // (c-SEA-1: acolytes 10269 at 15.100 and 10076 at 32.433, 26
+        // before the computer player's tail).
+        // PROVISIONAL: what the extra object is was not read.
+        let trained = state.table.training_made && type_id == i32::from_be_bytes(*b"uaco");
         match read_body(state, type_id) {
-            Some(total) => total.saturating_sub(UNIT.count),
+            Some(total) => total.saturating_sub(UNIT.count) + usize::from(trained),
             None => own_abilities(state, type_id).saturating_sub(1) + usize::from(shadowmeld),
         }
     } else {

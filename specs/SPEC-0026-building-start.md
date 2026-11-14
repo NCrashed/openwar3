@@ -372,7 +372,14 @@ tick from 256 north of their sites; a second peon is ordered to
      appears again, alive, at a free place next to the building
      ((-48, -400), that is (-80, -112) from the building's position),
      and its order becomes 0 in the next tick. In this version it is
-     not used up.
+     not used up. An Ancient (here an Ancient of War, `eaom`, `c-SEA-1` wisp
+     10585/15769 at 33.115017) uses the wisp up: it is put on the site
+     and hidden as for the moon well, the player's wisp record loses one
+     from `q4` in the tick of the start ((2147483647, 7, 1, 0, 7, 0, 8)
+     -> (2147483647, 7, 1, 0, 6, 0, 8); `q1` unchanged) while the new
+     `eaom` record is (2147483647, 0, 1, 0, 0, 0, 4), and at the
+     completion (93.117035) the wisp is removed instead of coming back,
+     with no further change of the wisp record.
    - **peon (Orc):** the same as the wisp: hidden inside while it
      builds, out at (720, -400) ((-80, -112) from the building) at the
      completion, order 0 in the next tick.

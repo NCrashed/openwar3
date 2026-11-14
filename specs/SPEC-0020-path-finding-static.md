@@ -436,8 +436,19 @@ new one as in the search (only the newly covered cells, including the
 corner rule for diagonal changes). The "previous sample" before the
 first one is the cell `(0, 0)`, so the first sampled cell is always
 checked as a step in the direction `(+1, +1)`. The farthest-point rule
-tries the points from the one after the target onwards and stops at the
-first one that cannot be seen.
+takes the point after the reached target without a test, then tries
+the points after that one in order and stops at the first that cannot
+be seen; the new target is the last point before it (the point after
+the reached target if already the first test fails). The cells checked
+include those occupied by standing units (SPEC-0021). Replay `c-SEA-1`,
+acolyte 10269 at 31.645689, at (8953.97, 3952.20), 9.97 from its
+target (8944, 3952): (8944, 3984) was taken untested; seen were
+(8944, 4016), (8912, 4048), (8880, 4080), (8848, 4112), (8848, 4144);
+(8848, 4176) was not seen: its walk checked cells (663, 508),
+(662, 509), (662, 510), (662, 511), (661, 512) and failed at the
+diagonal step to (660, 513), whose corner footprint at (661, 513)
+covers a cell of acolyte 11537 standing at the gold mine. New target:
+(8848, 4144).
 
 ## Edge cases
 

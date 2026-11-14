@@ -1351,7 +1351,7 @@ pub(super) fn ai_build_order(
     // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
     if matches!(
         &type_id.to_be_bytes(),
-        b"oalt" | b"eate" | b"emow" | b"otrb" | b"uaod"
+        b"oalt" | b"eate" | b"emow" | b"otrb"
     ) {
         // A builder taken from its place at a haunted mine stops counting
         // there (SPEC-0029; c-SEA-1: acolyte 10269 at 31.430725).
@@ -1381,6 +1381,15 @@ pub(super) fn ai_build_order(
             Some([1, -1])
         };
         state.ai_path_priority.insert(worker, lead_in);
+        set_attack_move(state, worker, None);
+    } else if type_id == i32::from_be_bytes(*b"uaod") {
+        // An Undead builder that walks to its site takes a plain build
+        // order: its path sees the standing workers and has no lead-in
+        // (SPEC-0020; c-SEA-1: acolyte 10269 from 31.435724).
+        super::harvest::paid_order_given(state, worker, false);
+        order(state, worker, Order::Build { type_id }, type_id, site);
+        // Its walk is the order's (`SetProduce`), not a new one.
+        state.ai_path_priority.insert(worker, None);
         set_attack_move(state, worker, None);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {

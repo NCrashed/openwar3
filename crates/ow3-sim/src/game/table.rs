@@ -160,6 +160,9 @@ pub struct ObjectTable {
     /// starting. Its construction layout includes a retained work order in
     /// addition to the compact layouts of the earlier AI building plans.
     pub ai_wisp_constructing: bool,
+    /// A computer's wisp starts an Ancient (`construction_rest`).
+    pub ai_ancient_constructing: bool,
+    ai_ancient_tail: Vec<u32>,
     /// A unit is being made by the end of its training (`unit_made`).
     pub training_made: bool,
     /// Parts retained between that building's unit layout and construction
@@ -295,6 +298,8 @@ impl ObjectTable {
             ai_supply_constructing: false,
             ai_other_constructing: false,
             ai_wisp_constructing: false,
+            ai_ancient_constructing: false,
+            ai_ancient_tail: Vec::new(),
             training_made: false,
             ai_construction_tail: None,
             ai_construction_start: None,
@@ -1168,7 +1173,7 @@ const BUILDING: Making = Making {
 /// on the map is not tested. The three of selling items are read on the
 /// arcane vault only.
 /// Whether type `t` roots (a Night Elf building with Aroo).
-fn roots_type(state: &super::State, t: &crate::data::UnitType) -> bool {
+pub(super) fn roots_type(state: &super::State, t: &crate::data::UnitType) -> bool {
     t.abilities
         .iter()
         .any(|&a| ability_code(state, a) == *b"Aroo")
@@ -1506,6 +1511,10 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     let tail = state
         .table
         .take_n(tick, kept + 9 + growth + last, "computer unit");
+    if state.table.ai_ancient_constructing {
+        state.table.ai_ancient_tail = tail;
+        return;
+    }
     if state.table.ai_wisp_constructing {
         for &k in &[5, 4, 9] {
             if let Some(&entry) = tail.get(k) {
@@ -1888,7 +1897,10 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .table
             .defer(entries[14 + shift + i], "unit state: limit watch");
     }
-    if !state.table.ai_constructing && !state.table.ai_wisp_constructing {
+    if !state.table.ai_constructing
+        && !state.table.ai_wisp_constructing
+        && !state.table.ai_ancient_constructing
+    {
         for &k in making.deferred {
             state.table.defer(entries[at(k)], "map start: unit");
         }
@@ -1901,16 +1913,19 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
     if let Some((count, at, after)) = building {
         // A rooting building's L goes first (c-SCC-1: the tree of life's 22,
         // then its pair; `building_layout`).
-        if after == -2.0 {
+        if after == -2.0 && !state.table.ai_ancient_constructing {
             state.table.defer(entries[at + 3], "map start: unit");
         }
-        if !state.table.ai_wisp_constructing {
+        if !state.table.ai_wisp_constructing && !state.table.ai_ancient_constructing {
             state.table.defer(entries[count - 1], "map start: unit");
             state.table.defer(entries[count - 2], "map start: unit");
         }
         // A building under construction dispels from its completion
         // (`construction_finished`; c-SBZ-1: the farm, hub #13).
-        if after == -2.0 {
+        if after == -2.0 && state.table.ai_ancient_constructing {
+            // An Ancient started by a wisp frees its parts at its start
+            // (`construction_rest`).
+        } else if after == -2.0 {
             // A rooted building frees five of its parts 1.2 s on (c-SCC-1:
             // the tree of life's 27, 28, 26, 25, 24 at 1.200099).
             // PROVISIONAL: what they are is not read; read once.
@@ -7255,7 +7270,7 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     let event = state.table.take(tick, "construction: event");
     if state.table.ai_constructing || state.table.ai_wisp_constructing {
         state.table.ai_construction_start = Some([one, event]);
-    } else if state.table.ai_other_constructing {
+    } else if state.table.ai_other_constructing || state.table.ai_ancient_constructing {
         // Both stay with the compact AI construction state.
     } else {
         state.table.defer(event, "construction: event");
@@ -7274,6 +7289,36 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     let order = entries(state, h)
         .map(|e| std::mem::take(&mut e.build_order))
         .unwrap_or_default();
+    // An Ancient's start takes only the progress pair; the building's and
+    // its tail's objects go in the next tick between the build order's two
+    // (c-SEA-1: the Ancient of War at 33.115017).
+    // PROVISIONAL: what each of them is was not read.
+    if state.table.ai_ancient_constructing {
+        state.table.take_n(tick, 2, "construction: progress");
+        let made = entries(state, building)
+            .map(|e| e.made.clone())
+            .unwrap_or_default();
+        let tail = std::mem::take(&mut state.table.ai_ancient_tail);
+        let freed = [24, 30, 29]
+            .into_iter()
+            .filter_map(|k| made.get(k).copied())
+            .chain(
+                [3, 8, 7, 6, 5, 4, 2, 10, 9]
+                    .into_iter()
+                    .filter_map(|k| tail.get(k).copied()),
+            );
+        for entry in freed.collect::<Vec<_>>() {
+            state.table.defer(entry, "AI ancient construction");
+        }
+        // Then the last object of the accepted plan.
+        if let Some(last) = entries(state, h).and_then(|e| e.ai_build_release.pop()) {
+            state.table.defer(last, "AI build: accepted plan");
+        }
+        for entry in order {
+            state.table.defer(entry, "build order");
+        }
+        return;
+    }
     if state.table.ai_wisp_constructing {
         let progress = state.table.take_n(tick, 2, "construction: progress");
         let timer = state.table.take_n(tick, 3, "construction: timer");

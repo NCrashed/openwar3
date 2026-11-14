@@ -1216,6 +1216,7 @@ pub(super) fn ai_build_order(
     let emow = i32::from_be_bytes(*b"emow");
     let otrb = i32::from_be_bytes(*b"otrb");
     let uaod = i32::from_be_bytes(*b"uaod");
+    let eaom = i32::from_be_bytes(*b"eaom");
     let (delay, site) = if type_id == usep {
         (
             250,
@@ -1255,6 +1256,16 @@ pub(super) fn ai_build_order(
             [
                 add(hall.x, (-32.0f32).to_bits()),
                 add(hall.y, 544.0f32.to_bits()),
+            ],
+        )
+    } else if type_id == eaom {
+        (
+            // Accepted at 31.595697 and started at 33.115017 in c-SEA-1
+            // (the newest wisp, at (8128, -6144)).
+            304,
+            [
+                add(hall.x, (-512.0f32).to_bits()),
+                add(hall.y, 64.0f32.to_bits()),
             ],
         )
     } else if type_id == uaod {
@@ -1382,7 +1393,7 @@ pub(super) fn ai_build_order(
         };
         state.ai_path_priority.insert(worker, lead_in);
         set_attack_move(state, worker, None);
-    } else if type_id == i32::from_be_bytes(*b"uaod") {
+    } else if type_id == uaod || type_id == eaom {
         // An Undead builder that walks to its site takes a plain build
         // order: its path sees the standing workers and has no lead-in
         // (SPEC-0020; c-SEA-1: acolyte 10269 from 31.435724).
@@ -1539,10 +1550,12 @@ pub(super) fn start_buildings(state: &mut State) {
         state.table.ai_constructing = undead;
         state.table.ai_other_constructing = other;
         state.table.ai_wisp_constructing = wisp;
+        state.table.ai_ancient_constructing = type_id == i32::from_be_bytes(*b"eaom");
         let building = start_construction(state, worker, type_id, site);
         state.table.ai_constructing = false;
         state.table.ai_other_constructing = false;
         state.table.ai_wisp_constructing = false;
+        state.table.ai_ancient_constructing = false;
         if building.is_some() {
             for object in state.objects.values_mut() {
                 if let Object::Unit(u) = object {
@@ -1752,6 +1765,20 @@ fn start_construction(state: &mut State, h: u32, type_id: i32, site: [u32; 2]) -
         move_off_footprint(state, h)
     };
     let moved = moved && !other;
+    // An Ancient uses its wisp up: the wisp counts as alive no more from
+    // the start (SPEC-0026, "Other races"; c-SEA-1: wisp 10585 at
+    // 33.115017).
+    // PROVISIONAL: its removal at the completion is not made yet.
+    if race == "nightelf"
+        && state
+            .data
+            .units
+            .get(&type_id)
+            .is_some_and(|t| super::table::roots_type(state, t))
+        && let Some((worker_owner, worker_type)) = state.unit(Some(h)).map(|u| (u.owner, u.type_id))
+    {
+        super::widgets::type_record(state, worker_owner, worker_type, |q| q[4] -= 1);
+    }
     let data = state.data.units.get(&type_id);
     let (max, build_time) = data.map_or((0, 0), |t| (t.hp, t.build_time));
     let base = mul(max, TENTH);

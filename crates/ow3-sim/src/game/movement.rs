@@ -1250,13 +1250,25 @@ pub(super) fn ai_build_order(
             ],
         )
     } else if type_id == otrb {
+        // The first two of c-SEA-1: accepted at 15.263439 and started at
+        // 19.197779, accepted at 31.265753 and started at 36.298267.
+        // PROVISIONAL: the game's placement rule is not specified, and the
+        // start is its builder's first update within 100 of the site
+        // (SPEC-0026), which needs the builders' walks reproduced.
+        let built = state
+            .units
+            .iter()
+            .filter_map(|&h| state.unit(Some(h)))
+            .filter(|u| u.owner == owner && u.alive && u.type_id == otrb)
+            .count();
+        let (delay, dx, dy) = if built == 0 {
+            (787, -32.0f32, 544.0f32)
+        } else {
+            (1007, -352.0, 928.0)
+        };
         (
-            // Accepted at 15.263439 and active at 19.197779 in c-SEA-1.
-            787,
-            [
-                add(hall.x, (-32.0f32).to_bits()),
-                add(hall.y, 544.0f32.to_bits()),
-            ],
+            delay,
+            [add(hall.x, dx.to_bits()), add(hall.y, dy.to_bits())],
         )
     } else if type_id == eaom {
         (

@@ -656,9 +656,12 @@ pub(super) fn reached(state: &State, h: u32, here: [u32; 2], target: u32) -> boo
 /// worker 5's walk given up earlier).
 pub(super) fn deliveries(state: &mut State) {
     let tick = state.ticks;
+    // At the worker's update: when the update batch moved a tick later, so
+    // does the delivery (SPEC-0018; c-SEA-1: peon 11229 at 34.739128).
+    let now = state.update_now;
     let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.deliveries)
         .into_iter()
-        .partition(|&(_, at)| at <= tick);
+        .partition(|&(_, at)| now && at <= tick);
     state.deliveries = later;
     for (h, _) in due {
         // The walk back is made, then the old one freed (SPEC-0024).
@@ -687,9 +690,10 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     {
         let mut s = state.borrow_mut();
         let tick = s.ticks;
+        let now = s.update_now;
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut s.deliveries)
             .into_iter()
-            .partition(|&(_, at)| at <= tick);
+            .partition(|&(_, at)| now && at <= tick);
         s.deliveries = later;
         for (h, target, delivering) in std::mem::take(&mut reached) {
             if delivering {
@@ -1839,7 +1843,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     if let Some(i) = state
         .deliveries
         .iter()
-        .position(|&(w, at)| w == h && at <= tick)
+        .position(|&(w, at)| w == h && at <= tick && state.update_now)
     {
         state.deliveries.remove(i);
         let gold = get(state, h).is_some_and(|g| matches!(g.carry, Some((Resource::Gold, _))));

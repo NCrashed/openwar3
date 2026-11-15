@@ -80,17 +80,43 @@ object's position:
 
 A building also occupies the cells of its own `collision` as a unit
 (SPEC-0021); in the tests these lay inside its texture.
-In the running game a building is entered in the cell occupancy in
-three nested squares around its centre cell: in `c-SEA-1` the Crypt at
-(8576, 4224) (centre cell (652, 516)) in 12 x 12 (cells 646 .. 657 by
-510 .. 521), 8 x 8 (649 .. 656 by 512 .. 519) and its 4 x 4 collision
-(650 .. 653 by 514 .. 517). The look-ahead check of a walking acolyte
-was free at cells (657, 520) and (657, 521), which lie only in the
-12 x 12 square, and blocked at (655, 519), in the 8 x 8 square
-(`c-SEA-1` acolyte 10076 at 35.218861,
-`c-SEA-1.acolyte10076-block-report.md`). So the outer ring does not
-block; whether the 8 x 8 square equals the building's pathing texture
-was not checked.
+**Buildings in the cell occupancy (`c-SEA-1`, read in the running
+game).** In the running game the cells of a building are not written
+into the pathing map: around every building read (Crypt, Necropolis,
+Ziggurat, haunted and entangled gold mines, Great Hall, Orc Burrow,
+Altar of Storms, Tree of Life, Moon Well, Altar of Elders, gold mine)
+every cell of the map's pathing stayed walkable. Instead the building
+is entered in the cell occupancy of SPEC-0021, as units are, with four
+entries, each over a square of cells placed by the rule of
+"Placement" above around the building's centre cell:
+
+| Entry | Cells | Blocks a ground walker |
+|---|---|---|
+| the whole pathing texture | e.g. Crypt 12 x 12 | no |
+| the texture's red part | e.g. Crypt 8 x 8 | no |
+| the texture's red part, a second time | the same cells | **yes** |
+| the collision square (4 x 4 for these buildings) | | no |
+
+The Crypt at (8576, 4224) (centre cell (652, 516), `12x12Simple`):
+whole texture 646 .. 657 by 510 .. 521, red part 648 .. 655 by
+512 .. 519, collision 650 .. 653 by 514 .. 517. Red parts read:
+Crypt, haunted and both gold mines, Tree of Life 8 x 8; Necropolis
+8 x 10; Great Hall 12 x 12; Ziggurat, Orc Burrow, Altar of Storms,
+Moon Well, Altar of Elders 6 x 6. A unit's own entry (2 x 2 for
+collision 16) also blocks a ground walker.
+
+So a ground unit is blocked by a building's red part only through
+this entry: the look-ahead check and the local search see it as they
+see a standing unit (SPEC-0021), and a blocked look-ahead counts as a
+block by units, with the patience counter of SPEC-0025 (`c-SEA-1`
+acolyte 10076 at 35.218861, blocked at cell (655, 519) of the Crypt's
+red part, drew its patience; `c-SEA-1.acolyte10076-block-report.md`).
+The test of the cells ahead against the pathing map (SPEC-0025) finds
+nothing there. The cells of the whole texture outside the red part do
+not block a ground walker (the acolyte's look-ahead at (657, 520) and
+(657, 521) was free). Whether the high-level search sees the red parts
+was not read here; the earlier tests of this section found it routing
+round buildings.
 
 ### Death of a destructable
 

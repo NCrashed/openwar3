@@ -80,6 +80,17 @@ object's position:
 
 A building also occupies the cells of its own `collision` as a unit
 (SPEC-0021); in the tests these lay inside its texture.
+In the running game a building is entered in the cell occupancy in
+three nested squares around its centre cell: in `c-SEA-1` the Crypt at
+(8576, 4224) (centre cell (652, 516)) in 12 x 12 (cells 646 .. 657 by
+510 .. 521), 8 x 8 (649 .. 656 by 512 .. 519) and its 4 x 4 collision
+(650 .. 653 by 514 .. 517). The look-ahead check of a walking acolyte
+was free at cells (657, 520) and (657, 521), which lie only in the
+12 x 12 square, and blocked at (655, 519), in the 8 x 8 square
+(`c-SEA-1` acolyte 10076 at 35.218861,
+`c-SEA-1.acolyte10076-block-report.md`). So the outer ring does not
+block; whether the 8 x 8 square equals the building's pathing texture
+was not checked.
 
 ### Death of a destructable
 

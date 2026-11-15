@@ -1180,6 +1180,10 @@ pub struct State {
     /// Each critter's next wander (queue time) and whether it walks one
     /// (`widgets::critters_before`).
     pub(super) critters: BTreeMap<u32, (u32, bool)>,
+    /// The cells of the buildings' red parts, with how many buildings
+    /// cover each: an entry of the cell occupancy that blocks ground units
+    /// (SPEC-0022, "Buildings in the cell occupancy").
+    pub(super) building_cells: BTreeMap<(i32, i32), u32>,
     /// The update cycle of each worker at its gold mine: the first update
     /// tick at or after its arrival (`harvest`).
     pub(super) mine_arrivals: std::collections::BTreeMap<u32, u64>,
@@ -1465,6 +1469,7 @@ impl State {
             building_steps: Vec::new(),
             blight_checks: Vec::new(),
             critters: BTreeMap::new(),
+            building_cells: BTreeMap::new(),
             mine_arrivals: std::collections::BTreeMap::new(),
             mine_entries: std::collections::BTreeMap::new(),
             pending_exits: std::collections::BTreeSet::new(),

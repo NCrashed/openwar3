@@ -481,6 +481,8 @@ struct Shared<'a> {
     budget: &'a mut Budget,
     paths: &'a mut BTreeMap<u32, Follow>,
     random: &'a mut Random,
+    /// The cells of the buildings' red parts (`State::building_cells`).
+    buildings: &'a BTreeMap<(i32, i32), u32>,
     events: Vec<PathEvent>,
     /// Only the search, no step.
     search_only: bool,
@@ -867,6 +869,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         budget: &mut state.budget,
         paths: &mut state.paths,
         random: &mut state.random,
+        buildings: &state.building_cells,
         events: Vec::new(),
         search_only,
         // A worker ends its local search touching its tree, except between
@@ -1505,7 +1508,15 @@ fn decide(
     }
     if touching_target {
         follow.touching = true;
-    } else if !examined.is_empty() {
+    } else if !examined.is_empty()
+        || !follow.ai_reassigned
+            && failing
+                .iter()
+                .any(|cell| shared.buildings.contains_key(cell))
+    {
+        // A building's red part is an entry of the cell occupancy, so a
+        // block by it is one by units (SPEC-0022, "Buildings in the cell
+        // occupancy"; c-SEA-1: acolyte 10076 at 35.218861).
         // A member of a group standing at its block counts afresh, drawing
         // again (c-RTW-3: footman 900 at 5467 and 5473, standing short
         // of its place).

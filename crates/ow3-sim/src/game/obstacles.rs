@@ -180,6 +180,9 @@ pub(super) fn place_building(
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let footprint = cells(&texture, turn, x, y, min);
     stamp(state, &footprint, true);
+    for &cell in &footprint.red {
+        *state.building_cells.entry(cell).or_default() += 1;
+    }
     ((x, y), Some(footprint))
 }
 
@@ -245,6 +248,14 @@ pub(super) fn died(state: &mut State, h: u32) {
         Some(Object::Unit(u)) => {
             if let Some(footprint) = u.footprint.take() {
                 stamp(state, &footprint, false);
+                for cell in &footprint.red {
+                    if let Some(n) = state.building_cells.get_mut(cell) {
+                        *n -= 1;
+                        if *n == 0 {
+                            state.building_cells.remove(cell);
+                        }
+                    }
+                }
             }
         }
         Some(Object::Destructable(_)) => refresh_destructable(state, h),

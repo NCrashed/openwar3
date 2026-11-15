@@ -823,10 +823,11 @@ fn melee_ai_checksums() {
 /// worker's first update in its own tick through checkpoint 324, then the Undead
 /// builder seeing its player's workers through checkpoint 330, then the Night
 /// Elf AI's Ancient of War through checkpoint 346, then deliveries at the
-/// update batch after it moved a tick later through checkpoint 351.
+/// update batch after it moved a tick later through checkpoint 351, then
+/// buildings blocking walkers as occupants through checkpoint 380.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(351)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(380)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -5867,7 +5868,6 @@ fn melee_ai_turn347_objects() {
 /// An Orc peon delivers gold; a new acolyte walking to the haunted mine is
 /// blocked and draws its patience; a sea turtle arrives at its point.
 #[test]
-#[ignore = "not matched yet: the new acolyte's block at 35.218861"]
 fn melee_ai_turn352_objects() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn352-events.tsv")) else {

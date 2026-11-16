@@ -4437,11 +4437,14 @@ fn register_ai_natives(
                         // A repeated pass may replace a moving worker's
                         // return order while it carries resources, but does
                         // not take other walkers or a worker hidden in its
-                        // accepted construction (c-SEA-1, turn 33).
+                        // accepted construction (c-SEA-1, turn 33), nor an
+                        // acolyte keeping its build order for 1 s after its
+                        // start (c-SEA-1: acolyte 10269 to 38.547031).
                         u.owner == player
                             && u.alive
                             && (!repeat
                                 || !u.hidden
+                                    && !state.released.iter().any(|&(w, _)| w == h)
                                     && !harvest::ai_gold_ordered(&state, h, mine)
                                     && (u.movement.is_none()
                                         || harvest::carried(&state, h).is_some()))

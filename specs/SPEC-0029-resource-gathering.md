@@ -654,7 +654,11 @@ owner directly. Read in `c-SDA-1`.
    with the clock of that tick as `T`: the wisps arrived at the updates
    0.869999 and 0.959999 and were counted at 0.879999161 and
    0.969999075. The count `n` (and so `P`) already changes at the
-   update itself; only the countdown waits for `T`.
+   update itself; only the countdown waits for `T`. A worker that
+   leaves (an acolyte ordered away from its place) is counted the same
+   way: `T` is the clock of the tick 0.01 s after the update at which
+   it leaves. `T` is always that tick's clock, not the update's clock
+   plus 0.01, which can differ in the last bit.
 
    Haunted mine 11433/11455 of `c-SEA-1`, from its first acolyte:
 
@@ -672,7 +676,17 @@ owner directly. Read in `c-SDA-1`.
    wisps throughout). The same rule gives the haunted mine's payments
    18.692325592 -> 19.942424774 (four acolytes) and the three-acolyte
    chain 10.536625862 -> 12.203391075 -> 13.870156288 (steps of
-   1.666765213). In `c-SDA-1`, five acolytes, `P = 1.0` and the step is
+   1.666765213). Later count changes of the same mine:
+
+   | `T` | Acolyte | Count | Value carried to `T` | Time left | Next payment |
+   |---|---|---|---|---|---|
+   | `0x4191437D` 18.157953262 | 10269 put on its place | 3 -> 4 | `0x3EDAE126` | `0x3F08CCB8` 0.534373760 | 18.692325592 |
+   | `0x41FB869A` 31.440723419 | 10269 leaves (update of 31.430725) | 4 -> 3 | `0x3F4D5A00` | `0x3FAB2055` 1.336924195 | 32.777645111 |
+   | `0x4210C0D9` 36.188327789 | 10076 put on its place | 3 -> 4 | `0x3F742A00` | `0x3F989A40` 1.192207336 | 37.380535126 |
+   | `0x422E0469` 43.504306793 | 10269 put on its place again | 4 -> 5 | `0x3DCFA000` | `0x3DCFA000` 0.101379395 | 43.605686188 |
+
+   All payments of this mine up to 48.61 s, with every value in bits,
+   are in `game-data/1.27b/replays/c-SEA-1.ugol11433-countdown.tsv`. In `c-SDA-1`, five acolytes, `P = 1.0` and the step is
    about 1.0001 s, so the payments come every 200 ticks with an
    occasional 201. A payment and its deferred step are the "two-record
    replacement" seen in `c-SEA-1` turns 24, 37 and 49 (SPEC-0024,

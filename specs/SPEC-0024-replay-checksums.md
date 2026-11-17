@@ -392,6 +392,48 @@ none. In `c-SEA-1` the Orc Burrow 10353/14786, created at queue time
 19.478098 (turn 196). In `c-SCC-1` the five start buildings of the
 computers took creations 12106, 12107, 12108, 12110 and 12111 this way.
 
+**Map start of a melee game.** The map start ends with one deferred
+free (the 0.0001 s timer, SPEC-0018) that frees most of the objects the
+start made. In `c-SEA-1` the main table sees 20 frees at world clock 0
+(during the start), 3812 in the 0.0001 s timer and 17 at 0.0002 s:
+3849 in all. Later turns can take entries from deep in this part of
+the free list (turn 462 used positions down to 3411), where the
+checkpoints do not see it, so the whole order matters. The full list,
+with the native call that made each object, is
+`game-data/1.27b/replays/c-SEA-1.start-burst-calls.tsv`
+(`c-SEA-1.start-burst-frees.tsv` has the same frees without the calls).
+In both files k counts a call's objects from 0 in creation order (for
+`CreateUnit`, k = 0 is the unit).
+
+`RecycleGuardPosition` on the Undead computer's starting ghoul, called
+by the melee start right after that player's `StartMeleeAI`, makes 36
+objects (k = 0 .. 35; creations 12045 .. 12080 in `c-SEA-1`):
+- k = 32 is freed at once, during the call;
+- 22 are freed in the 0.0001 s timer (below);
+- 13 are kept: k = 7, 8, 16, 19 .. 25 and 33 .. 35.
+
+The ghoul's own 32 objects (k = 0 .. 31) split three ways: k = 0 .. 17
+are kept; k = 19, 18, 23, 28, 27, 26, 25, 24, 22, 30, 29 are freed in
+the timer in that order, among the other starting units' objects (n =
+3222 .. 3232 in `c-SEA-1`); k = 20, 21 and 31 are freed later in the
+same timer, together with the `RecycleGuardPosition` objects. That
+block comes right after the objects of the last unit the melee start
+creates (the Night Elf computer's fifth wisp) and before the objects of
+earlier steps of the map script (n = 3419 .. 3443 of 3849), in this
+order:
+
+| Positions | Objects |
+|---|---|
+| 1, 2 | ghoul k = 20, 21 |
+| 3 .. 9 | guard position k = 1, 6, 5, 4, 3, 2, 0 |
+| 10 | ghoul k = 31 |
+| 11 .. 17 | guard position k = 10, 15, 14, 13, 12, 11, 9 |
+| 18, 19 | guard position k = 18, 17 |
+| 20 .. 25 | guard position k = 31, 30, 29, 28, 27, 26 |
+
+`c-SEA-1` has a single Undead computer, so this order was seen once.
+What each of these objects is was not read.
+
 **Orders given by the script.**
 
 | Order | Taken (in order) | Freed deferred | Freed when the order ends |
@@ -569,3 +611,9 @@ the damage event and its registration (see "Event objects").
    remainder changes is a turn in which the game state changed in one of
    the other parts. In `c-RSF-1.w3g` this happens at turn 41 (4286 ms),
    when `C` went from 851 to 858.
+5. **Map start free order:** after the map start of `c-SEA-1` and its
+   0.0001 s and 0.0002 s timers, the main-table frees, in order, are
+   the 3849 rows of `c-SEA-1.start-burst-frees.tsv` (entry and creation
+   number per row); rows 3419 .. 3443 are the ghoul and guard position
+   block above. Turn 462 of `c-SEA-1` (checkpoint `C` = 2ECD) depends on
+   rows 3411 .. 3428.

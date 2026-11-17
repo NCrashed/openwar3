@@ -503,6 +503,10 @@ helper, a cluster and a path, and frees the helper at once. The walk's
 path and cluster are freed (path first) at the unit's first update
 tick (its 6 m + 1 cycle, SPEC-0018) after the tick in which the walk
 was stopped or replaced. The update in the same tick does not count.
+Within that batch they are freed at the visit of the unit's movement,
+in the batch order of SPEC-0018 ("Order within the batch"), so between
+the steps of the other units' movements. They are not freed before or
+after all of them.
 Read in c-SBC for a footman whose updates fall on ticks 6 m + 1: new
 order at 701 -> freed 703; stop at 901 -> 907; new order at 1501 ->
 1507; acquisition stop at 2003 -> 2005; swing start at 2245 (in reach)

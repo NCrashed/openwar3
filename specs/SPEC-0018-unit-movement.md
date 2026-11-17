@@ -115,6 +115,34 @@ critter's wander timer at 15.600973129. Which unit an update belongs to,
 or what kind of update it is, plays no part: all units update in the
 one batch at `U(m)`.
 
+**Order within the batch.** The batch takes the units' movements in
+the order of a list. A movement is put at the front of the list when
+it is committed (see "When the unit starts to move"). A unit that gets
+a new movement while its old one is still in the list moves to the
+front with it. So the batch visits the movements from the most
+recently started to the oldest. The order has nothing to do with
+creation numbers or the order of the unit list. At its visit:
+- a movement that is still going takes its step, and everything that
+  follows from that step happens there, before the next movement's
+  visit: an arrival, the end of the order, the order's next step (a
+  delivery and the new harvest order, for example);
+- a movement whose unit came to rest (arrival, stop) in an earlier
+  batch is not stepped. Its walk's path and cluster are freed at this
+  visit (SPEC-0024, Walks), and the movement leaves the list.
+A unit without a movement in the list has no visit in this part of
+the batch.
+In `c-SEA-1`, the batch of tick clock 48.806392670 (queue 48.808555603)
+had 12 movements:
+- Orc peon 11021's walk to gold mine 699, started at 47.247 and
+  arrived at the batch of 48.776409, was the 7th. Its visit freed the
+  walk's 18047 and 18046.
+- Orc peon 11159's walk back to Great Hall 10978, started at about
+  47.0, was the 11th. Its step arrived, and its 19 takes (the delivery
+  and the new harvest order) came after 11021's two frees.
+Over 70 changes of the list between 40.0 and 48.84 s, every new
+movement came in at the front, and the list was always in this
+newest-first order.
+
 The orders of the tables above were given early in the game, where the
 updates still come first. How the cycle goes on once `U` has moved by
 a whole tick (after roughly 200 s at this rate) was not tested.

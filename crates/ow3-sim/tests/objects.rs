@@ -825,10 +825,11 @@ fn melee_ai_checksums() {
 /// Elf AI's Ancient of War through checkpoint 346, then deliveries at the
 /// update batch after it moved a tick later through checkpoint 351, then
 /// buildings blocking walkers as occupants through checkpoint 380, then an
-/// acolyte keeping its build order through checkpoint 414.
+/// acolyte keeping its build order through checkpoint 414, then the builder's
+/// facing from its walk through checkpoint 461.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(414)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(461)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }

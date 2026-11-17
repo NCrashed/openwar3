@@ -1544,6 +1544,12 @@ pub(super) fn start_buildings(state: &mut State) {
         super::harvest::builder_started(state, worker);
         state.moving.retain(|&h| h != worker);
         state.paths.remove(&worker);
+        // A builder that walked to its site keeps the heading of that walk
+        // as its facing (c-SEA-1: acolyte 10269 at 1.1109 from 37.527592).
+        let walked = state
+            .unit(Some(worker))
+            .and_then(|u| u.movement)
+            .map(|m| normal(m.heading));
         if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
             (u.x, u.y, u.facing) = (start[0], start[1], start[2]);
             u.movement = None;
@@ -1591,6 +1597,9 @@ pub(super) fn start_buildings(state: &mut State) {
                 // c-SEA-1: put at (9264, 5040) at the start of 37.527592.
                 u.x = add(site[0], (-48.0f32).to_bits());
                 u.y = add(site[1], (-112.0f32).to_bits());
+                if let Some(heading) = walked {
+                    u.facing = heading;
+                }
             } else if type_id == i32::from_be_bytes(*b"oalt")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {

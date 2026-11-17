@@ -160,6 +160,8 @@ pub struct ObjectTable {
     /// starting. Its construction layout includes a retained work order in
     /// addition to the compact layouts of the earlier AI building plans.
     pub ai_wisp_constructing: bool,
+    /// A computer unit's kept tail, until `unit_made` stores it.
+    computer_kept: Vec<u32>,
     /// A computer's wisp starts an Ancient (`construction_rest`).
     pub ai_ancient_constructing: bool,
     ai_ancient_tail: Vec<u32>,
@@ -298,6 +300,7 @@ impl ObjectTable {
             ai_supply_constructing: false,
             ai_other_constructing: false,
             ai_wisp_constructing: false,
+            computer_kept: Vec::new(),
             ai_ancient_constructing: false,
             ai_ancient_tail: Vec::new(),
             training_made: false,
@@ -993,6 +996,9 @@ pub struct UnitEntries {
     /// A newly completed AI-paid worker has not yet accepted its first gold
     /// assignment.
     pub ai_paid_worker_unassigned: bool,
+    /// The objects a computer's unit keeps of its tail (`computer_tail`):
+    /// the first two and, for a unit not a worker, the last.
+    pub computer_kept: Vec<u32>,
     /// The two records of that first assignment released immediately after
     /// the ordinary update that stops the worker at its mine.
     pub ai_paid_arrival: Vec<u32>,
@@ -1561,6 +1567,11 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
             state.table.ai_production.insert(h, entry);
         }
     }
+    let mut computer_kept = tail[..kept].to_vec();
+    if last == 1 {
+        computer_kept.extend(tail.last().copied());
+    }
+    state.table.computer_kept = computer_kept;
     // An idle worker's growth comes before the nine, each three going 1, 2, 0
     // (c-SCC-1: the acolyte's 28, 29, 27); the nine go in the order 1, 6, 5,
     // 4, 3, 2, 0, 8, 7 (the great hall's 11011, 11016 .. 11012, 11010, 11018,
@@ -1990,6 +2001,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
         u.entries = UnitEntries {
             id: Some(id),
             death,
+            computer_kept: std::mem::take(&mut state.table.computer_kept),
             death_first,
             death_late,
             death_mana,
@@ -3438,6 +3450,20 @@ pub(super) fn guard_position_recycled(state: &mut super::State, h: u32) {
     let made = state.table.take_n(tick, 35, "RecycleGuardPosition");
     state.table.free(tick, made[32], "RecycleGuardPosition");
     state.table.take(tick, "RecycleGuardPosition");
+    // Most of them, with the unit's kept tail, go 0.0001 s later
+    // (c-SEA-1: creations 11539, 11540, 12046 .. 12045, 11550, 12055 ..
+    // 12054, 12063, 12062, 12076 .. 12071 in the map start's cleanup).
+    // PROVISIONAL: what each of them is was not read.
+    let kept = entries(state, h)
+        .map(|e| std::mem::take(&mut e.computer_kept))
+        .unwrap_or_default();
+    let mut freed: Vec<u32> = kept.iter().take(2).copied().collect();
+    freed.extend([1, 6, 5, 4, 3, 2, 0].map(|k| made[k]));
+    freed.extend(kept.get(2).copied());
+    freed.extend([10, 15, 14, 13, 12, 11, 9, 18, 17, 31, 30, 29, 28, 27, 26].map(|k| made[k]));
+    for entry in freed {
+        state.table.defer(entry, "RecycleGuardPosition");
+    }
     let order = made[19..26].to_vec();
     let walk = made[33..35].to_vec();
     state.table.recycled_guard_cleanup.push(made[16]);

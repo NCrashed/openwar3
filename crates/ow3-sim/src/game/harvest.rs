@@ -2106,9 +2106,15 @@ pub struct PayingMine {
 
 /// Places round a haunted mine (`Abgm` `DataC`).
 const PLACES: usize = 5;
-/// A worker put on its place starts to count 0.01 s later (SPEC-0029: about
-/// 2 ticks).
-const JOIN_DELAY: u32 = 0x3C23_D70A;
+/// The time a worker put on its place, or leaving it, counts from: the
+/// clock of the tick 0.01 s (two ticks) after its update (SPEC-0029,
+/// item 9; c-SEA-1: acolyte 10269 leaving at 31.440723419).
+pub(super) fn count_time(state: &State) -> u32 {
+    add(
+        add(state.move_clock, crate::timers::TICK),
+        crate::timers::TICK,
+    )
+}
 
 /// Whether `h` gathers from `mine` without trips: an acolyte (`Aaha`) on a
 /// haunted mine (`Abgm`).
@@ -2228,6 +2234,7 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
             ]
         })
         .collect();
+    let at = count_time(state);
     let p = state.paying.entry(mine).or_default();
     let free = (0..PLACES)
         .filter(|&k| p.places[k].is_none())
@@ -2240,7 +2247,6 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     // The payment is a timer on the world clock (SPEC-0029, item 8), so the
     // worker starts to count on that clock too (c-SEA-1: the payments at
     // 10.536625862 and 19.942424774, hub #15).
-    let at = add(state.move_clock, JOIN_DELAY);
     p.joining.push((h, at));
     let retained_builder = state.ai_released_builders.contains(&h);
     let produced_paid = state
@@ -2315,6 +2321,7 @@ fn retained_harvest_arrived(state: &mut State, h: u32) {
 /// where it stopped, and counts 0.01 s later; at a mine with five inside it
 /// loses its order and stands.
 fn go_in_paid(state: &mut State, h: u32, mine: u32) {
+    let at = count_time(state);
     let p = state.paying.entry(mine).or_default();
     let occupants = p.places.iter().filter(|place| place.is_some()).count();
     let Some(k) = (0..PLACES).find(|&k| p.places[k].is_none()) else {
@@ -2322,7 +2329,6 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
         return;
     };
     p.places[k] = Some(h);
-    let at = add(state.move_clock, JOIN_DELAY);
     // The first wisp arrives at the end of its terminal wait, a late one at
     // its revisit; each counts from then (SPEC-0029, item 9: c-SEA-1 mine
     // 781, wisps counted at 0.879999161 .. 1.239998817).
@@ -2523,7 +2529,7 @@ fn pending_wisp_arrivals(state: &mut State) {
     }
     // It arrives at the end of its wait and counts 0.01 s later.
     for h in counted {
-        wisp_counts(state, h, add(state.move_clock, JOIN_DELAY));
+        wisp_counts(state, h, count_time(state));
     }
     for (h, mine) in finished {
         let occupants = state.paying.get(&mine).map_or(0, |p| {
@@ -2574,7 +2580,7 @@ pub(super) fn paid_order_given(state: &mut State, h: u32, keeps_place: bool) {
     if entangled_for(state, h, mine) {
         return;
     }
-    let now = state.timers.time();
+    let now = count_time(state);
     if let Some(p) = state.paying.get_mut(&mine) {
         p.joining.retain(|&(w, _)| w != h);
     }

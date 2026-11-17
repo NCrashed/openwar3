@@ -121,6 +121,10 @@ pub struct ObjectTable {
     /// the number of workers determining its refresh cadence.
     pub ai_paid_records_mine: Option<u32>,
     pub ai_paid_record_workers: usize,
+    /// Its countdown (SPEC-0029, item 9): the value at `ai_paid_base`,
+    /// known from its first payment on.
+    ai_paid_value: u32,
+    ai_paid_base: Option<u32>,
     /// Whether that pair has already made its one assignment-boundary
     /// replacement. Later paid-worker assignments retain the pair while its
     /// periodic update continues (c-SEA-1, turns 33, 83 and 92-93, hub #15).
@@ -286,6 +290,8 @@ impl ObjectTable {
             ai_paid_records: Vec::new(),
             ai_paid_records_mine: None,
             ai_paid_record_workers: 0,
+            ai_paid_value: 0,
+            ai_paid_base: None,
             ai_paid_replaced: false,
             recycled_guards: Vec::new(),
             destructable_paths: std::collections::BTreeMap::new(),
@@ -449,6 +455,16 @@ impl ObjectTable {
         self.timed_w.push((clock, AI_PRODUCE_AT, "SetProduce"));
     }
 
+    /// The rate of a paying mine's countdown with `n` workers: `-recip(P)`,
+    /// `P = recip(div(n, 5.0))` (SPEC-0029, item 9).
+    fn paying_rate(n: usize) -> u32 {
+        let period = ow3_math::recip(ow3_math::div(
+            ow3_math::i2r(n.max(1) as i32),
+            5.0f32.to_bits(),
+        ));
+        ow3_math::sub(0, ow3_math::recip(period))
+    }
+
     /// Replaces a paying mine's periodic ability pair at its payment and
     /// schedules the next payment (SPEC-0029, items 8 and 9).
     fn ai_paid_records_update(&mut self, tick: u64, clock: u32) {
@@ -460,11 +476,15 @@ impl ObjectTable {
             self.free(tick, entry, "paying mine: old periodic ability pair");
         }
         self.ai_paid_records = new;
-        // A countdown from 1.0 at rate 1/P, counted from this payment's
-        // clock, then the payment's own timeout-0 timer (SPEC-0029, item 9).
-        let period = (5.0 / self.ai_paid_record_workers as f32).to_bits();
-        let countdown = ow3_math::recip(ow3_math::recip(period));
-        let next = ow3_math::add(ow3_math::add(clock, countdown), 0.0001f32.to_bits());
+        // A new countdown from 1.0, counted from the payment's deferred step
+        // 0.0001 s later; the next payment is at its crossing (SPEC-0029,
+        // item 9).
+        let base = ow3_math::add(clock, 0.0001f32.to_bits());
+        let rate = Self::paying_rate(self.ai_paid_record_workers);
+        let left = ow3_math::div(ow3_math::sub(0, 1.0f32.to_bits()), rate);
+        let next = ow3_math::add(base, left);
+        self.ai_paid_value = 1.0f32.to_bits();
+        self.ai_paid_base = Some(base);
         self.free_at_clock(
             next,
             AI_PAID_UPDATE_AT,
@@ -495,9 +515,22 @@ impl ObjectTable {
         else {
             return;
         };
-        let remaining = (f32::from_bits(*clock) - f32::from_bits(now)).max(0.0);
-        let adjusted = remaining * old as f32 / new as f32;
-        *clock = ow3_math::add(now, adjusted.to_bits());
+        // The countdown is carried to `now` and runs on at the new rate
+        // (SPEC-0029, item 9).
+        let Some(base) = self.ai_paid_base else {
+            let remaining = (f32::from_bits(*clock) - f32::from_bits(now)).max(0.0);
+            let adjusted = remaining * old as f32 / new as f32;
+            *clock = ow3_math::add(now, adjusted.to_bits());
+            return;
+        };
+        let value = ow3_math::add(
+            self.ai_paid_value,
+            ow3_math::mul(Self::paying_rate(old), ow3_math::sub(now, base)),
+        );
+        let rate = Self::paying_rate(new);
+        *clock = ow3_math::add(now, ow3_math::div(ow3_math::sub(0, value), rate));
+        self.ai_paid_value = value;
+        self.ai_paid_base = Some(now);
     }
 
     fn ai_produce(&mut self, tick: u64) {
@@ -3320,7 +3353,7 @@ pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
         match phase {
             0 => {
                 state.table.take(tick, "late wisp: update record");
-                super::harvest::wisp_counts(state, h, ow3_math::add(state.move_clock, 0x3C23_D70A));
+                super::harvest::wisp_counts(state, h, super::harvest::count_time(state));
                 let count = state.table.ai_harvest_cleanup.len().min(2);
                 let old_arrival = state
                     .table

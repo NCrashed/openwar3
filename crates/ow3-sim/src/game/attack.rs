@@ -1976,6 +1976,25 @@ fn swing_walks_due(state: &State, before: Option<u32>) -> Vec<(u32, u32)> {
         .collect()
 }
 
+/// Unit `h`'s after-swing movement takes its place in the movement list
+/// at the backswing's end, with the walk made there (SPEC-0018, "Order
+/// within the batch"). A chase already `stored` moves to the front; else
+/// the order that stores the movement keeps that place.
+fn entry_started(state: &mut State, h: u32, stored: bool) {
+    state.orders_given += 1;
+    let given = state.orders_given;
+    state.table.walk_pending.remove(&h);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        match u.movement.as_mut() {
+            Some(m) if stored => m.given = given,
+            _ => u.entries.reserved_given = Some(given),
+        }
+        for &e in &u.entries.walk {
+            state.table.walk_key.insert(e, given);
+        }
+    }
+}
+
 /// The walks of the goals after the swings whose backswings end in this
 /// tick: the game takes the goal at the backswing's end, a tick before the
 /// chase here (SPEC-0024; c-SAK-1: kobold 8 at 1895, before the frees of
@@ -1998,6 +2017,9 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
     for (h, end) in ending {
         state.table_at(end);
         super::table::walk_made_at_order(state, h);
+        // The movement's entry starts here, with its walk (c-RXR-1: grunt
+        // 1083's at 933 before footman 889's).
+        entry_started(state, h, false);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.early_goal = true;
         }
@@ -2047,6 +2069,7 @@ pub(super) fn after_swing_walks(state: &mut State, before: Option<u32>) {
     for (h, end) in chasing {
         state.table_at(end);
         super::table::walk_made_at_order(state, h);
+        entry_started(state, h, true);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.swing_goal_at = Some(end);
         }
@@ -2094,6 +2117,7 @@ pub(super) fn attack_move_resumes(state: &mut State, before: Option<u32>) {
     for (h, q) in resuming {
         state.table_at(q);
         super::table::attack_move_resumed(state, h);
+        entry_started(state, h, false);
         if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
             u.entries.early_walk = true;
             u.entries.early_walk_at = tick;

@@ -575,6 +575,19 @@ pub(super) fn position_of(state: &State, widget: u32) -> Option<[u32; 2]> {
     }
 }
 
+/// The key of the movement unit `h` stores now: the one its after-swing
+/// movement took at the backswing's end, else the next.
+pub(super) fn next_given(state: &mut State, h: u32) -> u64 {
+    let reserved = match state.objects.get_mut(&h) {
+        Some(Object::Unit(u)) => u.entries.reserved_given.take(),
+        _ => None,
+    };
+    reserved.unwrap_or_else(|| {
+        state.orders_given += 1;
+        state.orders_given
+    })
+}
+
 /// Gives unit `h` an order towards `target`; false for a unit that cannot
 /// follow it. A unit that is moving takes the order at its next update.
 fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2]) -> bool {
@@ -603,7 +616,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     let same_ai_target =
         state.table.ai_harvest_reassigning && u.movement.is_some_and(|m| m.target == target);
     state.quiet_paths.remove(&h);
-    let given = state.orders_given + 1;
+    let given = u.entries.reserved_given.unwrap_or(state.orders_given + 1);
     let moving = match busy {
         // Taken at the next update, which the unit keeps.
         Some(m) => Moving {
@@ -683,7 +696,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             drop_ready: false,
         },
     };
-    state.orders_given = given;
+    next_given(state, h);
     // The order that took this target, kept through re-orders on it
     // (c-RZH-1: footmen 1 and 3 took creep 7 at 1103, 1 first) and lost
     // with another order (the hero took creep 10 again at 5383).
@@ -3537,13 +3550,52 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         (std::cmp::Reverse(given), member)
     };
     moving.sort_by_key(key);
+    // The given-up walks are visited at their own movements' places in
+    // the list, newest first, before a current movement of the same key
+    // (SPEC-0018, "Order within the batch").
+    super::table::resolve_walk_keys(state);
+    let mut walks = if state.update_now {
+        super::table::walk_visits(state)
+    } else {
+        Vec::new()
+    };
+    walks.sort_by_key(|&(key, _)| std::cmp::Reverse(key));
+    let given_of = |h: u32| {
+        state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .map_or(0, |m| m.given)
+    };
+    let mut visits: Vec<(Option<u64>, u32)> = Vec::with_capacity(moving.len() + walks.len());
+    let mut w = walks.into_iter().peekable();
+    for &h in &moving {
+        while let Some(&(key, walker)) = w.peek() {
+            if key < given_of(h) {
+                break;
+            }
+            visits.push((Some(key), walker));
+            w.next();
+        }
+        visits.push((None, h));
+    }
+    visits.extend(w.map(|(key, walker)| (Some(key), walker)));
     let mut still = Vec::with_capacity(moving.len());
     let mut attacks_after = Vec::new();
     let mut faced_ends = Vec::new();
     let mut help_starts: Vec<(u32, u32)> = Vec::new();
     // Creeps whose guard check gives their chase up (`table::guard_given_up`).
     let mut given_up: Vec<u32> = Vec::new();
-    for h in moving {
+    // An attack-move that arrived ends at the end of its visit.
+    let mut visited: Option<u32> = None;
+    for (walk, h) in visits {
+        if let Some(p) = visited.take() {
+            attack_move_visited(state, p);
+        }
+        if let Some(key) = walk {
+            super::table::walk_visited(state, h, key);
+            continue;
+        }
+        visited = Some(h);
         // A worker that delivered in its update takes its new order at its
         // next one (c-RXI-1: the frees of 2665).
         if super::harvest::at_update(state, h) {
@@ -4906,6 +4958,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             super::attack::begin(state, h, target, tick, m.order_id);
         }
     }
+    if let Some(p) = visited {
+        attack_move_visited(state, p);
+    }
 
     state.marked.clear();
     refresh_call_cells(state);
@@ -5244,8 +5299,7 @@ fn ends_before(state: &mut State, until: Option<u32>, first: bool, check: Option
         if at.is_finite() {
             super::attack::after_swing_walks(state, Some(at.to_bits()));
         }
-        let given = state.orders_given + 1;
-        state.orders_given = given;
+        let given = next_given(state, h);
         super::table::reaction_ended(state, h);
         let (timed, target) = match state.objects.get_mut(&h) {
             Some(Object::Unit(u)) => match u.movement.as_mut() {
@@ -5555,42 +5609,48 @@ pub(super) fn guard_back(state: &mut State, h: u32, home: [u32; 2]) {
 /// Attack-moves whose walk ended at their point in this tick's updates
 /// end there, before the walks given up in the updates are freed
 /// (c-RZH-1: the Mountain King at 35.188877, his walk freed after the
-/// ending's objects).
+/// ending's objects). The batch ends each at the end of its visit
+/// (`attack_move_visited`); this ends the rest.
 pub(super) fn attack_moves_arrived(state: &mut State) {
-    let units: Vec<u32> = state
-        .units
-        .iter()
-        .copied()
-        .filter(|&h| {
-            state.unit(Some(h)).is_some_and(|u| {
-                u.alive
-                    && u.attack.is_none()
-                    && u.attack_move.is_some_and(|a| a.resume_at.is_none())
-                    && u.movement
-                        .is_some_and(|m| !m.ordered() && m.order == Order::Point)
-            })
-        })
-        .collect();
+    let units: Vec<u32> = state.units.clone();
     for h in units {
-        let Some(a) = state.unit(Some(h)).and_then(|u| u.attack_move) else {
-            continue;
-        };
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
-            u.next_acquire = a.next_check;
-        }
-        // Its walk ended short of the point, outside the arrival radius,
-        // or reached it (c-SAK-1: footman 3 47.7 away at 57.388206;
-        // c-RZJ-1: footman 6 14.3 away at 38.577015).
-        let radius = mul(ARRIVAL, 32.0f32.to_bits());
-        let short = state.unit(Some(h)).and_then(|u| {
-            u.movement.map(|m| {
-                let (dx, dy) = (sub(u.x, m.target[0]), sub(u.y, m.target[1]));
-                real_of(add(mul(dx, dx), mul(dy, dy))) > real_of(mul(radius, radius))
-            })
-        });
-        set_attack_move(state, h, None);
-        super::table::attack_move_arrived(state, h, short);
+        attack_move_visited(state, h);
     }
+}
+
+/// Unit `h`'s attack-move ends at the end of its visit when its walk
+/// ended at its point (SPEC-0018, "Order within the batch": the arrival
+/// and the order's end happen at the visit; c-RZH-1: the Mountain King's
+/// at 35.188877 before the walk of a newer entry is freed).
+fn attack_move_visited(state: &mut State, h: u32) {
+    let arrives = state.unit(Some(h)).is_some_and(|u| {
+        u.alive
+            && u.attack.is_none()
+            && u.attack_move.is_some_and(|a| a.resume_at.is_none())
+            && u.movement
+                .is_some_and(|m| !m.ordered() && m.order == Order::Point)
+    });
+    if !arrives {
+        return;
+    }
+    let Some(a) = state.unit(Some(h)).and_then(|u| u.attack_move) else {
+        return;
+    };
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.next_acquire = a.next_check;
+    }
+    // Its walk ended short of the point, outside the arrival radius,
+    // or reached it (c-SAK-1: footman 3 47.7 away at 57.388206;
+    // c-RZJ-1: footman 6 14.3 away at 38.577015).
+    let radius = mul(ARRIVAL, 32.0f32.to_bits());
+    let short = state.unit(Some(h)).and_then(|u| {
+        u.movement.map(|m| {
+            let (dx, dy) = (sub(u.x, m.target[0]), sub(u.y, m.target[1]));
+            real_of(add(mul(dx, dx), mul(dy, dy))) > real_of(mul(radius, radius))
+        })
+    });
+    set_attack_move(state, h, None);
+    super::table::attack_move_arrived(state, h, short);
 }
 
 /// Attack-moves going on after a kill, and ending at their point; units

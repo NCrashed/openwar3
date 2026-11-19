@@ -673,7 +673,6 @@ fn avatar_resurrection_objects() {
 /// `c-SBW-1`: the Blademaster's Bladestorm and the Far Seer's Earthquake
 /// at level 6: every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn bladestorm_earthquake_checksums() {
     if let Some(first) = turn_parts("c-SBW-1") {
         assert_eq!(first, None, "the turns part at turn {first:?}");
@@ -831,7 +830,7 @@ fn melee_ai_checksums() {
 /// through checkpoint 486.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(486)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(488)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }
@@ -6086,7 +6085,6 @@ fn melee_ai_turn462_objects() {
 /// An Orc peon arrives at its mine and frees its order's records; at its
 /// next update its walk's two, before another peon's delivery takes.
 #[test]
-#[ignore = "not matched yet: a standing worker's walk freed at its place in the update batch"]
 fn melee_ai_turn487_objects() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-turn487-events.tsv")) else {
@@ -6146,7 +6144,6 @@ fn melee_ai_turn487_objects() {
 
 /// `c-SCC-1`'s object table.
 #[test]
-#[ignore = "not matched yet"]
 fn melee_start_objects() {
     if let Some(first) = compare_objects("c-SCC-1") {
         assert_eq!(first, None, "the object tables part at row {first:?}");

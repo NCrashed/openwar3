@@ -65,6 +65,14 @@ pub struct ObjectTable {
     pub removal_late: Vec<u32>,
     /// The walks freed after the updates of this tick (`walks_freed`).
     pub walks_due: Vec<Vec<u32>>,
+    /// The key of the movement each walk object belongs to: the walk is
+    /// freed at that movement's visit in the update batch (SPEC-0018,
+    /// "Order within the batch").
+    pub walk_key: std::collections::BTreeMap<u32, u64>,
+    /// Walks made before their unit's movement was stored, by unit.
+    /// The key the unit's movement had then: the walk takes the first
+    /// newer one.
+    pub walk_pending: std::collections::BTreeMap<u32, (Vec<u32>, Option<u64>)>,
     /// The pathing parts of each destructable, freed when it dies.
     pub destructable_paths: std::collections::BTreeMap<u32, Vec<u32>>,
     /// A gold mine had a worker inside (its object taken).
@@ -270,6 +278,8 @@ impl ObjectTable {
             day_rates: Vec::new(),
             removal_late: Vec::new(),
             walks_due: Vec::new(),
+            walk_key: std::collections::BTreeMap::new(),
+            walk_pending: std::collections::BTreeMap::new(),
             mine_used: false,
             computer_harvest: None,
             ai_harvest_extra: 0,
@@ -938,6 +948,10 @@ pub struct UnitEntries {
     /// The goal after its swing was taken at the backswing's end; the
     /// chase takes no other.
     pub early_goal: bool,
+    /// The key of the movement that starts at the backswing's end, taken
+    /// by the chase order that stores it (SPEC-0018, "Order within the
+    /// batch").
+    pub reserved_given: Option<u64>,
     /// The backswing end at which it took the goal of a target it chases
     /// with no attack under way (`attack::after_swing_walks`).
     pub swing_goal_at: Option<u32>,
@@ -4238,6 +4252,20 @@ pub(super) fn walk_made(state: &mut super::State, h: u32) {
     let cluster = state.table.take(tick, "walk: cluster");
     let path = state.table.take(tick, "walk: path");
     state.table.free(tick, helper, "search: helper");
+    // The movement it belongs to; one being given now takes its key when
+    // the movement is stored (`resolve_walk_keys`).
+    match state.unit(Some(h)).and_then(|u| u.movement) {
+        Some(m) => {
+            state.table.walk_key.insert(path, m.given);
+            state.table.walk_key.insert(cluster, m.given);
+        }
+        None => {
+            state
+                .table
+                .walk_pending
+                .insert(h, (vec![path, cluster], None));
+        }
+    }
     if let Some(e) = entries(state, h) {
         e.walk = vec![path, cluster];
         // A goal in reach after a swing is that walk's alone (c-SAK-1: the
@@ -4258,6 +4286,20 @@ pub(super) fn walk_made(state: &mut super::State, h: u32) {
 /// Unit `h` made a walk at its order: its first search takes none.
 pub(super) fn walk_made_at_order(state: &mut super::State, h: u32) {
     walk_made(state, h);
+    // Made before the order's movement is stored (after a swing), it
+    // belongs to that coming movement (c-RXR-1: unit 1048703 at 1235).
+    let current = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .map(|m| m.given);
+    if let Some(given) = current.filter(|&g| g != state.orders_given)
+        && let Some(walk) = entries(state, h).map(|e| e.walk.clone())
+    {
+        for e in &walk {
+            state.table.walk_key.remove(e);
+        }
+        state.table.walk_pending.insert(h, (walk, Some(given)));
+    }
     if let Some(e) = entries(state, h) {
         e.walk_ready = true;
     }
@@ -4343,9 +4385,9 @@ pub(super) fn walk_dropped(state: &mut super::State, h: u32) {
     }
 }
 
-/// Unit `h` updates: the walks it gave up in earlier ticks are freed.
+/// Unit `h` updates: its retained AI build objects due by now are freed;
+/// its given-up walks go at their own movements' visits (`walk_visits`).
 pub(super) fn unit_updated(state: &mut super::State, h: u32) {
-    let tick = state.table.now;
     let sim_tick = state.ticks;
     let scheduled = entries(state, h)
         .map(|e| {
@@ -4373,23 +4415,92 @@ pub(super) fn unit_updated(state: &mut super::State, h: u32) {
             .table
             .defer(entry, "AI build: retained assignment state");
     }
-    let due = entries(state, h).map(|e| {
-        if e.retained_late_wisp_walk {
-            return Vec::new();
+    // Its given-up walks go at their own movements' visits (`walk_visits`).
+}
+
+/// The walks made before their movement was stored take its key.
+pub(super) fn resolve_walk_keys(state: &mut super::State) {
+    let pending = std::mem::take(&mut state.table.walk_pending);
+    for (h, (walk, before)) in pending {
+        match state.unit(Some(h)).and_then(|u| u.movement) {
+            Some(m) if before.is_none_or(|b| m.given > b) => {
+                for e in walk {
+                    state.table.walk_key.insert(e, m.given);
+                }
+            }
+            _ => {
+                state.table.walk_pending.insert(h, (walk, before));
+            }
         }
-        let (due, kept) = std::mem::take(&mut e.stale)
-            .into_iter()
-            .partition::<Vec<_>, _>(|&(t, _)| t < tick);
-        e.stale = kept;
-        due
-    });
-    let due: Vec<u32> = due
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(_, e)| e)
-        .collect();
-    for walk in due.chunks(2) {
-        state.table.walks_due.push(walk.to_vec());
+    }
+}
+
+/// The given-up walks due in this batch, each with the key of the movement
+/// it belongs to: its visit frees it (SPEC-0018, "Order within the batch";
+/// SPEC-0024, Walks). A moving unit's walk given up before this tick, a
+/// unit at rest's once its update is due. A unit's walks of different
+/// movements are visited apart (c-RXR-1: unit 1048704 at 6420).
+pub(super) fn walk_visits(state: &super::State) -> Vec<(u64, u32)> {
+    let tick = state.table.now;
+    let mut visits = Vec::new();
+    for &h in &state.units {
+        let Some(u) = state.unit(Some(h)) else {
+            continue;
+        };
+        let e = &u.entries;
+        if e.retained_late_wisp_walk {
+            continue;
+        }
+        let moving = u.movement.is_some();
+        if !moving && !e.stale_update.is_some_and(|n| n <= tick) {
+            continue;
+        }
+        let mut keys: Vec<u64> = Vec::new();
+        for &(t, entry) in &e.stale {
+            if moving && t >= tick {
+                continue;
+            }
+            let key = state.table.walk_key.get(&entry).copied().unwrap_or(0);
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        visits.extend(keys.into_iter().map(|key| (key, h)));
+    }
+    visits
+}
+
+/// The visit of unit `h`'s given-up walk of the movement `key`
+/// (`walk_visits`): path before cluster.
+pub(super) fn walk_visited(state: &mut super::State, h: u32, key: u64) {
+    let tick = state.table.now;
+    let moving = state.unit(Some(h)).is_some_and(|u| u.movement.is_some());
+    let keys = std::mem::take(&mut state.table.walk_key);
+    let due = entries(state, h)
+        .map(|e| {
+            let (due, kept) = std::mem::take(&mut e.stale)
+                .into_iter()
+                .partition::<Vec<_>, _>(|&(t, entry)| {
+                    (!moving || t < tick) && keys.get(&entry).copied().unwrap_or(0) == key
+                });
+            e.stale = kept;
+            if !moving && e.stale.is_empty() {
+                e.stale_update = None;
+            }
+            due
+        })
+        .unwrap_or_default();
+    state.table.walk_key = keys;
+    // Two walks of one movement: the newest first (c-SCA-1: unit 1048708
+    // at 2137, a walk made at its order back after a stun).
+    let due: Vec<u32> = due.into_iter().map(|(_, e)| e).collect();
+    let mut walks: Vec<&[u32]> = due.chunks(2).collect();
+    walks.sort_by_key(|w| std::cmp::Reverse(state.table.creation_of(w[0])));
+    for walk in walks {
+        for &entry in walk {
+            state.table.walk_key.remove(&entry);
+            state.table.free(tick, entry, "walk");
+        }
     }
 }
 
@@ -7976,5 +8087,18 @@ mod tests {
         assert_eq!(t.take(203, "a"), 821);
         assert_eq!(t.take(203, "a"), 805);
         assert_eq!(t.next_entry(), 822);
+    }
+}
+
+/// Unit `h`'s walk takes an entry of its own at the front of the movement
+/// list, its movement keeping its place.
+pub(super) fn walk_entry_started(state: &mut super::State, h: u32) {
+    state.orders_given += 1;
+    let given = state.orders_given;
+    state.table.walk_pending.remove(&h);
+    if let Some(walk) = entries(state, h).map(|e| e.walk.clone()) {
+        for e in walk {
+            state.table.walk_key.insert(e, given);
+        }
     }
 }

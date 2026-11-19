@@ -1264,7 +1264,7 @@ pub struct State {
     /// update (SPEC-0025).
     clusters: Vec<movement::Cluster>,
     /// Orders given so far (SPEC-0021, order of handling).
-    orders_given: u64,
+    pub(super) orders_given: u64,
     /// The numbers of the orders given to groups (SPEC-0025).
     group_orders: BTreeSet<u64>,
     /// The members of each queued group order that have started it, the
@@ -4675,6 +4675,13 @@ fn register_ai_natives(
                             state.table.ai_harvest_extra = 4;
                             table::ai_harvest_reassigning(&mut state, worker);
                             table::harvest_ordered(&mut state, worker, false);
+                            // Its walk is freed as one of a newer entry than
+                            // the orders given before it (c-SEA-1: peon
+                            // 1049337 at 0.105, its walk freed first at 0.6).
+                            // PROVISIONAL: whether the movement itself moves
+                            // to the front was not read; moving it breaks the
+                            // later turns.
+                            table::walk_entry_started(&mut state, worker);
                             state.ai_path_priority.insert(worker, None);
                             follow::reassign_local(&mut state, worker);
                         }

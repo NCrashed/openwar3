@@ -115,33 +115,80 @@ critter's wander timer at 15.600973129. Which unit an update belongs to,
 or what kind of update it is, plays no part: all units update in the
 one batch at `U(m)`.
 
-**Order within the batch.** The batch takes the units' movements in
-the order of a list. A movement is put at the front of the list when
-it is committed (see "When the unit starts to move"). A unit that gets
-a new movement while its old one is still in the list moves to the
-front with it. So the batch visits the movements from the most
-recently started to the oldest. The order has nothing to do with
-creation numbers or the order of the unit list. At its visit:
+**Order within the batch.** The batch takes movements in the order of
+a list. An entry of the list is one movement, not one unit. A new
+entry is put at the front of the list when a movement starts, so the
+batch visits the movements from the most recently started to the
+oldest. The order has nothing to do with creation numbers, the order
+of the unit list, or a unit's last order. What starts an entry:
+- an order's movement, when the order is given (ten `attack`
+  orders to a point in `c-RXR-1` tick 301: ten entries, the last
+  ordered unit at the front);
+- a movement of an attack, to reach or to face the target, when it
+  starts (after an acquisition, for example; `c-RXR-1` from 2.57 s).
+  This includes the movement an attacker starts when its backswing
+  ends, even when it is already in reach and facing its target. Such a
+  movement makes its walk at once, comes to rest at its first step
+  (no motion) and is freed at the visit after that. In `c-RXR-1`
+  (ticks of `c-RXR-1.log.tsv`) grunt 1083/1086 and footman 889/892
+  started theirs in tick 933, in that order, with walks 1798/1799 and
+  1801/1802. Both came to rest at the batch of 937 and were freed at
+  the batch of 943: 889's entry first (it was newer), then 1083's.
+  Neither unit moved or turned between their hits (889: 832 and 1103,
+  1083: 804 and 1125);
+- a group order: one entry for the whole group (`c-RTW-3` at
+  24.021969);
+- a member that leaves its group's movement for a movement of its own
+  (`c-RTW-3` from 26.79 s). This happens during the group's visit:
+  the member's new movement takes 12 records and a walk (the first of
+  its three freed at once) and is put at the front. Why a member
+  leaves at a given batch was not read.
+Nothing else moves an entry. A new path search inside a movement that
+is still going (at its visit) leaves the entry where it is. A unit can
+have two entries: when a unit that is still in the list with a walk
+starts a new movement (an attack's movement, for example), the new one
+is put at the front and the old one keeps its place until its own
+visit. The members of a group have no entries of their own while they
+move with the group: they are handled at the group's visit.
+An entry started during the batch (inside a visit) is not visited in
+that batch. Its first visit is in the next one.
+At its visit:
 - a movement that is still going takes its step, and everything that
   follows from that step happens there, before the next movement's
   visit: an arrival, the end of the order, the order's next step (a
   delivery and the new harvest order, for example);
-- a movement whose unit came to rest (arrival, stop) in an earlier
-  batch is not stepped. Its walk's path and cluster are freed at this
-  visit (SPEC-0024, Walks), and the movement leaves the list.
+- a movement whose unit came to rest (arrival, stop, an acquisition
+  that ends the walk, or a walk given up) in an earlier batch is not
+  stepped. Its walk's path and cluster are freed at this visit
+  (SPEC-0024, Walks), and the movement leaves the list.
 A unit without a movement in the list has no visit in this part of
 the batch.
-In `c-SEA-1`, the batch of tick clock 48.806392670 (queue 48.808555603)
-had 12 movements:
-- Orc peon 11021's walk to gold mine 699, started at 47.247 and
-  arrived at the batch of 48.776409, was the 7th. Its visit freed the
-  walk's 18047 and 18046.
-- Orc peon 11159's walk back to Great Hall 10978, started at about
-  47.0, was the 11th. Its step arrived, and its 19 takes (the delivery
-  and the new harvest order) came after 11021's two frees.
-Over 70 changes of the list between 40.0 and 48.84 s, every new
-movement came in at the front, and the list was always in this
-newest-first order.
+
+Examples:
+- `c-SEA-1`, the batch of tick clock 48.806392670 (queue 48.808555603),
+  12 movements. Orc peon 11021's walk to gold mine 699 (started at
+  47.247, arrived at the batch of 48.776409) was the 7th; its visit
+  freed the walk's 18047 and 18046. Orc peon 11159's walk back to Great
+  Hall 10978 (started at about 47.0) was the 11th; its step arrived, and
+  its 19 takes (the delivery and the new harvest order) came after
+  11021's two frees.
+- `c-RXR-1`, tick 607 (3.029973), 16 movements. At the front, the
+  attack movements started between 2.57 and 3.025, among them rifleman
+  960/963's, started at 3.019973. Behind them, the walks of the
+  `attack` orders of 1.5 s, in the order riflemen 994, 977, 960, 943,
+  then footmen 871, 853, 835. All seven came to rest and are freed at
+  their visits in that order: 1405/1404, 1389/1388, 1373/1372,
+  1357/1356, 1293/1292, 1277/1276, 1261/1260. Rifleman 960's old walk
+  stays at its 1.5 s place, behind its own newer movement.
+- `c-RTW-3`, tick 5538 (27.686354). Footman 861/864 left the group's
+  movement during the group's visit at 27.596369. Its new walk 1510 ..
+  1512 belongs to its own entry, at the front. At 27.686354 the visits
+  are footman 879/882's new entry, then 861's (at rest: 1512, 1511
+  freed), then the group's (at rest: its walk 1413, 1412 from the group
+  order at 24.021969), then the oldest entry.
+Over the list changes read (70 in `c-SEA-1` from 40.0 to 48.84 s,
+c-RXR-1 from 1.0 to 3.05 s, c-RTW-3 from 0.5 to 27.7 s), every new
+entry came in at the front, and no entry moved otherwise.
 
 The orders of the tables above were given early in the game, where the
 updates still come first. How the cycle goes on once `U` has moved by

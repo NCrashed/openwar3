@@ -732,15 +732,34 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
                 } else {
                     path::high_level_cost(grid, search_at, order_cells, class)
                 };
-                (
-                    cost,
-                    path::high_level_cluster(grid, search_at, order_cells, class),
-                )
+                // A wander has no list: its searches go to its point
+                // (c-SEA-1: critter 9436 from 39.626438, every search to
+                // the wander point; turtle 9516, its high-level path the
+                // goal point only).
+                let cluster = if wander {
+                    None
+                } else {
+                    path::high_level_cluster(grid, search_at, order_cells, class)
+                };
+                (cost, cluster)
             };
             let list = cluster.map(|f| f.points).unwrap_or_default();
             let (j, w) = next_segment(&list, 0);
             let place = w.unwrap_or(order_cells);
             let found = member_search(grid, search_at, place, order_cells, class, tree);
+            // A wander's high-level path is its point only (c-SEA-1:
+            // turtle 9516; critter 9436, every search to the wander point).
+            let found = if wander {
+                let half = |p: [u32; 2]| p.map(|c| mul(c, 0x3F00_0000));
+                Some(path::Found {
+                    points: vec![half(search_at), half(order_cells)],
+                    reached: true,
+                    iterations: 0,
+                    clear: false,
+                })
+            } else {
+                found
+            };
             plan = (list, j.unwrap_or(0), w);
             (cost, found)
         } else if walker.tree.is_some() {

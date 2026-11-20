@@ -87,6 +87,21 @@ sea turtle 9516 at 21.447401 and 21.627371, each search expanded 32
 cells, the start included, and ended at the closest cell reached; see
 `c-SEA-1.turtle9516-report.md`).
 
+A critter's wander move has no waypoints between its position and its
+wander point: its high-level path is the wander point only. Every local
+search of the move therefore goes from where the critter stands
+straight to the wander point, with the limit 32: the search made with
+the order, and each new search when the critter reaches the end of a
+local path or is blocked. Each local path ends at the closest cell the
+search reached, so a wander point that cannot be reached is approached
+in short legs. `c-SEA-1` critter 9436/9436, wander point (2020.99,
+-4487.18), from 39.626438 to its arrival at 49.286129: six searches
+(at the order and at 41.725, 43.554, 43.884, 46.078 and 48.866), all
+with that goal; the first path ran straight south from (1775.5,
+-4284.9) to (1776, -4496), the cell of that column closest to the goal.
+The move ended by the mark (SPEC-0025) at (2159.98, -4510.58)
+(`c-SEA-1.critter9436-walk.tsv`).
+
 - The start cell is the cell of `s`, the goal cell that of `g`. If they
   are the same, the path is `s -> g` at once.
 - A* over cells. A node's cost `G` is the sum of step costs, 15 for a

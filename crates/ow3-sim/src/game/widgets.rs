@@ -2964,6 +2964,18 @@ pub(super) fn critters_before(state: &mut State, before: Option<u32>) {
             state.critters.remove(&h);
             continue;
         };
+        // One still on its wander's walk does not wander again: its next
+        // wait is drawn at its arrival (c-SEA-1: nsea 9436, walking from
+        // 39.626438 to 49.286129 with no draw between).
+        let walking = state.critters.get(&h).is_some_and(|&(_, w)| w)
+            && state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .is_some_and(|m| !super::movement::arrived(&m));
+        if walking {
+            state.critters.insert(h, (f32::INFINITY.to_bits(), true));
+            continue;
+        }
         let mut offset = || {
             let f = state.game_random[WANDER].fraction();
             mul(REACH, sub(mul(TWO, f), ONE))

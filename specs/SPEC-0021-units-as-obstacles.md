@@ -220,6 +220,29 @@ three peasants were refused although the local table stood at 299 of
 the 2000 / 300 table was back at 0 and the other three searched (6,
 13, 16), while the local table was not reset (299 -> 689), as above.
 
+**One set of tables per player.** Every budget table, the local one
+and the three high-level ones, is kept once for each player: a search
+counts against the tables of the player who owns the searching unit,
+and never refuses another player's units. In `c-SEA-1`, in the update
+batch of 0.119999938, each unit visited at its first update after an
+order made two high-level searches and one local search, all counted
+in its own player's tables (values before -> after):
+- Night Elf (player 3): wisp 11938/11957 5000 / 800 table 0 -> 3,
+  400 / 900 table 0 -> 3, local 0 -> 35; wisps 11812, 11851, 11893:
+  2000 / 300 table 0 -> 2 -> 5 -> 8, 400 / 900 table 3 -> 5 -> 8 -> 11,
+  local 35 -> 38 -> 48 -> 55;
+- Undead (player 2): acolyte 11618/11634 5000 / 800 table 0 -> 2,
+  400 / 900 table 0 -> 2, local 0 -> 31; acolytes 11537 and 11576:
+  no high-level cost, local 31 -> 42 -> 48;
+- Orc (player 1): peon 11299/11309 5000 / 800 table 0 -> 2, 400 / 900
+  table 0 -> 2, local 0 -> 22; peons 11021, 11089, 11159, 11229:
+  2000 / 300 table 0 -> 2 -> 4 -> 6 -> 9, 400 / 900 table 2 -> 4 ->
+  6 -> 8 -> 11, local 22 -> 26 -> 33 -> 41 -> 56.
+The Orc 2000 / 300 and 400 / 900 tables stood at 12 before this batch
+and were set to 0 at its start. In each player, the first high-level
+search of the batch went to the 5000 / 800 table and the later ones to
+the 2000 / 300 table; why was not read.
+
 ### Groups
 
 Members of a group that are neither held nor already walking are

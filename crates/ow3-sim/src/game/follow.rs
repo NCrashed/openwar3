@@ -181,8 +181,10 @@ pub struct Budget {
     /// each has its own table (c-SBJ-1: kobold 5's search of 13.679911
     /// not held by the heroes' long searches; analyst 11-15 02:05).
     used: [u32; 16],
-    /// The iterations of high-level searches this update cycle.
-    high: u32,
+    /// The iterations of high-level searches this update cycle, by the
+    /// same field as `used`: each player has its own table (c-SEA-1 at
+    /// 0.12: the Orc peons search after a wisp's failed search).
+    high: [u32; 16],
     /// Those of the high-level searches of critters' wander moves, which
     /// keep a table of their own (limit 400, budget 900; SPEC-0021,
     /// "High-level budgets").
@@ -193,7 +195,7 @@ impl Budget {
     /// The count starts again before every second update cycle, those
     /// with an odd number (SPEC-0021, "The window is two update cycles").
     pub(super) fn cycle(&mut self, number: u64) {
-        self.high = 0;
+        self.high = [0; 16];
         self.high_wander = 0;
         if number % 2 == 1 {
             self.window = number;
@@ -688,7 +690,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     let high_used = if wander {
         state.budget.high_wander > WANDER_HIGH_BUDGET
     } else {
-        state.budget.high > HIGH_BUDGET
+        state.budget.high[usize::from(move_kind(state, walker.handle) & 0xF)] > HIGH_BUDGET
     };
     if fresh && high_used && !priority {
         return Steer::Hold;
@@ -773,7 +775,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         if wander {
             state.budget.high_wander += cost;
         } else {
-            state.budget.high += cost;
+            state.budget.high[usize::from(move_kind(state, walker.handle) & 0xF)] += cost;
         }
         found
     });

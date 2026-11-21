@@ -613,8 +613,6 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
         return false;
     };
     let busy = u.movement.filter(|m| m.ordered());
-    let same_ai_target =
-        state.table.ai_harvest_reassigning && u.movement.is_some_and(|m| m.target == target);
     state.quiet_paths.remove(&h);
     let given = u.entries.reserved_given.unwrap_or(state.orders_given + 1);
     let moving = match busy {
@@ -717,7 +715,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     // A new path is searched at the next update (SPEC-0020); in the new
     // layout of a queued group the members keep theirs until their places
     // are laid out (SPEC-0025, "When a member searches again").
-    if !state.regrouping && !same_ai_target {
+    if !state.regrouping {
         state.drop_path(h);
         state.member_places.remove(&h);
     }

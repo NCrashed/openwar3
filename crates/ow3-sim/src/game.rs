@@ -4675,13 +4675,17 @@ fn register_ai_natives(
                             state.table.ai_harvest_extra = 4;
                             table::ai_harvest_reassigning(&mut state, worker);
                             table::harvest_ordered(&mut state, worker, false);
-                            // Its walk is freed as one of a newer entry than
-                            // the orders given before it (c-SEA-1: peon
-                            // 1049337 at 0.105, its walk freed first at 0.6).
-                            // PROVISIONAL: whether the movement itself moves
-                            // to the front was not read; moving it breaks the
-                            // later turns.
+                            // A new movement at the front of the list, its
+                            // walk with it (SPEC-0018; c-SEA-1: peon 11021 at
+                            // 0.1, visited before the other peons at 0.12, its
+                            // walk freed first at 0.6).
                             table::walk_entry_started(&mut state, worker);
+                            let given = state.orders_given;
+                            if let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+                                && let Some(m) = u.movement.as_mut()
+                            {
+                                m.given = given;
+                            }
                             state.ai_path_priority.insert(worker, None);
                             follow::reassign_local(&mut state, worker);
                         }

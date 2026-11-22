@@ -1202,6 +1202,11 @@ pub struct State {
     /// high-level path in the next update even after the shared budget. The
     /// value is an optional cell offset for a mandatory local lead-in.
     pub(super) ai_path_priority: BTreeMap<u32, Option<[i32; 2]>>,
+    /// Workers the melee AI reassigned whose path its order dropped: their
+    /// fresh search is a reassigned one (`follow::reassign_local`), which
+    /// passes their player's busy workers (c-SEA-1: peon 11089 past 11229
+    /// at 0.12).
+    pub(super) ai_reassigned_fresh: BTreeSet<u32>,
     /// The hits of weapons without a missile, when a test asks for them:
     /// tick, the queue time of the hit (its damage point timer's expiry),
     /// the queue time at the end of the tick and the target.
@@ -1476,6 +1481,7 @@ impl State {
             cooldowns_done: None,
             path_trace: None,
             ai_path_priority: BTreeMap::new(),
+            ai_reassigned_fresh: BTreeSet::new(),
             hit_trace: None,
             agent_trace: None,
             member_places: BTreeMap::new(),

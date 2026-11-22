@@ -695,6 +695,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     if fresh && high_used && !priority {
         return Steer::Hold;
     }
+    let reassigned_fresh = state.ai_reassigned_fresh.remove(&walker.handle);
     // Out of its mine at its own update with none waiting, a worker's
     // walk back is searched in that update from where it went in, before
     // it was put out (c-SDE-1: unit 4 at 41.398857, hub #15).
@@ -789,7 +790,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     let (ai_unblocked, ai_see_standing, ai_detouring, ai_passed) = state
         .paths
         .get(&walker.handle)
-        .map_or((lead_in.flatten().is_some(), false, false, None), |f| {
+        .map_or((lead_in.flatten().is_some() || reassigned_fresh, false, false, None), |f| {
             (
                 f.ai_reassigned,
                 f.ai_see_standing,
@@ -839,7 +840,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             from_entry,
             // A priority path without a lead-in (an Undead builder's) sees
             // its player's workers (c-SEA-1: acolyte 10269 at 31.645689).
-            ai_reassigned: lead_in.flatten().is_some(),
+            ai_reassigned: lead_in.flatten().is_some() || reassigned_fresh,
             ai_see_standing: false,
             ai_detour: None,
             ai_detour_first: None,

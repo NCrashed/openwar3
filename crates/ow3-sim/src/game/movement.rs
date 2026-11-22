@@ -716,6 +716,12 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
     // layout of a queued group the members keep theirs until their places
     // are laid out (SPEC-0025, "When a member searches again").
     if !state.regrouping {
+        // The AI's harvest order drops the path; the fresh search is a
+        // reassigned one (c-SEA-1: peon 11089 passes the standing 11229 at
+        // 0.12).
+        if state.table.ai_harvest_reassigning && state.paths.contains_key(&h) {
+            state.ai_reassigned_fresh.insert(h);
+        }
         state.drop_path(h);
         state.member_places.remove(&h);
     }

@@ -44,8 +44,8 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Basic orders, order queue (Shift) | done | known | SPEC-0019, 0031. |
 | Attacks, damage, armor, missiles | done | known | SPEC-0015, 0016. |
 | Target choice, calls for help, creep camps | done | known | SPEC-0019, 0030, 0048. |
-| Resource gathering (Human peasant) | partial | unknown | Gold and lumber work; gold and lumber harvesting match the game down to their internal objects (c-RXI-1, c-RYP-1). Other races' workers (acolytes, wisps, peons) not started. |
-| Building and training (Human) | partial | unknown | Placement, construction start, training queue. Other races, repair, cancel, upgrades and research not started. |
+| Resource gathering | partial | unknown | Human gold and lumber match the game down to their internal objects (c-RXI-1, c-RYP-1). Orc peons, Undead acolytes on a haunted mine and Night Elf wisps on an entangled mine match on gold in the melee AI game c-SEA-1 to 52.6 s (SPEC-0029). Lumber of the other races is less covered. |
+| Building and training | partial | unknown | Human placement, construction start and training queue. The melee AI's first buildings of three races (Crypt, Altar of Darkness, Altar of Storms, Orc Burrow, Altar of Elders, Moon Well, Ancient of War) and its trained workers match in c-SEA-1. The Undead blight is approximated by the area round its makers; Night Elf uprooting, repair, cancel, upgrades and research not started. |
 | Fog of war | partial | known | What a unit reveals (SPEC-0032). Invisibility and detection not started. |
 | Regions and their events | done | known | SPEC-0049. |
 | Heroes: experience, levels, attributes, skills | done | known | SPEC-0033 to 0035. |
@@ -55,7 +55,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Items: drops, use, shops, inventories | partial | unknown | Random item choice only (SPEC-0042). |
 | Flying, naval and amphibious movement | not started | unknown | |
 | Upkeep, food, victory and defeat (melee rules) | partial | unknown | Food is counted; upkeep and the melee end-of-game rules are not. |
-| Computer opponents (AI scripts) | not started | unknown | The AI natives exist in the native table (SPEC-0001); none behave yet. |
+| Computer opponents (AI scripts) | partial | unknown | The standard melee AI scripts run, each computer player in a script VM of its own, with the natives they use in the opening (SPEC-0001). In c-SEA-1 (Orc, Undead, Night Elf, 180 s) every turn checksum matches to 52.6 s, 524 of 1794 turns. Attacks, expansions and later build orders not reached yet; some build sites are measured, not specified. |
 
 ### Matching the game exactly
 
@@ -122,6 +122,12 @@ the game's order.
 - The test c-SBS-1 (a level-3 Paladin revived, six Archmages picking up
   items 95 to 145 away): its object table (1132 changes) and all turn
   checksums match the game.
+- The melee AI game c-SEA-1 (three computer players, Orc, Undead and
+  Night Elf, on a test map, 180 s): every turn checksum matches the game
+  to 52.6 s, 524 of its 1794 turns. On the way: the AI threads and their
+  sleeps, the workers of the three races on gold, haunted and entangled
+  mines paying by their countdowns, the first buildings and trained
+  workers, the order of the update batch, and the critters' wanders.
 
 **Scope unknown.** Each mechanic brings its own internal objects. We learn
 them one replay at a time, and only after a mechanic already moves right.
@@ -164,10 +170,13 @@ uncertainty down:
    game.
 2. **Unit abilities.** About 800 ability entries; the number of distinct
    mechanics behind them is not counted.
-3. **The other three races.** Their workers, building rules (Undead blight,
-   Night Elf uprooting, Orc burrows) and economy have not been looked at.
-4. **Computer opponents.** The AI scripts run on natives whose behaviour is
-   not specified.
+3. **The other three races.** Their workers on gold and their first
+   buildings are matched in c-SEA-1; their lumber, building rules
+   (Undead blight, Night Elf uprooting) and the rest of their economy
+   are not sized yet.
+4. **Computer opponents.** The opening of the melee AI matches to 52.6 s
+   of c-SEA-1; what the scripts do later (attacks, expansions, heroes)
+   and the natives that needs are not specified yet.
 5. **Network protocol** for games with the original client.
 6. **Interface parity** with the game (menus, tooltips, every command card
    state).

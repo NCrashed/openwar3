@@ -13,8 +13,16 @@ the game data; this repository contains no Blizzard assets or code.
 
 The engine loads every map of the 1.27b install, runs its scripts, and
 plays units, orders, combat, creeps, gathering, building and several hero
-abilities. A viewer shows the maps in 3D, and you can select units and
-order them. There is no full melee game yet, and no multiplayer.
+abilities. The game's standard melee AI scripts run too, each computer
+player in a script VM of its own. A viewer shows the maps in 3D, and you
+can select units and order them. There is no full melee game yet, and no
+multiplayer.
+
+The main work now is the melee reference game c-SEA-1: three computer
+opponents (Orc, Undead and Night Elf) play for 180 s, building their
+bases, training workers and harvesting gold. Its first 524 turns, the
+first 52.6 s, match the game bit for bit, every turn checksum included.
+That is about 29% of the game.
 
 What is checked against the game:
 
@@ -37,7 +45,11 @@ What is checked against the game:
   on a creep camp) every object change (1431) and turn checksum (161)
   match too, and so do those of the Flame Strike test (640 changes, 160
   turns) and the Night Elf spells test (Mana Burn, Fan of Knives,
-  Entangling Roots: 1276 changes, 161 turns).
+  Entangling Roots: 1276 changes, 161 turns);
+- in the melee AI game c-SEA-1, the computer players' gold workers
+  (peons, acolytes on a haunted mine, wisps on an entangled mine), their
+  first buildings and trained workers, and the critters wandering the
+  map match every turn checksum to 52.6 s (524 of 1794 turns).
 
 ## Roadmap
 
@@ -47,9 +59,11 @@ What is checked against the game:
    differences from the game.
 3. **Simulation that matches the game exactly.** Every mechanic checked
    against replays, down to the turn checksum. In progress: movement,
-   combat, creeps, Human economy and the first heroes are done.
+   combat, creeps, Human economy and the first heroes are done; the
+   melee AI's opening for Orc, Undead and Night Elf matches to 52.6 s.
 4. **Full melee game.** All four races, buildings, upgrades, items, all
-   abilities, computer opponents. Not started beyond Human basics.
+   abilities, computer opponents. Started: the computer opponents'
+   economy and first buildings for three races.
 5. **Multiplayer with the original 1.27b client.** Not started.
 6. **Beyond compatibility.** Lifted engine limits, new script APIs and
    modding, decided in the open.

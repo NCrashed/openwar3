@@ -682,6 +682,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
     ai_mine_waits(&mut state.borrow_mut());
     pay_mines(&mut state.borrow_mut());
     wisp_lumber(&mut state.borrow_mut());
+    paid_placements_due(&mut state.borrow_mut());
     let mut reached = std::mem::take(&mut state.borrow_mut().harvest_reached);
     // A worker that reached its drop-off delivers at its next update
     // (SPEC-0029: it stands at the end of its path, and gives its load at
@@ -719,6 +720,11 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
             deliver(&mut s, h);
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target, None);
+        } else if pays_for(&s, h, target) && !entangled_for(&s, h, target) {
+            // It stops within reach, stands an update, and is put on its
+            // place at the update after.
+            let due = s.ticks + 2 * UPDATE;
+            s.paid_placements.push((h, target, due));
         } else if pays_for(&s, h, target) {
             arrive_paid(&mut s, h, target);
         } else if wisp_tree(&s, h, target) {
@@ -2205,8 +2211,31 @@ pub(super) fn turned_mark(state: &mut State, h: u32, set_it: bool) -> bool {
     was
 }
 
-/// Acolyte `h` reached haunted mine `mine`: it is put at once on the free
-/// place nearest to where it stopped, and counts 0.01 s later.
+/// The acolytes put on their places at this tick's updates
+/// (`State::paid_placements`). One that took another order meanwhile is
+/// not.
+fn paid_placements_due(state: &mut State) {
+    if !state.update_now {
+        return;
+    }
+    let tick = state.ticks;
+    let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut state.paid_placements)
+        .into_iter()
+        .partition(|&(_, _, at)| at <= tick);
+    state.paid_placements = later;
+    for (h, mine, _) in due {
+        let waiting = state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .is_some_and(|m| m.order == movement::Order::Work { target: mine });
+        if waiting {
+            arrive_paid(state, h, mine);
+        }
+    }
+}
+
+/// Acolyte `h` reached haunted mine `mine`: it is put on the free place
+/// nearest to where it stopped, and counts 0.01 s later.
 fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     if entangled_for(state, h, mine) {
         go_in_paid(state, h, mine);
@@ -2265,6 +2294,13 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
         // path and cluster to the later paid-worker stale-walk lifecycle.
         super::table::walk_dropped(state, h);
     }
+    // Its movement comes to rest here and is visited once more, at its
+    // next update, which frees the walk (SPEC-0018; c-SEA-1: acolyte 11576
+    // put on its place at 0.27, walk freed at 0.30).
+    let next = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .map(|m| m.next_update);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.x = points[k][0];
         u.y = points[k][1];
@@ -2275,6 +2311,11 @@ fn arrive_paid(state: &mut State, h: u32, mine: u32) {
     } else if !produced_paid {
         state.drop_path(h);
         super::table::walk_dropped(state, h);
+        if let (Some(next), Some(Object::Unit(u))) = (next, state.objects.get_mut(&h))
+            && !u.entries.stale.is_empty()
+        {
+            u.entries.stale_update = Some(next);
+        }
     }
     produced_paid_harvest_arrived(state, h);
 }

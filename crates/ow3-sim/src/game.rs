@@ -1352,6 +1352,10 @@ pub struct State {
     /// Trees of life on their way to entangle a gold mine (SPEC-0029).
     entangling: Vec<movement::Entangling>,
     harvest_reached: Vec<(u32, u32, bool)>,
+    /// Acolytes that reached their haunted mine, put on their places at the
+    /// tick given, two updates later (c-SEA-1: acolyte 11576 stops at 0.21,
+    /// stands at 0.24 and is put on its place at 0.27).
+    paid_placements: Vec<(u32, u32, u64)>,
     /// Workers that deliver at their next update, with its tick
     /// (SPEC-0029).
     deliveries: Vec<(u32, u64)>,
@@ -1536,6 +1540,7 @@ impl State {
             released: Vec::new(),
             entangling: Vec::new(),
             harvest_reached: Vec::new(),
+            paid_placements: Vec::new(),
             deliveries: Vec::new(),
             objects_changed: 0,
             object_ticks: Vec::new(),

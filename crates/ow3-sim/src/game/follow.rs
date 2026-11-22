@@ -705,7 +705,27 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         None
     };
     let search_at = from_entry.unwrap_or(at);
-    let lifted = footprint.as_ref().filter(|_| fresh);
+    // The high-level search sees the static pathing map alone: no building
+    // there, also the gold mine under an entangled or haunted one at the
+    // target's place (SPEC-0020; c-SEA-1: wisp 11812's search of 0.12
+    // costs 3). PROVISIONAL: only the buildings at the target's place are
+    // lifted.
+    let stacked = walker.building.filter(|_| fresh).and_then(|b| {
+        let at = state.unit(Some(b)).map(|u| (u.x, u.y))?;
+        let (mut red, mut green) = (Vec::new(), Vec::new());
+        for &o in &state.units {
+            if let Some(f) = state
+                .unit(Some(o))
+                .filter(|u| (u.x, u.y) == at)
+                .and_then(|u| u.footprint.as_ref())
+            {
+                red.extend_from_slice(f.red());
+                green.extend_from_slice(f.green());
+            }
+        }
+        Some((red, green))
+    });
+    let lifted = stacked.as_ref();
     if let (Some((red, green)), Some(grid)) = (lifted, state.grid.as_mut()) {
         grid.stamp(red, green, false);
     }

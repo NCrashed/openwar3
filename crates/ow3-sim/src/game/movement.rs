@@ -275,6 +275,8 @@ pub struct Moving {
     /// A standing initial melee-AI reassignment tests propulsion after its
     /// turn at the next update.
     ai_standing: bool,
+    /// Its order replaced a movement the unit had (`order`).
+    replaced: bool,
     /// A moving initial melee-AI reassignment stands for the whole next
     /// update, not merely the lost movement tick of an ordinary restart.
     ai_restart: bool,
@@ -622,6 +624,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order_id,
             target,
             restart: (m.walking && !state.regrouping) || m.restart,
+            replaced: true,
             reaction: None,
             reaction_end: None,
             goal_taken: false,
@@ -649,6 +652,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             order,
             order_id,
             target,
+            replaced: false,
             // The stored heading of a unit whose facing still turns to it
             // (c-RXR-1: troll 16 kept 2.535097 through its attacks).
             heading: u.movement.map_or(u.facing, |m| m.heading),
@@ -1422,7 +1426,7 @@ pub(super) fn ai_build_order(
         };
         state.ai_path_priority.insert(worker, lead_in);
         set_attack_move(state, worker, None);
-    } else if type_id == uaod || type_id == eaom {
+    } else if type_id == uaod || type_id == eaom || type_id == usep {
         // An Undead builder that walks to its site takes a plain build
         // order: its path sees the standing workers and has no lead-in
         // (SPEC-0020; c-SEA-1: acolyte 10269 from 31.435724).
@@ -1449,9 +1453,6 @@ pub(super) fn ai_build_order(
         followup,
         cleanup,
     ));
-    if type_id == usep {
-        hold_ai_order(state, worker);
-    }
     worker_cleanup
 }
 
@@ -1607,7 +1608,9 @@ pub(super) fn start_buildings(state: &mut State) {
             {
                 u.x = add(site[0], 176.0f32.to_bits());
                 u.y = add(site[1], (-48.0f32).to_bits());
-                u.facing = 3.500_498_5_f32.to_bits();
+                // c-SEA-1: put at (8752, 4176) at the start of 1.349999, its
+                // walk still going.
+                u.facing = walked.unwrap_or(3.500_498_5_f32.to_bits());
             } else if type_id == i32::from_be_bytes(*b"uaod")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {
@@ -2892,7 +2895,7 @@ pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
         && let Some(m) = u.movement.as_mut()
     {
         m.ai_worker_produced = false;
-        m.ai_standing = !m.restart;
+        m.ai_standing = !m.restart && m.replaced;
         m.ai_restart = m.restart;
         repath = true;
     }

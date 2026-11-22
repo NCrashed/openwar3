@@ -3288,24 +3288,6 @@ pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
     }
 }
 
-/// A terminal-wait arrival makes old, otherwise standing AI-assignment walks
-/// eligible for their next ordinary update cleanup. The resulting batch can
-/// contain records from more than one player (c-SEA-1, turns 12-13, hub #15).
-pub(super) fn terminal_wait_walk_cleanup(state: &mut super::State) {
-    let now = state.table.now;
-    for object in state.objects.values_mut() {
-        let super::Object::Unit(u) = object else {
-            continue;
-        };
-        let old_stale = u.entries.stale_update.is_none()
-            && !u.entries.stale.is_empty()
-            && u.entries.stale.iter().all(|&(at, _)| at + 6 < now);
-        if old_stale {
-            u.entries.stale_update = Some(now + 6);
-        }
-    }
-}
-
 /// Keeps the walk of a late wisp assignment whose observed arrival boundary
 /// has no main-table frees (c-SEA-1, turn 13, hub #15).
 pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {

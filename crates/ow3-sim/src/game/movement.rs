@@ -1683,31 +1683,6 @@ pub(super) fn start_buildings(state: &mut State) {
     }
 }
 
-/// A walk to a unit within reach at the update's start (SPEC-0029; c-SDA-1,
-/// hub #15): it finishes now with the heading within 0.2 rad of the
-/// direction to the target; else the agent stops, takes that heading, and
-/// it finishes at the next update.
-fn facing_to_finish(
-    state: &State,
-    m: &mut Moving,
-    target: u32,
-    here: [u32; 2],
-    min: [u32; 2],
-) -> bool {
-    let Some(at) = position_of(state, target).map(|p| relative(p, min)) else {
-        return true;
-    };
-    let to = angle(sub(at[0], here[0]), sub(at[1], here[1]));
-    let off = super::facing::angle_difference(to, normal(m.heading));
-    if real_of(off).abs() < ATTACK_ANGLE {
-        return true;
-    }
-    m.heading = to;
-    m.walking = false;
-    m.velocity = [0, 0];
-    false
-}
-
 /// Whether `h` is a worker and `building` a building of its player under
 /// construction.
 fn unfinished_of_own(state: &State, h: u32, building: u32) -> bool {
@@ -3870,16 +3845,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             {
                 m.arrived
             } else {
+                // An acolyte stops within reach and stands while it turns:
+                // `harvest::paid_placements` (c-SEA-1: acolyte 11576 stops
+                // at 0.21).
                 super::harvest::reached(state, h, here, target)
-                    && (!super::harvest::reaches_by_distance(state, h, target)
-                        || super::harvest::turned_mark(state, h, false)
-                        || {
-                            let facing = facing_to_finish(state, &mut m, target, here, min);
-                            if !facing {
-                                super::harvest::turned_mark(state, h, true);
-                            }
-                            facing
-                        })
             }
         {
             let delivering = matches!(m.order, Order::Return { .. });

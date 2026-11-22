@@ -2201,16 +2201,6 @@ fn order_paid(state: &mut State, h: u32, mine: u32) -> bool {
     movement::harvest_order(state, h, Order::Gather { target: mine }, ORDER_HARVEST, at)
 }
 
-/// Worker `h` turned to its target within reach (`movement`): its next
-/// update finishes the walk. True when the mark was set, clearing it;
-/// with `set`, sets it.
-pub(super) fn turned_mark(state: &mut State, h: u32, set_it: bool) -> bool {
-    let mut g = get(state, h).unwrap_or_default();
-    let was = std::mem::replace(&mut g.ready, set_it);
-    set(state, h, Some(g));
-    was
-}
-
 /// The acolytes put on their places at this tick's updates
 /// (`State::paid_placements`). One that took another order meanwhile is
 /// not.

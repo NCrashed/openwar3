@@ -20,9 +20,9 @@ multiplayer.
 
 The main work now is the melee reference game c-SEA-1: three computer
 opponents (Orc, Undead and Night Elf) play for 180 s, building their
-bases, training workers and harvesting gold. Its first 525 turns, the
-first 52.7 s, match the game bit for bit, every turn checksum included.
-That is about 29% of the game.
+bases, training workers and harvesting gold. Its first 598 turns, the
+first 60.1 s, match the game bit for bit, every turn checksum included.
+That is a third of the game.
 
 What is checked against the game:
 
@@ -49,7 +49,7 @@ What is checked against the game:
 - in the melee AI game c-SEA-1, the computer players' gold workers
   (peons, acolytes on a haunted mine, wisps on an entangled mine), their
   first buildings and trained workers, and the critters wandering the
-  map match every turn checksum to 52.7 s (525 of 1794 turns).
+  map match every turn checksum to 60.1 s (598 of 1794 turns).
 
 ## Roadmap
 
@@ -60,7 +60,7 @@ What is checked against the game:
 3. **Simulation that matches the game exactly.** Every mechanic checked
    against replays, down to the turn checksum. In progress: movement,
    combat, creeps, Human economy and the first heroes are done; the
-   melee AI's opening for Orc, Undead and Night Elf matches to 52.7 s.
+   melee AI's opening for Orc, Undead and Night Elf matches to 60.1 s.
 4. **Full melee game.** All four races, buildings, upgrades, items, all
    abilities, computer opponents. Started: the computer opponents'
    economy and first buildings for three races.

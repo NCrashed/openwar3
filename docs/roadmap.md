@@ -44,7 +44,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Basic orders, order queue (Shift) | done | known | SPEC-0019, 0031. |
 | Attacks, damage, armor, missiles | done | known | SPEC-0015, 0016. |
 | Target choice, calls for help, creep camps | done | known | SPEC-0019, 0030, 0048. |
-| Resource gathering | partial | unknown | Human gold and lumber match the game down to their internal objects (c-RXI-1, c-RYP-1). Orc peons, Undead acolytes on a haunted mine and Night Elf wisps on an entangled mine match on gold in the melee AI game c-SEA-1 to 52.6 s (SPEC-0029). Lumber of the other races is less covered. |
+| Resource gathering | partial | unknown | Human gold and lumber match the game down to their internal objects (c-RXI-1, c-RYP-1). Orc peons, Undead acolytes on a haunted mine and Night Elf wisps on an entangled mine match on gold in the melee AI game c-SEA-1 to 52.7 s (SPEC-0029). Lumber of the other races is less covered. |
 | Building and training | partial | unknown | Human placement, construction start and training queue. The melee AI's first buildings of three races (Crypt, Altar of Darkness, Altar of Storms, Orc Burrow, Altar of Elders, Moon Well, Ancient of War) and its trained workers match in c-SEA-1. The Undead blight is approximated by the area round its makers; Night Elf uprooting, repair, cancel, upgrades and research not started. |
 | Fog of war | partial | known | What a unit reveals (SPEC-0032). Invisibility and detection not started. |
 | Regions and their events | done | known | SPEC-0049. |
@@ -55,7 +55,7 @@ turn by turn, including the turn checksum (SPEC-0024).
 | Items: drops, use, shops, inventories | partial | unknown | Random item choice only (SPEC-0042). |
 | Flying, naval and amphibious movement | not started | unknown | |
 | Upkeep, food, victory and defeat (melee rules) | partial | unknown | Food is counted; upkeep and the melee end-of-game rules are not. |
-| Computer opponents (AI scripts) | partial | unknown | The standard melee AI scripts run, each computer player in a script VM of its own, with the natives they use in the opening (SPEC-0001). In c-SEA-1 (Orc, Undead, Night Elf, 180 s) every turn checksum matches to 52.6 s, 524 of 1794 turns. Attacks, expansions and later build orders not reached yet; some build sites are measured, not specified. |
+| Computer opponents (AI scripts) | partial | unknown | The standard melee AI scripts run, each computer player in a script VM of its own, with the natives they use in the opening (SPEC-0001). In c-SEA-1 (Orc, Undead, Night Elf, 180 s) every turn checksum matches to 52.7 s, 525 of 1794 turns. Attacks, expansions and later build orders not reached yet; some build sites are measured, not specified. |
 
 ### Matching the game exactly
 
@@ -124,7 +124,7 @@ the game's order.
   checksums match the game.
 - The melee AI game c-SEA-1 (three computer players, Orc, Undead and
   Night Elf, on a test map, 180 s): every turn checksum matches the game
-  to 52.6 s, 524 of its 1794 turns. On the way: the AI threads and their
+  to 52.7 s, 525 of its 1794 turns. On the way: the AI threads and their
   sleeps, the workers of the three races on gold, haunted and entangled
   mines paying by their countdowns, the first buildings and trained
   workers, the order of the update batch, and the critters' wanders.
@@ -174,7 +174,7 @@ uncertainty down:
    buildings are matched in c-SEA-1; their lumber, building rules
    (Undead blight, Night Elf uprooting) and the rest of their economy
    are not sized yet.
-4. **Computer opponents.** The opening of the melee AI matches to 52.6 s
+4. **Computer opponents.** The opening of the melee AI matches to 52.7 s
    of c-SEA-1; what the scripts do later (attacks, expansions, heroes)
    and the natives that needs are not specified yet.
 5. **Network protocol** for games with the original client.

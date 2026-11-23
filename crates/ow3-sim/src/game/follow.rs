@@ -1027,6 +1027,8 @@ fn decide(
                 return Steer::Arrived;
             }
             if follow.stop_at.is_some() {
+                // The walk of the AI's order ends at W (as below).
+                follow.ai_reassigned = false;
                 follow.advance = true;
                 follow.local.clear();
             }
@@ -1260,6 +1262,10 @@ fn decide(
             // The end of its own list at W: it arrived there.
             if follow.stop_at.is_some() {
                 follow.advance = true;
+                // The walk of the AI's order ends here: its next searches
+                // see its player's waiting workers (c-SEA-1: peon 10461 at W
+                // at 50.485, its search of 50.515 refused by peon 11159).
+                follow.ai_reassigned = false;
                 follow.local.clear();
                 return Steer::Hold;
             }

@@ -864,6 +864,9 @@ pub struct UnitEntries {
     pub construction: Vec<u32>,
     pub dispel: Vec<u32>,
     pub construction_work: Option<u32>,
+    /// The records an Undead building keeps from its start to its finish:
+    /// a timer, the work order and its order parts (`construction_finished`).
+    pub undead_finish: Vec<u32>,
     pub first_helper: Option<u32>,
     /// A builder turning to its building: the fifth part of its work order,
     /// let go when it faces it (`turned_to_work`).
@@ -7549,8 +7552,11 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
             }
             state.table.defer(timer[1], "AI supply construction: timer");
             state.table.defer(timer[0], "AI supply construction: timer");
-            if let Some(e) = entries(state, h) {
-                e.work = std::iter::once(work).chain(parts).collect();
+            // Its last timer, the work order and its parts stay with the
+            // building to its finish (c-SEA-1: the Ziggurat's 13043 ..
+            // 13047, freed at 56.152355).
+            if let Some(e) = entries(state, building) {
+                e.undead_finish = [timer[2], work].into_iter().chain(parts).collect();
             }
             return;
         }
@@ -7857,6 +7863,18 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
 /// its dispel runs from 0.01 s after the completion.
 pub(super) fn construction_finished(state: &mut super::State, building: u32, builder: u32, q: u32) {
     let tick = state.table.now;
+    // An Undead building makes nothing at its finish: it frees the records
+    // kept from its start, the second order part first (c-SEA-1: the
+    // Ziggurat at 56.152355, 13046, 13045, 13047, 13044, 13043).
+    let kept = entries(state, building)
+        .map(|e| std::mem::take(&mut e.undead_finish))
+        .unwrap_or_default();
+    if let [timer, work, first, second, third] = kept[..] {
+        for e in [second, first, third, work, timer] {
+            state.table.free(tick, e, "Undead construction: finished");
+        }
+        return;
+    }
     let type_id = state.unit(Some(building)).map_or(0, |u| u.type_id);
     let after = building_layout(state, type_id)
         .filter(|b| b.2 >= 0.0)

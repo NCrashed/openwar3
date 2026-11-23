@@ -123,6 +123,9 @@ pub struct Harvest {
     starting_computer_mine: bool,
     starting_mine_at: Option<u64>,
     starting_mine_reached: Option<u32>,
+    /// Gathering from the melee AI's harvest order on: in the gathering
+    /// cycle for the searches (SPEC-0029; c-SEA-1, the peons from 0.1).
+    ai_gathering: bool,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -423,7 +426,7 @@ fn exit_place(state: &State, h: u32, push: bool) -> Option<[u32; 2]> {
 /// Whether worker `h` is in the gathering cycle, out of a mine once:
 /// no unit's way sees it (SPEC-0029).
 pub(super) fn passes_through(state: &State, h: u32) -> bool {
-    get(state, h).is_some_and(|g| g.cycling)
+    get(state, h).is_some_and(|g| g.cycling || g.ai_gathering)
 }
 
 /// Whether worker `h` goes into its mine in this tick and has had its
@@ -2792,5 +2795,23 @@ mod tests {
         for used in [81, 101, 141, 181] {
             assert_eq!(kept(used), 4);
         }
+    }
+}
+
+/// Worker `h` takes the melee AI's harvest order to an ordinary gold mine:
+/// from then it is in the gathering cycle for the searches (SPEC-0029,
+/// "Workers in the gathering cycle do not block each other"; c-SEA-1: the
+/// starting peons passed at 0.12).
+pub(super) fn ai_gathering(state: &mut State, h: u32) {
+    let ordinary = state.unit(Some(h)).and_then(|u| u.movement).is_some_and(|m| match m.order {
+        movement::Order::Gather { target } => is_mine(state, target),
+        _ => false,
+    });
+    if !ordinary {
+        return;
+    }
+    if let Some(mut g) = get(state, h) {
+        g.ai_gathering = true;
+        set(state, h, Some(g));
     }
 }

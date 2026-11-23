@@ -127,24 +127,11 @@ pub struct Follow {
     /// Its first local leg after a moving melee-AI reassignment is taken
     /// without the ordinary unit-to-unit wait check.
     ai_reassigned: bool,
-    /// After that leg meets an arrived worker, following local searches
-    /// route around arrived workers while active starting workers stay out.
-    ai_see_standing: bool,
-    /// The tangent cell chosen when that first leg meets an arrived worker.
-    ai_detour: Option<[u32; 2]>,
-    /// The first cell on the way to that tangent.
-    ai_detour_first: Option<[u32; 2]>,
-    /// An optional first cell after the tangent before ordinary shortcuts.
-    ai_detour_after: Option<[u32; 2]>,
-    /// It is currently taking that tangent leg and ignores the worker it
-    /// is passing until the cell is reached.
+    /// It is taking the lead-in cell of an AI building plan before ordinary
+    /// path shortcuts.
     ai_detouring: bool,
-    /// Index of the last mandatory cell of that tangent leg.
+    /// Index of the last point of that lead-in.
     ai_detour_end: usize,
-    /// The arrived worker being passed, then omitted from later checks of
-    /// this initial assignment path.
-    ai_blocker: Option<u32>,
-    ai_passed: Option<u32>,
     /// An accepted initial AI building plan still needs this first local
     /// cell offset before ordinary path shortcuts.
     ai_lead_in: Option<[i32; 2]>,
@@ -290,8 +277,6 @@ struct Other {
     kind: u8,
     /// Its group cluster, if it has one.
     group: Option<usize>,
-    /// Its committed position relative to the world corner.
-    position: [u32; 2],
 }
 
 /// The cells other units occupy, seen from one unit.
@@ -308,13 +293,8 @@ struct Others {
 fn others(
     state: &State,
     h: u32,
-    ignore_active_workers: bool,
-    see_standing_workers: bool,
-    detouring: bool,
-    passed: Option<u32>,
 ) -> Others {
     let min = [state.world_bounds[0], state.world_bounds[1]];
-    let owner = state.unit(Some(h)).map(|u| u.owner);
     let mut others = Others {
         standing: HashSet::new(),
         by_cell: HashMap::new(),
@@ -362,7 +342,6 @@ fn others(
                         squared_speed: 0,
                         kind: move_kind(state, o),
                         group: None,
-                        position: at,
                     },
                 );
             }
@@ -374,28 +353,9 @@ fn others(
         if o == h {
             continue;
         }
-        if Some(o) == passed {
-            continue;
-        }
         let Some(Object::Unit(u)) = state.objects.get(&o) else {
             continue;
         };
-        let ignored_worker = ignore_active_workers
-            && Some(u.owner) == owner
-            && state.data.units.get(&u.type_id).is_some_and(|t| t.worker);
-        if ignored_worker && (u.movement.is_some() || detouring) {
-            continue;
-        }
-        if ignored_worker
-            && state.unit(Some(h)).is_some_and(|me| {
-                let dx = real(sub(me.x, u.x));
-                let dy = real(sub(me.y, u.y));
-                let reach = if dy.abs() > dx.abs() { 70.0 } else { 40.0 };
-                dx * dx + dy * dy > reach * reach
-            })
-        {
-            continue;
-        }
         // A unit in Wind Walk is in no one's way, from its cast on
         // (SPEC-0040; c-SAK-1: footman 4 walked past the standing
         // Blademaster at 433, before his fade ended).
@@ -405,7 +365,7 @@ fn others(
         // A worker in the gathering cycle is seen by no one (SPEC-0029),
         // but when it stands at its work.
         if !u.alive
-            || (u.hidden && !ignored_worker)
+            || u.hidden
             || (super::harvest::passes_through(state, o)
                 && !super::harvest::standing_at_work(state, o))
             || super::harvest::gone_in_now(state, o)
@@ -458,7 +418,7 @@ fn others(
         };
         for cell in path::occupied_cells(to_cells(position), class) {
             // Marked group members are passed by as moving ones are.
-            if stands && !state.marked.contains(&o) && (!ignored_worker || see_standing_workers) {
+            if stands && !state.marked.contains(&o) {
                 others.standing.insert(cell);
             }
             others.by_cell.entry(cell).or_default().push(o);
@@ -470,7 +430,6 @@ fn others(
                 squared_speed: squared_speed(velocity),
                 kind: move_kind(state, o),
                 group: super::movement::group_of(state, o),
-                position,
             },
         );
     }
@@ -807,24 +766,9 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     if !state.paths.contains_key(&walker.handle) && !priority {
         super::table::path_searched(state, walker.handle);
     }
-    let (ai_unblocked, ai_see_standing, ai_detouring, ai_passed) = state
-        .paths
-        .get(&walker.handle)
-        .map_or((lead_in.flatten().is_some() || reassigned_fresh, false, false, None), |f| {
-            (
-                f.ai_reassigned,
-                f.ai_see_standing,
-                f.ai_detouring,
-                f.ai_passed,
-            )
-        });
     let others = others(
         state,
         walker.handle,
-        ai_unblocked,
-        ai_see_standing,
-        ai_detouring,
-        ai_passed,
     );
     let grid = state.grid.as_ref().unwrap();
     let held = state.path_holds.remove(&walker.handle);
@@ -861,14 +805,8 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             // A priority path without a lead-in (an Undead builder's) sees
             // its player's workers (c-SEA-1: acolyte 10269 at 31.645689).
             ai_reassigned: lead_in.flatten().is_some() || reassigned_fresh,
-            ai_see_standing: false,
-            ai_detour: None,
-            ai_detour_first: None,
-            ai_detour_after: None,
             ai_detouring: false,
             ai_detour_end: 0,
-            ai_blocker: None,
-            ai_passed: None,
             ai_lead_in,
         };
         follow.take_segment(order_cells);
@@ -1073,7 +1011,7 @@ fn decide(
         if tick < follow.hold_until {
             return Steer::Stand(segment_goal);
         }
-        if shared.budget.used[usize::from(shared.kind & 0xF)] > BUDGET && !follow.ai_reassigned {
+        if shared.budget.used[usize::from(shared.kind & 0xF)] > BUDGET {
             // Queued for a later window, without the hold.
             follow.hold_until = 0;
             return Steer::Stand(segment_goal);
@@ -1082,10 +1020,7 @@ fn decide(
         follow.end_blocked = false;
         let entry = follow.from_entry.take();
         let at = entry.unwrap_or(at);
-        let detour_first = follow.ai_detour_first.take();
-        let detour = follow.ai_detour.take();
-        let detour_after = follow.ai_detour_after.take();
-        let search_at = detour_after.or(detour).unwrap_or(at);
+        let search_at = at;
         let found = match walker.chase {
             // A chase searches to its goal and ends where it touches its
             // target (SPEC-0019).
@@ -1119,19 +1054,6 @@ fn decide(
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;
-        if let Some(detour) = detour {
-            follow.local.insert(0, at);
-            if detour_after.is_some() {
-                follow.local.insert(1, detour);
-            }
-            if let Some(first) = detour_first
-                && first != detour
-            {
-                follow.local.insert(1, first);
-            }
-            follow.ai_detour_end =
-                usize::from(detour_first != Some(detour)) + usize::from(detour_after.is_some()) + 1;
-        }
         let lead_in = follow.ai_lead_in.take();
         if let Some([dx, dy]) = lead_in {
             let (x, y) = path::cell_of(at);
@@ -1145,7 +1067,7 @@ fn decide(
         // One from its mine's entry walks to the path's next point, from
         // where it came out (c-SDE-1: unit 4 from (112, -208) towards
         // (48, -176) at 41.398857, hub #15).
-        follow.target = if detour.is_some() || lead_in.is_some() {
+        follow.target = if lead_in.is_some() {
             1.min(follow.local.len() - 1)
         } else if found.clear && entry.is_none() {
             follow.local.len() - 1
@@ -1423,9 +1345,6 @@ fn decide(
         if follow.ai_detouring && follow.target < follow.ai_detour_end {
             follow.target += 1;
         } else {
-            if follow.ai_detouring {
-                follow.ai_passed = follow.ai_blocker.take();
-            }
             follow.ai_detouring = false;
             follow.target = farthest_seen(&seen, at, &follow.local, follow.target, class);
         }
@@ -1510,50 +1429,6 @@ fn decide(
             class,
         )
     });
-    if follow.ai_reassigned && !examined.is_empty() {
-        let other = others.units[examined.first().unwrap()];
-        follow.ai_blocker = examined.first().copied();
-        let (cx, cy) = path::cell_of(at);
-        let (ox, oy) = path::cell_of(to_cells(other.position));
-        let dx = real(sub(other.position[0], walker.here[0]));
-        let dy = real(sub(other.position[1], walker.here[1]));
-        let centre = |c: i32| (c as f32 + 0.5).to_bits();
-        let (first, detour, after) = if dx.abs() >= dy.abs() {
-            let direction = if dy >= 0.0 { 1 } else { -1 };
-            (
-                [centre(cx), centre(cy + direction)],
-                [centre(cx), centre(oy + direction)],
-                None,
-            )
-        } else {
-            let direction = if dx >= 0.0 { 1 } else { -1 };
-            let vertical = if real(sub(walker.order[1], walker.here[1])) >= 0.0 {
-                1
-            } else {
-                -1
-            };
-            (
-                [centre(cx + direction), centre(cy)],
-                [centre(ox + 2 * direction), centre(cy)],
-                Some([centre(ox + 3 * direction), centre(cy + vertical)]),
-            )
-        };
-        follow.ai_detour_first = Some(first);
-        follow.ai_detour = Some(detour);
-        follow.ai_detour_after = after;
-        follow.ai_detouring = true;
-        follow.ai_see_standing = true;
-        follow.next = Next::Search;
-        follow.local.clear();
-        shared.events.push(PathEvent {
-            tick,
-            kind: PathEventKind::Blocked,
-            a: walker.handle,
-            b: None,
-            at: walker.here,
-        });
-        return Steer::Stand(segment_goal);
-    }
     if touching_target {
         follow.touching = true;
     } else if !examined.is_empty()
@@ -1766,14 +1641,8 @@ pub(super) fn reassign_local(state: &mut State, h: u32) {
         f.made = false;
         f.hold_until = 0;
         f.ai_reassigned = true;
-        f.ai_see_standing = false;
-        f.ai_detour = None;
-        f.ai_detour_first = None;
-        f.ai_detour_after = None;
         f.ai_detouring = false;
         f.ai_detour_end = 0;
-        f.ai_blocker = None;
-        f.ai_passed = None;
         f.ai_lead_in = None;
     }
 }

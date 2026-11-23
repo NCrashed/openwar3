@@ -2842,6 +2842,7 @@ fn stop_at(state: &mut State, h: u32, at: u32) {
 /// after its next turn; one that was walking keeps the ordinary restart
 /// stand (c-SEA-1, starting Orc peons, hub #15).
 pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
+    super::harvest::ai_gathering(state, h);
     // A repeated harvest order to the same target keeps the old path and
     // motion even though its table records are replaced (c-SEA-1 at
     // 3.099971, second starting Orc peon, hub #15). `order` keeps the path

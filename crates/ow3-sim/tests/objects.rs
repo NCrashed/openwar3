@@ -866,7 +866,6 @@ fn melee_ai_scripts_resume() {
 /// their game-table entries; here they are paired with simulation handles by
 /// type and their unique positions at the 0.100 s order boundary.
 #[test]
-#[ignore = "starting AI worker trajectories not matched yet"]
 fn melee_ai_worker_movements() {
     let dir = game_data().join("replays");
     let Ok(text) = std::fs::read_to_string(dir.join("c-SEA-1.ai-movement-workers.tsv")) else {

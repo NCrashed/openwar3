@@ -1390,9 +1390,9 @@ pub(super) fn ai_build_order(
         Vec::new()
     };
     // Orc and Night Elf builders walk to their accepted plan with the build
-    // order replacing the harvest order at its next movement update. Undead
-    // construction keeps the acolyte at its assignment pose until the
-    // self-building structure starts (c-SEA-1, Orc peon vector, hub #15).
+    // order replacing the harvest order at its next movement update (c-SEA-1,
+    // Orc peon vector, hub #15). An Undead builder takes a plain build order
+    // below.
     if matches!(
         &type_id.to_be_bytes(),
         b"oalt" | b"eate" | b"emow" | b"otrb"

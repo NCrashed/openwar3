@@ -2865,13 +2865,22 @@ pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
         state.timers.time()
     };
     stop_at(state, h, at);
+    // Only the AI's first reassignment of a worker still on its game-start
+    // harvest stands a whole update (c-SEA-1: peon 11229 at 0.12; peon
+    // 10461's order of 47.097332 steps at once, 47.127315).
+    let initial = super::harvest::starting_computer_harvest(state, h);
     let mut repath = false;
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
         && let Some(m) = u.movement.as_mut()
     {
         m.ai_worker_produced = false;
         m.ai_standing = !m.restart && m.replaced;
-        m.ai_restart = m.restart;
+        m.ai_restart = m.restart && initial;
+        // A later one does not restart a walking worker: it steps on at
+        // once, losing no tick.
+        if !initial {
+            m.restart = false;
+        }
         repath = true;
     }
     if repath {

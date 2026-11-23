@@ -66,4 +66,4 @@ the question that would replace it with a rule.
 
 | Fit | Where | Question |
 | --- | --- | --- |
-| The watches of the change to day are checked from time 0. The game replaced the nwna's War Stomp watches at queue time 60.070202, as if their checks or their mana counted from 0.070202 (we fire at 60.000, inside the same turn). | `table` (the change of the hour, `watch_scheduled`) | What happens at queue time 0.070202 of the start: the start of the units' regeneration, or the base of the watches' checks? |
+| The watches of the change to day are checked from time 0, and the nwna's War Stomp watches fire at 60.000. The game replaced them at queue time 60.070202. Nothing is scheduled at queue 0.065 to 0.075 at the start, so it is neither a check base nor a start of regeneration there; the creep's 0.1 s timers from the load are reset at once and do not cause it either. The checksum cannot tell the two times apart (both in turn 599). | `table` (the change of the hour, `watch_scheduled`) | Which engine timer fires the 60.070202 take, and the chain of delays that adds up to it (a trace from the take back along that timer's own schedule, in one run). |

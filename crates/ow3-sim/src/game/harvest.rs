@@ -716,27 +716,25 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target, None);
         } else if pays_for(&s, h, target) && !entangled_for(&s, h, target) {
-            // It is put on its place at its next update; the mine's first
-            // worker stands an update before (c-SEA-1: acolyte 11576 stops
-            // at 0.21 and is placed at 0.27, 11537 stops at 1.05 and is
-            // placed at 1.08). PROVISIONAL: the first worker's extra update
-            // is read from these two acolytes only.
-            let first = s
-                .paying
-                .get(&target)
-                .is_none_or(|p| p.places.iter().all(Option::is_none));
-            let due = s.ticks + if first { 2 * UPDATE } else { UPDATE };
-            s.paid_placements.push((h, target, due));
-            // A produced acolyte's retained pair and its walk go at the update
-            // that stops it, the walk freed at its next update (c-SEA-1:
-            // 14330, 14329 in turn 182; acolyte 10269's walk at 18.18).
+            // An acolyte produced by the AI is put on its place at the update
+            // that stops it (c-SEA-1: acolyte 10269 at 18.15). A starting
+            // one is put there at its next update, the mine's first worker
+            // an update later (11576 stops at 0.21 and is placed at 0.27,
+            // 11537 stops at 1.05 and is placed at 1.08). PROVISIONAL: read
+            // from these three acolytes only; the turn to the mine may be
+            // the rule behind it.
             let produced = s
                 .unit(Some(h))
                 .is_some_and(|u| !u.entries.ai_paid_arrival.is_empty());
-            produced_paid_harvest_arrived(&mut s, h);
             if produced {
-                s.drop_path(h);
-                super::table::walk_dropped(&mut s, h);
+                arrive_paid(&mut s, h, target);
+            } else {
+                let first = s
+                    .paying
+                    .get(&target)
+                    .is_none_or(|p| p.places.iter().all(Option::is_none));
+                let due = s.ticks + if first { 2 * UPDATE } else { UPDATE };
+                s.paid_placements.push((h, target, due));
             }
         } else if pays_for(&s, h, target) {
             // A wisp goes in at its next update (c-SEA-1: wisp 11893 stops

@@ -362,7 +362,33 @@ them closed and did not step onto (350, 389) next to them (read in
 the game). A worker on its first walk to the mine,
 or one waiting there for the first time, still blocks like any unit
 (and sees others). Whether a gathering worker sees units other than
-workers (creeps, soldiers) was not tested. A worker inside the mine keeps its cells where it
+workers (creeps, soldiers) was not tested.
+
+The same holds for the Orc peons of the melee AI in `c-SEA-1`, read at
+every local search from 0.12 to 1.4 s (which unit each search met and
+whether it closed the cell):
+- the starting peons with a gold harvest order were passed by every
+  search at 0.12 (the other peons', the builder's, which is not a
+  gathering search), although none had been in the mine yet: at the
+  start of the melee game they already count as workers in the
+  gathering cycle. Whether that comes from their harvest order of the
+  map start or from the AI's harvest order at 0.1 was not read;
+- a harvesting peon's own search passes every unit except a worker
+  waiting at the mine: peon 11089, waiting at gold mine 699 from its
+  arrival at 0.54, closed the cells of peon 11229's searches at 0.66
+  and 0.81, while walking peons (and wisps, acolytes and the builder)
+  were passed;
+- the builder 11299 and the wisps and acolytes are ordinary units:
+  they close the cells of the searches of ordinary units (the wisps'
+  and acolytes' searches met each other), and a harvesting peon passes
+  them;
+- later in the game, peon 10461's search at 50.515453 (on its harvest
+  walk after the AI's order at 47.097) was refused ten times by peon
+  11159, standing at mine 699 waiting to go in since 50.275585 (its
+  cells (668, 666), (668, 667), (669, 667)); so the path was not clear
+  (SPEC-0020, step 2).
+A unit's own cells never close its own search, and a walking unit's
+cells close no search (SPEC-0021). A worker inside the mine keeps its cells where it
 entered (they count when the place of a worker coming out is chosen,
 below), but blocks nothing while hidden. Read in the game (`c-RXI-1`,
 the bits of the cells' entries for the six peasants every 6 ticks from

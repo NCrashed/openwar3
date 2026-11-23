@@ -727,6 +727,17 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
                 .is_none_or(|p| p.places.iter().all(Option::is_none));
             let due = s.ticks + if first { 2 * UPDATE } else { UPDATE };
             s.paid_placements.push((h, target, due));
+            // A produced acolyte's retained pair and its walk go at the update
+            // that stops it, the walk freed at its next update (c-SEA-1:
+            // 14330, 14329 in turn 182; acolyte 10269's walk at 18.18).
+            let produced = s
+                .unit(Some(h))
+                .is_some_and(|u| !u.entries.ai_paid_arrival.is_empty());
+            produced_paid_harvest_arrived(&mut s, h);
+            if produced {
+                s.drop_path(h);
+                super::table::walk_dropped(&mut s, h);
+            }
         } else if pays_for(&s, h, target) {
             // A wisp goes in at its next update (c-SEA-1: wisp 11893 stops
             // at 0.84 and goes in at 0.87).

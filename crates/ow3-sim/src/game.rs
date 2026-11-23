@@ -1319,9 +1319,6 @@ pub struct State {
     /// Those initial miners after the observed wait transition. Their
     /// measured placement is outside another starting worker's local route.
     ai_mine_waiting: BTreeSet<u32>,
-    /// First worker of each common starting-computer mine arrival, retained
-    /// until that mine's first cycle identifies the observed exiting worker.
-    starting_mine_first: BTreeMap<u32, u32>,
     /// Group members marked during this tick's steps, which local
     /// searches pass by (SPEC-0025).
     marked: std::collections::BTreeSet<u32>,
@@ -1527,7 +1524,6 @@ impl State {
             ai_supply_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
             ai_mine_waiting: BTreeSet::new(),
-            starting_mine_first: BTreeMap::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
             engine_started: 0,

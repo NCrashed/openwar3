@@ -18,6 +18,10 @@
 //!   the game's checksum, and the C and D pairs near ours that would.
 //! - `info`: `OW3_INFO=k`, the replay's map, its number of turns and the
 //!   recorded time of turn `k`.
+//! - `kind`: `OW3_TYPE=nwna`, a unit type of the map: life, mana, regeneration
+//!   and each ability with its costs, cooldowns and durations by level.
+//! - `script`: `OW3_SCRIPT=text`, the functions of the map's `war3map.j`
+//!   whose body mentions it, with the calls that do.
 
 use std::path::PathBuf;
 
@@ -186,5 +190,60 @@ fn info() {
             turns.last().map(|t| t.after),
             turns.get(k.saturating_sub(1)).map(|t| t.after)
         );
+    });
+}
+
+#[test]
+fn kind() {
+    let Ok(code) = std::env::var("OW3_TYPE") else {
+        return;
+    };
+    let id = i32::from_be_bytes(code.as_bytes().try_into().expect("a four-letter type"));
+    with_replay(|_, map, _| {
+        let Some(t) = map.data.units.get(&id) else {
+            eprintln!("no type {code}");
+            return;
+        };
+        eprintln!(
+            "type {code} hp {} mana {} start {} regen {} life regen {}",
+            t.hp,
+            f32::from_bits(t.max_mana),
+            f32::from_bits(t.start_mana),
+            f32::from_bits(t.mana_regen),
+            f32::from_bits(t.life_regen)
+        );
+        for a in &t.abilities {
+            let Some(d) = map.data.abilities.get(a) else {
+                continue;
+            };
+            let levels: Vec<_> = d
+                .per_level
+                .iter()
+                .map(|l| (l.cost, f32::from_bits(l.cooldown), f32::from_bits(l.duration)))
+                .collect();
+            eprintln!(
+                "ability {} code {} levels (cost, cooldown, duration) {levels:?}",
+                String::from_utf8_lossy(&a.to_be_bytes()),
+                String::from_utf8_lossy(&d.code.to_be_bytes())
+            );
+        }
+    });
+}
+
+#[test]
+fn script() {
+    let Ok(pattern) = std::env::var("OW3_SCRIPT") else {
+        return;
+    };
+    with_replay(|_, map, _| {
+        for f in &map.scripts[2].functions {
+            let text = format!("{:?}", f.body);
+            if text.contains(&pattern) {
+                eprintln!("{} at {:?}", f.signature.name, f.position);
+                for piece in text.split("Call").filter(|p| p.contains(&pattern)) {
+                    eprintln!("  {}", &piece[..piece.len().min(300)]);
+                }
+            }
+        }
     });
 }

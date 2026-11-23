@@ -61,3 +61,9 @@ the question that would replace it with a rule.
 | The records of `RecycleGuardPosition` and the recycled guard's order at 1.0 | `table::guard_position_recycled` | What order 851988 is and which timer gives it. |
 | The production plan objects of the town hall (`ai_production`) and the retained records of produced workers (`ai_worker_completion_retained`) | `table` | The records of the AI's production requests, as a rule. |
 | The haunted mine's record chain anchored at the first paid placement | `table` (`ai_paid_records`) | The anchors 0.279999763 and 1.089998960 offered by the analyst. |
+
+### Creeps
+
+| Fit | Where | Question |
+| --- | --- | --- |
+| The watches of the change to day are checked from time 0. The game replaced the nwna's War Stomp watches at queue time 60.070202, as if their checks or their mana counted from 0.070202 (we fire at 60.000, inside the same turn). | `table` (the change of the hour, `watch_scheduled`) | What happens at queue time 0.070202 of the start: the start of the units' regeneration, or the base of the watches' checks? |

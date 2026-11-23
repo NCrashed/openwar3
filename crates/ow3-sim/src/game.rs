@@ -1658,7 +1658,12 @@ impl State {
         self.table.flush(tick);
         // The watches' checks come after the 0.0001 s frees (c-SAK-1: the
         // Mountain King's watch at 7903 after the frees of 7902).
-        for &h in &heroes {
+        let mut checked = heroes.clone();
+        checked.sort_by(|&a, &b| {
+            let (ka, kb) = (table::watch_check_key(self, a), table::watch_check_key(self, b));
+            f32::from_bits(ka.0).total_cmp(&f32::from_bits(kb.0)).then(ka.1.cmp(&kb.1))
+        });
+        for &h in &checked {
             table::watches_checked(self, h);
         }
         // A watch made anew frees the old one 0.0001 s later, before the

@@ -2292,6 +2292,32 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
                 rest.push(e);
             }
         }
+        // Each watch of a spell with a cost is the unit's watch of that cost
+        // from now: checked while the mana is below it (c-SEA-1: the nwna
+        // 3324 and 3254, their mana set to 0, replace their War Stomp
+        // watches 10535 and 10538 at 60.070202 as it reaches 90).
+        if to_day {
+            let mana = state
+                .unit(Some(h))
+                .map_or(f32::MAX, |u| f32::from_bits(u.mana.value()));
+            let costs = day_watch_costs(state, type_id);
+            let mut below = Vec::new();
+            if let Some(e) = entries(state, h) {
+                for (&cost, &watch) in costs.iter().zip(&own) {
+                    if cost <= 0 {
+                        continue;
+                    }
+                    let above = mana >= cost as f32;
+                    e.mana_watches.push((cost, watch, above));
+                    if !above {
+                        below.push(watch);
+                    }
+                }
+            }
+            for watch in below {
+                watch_scheduled(state, h, watch);
+            }
+        }
         state.table.day_of.insert(h, (own, rest));
     }
     if !to_day {
@@ -2308,6 +2334,31 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
 /// it has Ensnare (c-SCW-1, hub #15).
 /// PROVISIONAL: the attribution to these abilities is read from IceCrown's
 /// types.
+/// The mana costs of unit type `type_id`'s spells that make a watch at
+/// the change to day, in the order of `day_parts`.
+fn day_watch_costs(state: &super::State, type_id: i32) -> Vec<i32> {
+    let Some(t) = state.data.units.get(&type_id) else {
+        return Vec::new();
+    };
+    let mut costs = Vec::new();
+    for &a in &t.abilities {
+        let code = ability_code(state, a);
+        let cost = state
+            .data
+            .abilities
+            .get(&a)
+            .and_then(|d| d.per_level.first())
+            .map_or(0, |l| l.cost);
+        match &code {
+            b"Ashm" | b"Apos" | b"ACrn" | b"AOre" => {}
+            b"Aens" | b"Aweb" => costs.push(cost),
+            _ if cost > 0 => costs.push(cost),
+            _ => {}
+        }
+    }
+    costs
+}
+
 fn day_parts(state: &super::State, type_id: i32) -> (bool, usize, bool) {
     let Some(t) = state.data.units.get(&type_id) else {
         return (false, 0, false);
@@ -5075,10 +5126,20 @@ pub(super) fn mana_set(state: &mut super::State, h: u32) {
     let Some(mana) = state.unit(Some(h)).map(|u| f32::from_bits(u.mana.value())) else {
         return;
     };
+    let mut below = Vec::new();
     if let Some(e) = entries(state, h) {
         for w in &mut e.mana_watches {
             w.2 = mana >= w.0 as f32;
+            if !w.2 && !e.watch_checks.iter().any(|c| c.0 == w.1) {
+                below.push(w.1);
+            }
         }
+    }
+    // A watch now below its cost is checked from the set on, as one made
+    // below it (c-SEA-1: the nwna 3324 and 3254, set to 0 at the start,
+    // their War Stomp watches fired at 60.070202 when the mana reached 90).
+    for entry in below {
+        watch_scheduled(state, h, entry);
     }
 }
 
@@ -5108,6 +5169,7 @@ fn mana_watches_crossed(state: &mut super::State, h: u32, spent: i32) {
             continue;
         }
         let new = state.table.take(tick, "unit state: limit watch");
+        day_watch_replaced(state, h, entry, new);
         old.push(entry);
         if let Some(e) = entries(state, h) {
             e.mana_watches[k] = (cost, new, now);
@@ -5206,6 +5268,7 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
             .map_or(mana, |u| f32::from_bits(u.mana.value_at(at)));
         if value >= cost as f32 {
             let new = state.table.take(tick, "unit state: limit watch");
+            day_watch_replaced(state, h, entry, new);
             state.table.defer(entry, "unit state: limit watch");
             if let Some(e) = entries(state, h) {
                 e.watch_checks.retain(|&(w, _)| w != entry);
@@ -8101,4 +8164,39 @@ pub(super) fn walk_entry_started(state: &mut super::State, h: u32) {
             state.table.walk_key.insert(e, given);
         }
     }
+}
+
+/// Watch `old` of unit `h` was replaced by `new`: the hour's lists hold
+/// the new one (`day_of`), so the next change of the hour frees it.
+fn day_watch_replaced(state: &mut super::State, h: u32, old: u32, new: u32) {
+    for e in state.table.day.iter_mut().filter(|e| **e == old) {
+        *e = new;
+    }
+    if let Some((own, _)) = state.table.day_of.get_mut(&h) {
+        for e in own.iter_mut().filter(|e| **e == old) {
+            *e = new;
+        }
+    }
+}
+
+/// The order of unit `h`'s due watch checks in the timer queue: by time,
+/// then the older watch first (c-SEA-1: the nwna 3324's watch 10535 before
+/// the nwna 3254's 10538, both at 60.070202).
+pub(super) fn watch_check_key(state: &super::State, h: u32) -> (u32, u32) {
+    let clock = state.move_clock;
+    state
+        .unit(Some(h))
+        .and_then(|u| {
+            u.entries
+                .watch_checks
+                .iter()
+                .filter(|&&(_, n)| f32::from_bits(n) <= f32::from_bits(clock))
+                .map(|&(e, n)| (n, state.table.creation_of(e)))
+                .min_by(|a, b| {
+                    f32::from_bits(a.0)
+                        .total_cmp(&f32::from_bits(b.0))
+                        .then(a.1.cmp(&b.1))
+                })
+        })
+        .unwrap_or((u32::MAX, u32::MAX))
 }

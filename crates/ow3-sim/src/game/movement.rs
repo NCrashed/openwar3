@@ -1610,7 +1610,7 @@ pub(super) fn start_buildings(state: &mut State) {
                 u.y = add(site[1], (-48.0f32).to_bits());
                 // c-SEA-1: put at (8752, 4176) at the start of 1.349999, its
                 // walk still going.
-                u.facing = walked.unwrap_or(3.500_498_5_f32.to_bits());
+                u.facing = start[2];
             } else if type_id == i32::from_be_bytes(*b"uaod")
                 && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
             {
@@ -3483,6 +3483,24 @@ pub(super) fn step(state: &mut State) {
 
 /// The updates due at this tick, after the timers.
 pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
+    // A Crypt starts in the tick's timers, before the updates: its builder
+    // keeps the facing it has then (c-SEA-1: the acolyte at 1.349999).
+    let usep = i32::from_be_bytes(*b"usep");
+    let tick = state.ticks;
+    let due: Vec<u32> = state
+        .ai_builds
+        .iter()
+        .filter(|plan| plan.0 <= tick && plan.2 == usep)
+        .map(|plan| plan.1)
+        .collect();
+    for worker in due {
+        let facing = state.unit(Some(worker)).map(|u| u.facing);
+        for plan in state.ai_builds.iter_mut().filter(|plan| plan.1 == worker) {
+            if let Some(facing) = facing {
+                plan.4[2] = facing;
+            }
+        }
+    }
     refresh_call_cells(state);
     let tick = state.ticks;
     let control = update_clusters(state, tick);

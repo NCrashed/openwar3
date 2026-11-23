@@ -716,9 +716,16 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         } else if is_mine(&s, target) {
             arrive_at_mine(&mut s, h, target, None);
         } else if pays_for(&s, h, target) && !entangled_for(&s, h, target) {
-            // It stops within reach, stands an update, and is put on its
-            // place at the update after.
-            let due = s.ticks + 2 * UPDATE;
+            // It is put on its place at its next update; the mine's first
+            // worker stands an update before (c-SEA-1: acolyte 11576 stops
+            // at 0.21 and is placed at 0.27, 11537 stops at 1.05 and is
+            // placed at 1.08). PROVISIONAL: the first worker's extra update
+            // is read from these two acolytes only.
+            let first = s
+                .paying
+                .get(&target)
+                .is_none_or(|p| p.places.iter().all(Option::is_none));
+            let due = s.ticks + if first { 2 * UPDATE } else { UPDATE };
             s.paid_placements.push((h, target, due));
         } else if pays_for(&s, h, target) {
             // A wisp goes in at its next update (c-SEA-1: wisp 11893 stops

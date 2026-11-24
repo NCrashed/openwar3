@@ -108,9 +108,6 @@ pub struct ObjectTable {
     /// the later mixed post-AI cleanup batch. Their origin is known; this
     /// storage does not assign ownership of that batch (c-SEA-1, turn 13).
     pub recycled_guard_cleanup: Vec<u32>,
-    /// Late entangled-mine arrivals whose retained records are visited by
-    /// three following unit-update batches: next update tick, wisp and phase.
-    pub late_wisp_cleanup: Vec<(u64, u32, u8)>,
     /// The two records made after the second initial wisp enters an
     /// entangled mine, replaced at each payment of that mine (SPEC-0029,
     /// items 8 and 9).
@@ -291,7 +288,6 @@ impl ObjectTable {
             ai_worker_completion_retained: std::collections::BTreeMap::new(),
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
-            late_wisp_cleanup: Vec::new(),
             late_entangled_records: Vec::new(),
             late_entangled_mine: None,
             starting_harvest_left: 0,
@@ -926,8 +922,6 @@ pub struct UnitEntries {
     pub stale: Vec<(u64, u32)>,
     /// The update at which those walks go if the unit stands by then.
     pub stale_update: Option<u64>,
-    /// A late wisp arrival whose observed boundary retains its walk pair.
-    pub retained_late_wisp_walk: bool,
     /// Its walk was made at its order; the first search of the order
     /// takes no new one.
     pub walk_ready: bool,
@@ -3148,6 +3142,19 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         let capture_cleanup = std::mem::take(&mut state.table.ai_harvest_cleanup_armed);
         let mut cleanup = Vec::new();
         let produced_paid = entries(state, h).is_some_and(|e| e.ai_paid_worker_unassigned);
+        // A wisp that will be its mine's fourth or later occupant keeps its
+        // order and its walk to its entry (c-SEA-1: wisp 11776 at 1.1, in at
+        // 1.23, its order's 12585, 12584 freed then and its walk at 1.26).
+        let wisp = super::harvest::is_wisp(state, h)
+            && state
+                .unit(Some(h))
+                .and_then(|u| u.movement)
+                .is_some_and(|m| match m.order {
+                    super::movement::Order::Gather { target } => {
+                        super::harvest::late_wisp_assignment(state, target)
+                    }
+                    _ => false,
+                });
         if let Some(e) = entries(state, h) {
             if paid {
                 e.harvest_arrive.clear();
@@ -3186,8 +3193,9 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                 cleanup = std::mem::take(&mut e.harvest_arrive);
                 // A produced acolyte's kept records belong to its harvest
                 // order and last as long as it (SPEC-0024; c-SEA-1:
-                // acolyte 10269's 14323 .. 14328 to 31.430725).
-                if !produced_paid {
+                // acolyte 10269's 14323 .. 14328 to 31.430725), and a wisp's
+                // go at its entry into the mine (11776 at 1.23).
+                if !produced_paid && !wisp {
                     cleanup.extend(std::mem::take(&mut e.order));
                 }
             }
@@ -3206,7 +3214,9 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
             state.table.ai_harvest_cleanup = cleanup;
         }
         walk_made_at_order(state, h);
-        if capture_cleanup {
+        // A wisp keeps its walk to its entry into the mine (c-SEA-1: wisp
+        // 11776's 12593, 12592 freed at 1.26, after its entry at 1.23).
+        if capture_cleanup && !wisp {
             let tick = state.table.now;
             if let Some(e) = entries(state, h) {
                 let walk = std::mem::take(&mut e.walk);
@@ -3342,28 +3352,6 @@ pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
     }
 }
 
-/// Keeps the walk of a late wisp assignment whose observed arrival boundary
-/// has no main-table frees (c-SEA-1, turn 13, hub #15).
-pub(super) fn retain_late_wisp_walk(state: &mut super::State, h: u32) {
-    if let Some(e) = entries(state, h) {
-        e.retained_late_wisp_walk = true;
-        e.stale_update = None;
-    }
-    // The retained arrival is revisited on the fifth shared update after
-    // this boundary, then on the following two updates (c-SEA-1, turn 14).
-    if !state
-        .table
-        .late_wisp_cleanup
-        .iter()
-        .any(|&(_, worker, _)| worker == h)
-    {
-        state
-            .table
-            .late_wisp_cleanup
-            .push((state.table.now + 26, h, 0));
-    }
-}
-
 /// A payment of entangled mine `mine` at world clock `e` replaces its two
 /// records: the new pair is taken at the payment, the old one freed
 /// 0.0001 s later (SPEC-0024, "Objects by mechanic"; SPEC-0029, items 8
@@ -3383,58 +3371,6 @@ pub(super) fn entangled_mine_paid(state: &mut super::State, mine: u32, e: u32) {
             .free_at_clock(release, entry, "entangled mine: old payment pair");
     }
     state.table.late_entangled_records = new;
-}
-
-/// Advances the two observed cleanup updates of a late wisp arrival. The
-/// retained walk is cleared on the following shared update; later harvest
-/// arrivals have their own ordinary lifecycle (c-SEA-1, turns 14 and 16).
-pub(super) fn late_wisp_cleanup_updated(state: &mut super::State) {
-    let tick = state.table.now;
-    let mut due = Vec::new();
-    state.table.late_wisp_cleanup.retain(|record| {
-        if record.0 <= tick {
-            due.push(*record);
-            false
-        } else {
-            true
-        }
-    });
-    for (_, h, phase) in due {
-        match phase {
-            0 => {
-                state.table.take(tick, "late wisp: update record");
-                super::harvest::wisp_counts(state, h, super::harvest::count_time(state));
-                let count = state.table.ai_harvest_cleanup.len().min(2);
-                let old_arrival = state
-                    .table
-                    .ai_harvest_cleanup
-                    .drain(..count)
-                    .collect::<Vec<_>>();
-                for entry in old_arrival {
-                    state.table.defer(entry, "late wisp: old arrival");
-                }
-                let records = entries(state, h)
-                    .map(|e| std::mem::take(&mut e.wisp_arrival))
-                    .unwrap_or_default();
-                for entry in records {
-                    state.table.defer(entry, "late wisp: unit record");
-                }
-                state.table.late_wisp_cleanup.push((tick + 6, h, 1));
-            }
-            _ => {
-                let stale = entries(state, h)
-                    .map(|e| {
-                        e.retained_late_wisp_walk = false;
-                        e.stale_update = None;
-                        std::mem::take(&mut e.stale)
-                    })
-                    .unwrap_or_default();
-                for (_, entry) in stale {
-                    state.table.free(tick, entry, "late wisp: walk");
-                }
-            }
-        }
-    }
 }
 
 /// Schedules the placement-record transition of the nearest acolyte in a
@@ -4484,9 +4420,6 @@ pub(super) fn walk_visits(state: &super::State) -> Vec<(u64, u32)> {
             continue;
         };
         let e = &u.entries;
-        if e.retained_late_wisp_walk {
-            continue;
-        }
         let moving = u.movement.is_some();
         if !moving && !e.stale_update.is_some_and(|n| n <= tick) {
             continue;
@@ -4554,10 +4487,7 @@ pub(super) fn walks_freed(state: &mut super::State) {
         .collect();
     for h in standing {
         let due = entries(state, h).and_then(|e| {
-            (!e.retained_late_wisp_walk
-                && e.stale_update.is_some_and(|n| n <= tick)
-                && !e.stale.is_empty())
-            .then(|| {
+            (e.stale_update.is_some_and(|n| n <= tick) && !e.stale.is_empty()).then(|| {
                 e.stale_update = None;
                 std::mem::take(&mut e.stale)
             })

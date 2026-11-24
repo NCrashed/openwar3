@@ -4708,7 +4708,13 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     let place = (cluster > 1)
                         .then(|| state.member_now.get(&h).copied())
                         .flatten();
-                    let mine = building.is_some_and(|b| super::harvest::is_mine(state, b));
+                    // An entangled mine too: a wisp turns to it before it goes in
+                    // (c-SEA-1: wisp 11776, blocked at 1.11, in at 1.23).
+                    let mine = building.is_some_and(|b| {
+                        super::harvest::is_mine(state, b)
+                            || (super::harvest::pays_for(state, h, b)
+                                && super::harvest::is_wisp(state, h))
+                    });
                     let flee = state
                         .unit(Some(h))
                         .is_some_and(|u| u.attack_removed && u.attack_move.is_some());

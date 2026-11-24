@@ -290,10 +290,7 @@ struct Others {
 
 /// The other ground units than `h` with the cells they occupy: a moving
 /// unit at its position of its last update.
-fn others(
-    state: &State,
-    h: u32,
-) -> Others {
+fn others(state: &State, h: u32) -> Others {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let mut others = Others {
         standing: HashSet::new(),
@@ -766,10 +763,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
     if !state.paths.contains_key(&walker.handle) && !priority {
         super::table::path_searched(state, walker.handle);
     }
-    let others = others(
-        state,
-        walker.handle,
-    );
+    let others = others(state, walker.handle);
     let grid = state.grid.as_ref().unwrap();
     let held = state.path_holds.remove(&walker.handle);
     let mut follow = state.paths.remove(&walker.handle).unwrap_or_else(|| {

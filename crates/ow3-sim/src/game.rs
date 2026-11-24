@@ -1660,8 +1660,13 @@ impl State {
         // Mountain King's watch at 7903 after the frees of 7902).
         let mut checked = heroes.clone();
         checked.sort_by(|&a, &b| {
-            let (ka, kb) = (table::watch_check_key(self, a), table::watch_check_key(self, b));
-            f32::from_bits(ka.0).total_cmp(&f32::from_bits(kb.0)).then(ka.1.cmp(&kb.1))
+            let (ka, kb) = (
+                table::watch_check_key(self, a),
+                table::watch_check_key(self, b),
+            );
+            f32::from_bits(ka.0)
+                .total_cmp(&f32::from_bits(kb.0))
+                .then(ka.1.cmp(&kb.1))
         });
         for &h in &checked {
             table::watches_checked(self, h);
@@ -4539,9 +4544,6 @@ fn register_ai_natives(
                     }
                 }
                 let paid = harvest::pays_for(&state, worker, mine);
-                let retain_walk = paid
-                    && harvest::is_wisp(&state, worker)
-                    && harvest::late_wisp_assignment(&state, mine);
                 // PROVISIONAL: a renewed trained worker's order has one record
                 // more (c-SEA-1 at 31.095781: 20 before its walk); which one
                 // was not read.
@@ -4587,9 +4589,6 @@ fn register_ai_natives(
                         state.table.ai_harvest_fewer = 0;
                         if Some(worker) == paid_placement {
                             table::ai_paid_placement(&mut state, worker, mine, repeat);
-                        }
-                        if retain_walk {
-                            table::retain_late_wisp_walk(&mut state, worker);
                         }
                     }
                     gold_workers.borrow_mut().insert(worker);

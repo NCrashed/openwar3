@@ -673,9 +673,6 @@ pub(super) fn deliveries(state: &mut State) {
 /// What the workers that reached their mines, trees and drop-offs at the
 /// updates of this tick do, then the mines and the trees of this tick.
 pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
-    if state.borrow().update_now {
-        super::table::late_wisp_cleanup_updated(&mut state.borrow_mut());
-    }
     starting_mine_arrivals(&mut state.borrow_mut());
     ai_mine_waits(&mut state.borrow_mut());
     pay_mines(&mut state.borrow_mut());
@@ -876,10 +873,6 @@ pub(super) fn builder_started(state: &mut State, worker: u32) {
     state.harvest_waiters.retain(|&h| h != worker);
     state.deliveries.retain(|&(h, _)| h != worker);
     state.mine_arrivals.remove(&worker);
-    state
-        .table
-        .late_wisp_cleanup
-        .retain(|&(_, h, _)| h != worker);
 }
 
 /// Workers whose order is no longer one of gathering keep their load and
@@ -2319,9 +2312,7 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
     // Each wisp goes in at the update after it reached the mine and counts
     // 0.01 s later (SPEC-0029, item 9: c-SEA-1 mine 781, wisps counted at
     // 0.879999161 .. 1.239998817).
-    if (0..3).contains(&occupants) {
-        p.joining.push((h, at));
-    }
+    p.joining.push((h, at));
     if occupants >= 2 {
         // From the third wisp on, reaching an entangled mine does not also
         // enter the ordinary-mine waiting transition. The second wisp still
@@ -2338,18 +2329,10 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
             set(state, h, Some(gathering));
         }
     }
-    wisp_arrival_records(state, h, occupants, at, false);
-    if occupants >= 3 {
-        state.paths.remove(&h);
-        super::table::retain_late_wisp_walk(state, h);
-    } else {
-        state.drop_path(h);
-    }
+    wisp_arrival_records(state, h, occupants, at);
+    state.drop_path(h);
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.movement = None;
-        if occupants >= 3 {
-            u.entries.stale_update = None;
-        }
     }
     hide(state, h, true);
 }
@@ -2357,12 +2340,7 @@ fn go_in_paid(state: &mut State, h: u32, mine: u32) {
 /// The table records kept by a wisp's order are released when it completes
 /// entry into an entangled mine. `occupants` includes earlier reservations,
 /// but not a newly allocated place in the ordinary call above.
-fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32, terminal_wait: bool) {
-    // The fourth and later wisps enter without a main-table transition
-    // (c-SEA-1, turn 13, hub #15).
-    if !terminal_wait && occupants >= 3 {
-        return;
-    }
+fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32) {
     let tick = state.table.now;
     state.table.take(tick, "wisp: entangled-mine arrival");
     let (order, records) = state
@@ -2398,19 +2376,6 @@ fn wisp_arrival_records(state: &mut State, h: u32, occupants: usize, at: u32, te
             .iter()
             .find(|(_, p)| p.places.contains(&Some(h)))
             .map(|(&mine, _)| mine);
-    }
-}
-
-/// Wisp `h` inside its entangled mine starts to count at world clock `at`.
-pub(super) fn wisp_counts(state: &mut State, h: u32, at: u32) {
-    if let Some(p) = state
-        .paying
-        .values_mut()
-        .find(|p| p.places.contains(&Some(h)))
-        && !p.working.contains(&h)
-        && !p.joining.iter().any(|&(w, _)| w == h)
-    {
-        p.joining.push((h, at));
     }
 }
 
@@ -2803,10 +2768,13 @@ mod tests {
 /// "Workers in the gathering cycle do not block each other"; c-SEA-1: the
 /// starting peons passed at 0.12).
 pub(super) fn ai_gathering(state: &mut State, h: u32) {
-    let ordinary = state.unit(Some(h)).and_then(|u| u.movement).is_some_and(|m| match m.order {
-        movement::Order::Gather { target } => is_mine(state, target),
-        _ => false,
-    });
+    let ordinary = state
+        .unit(Some(h))
+        .and_then(|u| u.movement)
+        .is_some_and(|m| match m.order {
+            movement::Order::Gather { target } => is_mine(state, target),
+            _ => false,
+        });
     if !ordinary {
         return;
     }

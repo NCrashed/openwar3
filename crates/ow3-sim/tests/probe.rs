@@ -219,7 +219,13 @@ fn kind() {
             let levels: Vec<_> = d
                 .per_level
                 .iter()
-                .map(|l| (l.cost, f32::from_bits(l.cooldown), f32::from_bits(l.duration)))
+                .map(|l| {
+                    (
+                        l.cost,
+                        f32::from_bits(l.cooldown),
+                        f32::from_bits(l.duration),
+                    )
+                })
                 .collect();
             eprintln!(
                 "ability {} code {} levels (cost, cooldown, duration) {levels:?}",

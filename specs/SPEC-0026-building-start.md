@@ -336,6 +336,13 @@ player's peon record went from (2147483647, 7, 0, 0, 7, 0, 8) to
 (2147483647, 7, 1, 0, 7, 0, 8) in the tick of the AI's
 `SetProduce(1, opeo, -1)` (world 31.265752792), which queued a peon at
 the Great Hall, and G changed with it (C7218CD9 -> 47218CD9).
+A hero queued for training does not count in `q2`: at the Night Elf
+player's `SetProduce(1, Emoo, -1)` (Priestess of the Moon at the Altar
+of Elders, queue 61.599998 in `c-SEA-1`) neither the `Emoo` record
+(1, 0, 0, 0, 0, 0, 8) nor the `HERO` record (3, 0, 0, 0, 0, 0, 0)
+changed, while the wisp queued in the same wake raised the `ewsp`
+record's `q2` from 0 to 1. The player had no hero yet; whether a later
+hero counts was not read.
 
 ### Other races
 

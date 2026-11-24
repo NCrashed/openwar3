@@ -860,8 +860,8 @@ pub struct UnitEntries {
     pub construction: Vec<u32>,
     pub dispel: Vec<u32>,
     pub construction_work: Option<u32>,
-    /// The records an Undead building keeps from its start to its finish:
-    /// a timer, the work order and its order parts (`construction_finished`).
+    /// The last five records of an Undead building's start, kept to its
+    /// finish (`construction_finished`).
     pub undead_finish: Vec<u32>,
     pub first_helper: Option<u32>,
     /// A builder turning to its building: the fifth part of its work order,
@@ -7568,8 +7568,11 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
         }
         state.table.defer(timer[2], "AI construction: timer");
         state.table.defer(timer[1], "AI construction: timer");
-        if let Some(e) = entries(state, h) {
-            e.work = std::iter::once(work).chain(parts).collect();
+        // Its work order and the order's parts stay with the building to
+        // its finish (c-SEA-1: the Crypt's 12633 .. 12637, freed at
+        // 61.354496).
+        if let Some(e) = entries(state, building) {
+            e.undead_finish = std::iter::once(work).chain(parts).collect();
         }
         return;
     }
@@ -7856,14 +7859,16 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
 /// its dispel runs from 0.01 s after the completion.
 pub(super) fn construction_finished(state: &mut super::State, building: u32, builder: u32, q: u32) {
     let tick = state.table.now;
-    // An Undead building makes nothing at its finish: it frees the records
-    // kept from its start, the second order part first (c-SEA-1: the
-    // Ziggurat at 56.152355, 13046, 13045, 13047, 13044, 13043).
+    // An Undead building makes nothing at its finish: it frees the last
+    // five records of its start, the second last, the third last, the
+    // last, then the fourth and fifth last (c-SEA-1: the Ziggurat at
+    // 56.152355, 13046, 13045, 13047, 13044, 13043; the Crypt at 61.354496,
+    // 12636, 12635, 12637, 12634, 12633). PROVISIONAL: read on these two.
     let kept = entries(state, building)
         .map(|e| std::mem::take(&mut e.undead_finish))
         .unwrap_or_default();
-    if let [timer, work, first, second, third] = kept[..] {
-        for e in [second, first, third, work, timer] {
+    if let [fifth, fourth, third, second, last] = kept[..] {
+        for e in [second, third, last, fourth, fifth] {
             state.table.free(tick, e, "Undead construction: finished");
         }
         return;

@@ -137,6 +137,8 @@ pub struct UnitType {
     /// (it trains or revives), items to sell, an upgrade.
     pub queue: bool,
     pub rally: bool,
+    /// The units it trains (`Trains`).
+    pub trains: Vec<i32>,
     pub sells_items: bool,
     pub upgrades: bool,
     /// The pathing texture of a building (`pathTex` of `UnitData.slk`,
@@ -1168,6 +1170,18 @@ impl ObjectData {
                     .is_some_and(|v| !v.trim().is_empty() && v.trim() != "0")
             };
             unit.rally = listed("Trains") || listed("Revive");
+            unit.trains = functions
+                .get(&section, "Trains")
+                .map(|v| {
+                    v.split(',')
+                        .filter_map(|code| {
+                            let code = code.trim().as_bytes();
+                            (code.len() == 4)
+                                .then(|| i32::from_be_bytes([code[0], code[1], code[2], code[3]]))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             unit.sells_items = listed("Makeitems");
             unit.upgrades = listed("Upgrade");
             unit.queue = unit.rally || unit.sells_items || listed("Researches");

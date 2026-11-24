@@ -4114,6 +4114,26 @@ fn register_ai_natives(
                 .map_or((false, false, false), |t| {
                     (t.worker, t.building, t.food_made > 0)
                 });
+            // A unit another of the player's finished buildings trains is
+            // started there like a worker (c-SEA-1: a ghoul at the Crypt at
+            // 61.433331, six records, the 3rd and 4th kept).
+            let trainer = (!worker && !building)
+                .then(|| {
+                    state.units.iter().copied().find(|&b| {
+                        state.unit(Some(b)).is_some_and(|u| {
+                            u.owner == player
+                                && u.alive
+                                && u.construction.is_none()
+                                && state
+                                    .data
+                                    .units
+                                    .get(&u.type_id)
+                                    .is_some_and(|t| t.trains.contains(&type_id))
+                        })
+                    })
+                })
+                .flatten();
+            let worker = worker || trainer.is_some();
             let planned_at = production_plans.borrow().get(&type_id).copied();
             let worker_pending = worker
                 && ai_unit_count(&state, player, type_id, false)
@@ -4310,7 +4330,8 @@ fn register_ai_natives(
                 *state.setup.player_states.entry((player, 5)).or_default() += food;
             }
             if let Some(records) = worker_records
-                && let Some(hall) = ai_town_halls(&state, player).into_iter().next()
+                && let Some(hall) =
+                    trainer.or_else(|| ai_town_halls(&state, player).into_iter().next())
             {
                 let build_time = state
                     .data

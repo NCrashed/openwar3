@@ -4379,17 +4379,14 @@ fn register_ai_natives(
         }),
     );
     let assigned = Rc::new(RefCell::new(BTreeSet::<u32>::new()));
-    let gold_counts = Rc::new(RefCell::new(BTreeMap::<u32, usize>::new()));
     let harvest_cycle = Rc::new(RefCell::new(0usize));
     let clear = assigned.clone();
-    let clear_gold = gold_counts.clone();
     let clear_cycle = harvest_cycle.clone();
     let cleared = state.clone();
     add(
         "native ClearHarvestAI takes nothing returns nothing",
         Rc::new(move |_, _| {
             clear.borrow_mut().clear();
-            clear_gold.borrow_mut().clear();
             *clear_cycle.borrow_mut() += 1;
             table::ai_harvest_cleared(&mut cleared.borrow_mut());
             Ok(None)
@@ -4397,7 +4394,6 @@ fn register_ai_natives(
     );
     let harvesting = state.clone();
     let gold_workers = assigned.clone();
-    let gold_assigned = gold_counts.clone();
     let gold_cycle = harvest_cycle.clone();
     add(
         "native HarvestGold takes integer town, integer peons returns nothing",
@@ -4427,6 +4423,7 @@ fn register_ai_natives(
                                 && u.alive
                                 && !u.movement.is_some_and(|m| m.ai_worker_produced)
                         }) && harvest::ai_gold_assigned(&state, h, mine, settled)
+                            && !gold_workers.borrow().contains(&h)
                     })
                     .take(wanted)
                     .collect()
@@ -4434,9 +4431,11 @@ fn register_ai_natives(
                 Vec::new()
             };
             gold_workers.borrow_mut().extend(existing.iter().copied());
-            let already = existing
-                .len()
-                .max(gold_assigned.borrow().get(&mine).copied().unwrap_or(0));
+            // Each call puts that many more workers on gold: those already on
+            // it count only if no earlier call of the pass counted them
+            // (c-SEA-1: the Night Elf HarvestGold(0, 1) after HarvestGold(0,
+            // 4) gives wisp 10114 a gold order at 61.099636).
+            let already = existing.len();
             let remaining = wanted.saturating_sub(already);
             let workers: Vec<u32> = state
                 .units
@@ -4518,8 +4517,6 @@ fn register_ai_natives(
                     .all(|&worker| harvest::carried(&state, worker).is_some())
             {
                 gold_workers.borrow_mut().extend(workers.iter().copied());
-                assigned_now += workers.len();
-                gold_assigned.borrow_mut().insert(mine, assigned_now);
                 return Ok(None);
             }
             for worker in workers {
@@ -4537,6 +4534,7 @@ fn register_ai_natives(
                     });
                     if let Some(slot) = slot {
                         gold_workers.borrow_mut().insert(slot);
+                        gold_workers.borrow_mut().insert(worker);
                         worker = slot;
                     }
                 }
@@ -4601,7 +4599,6 @@ fn register_ai_natives(
                 }
                 state.table.ai_harvest_extra = 0;
             }
-            gold_assigned.borrow_mut().insert(mine, assigned_now);
             Ok(None)
         }),
     );

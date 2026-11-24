@@ -3249,8 +3249,10 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                 .copied()
                 .collect();
             e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
+            // The kept record goes before the order (c-SEA-1: 19520, then 19519
+            // at 62.099998).
             if released {
-                e.order.push(record);
+                e.order.insert(e.order.len() - 1, record);
             }
         }
     }

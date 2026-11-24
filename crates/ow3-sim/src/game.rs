@@ -608,6 +608,9 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
                 u.x = add(x, (-80.0f32).to_bits());
                 u.y = add(y, (-112.0f32).to_bits());
                 u.hidden = false;
+                // Its build order ends with it: the AI's wood pass takes it as
+                // idle (c-SEA-1: wisp 11938 at 62.099998).
+                u.shown_order = None;
             }
             movement::stop(s, w);
             // An AI's builder goes back to its town's mine (c-SEA-1: peon
@@ -4544,6 +4547,15 @@ fn register_ai_natives(
             // 4) gives wisp 10114 a gold order at 61.099636).
             let already = existing.len();
             let remaining = wanted.saturating_sub(already);
+            // A worker counted here whose order came from its release by a
+            // finished building is given the AI's own order (c-SEA-1: peon
+            // 11299 at 62.099998, counted second by HarvestGold(0, 4)).
+            // PROVISIONAL: the count is read from the result only.
+            let released: Vec<u32> = existing
+                .iter()
+                .copied()
+                .filter(|&h| harvest::builder_released(&state, h))
+                .collect();
             let workers: Vec<u32> = state
                 .units
                 .iter()
@@ -4595,6 +4607,7 @@ fn register_ai_natives(
                 renewed.clone_from(&trained);
                 workers.splice(0..0, trained);
             }
+            workers.splice(0..0, released);
             let paid_placement = workers
                 .iter()
                 .copied()

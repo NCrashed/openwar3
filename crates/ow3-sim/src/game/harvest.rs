@@ -126,6 +126,10 @@ pub struct Harvest {
     /// Gathering from the melee AI's harvest order on: in the gathering
     /// cycle for the searches (SPEC-0029; c-SEA-1, the peons from 0.1).
     ai_gathering: bool,
+    /// Its order came from its release by a finished building, and no AI
+    /// pass has given it one since: the AI does not count it as a gold
+    /// worker (c-SEA-1: peon 11299, released at 61.5, reassigned at 62.1).
+    released: bool,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -263,6 +267,7 @@ pub(super) fn order_harvest(state: &mut State, h: u32, target: u32) -> bool {
     g.target = Some(target);
     g.next_hit = None;
     g.back_at = None;
+    g.released = state.table.ai_builder_released;
     // A melee-AI replacement starts a new paced-gathering history. The
     // first Orc peon reassigned after its automatic opening cycle therefore
     // makes its next return at ordinary speed (c-SEA-1, turn 72, hub #15).
@@ -2438,6 +2443,12 @@ pub(super) fn paid_working(state: &State, h: u32) -> bool {
 /// while they walk or return resources (c-SEA-1, turns 33 and 92, hub #15).
 pub(super) fn ai_gold_assigned(state: &State, h: u32, mine: u32, settled: bool) -> bool {
     ai_gold_targeted(state, h, mine) && (settled || paid_working(state, h))
+}
+
+/// Whether worker `h` gathers on the order of its release by a finished
+/// building, which no AI pass has replaced (`Harvest::released`).
+pub(super) fn builder_released(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.released)
 }
 
 pub(super) fn ai_gold_targeted_mine(state: &State, h: u32, mine: u32) -> bool {

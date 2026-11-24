@@ -3823,10 +3823,72 @@ fn string(value: &Value) -> Option<&str> {
 /// The units an AI count query sees.  A requested unit already present in a
 /// training queue counts for `GetUnitCount`, while `GetUnitCountDone` only
 /// sees live, completed units (hub #15, c-SEA-1 turn 3).
+/// The gold and lumber the AI sees a unit of `type_id` cost. A hero costs
+/// nothing while the player has no hero (c-SEA-1 at 61.599998: the
+/// Priestess of the Moon, 0 and 0, started with 230 gold and 0 lumber).
+/// PROVISIONAL: read on this one hero, the player's first.
+fn ai_unit_cost(state: &State, player: i32, type_id: i32) -> (i32, i32) {
+    let Some(t) = state.data.units.get(&type_id) else {
+        return (0, 0);
+    };
+    let has_hero = || {
+        state
+            .units
+            .iter()
+            .filter_map(|&h| state.unit(Some(h)))
+            .any(|u| {
+                u.owner == player
+                    && u.alive
+                    && (crate::data::is_hero(u.type_id)
+                        || u.queue
+                            .as_ref()
+                            .is_some_and(|q| q.types().iter().any(|&id| crate::data::is_hero(id))))
+            })
+            || ai_heroes_training(state, player, None) > 0
+    };
+    if crate::data::is_hero(type_id) && !has_hero() {
+        return (0, 0);
+    }
+    (t.gold_cost, t.lumber_cost)
+}
+
+/// The heroes (of `type_id`, or all) an AI player has in training. They
+/// are not in their type records (`q2`; c-SEA-1 at 61.599998).
+/// PROVISIONAL: that `GetUnitCount` counts them is not read.
+fn ai_heroes_training(state: &State, player: i32, type_id: Option<i32>) -> usize {
+    state
+        .engine_timers
+        .values()
+        .filter(|t| {
+            matches!(t, training::EngineTimer::AiWorker { owner, type_id: id, .. }
+                if *owner == player
+                    && crate::data::is_hero(*id)
+                    && type_id.is_none_or(|want| want == *id))
+        })
+        .count()
+}
+
 fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
+    // The wisp an Ancient uses up counts no more from its start (SPEC-0026,
+    // "Other races"; c-SEA-1 at 61.599998: wisp 10585 in the Ancient of
+    // War is left out, 10264 in the Moon Well is counted).
+    let used_up: Vec<u32> = state
+        .units
+        .iter()
+        .filter_map(|&h| state.unit(Some(h)))
+        .filter(|b| {
+            state
+                .data
+                .units
+                .get(&b.type_id)
+                .is_some_and(|t| table::roots_type(state, t))
+        })
+        .filter_map(|b| b.construction.as_ref().and_then(|c| c.inside))
+        .collect();
     let present = state
         .units
         .iter()
+        .filter(|h| !used_up.contains(h))
         .filter_map(|&h| state.unit(Some(h)))
         // A building under construction counts once, through `q2` of the
         // type record below (SPEC-0026; c-SEA-1 at 31.266666: one Altar of
@@ -3856,7 +3918,12 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
             .and_then(|records| records.iter().find(|(id, _)| *id == type_id))
             .map_or(0, |(_, record)| record[2] as usize)
     };
-    (present + queued + pending) as i32
+    let training = if done {
+        0
+    } else {
+        ai_heroes_training(state, player, Some(type_id))
+    };
+    (present + queued + pending + training) as i32
 }
 
 fn ai_town_halls(state: &State, player: i32) -> Vec<u32> {
@@ -4015,12 +4082,7 @@ fn register_ai_natives(
     add(
         "native GetUnitGoldCost takes integer unitid returns integer",
         Rc::new(move |_, args| {
-            let cost = costs
-                .borrow()
-                .data
-                .units
-                .get(&integer(&args[0]))
-                .map_or(0, |t| t.gold_cost);
+            let cost = ai_unit_cost(&costs.borrow(), player, integer(&args[0])).0;
             Ok(Some(Value::Integer(cost)))
         }),
     );
@@ -4028,12 +4090,7 @@ fn register_ai_natives(
     add(
         "native GetUnitWoodCost takes integer unitid returns integer",
         Rc::new(move |_, args| {
-            let cost = costs
-                .borrow()
-                .data
-                .units
-                .get(&integer(&args[0]))
-                .map_or(0, |t| t.lumber_cost);
+            let cost = ai_unit_cost(&costs.borrow(), player, integer(&args[0])).1;
             Ok(Some(Value::Integer(cost)))
         }),
     );
@@ -4142,6 +4199,7 @@ fn register_ai_natives(
                 })
                 .flatten();
             let worker = worker || trainer.is_some();
+            let cost = ai_unit_cost(&state, player, type_id);
             let planned_at = production_plans.borrow().get(&type_id).copied();
             let worker_pending = worker
                 && ai_unit_count(&state, player, type_id, false)
@@ -4244,8 +4302,21 @@ fn register_ai_natives(
                         && worker
                         && planned_at.is_some()
                         && harvest::is_wisp_type(&state, type_id);
-                    let made = state.table.take_n(tick, 6, "SetProduce");
-                    state.table.defer_at(tick, made[1], "SetProduce");
+                    // A hero's start makes four records, all freed in the
+                    // next tick: the second, first, fourth and third
+                    // (c-SEA-1: the Priestess of the Moon at 61.599998,
+                    // 19551 .. 19554).
+                    let made = if crate::data::is_hero(type_id) {
+                        let made = state.table.take_n(tick, 4, "SetProduce: hero");
+                        for i in [1, 0, 3, 2] {
+                            state.table.defer_at(tick, made[i], "SetProduce: hero");
+                        }
+                        made
+                    } else {
+                        let made = state.table.take_n(tick, 6, "SetProduce");
+                        state.table.defer_at(tick, made[1], "SetProduce");
+                        made
+                    };
                     if wisp_reserved {
                         for entry in state
                             .table
@@ -4257,15 +4328,17 @@ fn register_ai_natives(
                         }
                     }
                     if starts_worker {
-                        worker_records = Some([made[2], made[3]]);
+                        worker_records = Some((made.len() == 6).then(|| [made[2], made[3]]));
                     }
                     if temporary {
                         if let Some(hall) = ai_town_halls(&state, player).into_iter().next() {
                             table::ai_production_cleanup(&mut state, hall);
                         }
                     }
-                    for &entry in [made[0], made[5], made[4]].iter() {
-                        state.table.defer_at(tick, entry, "SetProduce");
+                    if let [first, _, _, _, fifth, sixth] = made[..] {
+                        for entry in [first, sixth, fifth] {
+                            state.table.defer_at(tick, entry, "SetProduce");
+                        }
                     }
                 }
             }
@@ -4276,11 +4349,7 @@ fn register_ai_natives(
                     *production_builder_available.borrow_mut() = false;
                 }
                 if !starts_worker {
-                    let (gold, lumber) = state
-                        .data
-                        .units
-                        .get(&type_id)
-                        .map_or((0, 0), |unit| (unit.gold_cost, unit.lumber_cost));
+                    let (gold, lumber) = cost;
                     *state.setup.player_states.entry((player, 1)).or_default() -= gold;
                     *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
                 }
@@ -4323,16 +4392,20 @@ fn register_ai_natives(
                     },
                 );
             }
-            if worker && (accepted || temporary) {
+            // A hero in training leaves its record alone (c-SEA-1 at 61.599998:
+            // the Priestess of the Moon's stays (1, 0, 0, 0, 0, 0, 8)).
+            if worker && (accepted || temporary) && !crate::data::is_hero(type_id) {
                 widgets::type_record(&mut state, player, type_id, |q| {
                     q[2] = q[2].wrapping_add(1);
                 });
             }
             if starts_worker {
-                let (gold, lumber, food) =
-                    state.data.units.get(&type_id).map_or((0, 0, 0), |unit| {
-                        (unit.gold_cost, unit.lumber_cost, unit.food_used)
-                    });
+                let (gold, lumber) = cost;
+                let food = state
+                    .data
+                    .units
+                    .get(&type_id)
+                    .map_or(0, |unit| unit.food_used);
                 *state.setup.player_states.entry((player, 1)).or_default() -= gold;
                 *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
                 *state.setup.player_states.entry((player, 5)).or_default() += food;

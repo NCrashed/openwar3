@@ -50,7 +50,7 @@ pub enum EngineTimer {
         owner: i32,
         hall: u32,
         type_id: i32,
-        records: [u32; 2],
+        records: Option<[u32; 2]>,
     },
 }
 
@@ -164,12 +164,15 @@ fn finish_ai_worker(
     owner: i32,
     hall: u32,
     type_id: i32,
-    records: [u32; 2],
+    records: Option<[u32; 2]>,
 ) {
     {
         let mut s = state.borrow_mut();
-        s.table.defer(records[1], "AI worker production");
-        s.table.defer(records[0], "AI worker production");
+        // A hero keeps no records of its start (c-SEA-1: the Priestess of
+        // the Moon at 61.599998). PROVISIONAL: its completion is not read.
+        for entry in records.into_iter().flat_map(|[a, b]| [b, a]) {
+            s.table.defer(entry, "AI worker production");
+        }
         // The produced wisp uses the third free training cell. The produced
         // peon and acolyte use the first one (c-SEA-1 worker completions).
         // The first produced Orc peon's controller is staged separately;

@@ -7917,12 +7917,28 @@ pub(super) fn construction_finished(
             .unwrap_or_default();
         if let Some((&release_last, release)) = release.split_last() {
             let finish = state.table.take(tick, "AI construction: finished");
+            // A Night Elf building takes six more, freed after the rest
+            // as two rotated triples, and its wisp gets no order (c-SEA-1:
+            // the Altar of Elders at 61.589996, 19539 .. 19544 freed as
+            // 19540, 19541, 19539, 19543, 19544, 19542). PROVISIONAL: what
+            // the six belong to is not read.
+            let wisp = super::harvest::is_wisp(state, builder);
+            let extra = if wisp {
+                state.table.take_n(tick, 6, "AI construction: finished")
+            } else {
+                Vec::new()
+            };
             for e in order.into_iter().chain(release.iter().copied()) {
                 state.table.defer(e, "AI construction: finished");
             }
             state.table.defer(finish, "AI construction: finished");
             state.table.defer(release_last, "AI build: released");
-            return true;
+            for triple in extra.chunks(3) {
+                for &e in triple[1..].iter().chain(&triple[..1]) {
+                    state.table.defer(e, "AI construction: finished");
+                }
+            }
+            return !wisp;
         }
         for e in order {
             state.table.free(tick, e, "Undead construction: finished");

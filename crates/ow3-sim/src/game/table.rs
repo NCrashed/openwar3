@@ -89,6 +89,9 @@ pub struct ObjectTable {
     /// The next harvest order comes from the melee AI and releases the old
     /// order's arrival parts before the rest of that order.
     pub ai_harvest_reassigning: bool,
+    /// The harvest order of an AI builder released by its finished
+    /// building (`construction_finished`).
+    pub ai_builder_released: bool,
     /// The first worker assigned after `ClearHarvestAI` has its temporary
     /// order state cleaned between the two cleanup groups of the accepted
     /// building plan (c-SEA-1, hub #15).
@@ -282,6 +285,7 @@ impl ObjectTable {
             ai_harvest_extra: 0,
             ai_harvest_fewer: 0,
             ai_harvest_reassigning: false,
+            ai_builder_released: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
             ai_harvest_cleanup_owner: None,
@@ -860,7 +864,7 @@ pub struct UnitEntries {
     pub construction: Vec<u32>,
     pub dispel: Vec<u32>,
     pub construction_work: Option<u32>,
-    /// The last five records of an Undead building's start, kept to its
+    /// The last five records of an AI building's start, kept to its
     /// finish (`construction_finished`).
     pub undead_finish: Vec<u32>,
     pub first_helper: Option<u32>,
@@ -3091,7 +3095,14 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
     let tick = state.table.now;
     let order = state.table.take(tick, "script target order");
     let record = state.table.take(tick, "order record");
-    state.table.defer(record, "order record");
+    // A builder released by its finished building keeps the order record
+    // and gives up one more part (c-SEA-1: peon 11299 at 61.499996, 19520
+    // kept, 19534 .. 19530 freed). PROVISIONAL: read on this one; which
+    // records keep what is not read.
+    let released = std::mem::take(&mut state.table.ai_builder_released);
+    if !released {
+        state.table.defer(record, "order record");
+    }
     let ai_reassignment = std::mem::take(&mut state.table.ai_harvest_reassigning);
     if ai_reassignment {
         let starting_computer = super::harvest::starting_computer_harvest(state, h);
@@ -3225,14 +3236,22 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         }
         return;
     } else {
-        for &entry in parts[n - 4..].iter().rev() {
+        let freed = if released { 5 } else { 4 };
+        for &entry in parts[n - freed..].iter().rev() {
             state.table.defer(entry, "harvest: order start");
         }
         if let Some(e) = entries(state, h) {
             // At the tree only its k 7 goes at the arrival (c-RYP-1: 1265).
             let kept = if tree { n - 5 } else { n - 6 };
-            e.harvest_arrive = parts[kept..n - 4].iter().rev().copied().collect();
+            e.harvest_arrive = parts[kept.min(n - freed)..n - freed]
+                .iter()
+                .rev()
+                .copied()
+                .collect();
             e.order = parts[..kept].iter().rev().copied().chain([order]).collect();
+            if released {
+                e.order.push(record);
+            }
         }
     }
     walk_made_at_order(state, h);
@@ -7416,9 +7435,12 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     state.table.constructing = false;
     let one = state.table.take(tick, "construction: start");
     let event = state.table.take(tick, "construction: event");
-    if state.table.ai_constructing || state.table.ai_wisp_constructing {
+    if state.table.ai_constructing
+        || state.table.ai_wisp_constructing
+        || state.table.ai_other_constructing
+    {
         state.table.ai_construction_start = Some([one, event]);
-    } else if state.table.ai_other_constructing || state.table.ai_ancient_constructing {
+    } else if state.table.ai_ancient_constructing {
         // Both stay with the compact AI construction state.
     } else {
         state.table.defer(event, "construction: event");
@@ -7579,8 +7601,18 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     if state.table.ai_other_constructing {
         let mut progress = state.table.take_n(tick, 2, "construction: progress");
         progress.push(state.table.take(tick, "construction: timer"));
+        // The last five records of its start stay with the building to its
+        // finish (c-SEA-1: the Altar of Storms' 12677 .. 12681 at 61.499996).
+        let start = state.table.ai_construction_start.take();
         if let Some(e) = entries(state, building) {
-            e.construction = progress;
+            if let Some([one, event]) = start {
+                e.undead_finish = [one, event]
+                    .into_iter()
+                    .chain(progress.iter().copied())
+                    .collect();
+            } else {
+                e.construction = progress;
+            }
         }
         for entry in order {
             state.table.defer(entry, "build order");
@@ -7856,8 +7888,14 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
 /// Building `building` is finished at queue time `q` (c-SBZ-1: the
 /// barracks at 44.043449, hub #13): an object and the construction-finish
 /// event's, both freed at once after the construction's progress pair;
-/// its dispel runs from 0.01 s after the completion.
-pub(super) fn construction_finished(state: &mut super::State, building: u32, builder: u32, q: u32) {
+/// its dispel runs from 0.01 s after the completion. Returns whether an AI
+/// builder is released to its mine.
+pub(super) fn construction_finished(
+    state: &mut super::State,
+    building: u32,
+    builder: u32,
+    q: u32,
+) -> bool {
     let tick = state.table.now;
     // An Undead building makes nothing at its finish: it frees the last
     // five records of its start, the second last, the third last, the
@@ -7868,10 +7906,28 @@ pub(super) fn construction_finished(state: &mut super::State, building: u32, bui
         .map(|e| std::mem::take(&mut e.undead_finish))
         .unwrap_or_default();
     if let [fifth, fourth, third, second, last] = kept[..] {
-        for e in [second, third, last, fourth, fifth] {
+        let order = [second, third, last, fourth, fifth];
+        // An Orc building takes one record and frees, in the next tick,
+        // the same five, its builder's records of the build order but
+        // the last, its own record, then that last one (c-SEA-1: the
+        // Altar of Storms at 61.499996). Its builder goes back to the
+        // mine (`game::finish_construction`). PROVISIONAL: read on this one.
+        let release = entries(state, builder)
+            .map(|e| std::mem::take(&mut e.ai_build_release))
+            .unwrap_or_default();
+        if let Some((&release_last, release)) = release.split_last() {
+            let finish = state.table.take(tick, "AI construction: finished");
+            for e in order.into_iter().chain(release.iter().copied()) {
+                state.table.defer(e, "AI construction: finished");
+            }
+            state.table.defer(finish, "AI construction: finished");
+            state.table.defer(release_last, "AI build: released");
+            return true;
+        }
+        for e in order {
             state.table.free(tick, e, "Undead construction: finished");
         }
-        return;
+        return false;
     }
     let type_id = state.unit(Some(building)).map_or(0, |u| u.type_id);
     let after = building_layout(state, type_id)
@@ -7916,6 +7972,7 @@ pub(super) fn construction_finished(state: &mut super::State, building: u32, bui
     for e in dispel {
         state.table.free_at_q(end, e, "building: dispel");
     }
+    false
 }
 
 /// The work on building `building` ends two ticks after its completion

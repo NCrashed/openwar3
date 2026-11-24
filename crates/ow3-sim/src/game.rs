@@ -597,7 +597,7 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
             .entry((owner, PLAYER_STATE_RESOURCE_FOOD_CAP))
             .or_default() += food;
         let q = s.event_time.unwrap_or_else(|| s.timers.time());
-        table::construction_finished(s, h, c.builder, q);
+        let released = table::construction_finished(s, h, c.builder, q);
         // A wisp or a peon inside comes out at (-80, -112) from the
         // building, alive, and stands (SPEC-0026, "Other races").
         // PROVISIONAL: the free place next to the building is taken as that
@@ -610,6 +610,14 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
                 u.hidden = false;
             }
             movement::stop(s, w);
+            // An AI's builder goes back to its town's mine (c-SEA-1: peon
+            // 11299 from the Altar of Storms at 61.499996).
+            // PROVISIONAL: the mine is taken as the first town's.
+            if released && let Some(mine) = ai_town_mine(s, owner, 0) {
+                s.table.ai_builder_released = true;
+                harvest::order_harvest(s, w, mine);
+                s.table.ai_builder_released = false;
+            }
         }
         // The work on it ends two ticks later (c-SBZ-1: 25.801769 after
         // 25.791811, 44.054104 after 44.043449), its workers' in the order
@@ -5827,12 +5835,16 @@ fn power_building(state: &mut State) {
         c.helpers.retain(|x| workers.contains(&x.0));
         // Its first builder left: no growth and no payments until a helper
         // takes over at its next 1.0 s timer (hub #13).
-        if c.gone.is_none() && !c.alone && c.tb.is_some() && !workers.contains(&c.builder) {
+        // A builder inside its building (a peon, a wisp) works there
+        // (c-SEA-1: the Altar of Storms, peon 11299 inside from 1.5 to its
+        // finish at 61.499996).
+        let builder_works = workers.contains(&c.builder) || c.inside == Some(c.builder);
+        if c.gone.is_none() && !c.alone && c.tb.is_some() && !builder_works {
             c.gone = Some(now);
         }
         if let Some(gone) = c.gone
             && c.taking.is_none()
-            && !workers.contains(&c.builder)
+            && !builder_works
         {
             let next = f32::from_bits(add(clock, crate::timers::TICK));
             let fire = |since: u32| {

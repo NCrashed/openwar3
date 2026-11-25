@@ -3847,7 +3847,6 @@ fn ai_unit_cost(state: &State, player: i32, type_id: i32) -> (i32, i32) {
                             .as_ref()
                             .is_some_and(|q| q.types().iter().any(|&id| crate::data::is_hero(id))))
             })
-            || ai_heroes_training(state, player, None) > 0
     };
     if crate::data::is_hero(type_id) && !has_hero() {
         return (0, 0);
@@ -3855,20 +3854,15 @@ fn ai_unit_cost(state: &State, player: i32, type_id: i32) -> (i32, i32) {
     (t.gold_cost, t.lumber_cost)
 }
 
-/// The heroes (of `type_id`, or all) an AI player has in training. They
-/// are not in their type records (`q2`; c-SEA-1 at 61.599998).
-/// PROVISIONAL: that `GetUnitCount` counts them is not read.
-fn ai_heroes_training(state: &State, player: i32, type_id: Option<i32>) -> usize {
-    state
-        .engine_timers
-        .values()
-        .filter(|t| {
-            matches!(t, training::EngineTimer::AiWorker { owner, type_id: id, .. }
-                if *owner == player
-                    && crate::data::is_hero(*id)
-                    && type_id.is_none_or(|want| want == *id))
-        })
-        .count()
+/// Whether an AI player has hero `type_id` in training. Neither its type
+/// record nor `GetUnitCount` counts it, so the AI asks for it again at its
+/// next wakes (c-SEA-1: the Priestess of the Moon at 61.599998 and
+/// 63.599998).
+fn ai_hero_training(state: &State, player: i32, type_id: i32) -> bool {
+    state.engine_timers.values().any(|t| {
+        matches!(t, training::EngineTimer::AiWorker { owner, type_id: id, .. }
+            if *owner == player && *id == type_id)
+    })
 }
 
 fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
@@ -3921,12 +3915,7 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
             .and_then(|records| records.iter().find(|(id, _)| *id == type_id))
             .map_or(0, |(_, record)| record[2] as usize)
     };
-    let training = if done {
-        0
-    } else {
-        ai_heroes_training(state, player, Some(type_id))
-    };
-    (present + queued + pending + training) as i32
+    (present + queued + pending) as i32
 }
 
 fn ai_town_halls(state: &State, player: i32) -> Vec<u32> {
@@ -4242,7 +4231,13 @@ fn register_ai_natives(
                 && planned_at.is_some_and(|plan| {
                     !plan.temporary && !plan.repeated && state.ticks >= plan.at.saturating_add(600)
                 });
-            let starts_worker = worker && (accepted || temporary && !already);
+            // A hero asked for again while it trains makes its four records
+            // and starts nothing more (c-SEA-1: the Priestess of the Moon at
+            // 63.599998, 19911 .. 19914). PROVISIONAL: why it is accepted is
+            // not read.
+            let hero_again =
+                crate::data::is_hero(type_id) && ai_hero_training(&state, player, type_id);
+            let starts_worker = worker && (accepted || temporary && !already) && !hero_again;
             let mut worker_records = None;
             if building && supply && qty > 0 {
                 state.ai_pending_supply.entry(player).or_insert(type_id);

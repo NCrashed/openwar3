@@ -116,6 +116,9 @@ pub struct Follow {
     /// The unit arrived at W: at its next update W moves on and it
     /// searches its own list to the new W.
     advance: bool,
+    /// The unit stopped near W and turned to it: it stands one more update
+    /// before W moves on (c-SEA-1: wisp 10114 at 63.683 and 63.713).
+    at_w: bool,
     /// A chase whose path ended: it arrives at its next update.
     end_blocked: bool,
     /// A worker at the end of its path to a mine, turning to it: its stop
@@ -792,6 +795,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             w: plan.1,
             stop_at: plan.2,
             advance: false,
+            at_w: false,
             new_group: held.is_some(),
             end_blocked: false,
             turning_in: false,
@@ -894,6 +898,11 @@ fn decide(
     tick: u64,
     limit: u32,
 ) -> Steer {
+    if follow.at_w {
+        follow.at_w = false;
+        follow.advance = true;
+        return Steer::Hold;
+    }
     if follow.waypoints.is_empty() {
         return Steer::Walk(walker.order);
     }
@@ -1176,13 +1185,27 @@ fn decide(
         }
         if follow.final_goal {
             // The end of its own list at W: it arrived there.
-            if follow.stop_at.is_some() {
-                follow.advance = true;
+            if let Some(w) = follow.stop_at {
                 // The walk of the AI's order ends here: its next searches
                 // see its player's waiting workers (c-SEA-1: peon 10461 at W
                 // at 50.485, its search of 50.515 refused by peon 11159).
                 follow.ai_reassigned = false;
                 follow.local.clear();
+                // Not yet turned to W, it stops and turns this update and W
+                // moves on at the next (c-SEA-1: wisp 10114, 0.28 off at
+                // 63.683, dropped at 63.713; peon 10461 facing W at 50.485).
+                // PROVISIONAL: the 0.2 of the arrival's turn is taken.
+                let w = to_world(w);
+                let (dx, dy) = (sub(w[0], walker.here[0]), sub(w[1], walker.here[1]));
+                let off = super::facing::angle_difference(
+                    super::movement::angle(dx, dy),
+                    walker.heading,
+                );
+                if real(off).abs() > 0.2 {
+                    follow.at_w = true;
+                    return Steer::Stand(w);
+                }
+                follow.advance = true;
                 return Steer::Hold;
             }
             // A member at the end of its path to an old place, its place

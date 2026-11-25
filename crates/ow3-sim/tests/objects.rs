@@ -830,7 +830,7 @@ fn melee_ai_checksums() {
 /// through checkpoint 486.
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(622)) {
+    if let Some(first) = turn_checksums("c-SEA-1", Some(634)) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }

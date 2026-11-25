@@ -867,6 +867,10 @@ pub struct UnitEntries {
     /// The last five records of an AI building's start, kept to its
     /// finish (`construction_finished`).
     pub undead_finish: Vec<u32>,
+    /// Five records of an AI building made by a peon or wisp, its 16th to
+    /// 20th (from 0), freed 0.884514 s after its finish
+    /// (`construction_finished`).
+    pub finish_effect: Vec<u32>,
     pub first_helper: Option<u32>,
     /// A builder turning to its building: the fifth part of its work order,
     /// let go when it faces it (`turned_to_work`).
@@ -2050,6 +2054,13 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             id: Some(id),
             death,
             computer_kept: std::mem::take(&mut state.table.computer_kept),
+            finish_effect: if building.is_some()
+                && (state.table.ai_other_constructing || state.table.ai_wisp_constructing)
+            {
+                entries[16..21].to_vec()
+            } else {
+                Vec::new()
+            },
             death_first,
             death_late,
             death_mana,
@@ -7935,6 +7946,22 @@ pub(super) fn construction_finished(
             }
             state.table.defer(finish, "AI construction: finished");
             state.table.defer(release_last, "AI build: released");
+            // Five more of the building's own records go 0.884514 s of queue
+            // time later, the second last, the last, then the third to the
+            // fifth last (c-SEA-1: the Altar of Storms' 12658, 12659, 12657,
+            // 12656, 12655 at 62.388927; the Altar of Elders' 12718 .. 12715
+            // at 62.478878). PROVISIONAL: what times them is not read.
+            let effect = entries(state, building)
+                .map(|e| std::mem::take(&mut e.finish_effect))
+                .unwrap_or_default();
+            if let [fifth, fourth, third, second, last] = effect[..] {
+                let end = ow3_math::add(q, 0.884514f32.to_bits());
+                for e in [second, last, third, fourth, fifth] {
+                    state
+                        .table
+                        .free_at_q(end, e, "AI construction: finish effect");
+                }
+            }
             for triple in extra.chunks(3) {
                 for &e in triple[1..].iter().chain(&triple[..1]) {
                     state.table.defer(e, "AI construction: finished");

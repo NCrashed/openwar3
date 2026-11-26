@@ -3858,10 +3858,11 @@ fn ai_unit_cost(state: &State, player: i32, type_id: i32) -> (i32, i32) {
     (t.gold_cost, t.lumber_cost)
 }
 
-/// Whether an AI player has hero `type_id` in training. Neither its type
-/// record nor `GetUnitCount` counts it, so the AI asks for it again at its
-/// next wakes (c-SEA-1: the Priestess of the Moon at 61.599998 and
-/// 63.599998).
+/// Whether an AI player has hero `type_id` in training. A hero that waits
+/// for food has no training yet: neither its type record nor `GetUnitCount`
+/// counts it, and the AI asks for it again at its next wakes (c-SEA-1: the
+/// Priestess of the Moon at 61.599998 and 63.599998, the Blademaster from
+/// 63.266663 to its start at 69.266663).
 fn ai_hero_training(state: &State, player: i32, type_id: i32) -> bool {
     state.engine_timers.values().any(|t| {
         matches!(t, training::EngineTimer::AiWorker { owner, type_id: id, .. }
@@ -4276,6 +4277,28 @@ fn register_ai_natives(
                 crate::data::is_hero(type_id) && ai_hero_training(&state, player, type_id);
             let starts_worker = worker && (accepted || temporary && !already) && !hero_again;
             let mut worker_records = None;
+            // Room for its food: a training starts only with it (SPEC-0027).
+            let food_room = {
+                let food = state
+                    .data
+                    .units
+                    .get(&type_id)
+                    .map_or(0, |unit| unit.food_used);
+                let used = state
+                    .setup
+                    .player_states
+                    .get(&(player, 5))
+                    .copied()
+                    .unwrap_or(0);
+                let cap = state
+                    .setup
+                    .player_states
+                    .get(&(player, PLAYER_STATE_RESOURCE_FOOD_CAP))
+                    .copied()
+                    .unwrap_or(0);
+                used + food <= cap
+            };
+            let mut hero_waits = false;
             if building && supply && qty > 0 {
                 state.ai_pending_supply.entry(player).or_insert(type_id);
             }
@@ -4337,20 +4360,36 @@ fn register_ai_natives(
                         && worker
                         && planned_at.is_some()
                         && harvest::is_wisp_type(&state, type_id);
-                    // A hero's start makes four records, all freed in the
-                    // next tick: the second, first, fourth and third
+                    // A hero's request makes four records, all freed in the
+                    // next tick: the second, first, last and third last
                     // (c-SEA-1: the Priestess of the Moon at 61.599998,
-                    // 19551 .. 19554).
-                    let made = if crate::data::is_hero(type_id) {
-                        let made = state.table.take_n(tick, 4, "SetProduce: hero");
-                        for i in [1, 0, 3, 2] {
+                    // 19551 .. 19554). One that starts its training puts two
+                    // more in the middle, kept with the training (c-SEA-1:
+                    // the Blademaster at 69.266663, 20499 and 20500 of
+                    // 20497 .. 20502). A hero that waits for food makes the
+                    // four only (SPEC-0027; c-SEA-1: the Priestess of the
+                    // Moon, at 61.599998 with 10 of 10 food used).
+                    // PROVISIONAL: that food decides it is a guess.
+                    let hero = crate::data::is_hero(type_id);
+                    let (made, kept) = if hero {
+                        let starts = !hero_again && food_room;
+                        hero_waits = !starts;
+                        let made = state.table.take_n(
+                            tick,
+                            if starts { 6 } else { 4 },
+                            "SetProduce: hero",
+                        );
+                        let n = made.len();
+                        for i in [1, 0, n - 1, n - 2] {
                             state.table.defer_at(tick, made[i], "SetProduce: hero");
                         }
-                        made
+                        let kept = starts.then(|| [made[2], made[3]]);
+                        (made, kept)
                     } else {
                         let made = state.table.take_n(tick, 6, "SetProduce");
                         state.table.defer_at(tick, made[1], "SetProduce");
-                        made
+                        let kept = Some([made[2], made[3]]);
+                        (made, kept)
                     };
                     if wisp_reserved {
                         for entry in state
@@ -4362,15 +4401,18 @@ fn register_ai_natives(
                             state.table.defer_at(tick, entry, "AI worker completion");
                         }
                     }
-                    if starts_worker {
-                        worker_records = Some((made.len() == 6).then(|| [made[2], made[3]]));
+                    // A hero waiting for food starts no training yet.
+                    if starts_worker && !hero_waits {
+                        worker_records = Some(kept);
                     }
                     if temporary {
                         if let Some(hall) = ai_town_halls(&state, player).into_iter().next() {
                             table::ai_production_cleanup(&mut state, hall);
                         }
                     }
-                    if let [first, _, _, _, fifth, sixth] = made[..] {
+                    if let [first, _, _, _, fifth, sixth] = made[..]
+                        && !hero
+                    {
                         for entry in [first, sixth, fifth] {
                             state.table.defer_at(tick, entry, "SetProduce");
                         }
@@ -4427,9 +4469,11 @@ fn register_ai_natives(
                     },
                 );
             }
-            // A hero in training leaves its record alone (c-SEA-1 at 61.599998:
-            // the Priestess of the Moon's stays (1, 0, 0, 0, 0, 0, 8)).
-            if worker && (accepted || temporary) && !crate::data::is_hero(type_id) {
+            // A hero waiting for food, or asked for again while it trains,
+            // leaves its record alone (c-SEA-1: the Priestess of the Moon's
+            // stays (1, 0, 0, 0, 0, 0, 8) at 61.599998; the Blademaster's
+            // start at 69.266663 changes it).
+            if worker && (accepted || temporary) && !hero_waits && !hero_again {
                 widgets::type_record(&mut state, player, type_id, |q| {
                     q[2] = q[2].wrapping_add(1);
                 });
@@ -4443,7 +4487,10 @@ fn register_ai_natives(
                     .map_or(0, |unit| unit.food_used);
                 *state.setup.player_states.entry((player, 1)).or_default() -= gold;
                 *state.setup.player_states.entry((player, 2)).or_default() -= lumber;
-                *state.setup.player_states.entry((player, 5)).or_default() += food;
+                // A hero waiting for food takes none yet.
+                if !hero_waits {
+                    *state.setup.player_states.entry((player, 5)).or_default() += food;
+                }
             }
             if let Some(records) = worker_records
                 && let Some(hall) =

@@ -4928,8 +4928,16 @@ fn register_ai_natives(
                         (h, tree)
                     })
                 })
-                .take(wanted)
                 .collect();
+            // Those the previous pass had on wood come before new ones, but
+            // for wisps (c-SEA-1: ghoul 11503 before 10641 at 80.099998; wisp
+            // 2219, on wood, taken as new at 62.1).
+            let mut workers = workers;
+            workers.sort_by_key(|&(h, _)| {
+                harvest::is_wisp(&state, h)
+                    || wood_memory.borrow().get(&h) != Some(&harvest::Resource::Lumber)
+            });
+            workers.truncate(wanted);
             let taken = workers.len();
             for (worker, tree) in workers {
                 match tree {

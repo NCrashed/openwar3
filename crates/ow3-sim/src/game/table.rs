@@ -885,6 +885,13 @@ pub struct UnitEntries {
     /// 20th (from 0; a supply building's 15th to 19th), freed 0.884514 s after
     /// its finish (`construction_finished`).
     pub finish_effect: Vec<u32>,
+    /// The records an AI unit's order to its captain leaves to its next
+    /// harvest order: freed around that order's record, then its walk in
+    /// the next tick and one more at the next update (`ai_captain_reorders`,
+    /// `ai_wood_without_target`).
+    pub captain_cleanup: Vec<u32>,
+    pub captain_walk: Vec<u32>,
+    pub captain_late: Option<u32>,
     pub first_helper: Option<u32>,
     /// A builder turning to its building: the fifth part of its work order,
     /// let go when it faces it (`turned_to_work`).
@@ -2682,7 +2689,20 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
         state.table.free(tick, arrival[0], "AI captain: arrival");
         let made = state.table.take_n(tick, 17, "AI captain: order");
         state.table.free(tick, made[1], "AI captain: order");
-        state.table.take(tick, "AI captain: kept");
+        let retained = state.table.take(tick, "AI captain: kept");
+        // What its next harvest order frees around its own (c-SEA-1: ghoul
+        // 10641 at 82.099998: 21785, 21919, then 21910 .. 21906, 21904; its
+        // walk 21918, 21917 in the next tick and 21902 at its next update).
+        if let Some(e) = entries(state, h) {
+            let tail = (e.computer_kept.len() > 2).then(|| e.computer_kept.remove(2));
+            e.captain_cleanup = tail
+                .into_iter()
+                .chain([retained])
+                .chain([8, 7, 6, 5, 4, 2].map(|k| made[k]))
+                .collect();
+            e.captain_walk = vec![made[16], made[15]];
+            e.captain_late = Some(made[0]);
+        }
         let (old, walk) = entries(state, h)
             .map(|e| (std::mem::take(&mut e.order), std::mem::take(&mut e.walk)))
             .unwrap_or_default();
@@ -3507,7 +3527,29 @@ pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
     let record = state.table.take(tick, "order record");
     let parts = state.table.take_n(tick, 2, "harvest: order start");
 
-    let retained = std::mem::take(&mut state.table.recycled_guard_cleanup);
+    // A unit its AI ordered to its captain has its own records here, its
+    // walk freed in the next tick and one more at its next update (c-SEA-1:
+    // ghoul 10641 at 82.099998).
+    let (own, walk, late) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.captain_cleanup),
+                std::mem::take(&mut e.captain_walk),
+                e.captain_late.take(),
+            )
+        })
+        .unwrap_or_default();
+    let retained = if own.is_empty() {
+        std::mem::take(&mut state.table.recycled_guard_cleanup)
+    } else {
+        own
+    };
+    for e in walk {
+        state.table.defer_at(tick + 1, e, "AI captain: walk");
+    }
+    if let Some(e) = late {
+        state.table.defer_at(tick + 6, e, "AI captain: late record");
+    }
     for &entry in retained.iter().take(2) {
         state.table.defer(entry, "recycled guard: mixed cleanup");
     }

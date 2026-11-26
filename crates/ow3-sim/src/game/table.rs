@@ -933,6 +933,9 @@ pub struct UnitEntries {
     pub after_queue: Vec<u32>,
     /// A building's objects of its making, all of them (for a cancel).
     pub made: Vec<u32>,
+    /// A wisp's objects of its making, freed when an Ancient that used it up
+    /// is finished (`construction_finished`).
+    pub wisp_made: Vec<u32>,
     /// A helper's order part freed when its help starts.
     pub repair_part: Option<u32>,
     /// The rate parts of a building's life set anew by its helpers.
@@ -2147,6 +2150,7 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             level: making.level.iter().map(|&k| entries[at(k)]).collect(),
             camp: std::ptr::eq(making, &CAMP_CREEP),
             dispel: pending_dispel,
+            wisp_made: if wisp { entries.clone() } else { Vec::new() },
             made: if std::ptr::eq(making, &BUILDING) {
                 entries.clone()
             } else {
@@ -7663,10 +7667,9 @@ pub(super) fn construction_begun(state: &mut super::State, h: u32, building: u32
     if state.table.ai_constructing
         || state.table.ai_wisp_constructing
         || state.table.ai_other_constructing
+        || state.table.ai_ancient_constructing
     {
         state.table.ai_construction_start = Some([one, event]);
-    } else if state.table.ai_ancient_constructing {
-        // Both stay with the compact AI construction state.
     } else {
         state.table.defer(event, "construction: event");
         state.table.defer(one, "construction: start");
@@ -7689,11 +7692,20 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
     // (c-SEA-1: the Ancient of War at 33.115017).
     // PROVISIONAL: what each of them is was not read.
     if state.table.ai_ancient_constructing {
-        state.table.take_n(tick, 2, "construction: progress");
+        let progress = state.table.take_n(tick, 2, "construction: progress");
         let made = entries(state, building)
             .map(|e| e.made.clone())
             .unwrap_or_default();
         let tail = std::mem::take(&mut state.table.ai_ancient_tail);
+        // The tail's last, the start's two and the progress pair stay with
+        // the building to its finish (c-SEA-1: the Ancient of War's 16402
+        // .. 16406, freed at 93.115013).
+        let start = state.table.ai_construction_start.take();
+        if let (Some(&last), Some([one, event])) = (tail.last(), start)
+            && let Some(e) = entries(state, building)
+        {
+            e.undead_finish = vec![last, one, event, progress[0], progress[1]];
+        }
         let freed = [24, 30, 29]
             .into_iter()
             .filter_map(|k| made.get(k).copied())
@@ -8164,6 +8176,55 @@ pub(super) fn construction_finished(
         let release = entries(state, builder)
             .map(|e| std::mem::take(&mut e.ai_build_release))
             .unwrap_or_default();
+        // An Ancient uses its wisp up: at its finish it takes six with the
+        // wisp and three for each idle wisp of its player; it frees the five,
+        // the first of the six, the wisp's build-order records, the sixth to
+        // fourth, the wisp's own records with the third among them, the
+        // second, then the idle wisps' threes; the wisp is gone (c-SEA-1:
+        // the Ancient of War at 93.115013, 23515 .. 23535). PROVISIONAL:
+        // read on this one.
+        let ancient = state
+            .unit(Some(building))
+            .and_then(|u| state.data.units.get(&u.type_id))
+            .is_some_and(|t| roots_type(state, t));
+        if ancient && super::harvest::is_wisp(state, builder) {
+            let six = state.table.take_n(tick, 6, "AI construction: finished");
+            let idle = idle_wisps(state, builder).saturating_sub(1);
+            let extra = state
+                .table
+                .take_n(tick, 3 * idle, "AI construction: finished");
+            let (made, kept) = entries(state, builder)
+                .map(|e| (e.wisp_made.clone(), std::mem::take(&mut e.computer_kept)))
+                .unwrap_or_default();
+            let mut freed: Vec<u32> = order.to_vec();
+            freed.push(six[0]);
+            freed.extend(release.iter().copied());
+            freed.extend([six[5], six[4], six[3]]);
+            freed.extend(kept.iter().take(2).copied());
+            freed.extend(
+                [17, 15, 10]
+                    .into_iter()
+                    .filter_map(|k| made.get(k).copied()),
+            );
+            freed.push(six[2]);
+            freed.extend(
+                [19, 18, 16, 14, 13, 12, 11, 8, 7, 6, 5, 4, 9, 2, 3, 1, 0]
+                    .into_iter()
+                    .filter_map(|k| made.get(k).copied()),
+            );
+            freed.push(six[1]);
+            for e in freed {
+                state.table.defer(e, "AI construction: finished");
+            }
+            for triple in extra.chunks(3) {
+                for &e in triple[1..].iter().chain(&triple[..1]) {
+                    state.table.defer(e, "AI construction: finished");
+                }
+            }
+            state.objects.remove(&builder);
+            state.units.retain(|&u| u != builder);
+            return false;
+        }
         if let Some((&release_last, release)) = release.split_last() {
             let wisp = super::harvest::is_wisp(state, builder);
             // A supply building first takes records of its own, which stay:

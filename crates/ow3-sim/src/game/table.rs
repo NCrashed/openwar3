@@ -115,6 +115,9 @@ pub struct ObjectTable {
     /// the later mixed post-AI cleanup batch. Their origin is known; this
     /// storage does not assign ownership of that batch (c-SEA-1, turn 13).
     pub recycled_guard_cleanup: Vec<u32>,
+    /// Units ordered to their AI's captain: the queue time of their next
+    /// order there (`ai_captain_reorders`).
+    pub ai_captain_moves: Vec<(u32, u32)>,
     /// The two records made after the second initial wisp enters an
     /// entangled mine, replaced at each payment of that mine (SPEC-0029,
     /// items 8 and 9).
@@ -297,6 +300,7 @@ impl ObjectTable {
             ai_worker_completion_retained: std::collections::BTreeMap::new(),
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
+            ai_captain_moves: Vec::new(),
             late_entangled_records: Vec::new(),
             late_entangled_mine: None,
             starting_harvest_left: 0,
@@ -2619,6 +2623,8 @@ pub(super) fn ai_captain_ordered(state: &mut super::State, h: u32) {
     let order = state.table.take(tick, "AI captain: order");
     let task = state.table.take(tick, "AI captain: task");
     let parts = state.table.take_n(tick, 13, "AI captain: move");
+    let next = (f32::from_bits(state.timers.time()).floor() + 1.0).to_bits();
+    state.table.ai_captain_moves.push((next, h));
     walk_made_at_order(state, h);
     state.table.take(tick, "AI captain: kept");
     state.table.defer(task, "AI captain: task");
@@ -2628,6 +2634,61 @@ pub(super) fn ai_captain_ordered(state: &mut super::State, h: u32) {
     }
     if let Some(e) = entries(state, h) {
         e.order = parts[..7].iter().rev().copied().collect();
+    }
+}
+
+/// The units the melee AI ordered to their captain are ordered again to
+/// the captain's place at the next whole second of the queue clock
+/// (c-SEA-1: ghoul 10641, ordered at 79.429451, again at 80.004242 with
+/// 21899 .. 21919, as the first ghoul's guard order at 1.0): an arrival of
+/// three, the first freed at once, 17 more, the second freed at once, and
+/// one kept; the 17's fourth, the old order's kept parts and the 17's
+/// fifteenth to tenth 0.0001 s later; the old walk at the unit's visit, the
+/// arrival's other two at the unit's next update.
+///
+/// PROVISIONAL: read on this one, the rule of whole seconds a guess; when
+/// the kept ones go is not read.
+pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
+    let due: Vec<(u32, u32)> = state
+        .table
+        .ai_captain_moves
+        .iter()
+        .copied()
+        .filter(|&(at, _)| f32::from_bits(at) <= f32::from_bits(next))
+        .collect();
+    if due.is_empty() {
+        return;
+    }
+    state
+        .table
+        .ai_captain_moves
+        .retain(|&(at, _)| f32::from_bits(at) > f32::from_bits(next));
+    let tick = state.table.now;
+    for (_, h) in due {
+        let arrival = state.table.take_n(tick, 3, "AI captain: arrival");
+        state.table.free(tick, arrival[0], "AI captain: arrival");
+        let made = state.table.take_n(tick, 17, "AI captain: order");
+        state.table.free(tick, made[1], "AI captain: order");
+        state.table.take(tick, "AI captain: kept");
+        let (old, walk) = entries(state, h)
+            .map(|e| (std::mem::take(&mut e.order), std::mem::take(&mut e.walk)))
+            .unwrap_or_default();
+        let freed = std::iter::once(made[3])
+            .chain(old)
+            .chain(made[9..=14].iter().rev().copied());
+        for e in freed {
+            state.table.free(tick, e, "AI captain: order");
+        }
+        // The old walk goes at the unit's visit of this tick, given up
+        // before it.
+        if let Some(e) = entries(state, h) {
+            let before = tick.saturating_sub(1);
+            e.stale
+                .extend(walk.into_iter().map(|entry| (before, entry)));
+        }
+        for &e in arrival[1..].iter().rev() {
+            state.table.defer_at(tick + 6, e, "AI captain: arrival");
+        }
     }
 }
 

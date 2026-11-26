@@ -2453,6 +2453,7 @@ impl<'a> Game<'a> {
                 }
             }
             table::recycled_guards_prepare(state);
+            table::ai_captain_reorders(state, next);
         }
         // The time-of-day events the running clock passes in this tick
         // (SPEC-0017).

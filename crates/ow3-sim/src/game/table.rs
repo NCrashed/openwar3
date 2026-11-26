@@ -2351,12 +2351,25 @@ pub(super) fn time_of_day_set(state: &mut super::State, tick: u64, old: u32, new
                 .unit(Some(h))
                 .map_or(f32::MAX, |u| f32::from_bits(u.mana.value()));
             let costs = day_watch_costs(state, type_id);
+            // The records of the costed watches go to the costs from the
+            // lowest (c-SEA-1: the nwns' Roar, 100, has the first, 10185,
+            // Rejuvenation, 125, the second, though `abilList` is ACrj,
+            // ACro). PROVISIONAL: read on this one creep type.
+            let mut costed: Vec<(i32, u32)> = costs
+                .iter()
+                .zip(&own)
+                .filter(|&(&cost, _)| cost > 0)
+                .map(|(&cost, &watch)| (cost, watch))
+                .collect();
+            let mut records: Vec<u32> = costed.iter().map(|c| c.1).collect();
+            records.sort_by_key(|&e| state.table.creation_of(e));
+            costed.sort_by_key(|c| c.0);
+            for (c, e) in costed.iter_mut().zip(records) {
+                c.1 = e;
+            }
             let mut below = Vec::new();
             if let Some(e) = entries(state, h) {
-                for (&cost, &watch) in costs.iter().zip(&own) {
-                    if cost <= 0 {
-                        continue;
-                    }
+                for &(cost, watch) in &costed {
                     let above = mana >= cost as f32;
                     e.mana_watches.push((cost, watch, above));
                     if !above {
@@ -5345,11 +5358,20 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
             }
             continue;
         };
-        // The value at the check's own time.
+        // The value at the check's own time, or at the tick's when that is later
+        // (c-SEA-1: the nwns' Roar watches due at 80.08, fired in the tick of
+        // 80.084198).
+        let seen = if f32::from_bits(clock) > f32::from_bits(at) {
+            clock
+        } else {
+            at
+        };
         let value = state
             .unit(Some(h))
-            .map_or(mana, |u| f32::from_bits(u.mana.value_at(at)));
-        if value >= cost as f32 {
+            .map_or(mana, |u| f32::from_bits(u.mana.value_at(seen)));
+        // The watch tests the cost plus 0.1 (c-SEA-1: the nwns' Roar watches,
+        // cost 100, at 80.079994 with the mana from 0 at 1.25 a second).
+        if value >= cost as f32 + 0.1 {
             let new = state.table.take(tick, "unit state: limit watch");
             day_watch_replaced(state, h, entry, new);
             state.table.defer(entry, "unit state: limit watch");
@@ -5370,6 +5392,14 @@ pub(super) fn watches_checked(state: &mut super::State, h: u32) {
         let step = if near < WATCH_STEP { near } else { WATCH_STEP };
         // Counted from the check's own time (26.397 -> 30.397).
         let next = ow3_math::add(at, step.to_bits());
+        // A check just short of it comes again at the next tick, at that
+        // tick's value (c-SEA-1: the nwna's War Stomp watch, cost 90, 90.09999
+        // at 60.066658, fired at 60.070202).
+        let next = if f32::from_bits(next) <= f32::from_bits(clock) {
+            ow3_math::add(clock, crate::timers::TICK)
+        } else {
+            next
+        };
         if let Some(e) = entries(state, h)
             && let Some(c) = e.watch_checks.iter_mut().find(|c| c.0 == entry)
         {

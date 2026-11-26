@@ -868,8 +868,8 @@ pub struct UnitEntries {
     /// finish (`construction_finished`).
     pub undead_finish: Vec<u32>,
     /// Five records of an AI building made by a peon or wisp, its 16th to
-    /// 20th (from 0), freed 0.884514 s after its finish
-    /// (`construction_finished`).
+    /// 20th (from 0; the Moon Well's 15th to 19th), freed 0.884514 s after
+    /// its finish (`construction_finished`).
     pub finish_effect: Vec<u32>,
     pub first_helper: Option<u32>,
     /// A builder turning to its building: the fifth part of its work order,
@@ -2057,7 +2057,15 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             finish_effect: if building.is_some()
                 && (state.table.ai_other_constructing || state.table.ai_wisp_constructing)
             {
-                entries[16..21].to_vec()
+                // The Moon Well's (`ai_wisp_constructing`) are one record
+                // earlier (c-SEA-1: 14616 .. 14620 at 68.795403). PROVISIONAL:
+                // read by the checksums of turns 686 to 689.
+                let first = if state.table.ai_wisp_constructing {
+                    15
+                } else {
+                    16
+                };
+                entries[first..first + 5].to_vec()
             } else {
                 Vec::new()
             },

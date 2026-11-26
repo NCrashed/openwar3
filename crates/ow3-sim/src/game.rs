@@ -620,6 +620,16 @@ pub(super) fn finish_construction(vm: &mut Vm, state: &Rc<RefCell<State>>, h: u3
                 s.table.ai_builder_released = true;
                 harvest::order_harvest(s, w, mine);
                 s.table.ai_builder_released = false;
+                // Out of its building with no movement before, it stands
+                // its first update and steps from the second (c-SEA-1: peon
+                // 10494, search at 69.205177, velocity at 69.235161).
+                // PROVISIONAL: its heading turns one update later in the
+                // game.
+                if let Some(Object::Unit(u)) = s.objects.get_mut(&w)
+                    && let Some(m) = u.movement.as_mut()
+                {
+                    m.ai_restart = true;
+                }
             }
         }
         // The work on it ends two ticks later (c-SBZ-1: 25.801769 after

@@ -277,9 +277,10 @@ pub struct Moving {
     ai_standing: bool,
     /// Its order replaced a movement the unit had (`order`).
     replaced: bool,
-    /// A moving initial melee-AI reassignment stands for the whole next
+    /// A moving initial melee-AI reassignment, or a builder the AI released
+    /// from its finished building, stands for the whole next
     /// update, not merely the lost movement tick of an ordinary restart.
-    ai_restart: bool,
+    pub(super) ai_restart: bool,
     /// A reserved Undead AI builder keeps its outward order but stands at
     /// its assignment pose until the corresponding construction boundary.
     ai_held: bool,

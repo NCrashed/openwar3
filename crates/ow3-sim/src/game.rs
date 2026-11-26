@@ -1340,6 +1340,12 @@ pub struct State {
     /// markers of the melee AI"): standing for searches of the ground
     /// kind, not for workers in the gathering cycle.
     town_markers: Vec<(i32, i32)>,
+    /// Workers pushed aside in the tick of their arrival at a mine, in their
+    /// standby: worker, stage, the tick its next stage is due and the tick
+    /// of its first stage (`harvest::standby`).
+    pub(super) mine_standby: Vec<(u32, u8, u64, u32)>,
+    /// Workers pushed aside, with the tick (`harvest::push_aside`).
+    pub(super) pushed: BTreeMap<u32, u64>,
     /// Where each computer player's melee AI keeps its captain: its mine
     /// marker (c-SEA-1: the Undead's at (8928, 4448)).
     pub(super) ai_captains: BTreeMap<i32, [u32; 2]>,
@@ -1551,6 +1557,8 @@ impl State {
             ai_supply_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
             town_markers: Vec::new(),
+            mine_standby: Vec::new(),
+            pushed: BTreeMap::new(),
             ai_captains: BTreeMap::new(),
             ai_mine_waiting: BTreeSet::new(),
             marked: std::collections::BTreeSet::new(),
@@ -2457,6 +2465,7 @@ impl<'a> Game<'a> {
             }
             table::recycled_guards_prepare(state);
             table::ai_captain_reorders(state, next);
+            harvest::standby(state);
         }
         // The time-of-day events the running clock passes in this tick
         // (SPEC-0017).

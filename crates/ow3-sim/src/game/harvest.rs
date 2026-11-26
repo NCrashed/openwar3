@@ -965,6 +965,11 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
         set(state, h, Some(g));
         return;
     }
+    // Pushed aside in this tick, it stands by (`standby`).
+    if state.pushed.get(&h) == Some(&tick) {
+        state.mine_standby.push((h, 0, tick + UPDATE, 0));
+        return;
+    }
     // Its update cycle, from the update at or after its arrival.
     let phase = state
         .unit(Some(h))
@@ -1170,6 +1175,16 @@ fn push_aside(state: &mut State, h: u32) {
     // count the time before the push (c-SEA-1: peon 11229 put at (9200,
     // 9040) at 65.996941, at 9044.67 north of it one update later).
     let clock = state.move_clock;
+    let tick = state.ticks;
+    // One pushed after its update, in the tick of its arrival at its mine,
+    // stands by instead
+    // (`arrive_at_mine`, `standby`; c-SEA-1: peon 11229 at 116.724060; peon
+    // 10461, pushed before its update at 90.263603, arrives).
+    for &o in &on {
+        if state.updated.contains(&o) {
+            state.pushed.insert(o, tick);
+        }
+    }
     for o in on {
         if let Some(at) = exit_place(state, o, true)
             && let Some(Object::Unit(u)) = state.objects.get_mut(&o)
@@ -2804,4 +2819,58 @@ pub(super) fn ai_gathering(state: &mut State, h: u32) {
         g.ai_gathering = true;
         set(state, h, Some(g));
     }
+}
+
+/// The standby of a worker pushed aside in the tick of its arrival at its
+/// mine, before the tick's updates (c-SEA-1: peon 11229, arrived at
+/// 116.724060 and put on (9168, 9008)): at its next update three records,
+/// the third freed 0.0001 s later, and it stands with its path emptied;
+/// 0.5 s of queue time later three more; at its next update after that
+/// it walks to its mine again.
+///
+/// PROVISIONAL: read on this one; what the records are is not read.
+pub(super) fn standby(state: &mut State) {
+    let tick = state.ticks;
+    let mut kept = Vec::new();
+    for (h, stage, at, q) in std::mem::take(&mut state.mine_standby) {
+        let t = state.table.now;
+        match stage {
+            0 if at <= tick => {
+                let r = state.table.take_n(t, 3, "mine standby");
+                // Its arrival's parts go as at a wait start, then the third;
+                // its walk at its next update (c-SEA-1: 26065, 26064, 26252
+                // at 116.759041, the walk 26073, 26072 at 116.784027).
+                let (arrival, walk) = state
+                    .unit(Some(h))
+                    .map(|u| (u.entries.harvest_arrive.clone(), u.entries.walk.clone()))
+                    .unwrap_or_default();
+                for e in arrival {
+                    state.table.defer(e, "mine standby: arrival");
+                }
+                state.table.defer(r[2], "mine standby");
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.harvest_arrive.clear();
+                    u.entries.walk.clear();
+                    u.entries.stale.extend(walk.into_iter().map(|e| (tick, e)));
+                    u.entries.stale_update = Some(tick + UPDATE);
+                }
+                state.paths.remove(&h);
+                // 0.5 s on: 100 ticks (117.253769 after 116.754044).
+                kept.push((h, 1, tick + 100, u32::try_from(tick).unwrap_or(u32::MAX)));
+            }
+            1 if at <= tick => {
+                state.table.take_n(t, 3, "mine standby");
+                // Its next update, in the phase of the first stage's.
+                let first = u64::from(q);
+                let next = first + UPDATE * ((tick - first) / UPDATE + 1);
+                kept.push((h, 2, next, q));
+            }
+            2 if at <= tick => {
+                state.ai_path_priority.insert(h);
+                walk_to_work(state, h);
+            }
+            _ => kept.push((h, stage, at, q)),
+        }
+    }
+    state.mine_standby.extend(kept);
 }

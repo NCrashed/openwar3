@@ -173,13 +173,14 @@ fn finish_ai_worker(
         for entry in records.into_iter().flat_map(|[a, b]| [b, a]) {
             s.table.defer(entry, "AI worker production");
         }
-        // The produced wisp uses the third free training cell. The produced
-        // peon and acolyte use the first one (c-SEA-1 worker completions).
-        // The first produced Orc peon's controller is staged separately;
-        // its creation boundary itself is outside the movement vector.
+        // The first free training cell, the town markers in the way too
+        // (SPEC-0027; SPEC-0021, "Town markers of the melee AI"; c-SEA-1:
+        // wisp 2219 at 59.598156 past the marker cell (648, 182) and wisp
+        // 10114). The first produced Orc peon's controller is staged
+        // separately; its creation boundary itself is outside the movement
+        // vector.
         let controller_place = place(&s, hall, type_id, None, 0);
-        let place_index = usize::from(type_id == i32::from_be_bytes(*b"ewsp")) * 2;
-        let place = place(&s, hall, type_id, None, place_index);
+        let place = controller_place;
         let Some(unit) =
             super::widgets::create_unit(&mut s, owner, type_id, [place[0], place[1], 0])
         else {
@@ -731,6 +732,8 @@ fn standing_cells(state: &State) -> std::collections::BTreeSet<(i32, i32)> {
         let p = super::movement::relative([u.x, u.y], min).map(|c| mul(c, CELL));
         cells.extend(crate::path::occupied_cells(p, class));
     }
+    // The melee AI's town markers stand there too (SPEC-0021).
+    cells.extend(state.town_markers.iter().copied());
     cells
 }
 

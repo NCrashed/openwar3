@@ -288,6 +288,9 @@ struct Others {
     standing: HashSet<(i32, i32)>,
     /// The units on each occupied cell, in the order of creation.
     by_cell: HashMap<(i32, i32), Vec<u32>>,
+    /// The cells of the melee AI's town markers (SPEC-0021): standing for
+    /// the searches and in the way of the look-ahead.
+    markers: HashSet<(i32, i32)>,
     units: HashMap<u32, Other>,
 }
 
@@ -299,6 +302,7 @@ fn others(state: &State, h: u32) -> Others {
         standing: HashSet::new(),
         by_cell: HashMap::new(),
         units: HashMap::new(),
+        markers: HashSet::new(),
     };
     // A unit in Wind Walk sees no one in its way either (SPEC-0040;
     // c-SAK-1: the Blademaster walked through kobold 9 at 847).
@@ -348,6 +352,28 @@ fn others(state: &State, h: u32) -> Others {
             others.standing.extend(cells);
         }
         return others;
+    }
+    // The melee AI's town markers stand for walks of the ground kind, not
+    // for workers in the gathering cycle above (SPEC-0021, "Town markers of
+    // the melee AI"; c-SEA-1: cell (659, 197) in wisp 10114's search of
+    // 61.104633).
+    // A worker's harvest walk searches with the gathering kind only, a
+    // wisp's with the ground kind (SPEC-0021).
+    let gathering = !super::harvest::is_wisp(state, h)
+        && state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .is_some_and(|m| {
+                matches!(
+                    m.order,
+                    super::movement::Order::Gather { .. }
+                        | super::movement::Order::Work { .. }
+                        | super::movement::Order::Return { .. }
+                )
+            });
+    if !gathering {
+        others.markers.extend(state.town_markers.iter().copied());
+        others.standing.extend(state.town_markers.iter().copied());
     }
     for &o in &state.units {
         if o == h {
@@ -1197,10 +1223,8 @@ fn decide(
                 // PROVISIONAL: the 0.2 of the arrival's turn is taken.
                 let w = to_world(w);
                 let (dx, dy) = (sub(w[0], walker.here[0]), sub(w[1], walker.here[1]));
-                let off = super::facing::angle_difference(
-                    super::movement::angle(dx, dy),
-                    walker.heading,
-                );
+                let off =
+                    super::facing::angle_difference(super::movement::angle(dx, dy), walker.heading);
                 if real(off).abs() > 0.2 {
                     follow.at_w = true;
                     return Steer::Stand(w);
@@ -1377,7 +1401,11 @@ fn decide(
     });
     let failing: Vec<(i32, i32)> = path::ahead_cells(at, target, class)
         .into_iter()
-        .filter(|&(x, y)| !grid.passable(x, y) || others.by_cell.contains_key(&(x, y)))
+        .filter(|&(x, y)| {
+            !grid.passable(x, y)
+                || others.by_cell.contains_key(&(x, y))
+                || !follow.ai_reassigned && others.markers.contains(&(x, y))
+        })
         .collect();
     if failing.is_empty() {
         follow.patience = 0;
@@ -1453,10 +1481,12 @@ fn decide(
             && failing
                 .iter()
                 .any(|cell| shared.buildings.contains_key(cell))
+        || !follow.ai_reassigned && failing.iter().any(|cell| others.markers.contains(cell))
     {
         // A building's red part is an entry of the cell occupancy, so a
         // block by it is one by units (SPEC-0022, "Buildings in the cell
-        // occupancy"; c-SEA-1: acolyte 10076 at 35.218861).
+        // occupancy"; c-SEA-1: acolyte 10076 at 35.218861). So is a town
+        // marker (SPEC-0021). PROVISIONAL: no block by a marker is read.
         // A member of a group standing at its block counts afresh, drawing
         // again (c-RTW-3: footman 900 at 5467 and 5473, standing short
         // of its place).

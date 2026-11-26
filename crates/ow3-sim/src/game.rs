@@ -1327,6 +1327,10 @@ pub struct State {
     /// an observed update: tick, worker and mine. The ordinary mine queue
     /// transition handles their state and table records at that tick.
     ai_mine_waits: Vec<(u64, u32, u32)>,
+    /// The cells of the town markers of the melee AI (SPEC-0021, "Town
+    /// markers of the melee AI"): standing for searches of the ground
+    /// kind, not for workers in the gathering cycle.
+    town_markers: Vec<(i32, i32)>,
     /// Those initial miners after the observed wait transition. Their
     /// measured placement is outside another starting worker's local route.
     ai_mine_waiting: BTreeSet<u32>,
@@ -1534,6 +1538,7 @@ impl State {
             ai_released_builders: BTreeSet::new(),
             ai_supply_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
+            town_markers: Vec::new(),
             ai_mine_waiting: BTreeSet::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
@@ -3918,6 +3923,39 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
     (present + queued + pending) as i32
 }
 
+/// The two town markers a computer player's melee AI places as it starts
+/// (SPEC-0021, "Town markers of the melee AI"): with H its town hall and M
+/// its gold mine, one at (H + M) / 2 and one 300 from H away from M. Each
+/// holds the cell of its point.
+/// PROVISIONAL: the mine is the town's nearest (open question 6).
+fn town_markers(state: &mut State, player: i32) {
+    use ow3_math::natives::sqrt;
+    let Some(&hall) = ai_town_halls(state, player).first() else {
+        return;
+    };
+    let Some(mine) = ai_town_mine(state, player, 0) else {
+        return;
+    };
+    let (Some(h), Some(m)) = (state.unit(Some(hall)), state.unit(Some(mine))) else {
+        return;
+    };
+    let (h, m) = ([h.x, h.y], [m.x, m.y]);
+    let half = 0.5f32.to_bits();
+    let mid = [mul(add(h[0], m[0]), half), mul(add(h[1], m[1]), half)];
+    let d = [sub(h[0], m[0]), sub(h[1], m[1])];
+    let length = sqrt(add(mul(d[0], d[0]), mul(d[1], d[1])));
+    let far = 300.0f32.to_bits();
+    let back = [
+        add(h[0], div(mul(far, d[0]), length)),
+        add(h[1], div(mul(far, d[1]), length)),
+    ];
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    for p in [back, mid] {
+        let at = movement::relative(p, min).map(|c| mul(c, (1.0f32 / 32.0).to_bits()));
+        state.town_markers.push(crate::path::cell_of(at));
+    }
+}
+
 fn ai_town_halls(state: &State, player: i32) -> Vec<u32> {
     state
         .units
@@ -5603,6 +5641,9 @@ fn register_natives(
                 let player = state.player_id(handle(&args[0]));
                 let tick = state.table.now;
                 state.table.take(tick, "StartMeleeAI");
+                if let Some(player) = player {
+                    town_markers(&mut state, player);
+                }
                 player
             };
             if let (Some(ai), Some(player), Some(script)) = (ai.as_ref(), player, string(&args[1]))

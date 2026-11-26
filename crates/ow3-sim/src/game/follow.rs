@@ -377,6 +377,20 @@ fn others(state: &State, h: u32) -> Others {
             }
             others.standing.extend(cells);
         }
+        // And a worker walking to its mine after its standby, as for others
+        // (c-SEA-1: peon 11229 blocking 10461's look-ahead at 117.533615,
+        // 117.683533 and 117.833450, each a wait for a moving unit).
+        for &o in &state.units {
+            if o == h || !super::harvest::standby_walk(state, o) {
+                continue;
+            }
+            if let Some(Object::Unit(u)) = state.objects.get(&o)
+                && u.alive
+                && !u.hidden
+            {
+                see(state, &mut others, o, u, min);
+            }
+        }
         return others;
     }
     for &o in &state.units {
@@ -402,68 +416,71 @@ fn others(state: &State, h: u32) -> Others {
         {
             continue;
         }
-        let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
-        // The look-ahead reads the velocity the other unit has at the
-        // check. A unit alone that stopped at its update earlier in this
-        // tick stands (c-RZH-1: footman 4 blocked by footman 6, blocked at
-        // 5983 and at its target at 6049), but the stand of a new goal
-        // after a swing comes after the updates (c-RXD-1: creep 7 waits
-        // for creep 8 at 2803), and so do the stops of the members of a
-        // group cluster, after their cluster's update (c-RTW-3: 954 waits
-        // for 936 at 4855).
-        let grouped =
-            state.renewed_now.contains(&o) || super::movement::group_of(state, o).is_some();
-        let velocity = |m: &super::movement::Moving| match state.start_velocities.get(&o) {
-            Some(&start) if m.velocity == [0, 0] && grouped => start,
-            _ => m.velocity,
-        };
-        // A unit stopped this tick stands for the searches (`stands`).
-        let (moving, stands, position, velocity) = match &u.movement {
-            // A group member that started at its update earlier in this
-            // tick, while its cluster has updates to come, still stands.
-            Some(m)
-                if m.velocity != [0, 0]
-                    && super::movement::seen_velocity(state, o, m) == [0, 0] =>
-            {
-                (false, true, super::movement::held_at(state, o, m), [0, 0])
-            }
-            // Its speed now, also when it moved at its update earlier in
-            // this tick.
-            Some(m) if m.velocity != [0, 0] => (
-                true,
-                false,
-                super::movement::held_at(state, o, m),
-                m.velocity,
-            ),
-            Some(m) if velocity(m) != [0, 0] => {
-                let here = super::movement::relative([u.x, u.y], min);
-                (true, true, here, velocity(m))
-            }
-            _ => (
-                false,
-                true,
-                super::movement::relative([u.x, u.y], min),
-                [0, 0],
-            ),
-        };
-        for cell in path::occupied_cells(to_cells(position), class) {
-            // Marked group members are passed by as moving ones are.
-            if stands && !state.marked.contains(&o) {
-                others.standing.insert(cell);
-            }
-            others.by_cell.entry(cell).or_default().push(o);
-        }
-        others.units.insert(
-            o,
-            Other {
-                moving,
-                squared_speed: squared_speed(velocity),
-                kind: move_kind(state, o),
-                group: super::movement::group_of(state, o),
-            },
-        );
+        see(state, &mut others, o, u, min);
     }
     others
+}
+
+/// Unit `o` as the others' searches and look-aheads see it.
+fn see(state: &State, others: &mut Others, o: u32, u: &super::Unit, min: [u32; 2]) {
+    let class = path::size_class(state.data.units.get(&u.type_id).map_or(0, |t| t.collision));
+    // The look-ahead reads the velocity the other unit has at the
+    // check. A unit alone that stopped at its update earlier in this
+    // tick stands (c-RZH-1: footman 4 blocked by footman 6, blocked at
+    // 5983 and at its target at 6049), but the stand of a new goal
+    // after a swing comes after the updates (c-RXD-1: creep 7 waits
+    // for creep 8 at 2803), and so do the stops of the members of a
+    // group cluster, after their cluster's update (c-RTW-3: 954 waits
+    // for 936 at 4855).
+    let grouped = state.renewed_now.contains(&o) || super::movement::group_of(state, o).is_some();
+    let velocity = |m: &super::movement::Moving| match state.start_velocities.get(&o) {
+        Some(&start) if m.velocity == [0, 0] && grouped => start,
+        _ => m.velocity,
+    };
+    // A unit stopped this tick stands for the searches (`stands`).
+    let (moving, stands, position, velocity) = match &u.movement {
+        // A group member that started at its update earlier in this
+        // tick, while its cluster has updates to come, still stands.
+        Some(m)
+            if m.velocity != [0, 0] && super::movement::seen_velocity(state, o, m) == [0, 0] =>
+        {
+            (false, true, super::movement::held_at(state, o, m), [0, 0])
+        }
+        // Its speed now, also when it moved at its update earlier in
+        // this tick.
+        Some(m) if m.velocity != [0, 0] => (
+            true,
+            false,
+            super::movement::held_at(state, o, m),
+            m.velocity,
+        ),
+        Some(m) if velocity(m) != [0, 0] => {
+            let here = super::movement::relative([u.x, u.y], min);
+            (true, true, here, velocity(m))
+        }
+        _ => (
+            false,
+            true,
+            super::movement::relative([u.x, u.y], min),
+            [0, 0],
+        ),
+    };
+    for cell in path::occupied_cells(to_cells(position), class) {
+        // Marked group members are passed by as moving ones are.
+        if stands && !state.marked.contains(&o) {
+            others.standing.insert(cell);
+        }
+        others.by_cell.entry(cell).or_default().push(o);
+    }
+    others.units.insert(
+        o,
+        Other {
+            moving,
+            squared_speed: squared_speed(velocity),
+            kind: move_kind(state, o),
+            group: super::movement::group_of(state, o),
+        },
+    );
 }
 
 /// What the units share while they decide their steps: the budget of

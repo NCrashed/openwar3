@@ -498,6 +498,9 @@ struct Shared<'a> {
     group: Option<usize>,
     /// The movement type of the unit deciding (`move_kind`).
     kind: u8,
+    /// A worker walking to its mine after its standby
+    /// (`harvest::standby_walk`).
+    standby: bool,
     /// The red cells of the building walked to, if any.
     building: Vec<(i32, i32)>,
     /// The cells of the tree walked to, for the touch test at the end of
@@ -905,6 +908,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         tree: tree_cells,
         group,
         kind,
+        standby: standby_walk,
     };
     let limit = if wander {
         WANDER_LOCAL_LIMIT
@@ -999,7 +1003,13 @@ fn decide(
         if in_reach || follow.touching {
             // Not yet turned to it: it stands and turns this update
             // (c-RYP-1: peasant 5 at 1009, arrived at 1015).
-            if real(off).abs() > 0.2 {
+            // After its standby a worker turns to its mine with the turn of
+            // the update (0.6) and arrives when that turn brings it within
+            // 0.2 (c-SEA-1: peon 11229 at the end of its path at 119.422577,
+            // turning at 119.452560 and 119.482544, waiting from 119.512527).
+            // PROVISIONAL: read on this one walk.
+            let within = if shared.standby { 0.8 } else { 0.2 };
+            if real(off).abs() > within {
                 return Steer::Stand(place);
             }
             // At its target, or touching its tree: the walk ends there
@@ -1181,6 +1191,12 @@ fn decide(
             // The end of a path that did not get there: blocked, with the
             // patience counter, and a new search at the next update
             // (SPEC-0025, "Blocked units"; c-RXD-1: creep 9 at 5719).
+            // After its standby a worker at the end of its path has
+            // arrived (`harvest::standby_walk`): it turns to its mine.
+            if shared.standby && follow.final_goal {
+                follow.touching = true;
+                return Steer::Stand(walker.order);
+            }
             if follow.final_goal {
                 shared.events.push(PathEvent {
                     tick,

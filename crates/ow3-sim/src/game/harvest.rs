@@ -136,6 +136,10 @@ pub struct Harvest {
     /// footprint, so it does not touch the mine (c-SEA-1: peon 11229's
     /// search of 117.263763, round to the mine's east side).
     standby_walk: bool,
+    /// The order-parameter task of its standby's first stage, kept until
+    /// it starts to wait at its mine (c-SEA-1: peon 11229's 26250, taken
+    /// at 116.754044, freed after its wait record of 119.512527).
+    standby_task: Option<u32>,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -1815,6 +1819,17 @@ pub(super) fn standby_walk(state: &State, h: u32) -> bool {
     get(state, h).is_some_and(|g| g.standby_walk)
 }
 
+/// Worker `h` starts to wait at its mine: the task its standby kept goes
+/// 0.0001 s after its wait record (`standby`).
+pub(super) fn standby_waits(state: &mut State, h: u32) {
+    if let Some(mut g) = get(state, h)
+        && let Some(task) = g.standby_task.take()
+    {
+        set(state, h, Some(g));
+        state.table.defer(task, "mine standby: task target");
+    }
+}
+
 /// What worker `h` carries, for the interface.
 pub(super) fn carried(state: &State, h: u32) -> Option<(Resource, i32)> {
     get(state, h).and_then(|g| g.carry)
@@ -2873,6 +2888,10 @@ pub(super) fn standby(state: &mut State) {
                     u.entries.stale_update = Some(tick + UPDATE);
                 }
                 state.paths.remove(&h);
+                if let Some(mut g) = get(state, h) {
+                    g.standby_task = Some(r[0]);
+                    set(state, h, Some(g));
+                }
                 // 0.5 s on: 100 ticks (117.253769 after 116.754044).
                 kept.push((
                     h,
@@ -2887,10 +2906,13 @@ pub(super) fn standby(state: &mut State) {
                 // parameter task of the first stage, 0.0001 s later
                 // (c-SEA-1: 26327..26329 at 117.253769, 26327 freed at
                 // once, 26251 at 117.253868).
-                // PROVISIONAL: the other two kept, their end not read.
+                // The other two are its walk, kept to its wait start.
                 let r = state.table.take_n(t, 3, "mine standby: walk");
                 state.table.free(t, r[0], "mine standby: walk");
                 state.table.defer(task, "mine standby: task");
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.walk.extend([r[2], r[1]]);
+                }
                 // Its next update, in the phase of the first stage's.
                 let first = u64::from(q);
                 let next = first + UPDATE * ((tick - first) / UPDATE + 1);
@@ -2902,7 +2924,17 @@ pub(super) fn standby(state: &mut State) {
                     g.standby_walk = true;
                     set(state, h, Some(g));
                 }
+                // Its walk of the second stage stays its walk: freed an
+                // update after its wait start (c-SEA-1: 26329, 26328 at
+                // 119.542511).
+                let kept_walk = match state.objects.get_mut(&h) {
+                    Some(Object::Unit(u)) => std::mem::take(&mut u.entries.walk),
+                    _ => Vec::new(),
+                };
                 walk_to_work(state, h);
+                if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+                    u.entries.walk = kept_walk;
+                }
             }
             _ => kept.push((h, stage, at, q, task)),
         }

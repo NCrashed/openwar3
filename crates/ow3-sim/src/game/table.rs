@@ -3900,6 +3900,7 @@ pub(super) fn harvest_waits(state: &mut super::State, h: u32) {
     if let Some(e) = entries(state, h) {
         e.harvest_inside = Some(reference);
     }
+    super::harvest::standby_waits(state, h);
 }
 
 /// Worker `h`, which waited, goes into the gold mine: the reference to

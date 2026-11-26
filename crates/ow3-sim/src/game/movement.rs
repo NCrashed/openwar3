@@ -455,6 +455,13 @@ impl Moving {
         self.origin = self.position(clock);
         self.since = clock;
     }
+
+    /// Puts the unit at `at` (relative) from movement clock `clock` on, its
+    /// velocity kept (a worker pushed aside, SPEC-0029).
+    pub(super) fn put(&mut self, at: [u32; 2], clock: u32) {
+        self.origin = at;
+        self.since = clock;
+    }
 }
 
 /// The angle of vector (`x`, `y`) in `0..2 pi`, through `acos` and `sqrt`
@@ -1418,22 +1425,20 @@ pub(super) fn ai_build_order(
                 m.ai_standing = false;
             }
         }
-        let lead_in = if type_id == emow {
-            // The wisp's route to this Moon Well starts one cell north.
-            Some([0, 1])
-        } else {
-            Some([1, -1])
-        };
-        state.ai_path_priority.insert(worker, lead_in);
+        // Its path has the priority of a new AI path. The town markers
+        // shape its first steps (SPEC-0021; c-SEA-1: peon 11299 at 0.12 to
+        // the first point of its path, the burrow builder of 15.27 straight
+        // north past the back marker).
+        state.ai_path_priority.insert(worker);
         set_attack_move(state, worker, None);
     } else if type_id == uaod || type_id == eaom || type_id == usep {
         // An Undead builder that walks to its site takes a plain build
-        // order: its path sees the standing workers and has no lead-in
-        // (SPEC-0020; c-SEA-1: acolyte 10269 from 31.435724).
+        // order: its path sees the standing workers (SPEC-0020; c-SEA-1:
+        // acolyte 10269 from 31.435724).
         super::harvest::paid_order_given(state, worker, false);
         order(state, worker, Order::Build { type_id }, type_id, site);
         // Its walk is the order's (`SetProduce`), not a new one.
-        state.ai_path_priority.insert(worker, None);
+        state.ai_path_priority.insert(worker);
         set_attack_move(state, worker, None);
     }
     if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {

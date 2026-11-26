@@ -38,7 +38,6 @@ the question that would replace it with a rule.
 | The delay from an accepted building plan to the construction start, per building type: Crypt 250 ticks, Altar of Storms 280, Altar of Elders 298, Ancient of War 304, Moon Well 461, Altar of Darkness 1220, Orc Burrow 787 and 1007 | `movement::ai_build_order` | Is the start a fixed delay from the order or the builder's arrival at its site (the Crypt's 1.25 s fits both)? |
 | The building sites, as offsets from the town hall per type | `movement::ai_build_order` | How does the AI choose the site (`SetProduce` and the placement search)? |
 | The builder's facing at the start: measured constants for the Altars of Storms and of Elders | `movement::start_buildings` | Does every builder keep the heading of its walk, as the Crypt's and the Altar of Darkness' do? |
-| The lead-in cell of an Orc or Night Elf builder's first path (`[1, -1]`, `[0, 1]` for the Moon Well's wisp) | `movement::ai_build_order`, `follow::steer` | Why does that first path start one cell off? |
 | The look-ahead of a path from an AI order passes the buildings' red cells | `follow::decide` (`ai_reassigned`) | Does a building's red part stop the look-ahead of every unit, and why not these? |
 | The construction records of the AI's Undead, Orc and Night Elf buildings (`ai_constructing`, `ai_supply_constructing`, `ai_wisp_constructing`, `ai_ancient_constructing`) | `table::construction_rest`, `table::ai_supply_construction_started`, `table::construction_finished` | The records of a construction start and finish per race, as a rule. |
 

@@ -7542,8 +7542,10 @@ pub(super) fn construction_rest(state: &mut super::State, h: u32, building: u32,
                 .defer(entry, "AI wisp construction: computer unit");
         }
         state.table.defer(timer[2], "AI wisp construction: timer");
-        if let Some(e) = entries(state, h) {
-            e.work = std::iter::once(work).chain(parts).collect();
+        // Its work's five records stay with the building to its finish
+        // (c-SEA-1: the Moon Well's 14643 .. 14647, freed at 67.907997).
+        if let Some(e) = entries(state, building) {
+            e.undead_finish = std::iter::once(work).chain(parts).collect();
         }
         return;
     }
@@ -7898,6 +7900,28 @@ pub(super) fn guard_given_up(state: &mut super::State, h: u32, moving_order: boo
     state.table.defer(one, "guard: given up");
 }
 
+/// The idle wisps of builder `builder`'s player at its building's finish,
+/// the builder included: alive, out and with no order (c-SEA-1: 2219 and
+/// 11938 at 61.589996, 10264, 2219 and 11938 at 67.907997).
+fn idle_wisps(state: &super::State, builder: u32) -> usize {
+    let Some(owner) = state.unit(Some(builder)).map(|u| u.owner) else {
+        return 0;
+    };
+    state
+        .units
+        .iter()
+        .filter(|&&h| {
+            super::harvest::is_wisp(state, h)
+                && state.unit(Some(h)).is_some_and(|u| {
+                    u.owner == owner
+                        && u.alive
+                        && (h == builder
+                            || !u.hidden && u.movement.is_none() && u.shown_order.is_none())
+                })
+        })
+        .count()
+}
+
 /// Building `building` is finished at queue time `q` (c-SBZ-1: the
 /// barracks at 44.043449, hub #13): an object and the construction-finish
 /// event's, both freed at once after the construction's progress pair;
@@ -7929,19 +7953,39 @@ pub(super) fn construction_finished(
             .map(|e| std::mem::take(&mut e.ai_build_release))
             .unwrap_or_default();
         if let Some((&release_last, release)) = release.split_last() {
-            let finish = state.table.take(tick, "AI construction: finished");
-            // A Night Elf building takes six more, freed after the rest
-            // as two rotated triples, and its wisp gets no order (c-SEA-1:
-            // the Altar of Elders at 61.589996, 19539 .. 19544 freed as
-            // 19540, 19541, 19539, 19543, 19544, 19542). PROVISIONAL: what
-            // the six belong to is not read.
             let wisp = super::harvest::is_wisp(state, builder);
-            let extra = if wisp {
-                state.table.take_n(tick, 6, "AI construction: finished")
+            // A Night Elf supply building first takes three of its own: the
+            // first is freed after the third last of the five, the others
+            // stay (c-SEA-1: the Moon Well's 20335 .. 20337 at 67.907997).
+            // PROVISIONAL: read on this one; what the two kept are is not
+            // read.
+            let supply = state
+                .unit(Some(building))
+                .and_then(|u| state.data.units.get(&u.type_id))
+                .is_some_and(|t| t.food_made > 0);
+            let own = if wisp && supply {
+                state.table.take_n(tick, 3, "AI construction: supply")
             } else {
                 Vec::new()
             };
-            for e in order.into_iter().chain(release.iter().copied()) {
+            let finish = state.table.take(tick, "AI construction: finished");
+            // A Night Elf building takes three more for each idle wisp of
+            // its player, its builder included, freed after the rest as
+            // rotated triples, and its wisp gets no order (c-SEA-1: the
+            // Altar of Elders at 61.589996 with two, 19539 .. 19544 freed
+            // as 19540, 19541, 19539, 19543, 19544, 19542; the Moon Well at
+            // 67.907997 with three). PROVISIONAL: what the triples are is
+            // not read.
+            let idle = if wisp { idle_wisps(state, builder) } else { 0 };
+            let extra = state
+                .table
+                .take_n(tick, 3 * idle, "AI construction: finished");
+            for e in [second, third]
+                .into_iter()
+                .chain(own.first().copied())
+                .chain([last, fourth, fifth])
+                .chain(release.iter().copied())
+            {
                 state.table.defer(e, "AI construction: finished");
             }
             state.table.defer(finish, "AI construction: finished");

@@ -130,14 +130,6 @@ pub struct Follow {
     /// Its first local leg after a moving melee-AI reassignment is taken
     /// without the ordinary unit-to-unit wait check.
     ai_reassigned: bool,
-    /// It is taking the lead-in cell of an AI building plan before ordinary
-    /// path shortcuts.
-    ai_detouring: bool,
-    /// Index of the last point of that lead-in.
-    ai_detour_end: usize,
-    /// An accepted initial AI building plan still needs this first local
-    /// cell offset before ordinary path shortcuts.
-    ai_lead_in: Option<[i32; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +304,29 @@ fn others(state: &State, h: u32) -> Others {
     {
         return others;
     }
+    // The melee AI's town markers stand for walks of the ground kind, by
+    // the walk's order, also for a worker of the gathering cycle on a build
+    // order (SPEC-0021, "Town markers of the melee AI"; c-SEA-1: cell (659,
+    // 197) in wisp 10114's search of 61.104633; cell (666, 663) next to peon
+    // 11299's start at 0.12, its first path point walked to).
+    // A worker's harvest walk searches with the gathering kind only, a
+    // wisp's with the ground kind (SPEC-0021).
+    let gathering = !super::harvest::is_wisp(state, h)
+        && state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .is_some_and(|m| {
+                matches!(
+                    m.order,
+                    super::movement::Order::Gather { .. }
+                        | super::movement::Order::Work { .. }
+                        | super::movement::Order::Return { .. }
+                )
+            });
+    if !gathering {
+        others.markers.extend(state.town_markers.iter().copied());
+        others.standing.extend(state.town_markers.iter().copied());
+    }
     // Nor does such a worker see any unit (SPEC-0029), but for its searches
     // the workers waiting at a mine are in the way (c-RXI-1: worker 4's
     // search of 1279 touched two of them).
@@ -352,28 +367,6 @@ fn others(state: &State, h: u32) -> Others {
             others.standing.extend(cells);
         }
         return others;
-    }
-    // The melee AI's town markers stand for walks of the ground kind, not
-    // for workers in the gathering cycle above (SPEC-0021, "Town markers of
-    // the melee AI"; c-SEA-1: cell (659, 197) in wisp 10114's search of
-    // 61.104633).
-    // A worker's harvest walk searches with the gathering kind only, a
-    // wisp's with the ground kind (SPEC-0021).
-    let gathering = !super::harvest::is_wisp(state, h)
-        && state
-            .unit(Some(h))
-            .and_then(|u| u.movement)
-            .is_some_and(|m| {
-                matches!(
-                    m.order,
-                    super::movement::Order::Gather { .. }
-                        | super::movement::Order::Work { .. }
-                        | super::movement::Order::Return { .. }
-                )
-            });
-    if !gathering {
-        others.markers.extend(state.town_markers.iter().copied());
-        others.standing.extend(state.town_markers.iter().copied());
     }
     for &o in &state.units {
         if o == h {
@@ -658,14 +651,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         f.take_segment(order_cells);
     }
     let fresh = !state.paths.contains_key(&walker.handle);
-    let lead_in = state.ai_path_priority.remove(&walker.handle);
-    let priority = lead_in.is_some();
-    let ai_lead_in = lead_in.flatten().filter(|_| {
-        state.unit(Some(walker.handle)).is_some_and(|u| {
-            u.movement
-                .is_some_and(|m| matches!(m.order, super::movement::Order::Build { .. }))
-        })
-    });
+    let priority = state.ai_path_priority.remove(&walker.handle);
     // A new path finding the high-level budget used up is refused for
     // the tick (SPEC-0021, "High-level budgets").
     let wander = state
@@ -826,12 +812,8 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
             end_blocked: false,
             turning_in: false,
             from_entry,
-            // A priority path without a lead-in (an Undead builder's) sees
-            // its player's workers (c-SEA-1: acolyte 10269 at 31.645689).
-            ai_reassigned: lead_in.flatten().is_some() || reassigned_fresh,
-            ai_detouring: false,
-            ai_detour_end: 0,
-            ai_lead_in,
+            // A new path after a melee-AI reassignment (`ai_reassigned_fresh`).
+            ai_reassigned: reassigned_fresh,
         };
         follow.take_segment(order_cells);
         follow
@@ -1083,22 +1065,12 @@ fn decide(
             follow.hold_until = tick + HOLD;
         }
         follow.local = found.points;
-        let lead_in = follow.ai_lead_in.take();
-        if let Some([dx, dy]) = lead_in {
-            let (x, y) = path::cell_of(at);
-            let centre = |c: i32| (c as f32 + 0.5).to_bits();
-            follow.local.insert(1, [centre(x + dx), centre(y + dy)]);
-            follow.ai_detouring = true;
-            follow.ai_detour_end = 1;
-        }
         follow.partial = !found.reached;
         // A search that met nothing in the way walks straight to the end.
         // One from its mine's entry walks to the path's next point, from
         // where it came out (c-SDE-1: unit 4 from (112, -208) towards
         // (48, -176) at 41.398857, hub #15).
-        follow.target = if lead_in.is_some() {
-            1.min(follow.local.len() - 1)
-        } else if found.clear && entry.is_none() {
+        follow.target = if found.clear && entry.is_none() {
             follow.local.len() - 1
         } else {
             1.min(follow.local.len() - 1)
@@ -1383,12 +1355,7 @@ fn decide(
         return Steer::Stand(to_world(reached));
     }
     if close(at, follow.local[follow.target]) {
-        if follow.ai_detouring && follow.target < follow.ai_detour_end {
-            follow.target += 1;
-        } else {
-            follow.ai_detouring = false;
-            follow.target = farthest_seen(&seen, at, &follow.local, follow.target, class);
-        }
+        follow.target = farthest_seen(&seen, at, &follow.local, follow.target, class);
     }
     let target = follow.local[follow.target];
     // The look-ahead check sees every unit.
@@ -1404,7 +1371,7 @@ fn decide(
         .filter(|&(x, y)| {
             !grid.passable(x, y)
                 || others.by_cell.contains_key(&(x, y))
-                || !follow.ai_reassigned && others.markers.contains(&(x, y))
+                || others.markers.contains(&(x, y))
         })
         .collect();
     if failing.is_empty() {
@@ -1481,7 +1448,7 @@ fn decide(
             && failing
                 .iter()
                 .any(|cell| shared.buildings.contains_key(cell))
-        || !follow.ai_reassigned && failing.iter().any(|cell| others.markers.contains(cell))
+        || failing.iter().any(|cell| others.markers.contains(cell))
     {
         // A building's red part is an entry of the cell occupancy, so a
         // block by it is one by units (SPEC-0022, "Buildings in the cell
@@ -1688,9 +1655,6 @@ pub(super) fn reassign_local(state: &mut State, h: u32) {
         f.made = false;
         f.hold_until = 0;
         f.ai_reassigned = true;
-        f.ai_detouring = false;
-        f.ai_detour_end = 0;
-        f.ai_lead_in = None;
     }
 }
 /// Whether unit `h`'s last search found no point nearer to its goal than

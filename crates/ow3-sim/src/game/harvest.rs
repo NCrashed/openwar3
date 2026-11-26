@@ -1166,13 +1166,17 @@ fn push_aside(state: &mut State, h: u32) {
         // state the game tests after it is taken as always set.
         .filter(|&o| overlaps(state, h, o))
         .collect();
+    // It walks on from there at its velocity: its next update does not
+    // count the time before the push (c-SEA-1: peon 11229 put at (9200,
+    // 9040) at 65.996941, at 9044.67 north of it one update later).
+    let clock = state.move_clock;
     for o in on {
         if let Some(at) = exit_place(state, o, true)
             && let Some(Object::Unit(u)) = state.objects.get_mut(&o)
         {
             [u.x, u.y] = at;
             if let Some(m) = u.movement.as_mut() {
-                m.origin = relative(at, min);
+                m.put(relative(at, min), clock);
             }
         }
     }

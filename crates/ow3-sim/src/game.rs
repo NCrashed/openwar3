@@ -1210,9 +1210,8 @@ pub struct State {
     /// The path decisions of the units, when a test asks for them.
     pub path_trace: Option<Vec<follow::PathEvent>>,
     /// Accepted melee-AI workers whose replacement order gets its first
-    /// high-level path in the next update even after the shared budget. The
-    /// value is an optional cell offset for a mandatory local lead-in.
-    pub(super) ai_path_priority: BTreeMap<u32, Option<[i32; 2]>>,
+    /// high-level path in the next update even after the shared budget.
+    pub(super) ai_path_priority: BTreeSet<u32>,
     /// Workers the melee AI reassigned whose path its order dropped: their
     /// fresh search is a reassigned one (`follow::reassign_local`), which
     /// passes their player's busy workers (c-SEA-1: peon 11089 past 11229
@@ -1496,7 +1495,7 @@ impl State {
             pending_exits: std::collections::BTreeSet::new(),
             cooldowns_done: None,
             path_trace: None,
-            ai_path_priority: BTreeMap::new(),
+            ai_path_priority: BTreeSet::new(),
             ai_reassigned_fresh: BTreeSet::new(),
             hit_trace: None,
             agent_trace: None,
@@ -4842,7 +4841,7 @@ fn register_ai_natives(
                             {
                                 m.given = given;
                             }
-                            state.ai_path_priority.insert(worker, None);
+                            state.ai_path_priority.insert(worker);
                             follow::reassign_local(&mut state, worker);
                         }
                         wood_workers.borrow_mut().insert(worker);

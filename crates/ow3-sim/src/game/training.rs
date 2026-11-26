@@ -166,7 +166,7 @@ fn finish_ai_worker(
     type_id: i32,
     records: Option<[u32; 2]>,
 ) {
-    {
+    let made = {
         let mut s = state.borrow_mut();
         // A hero keeps no records of its start (c-SEA-1: the Priestess of
         // the Moon at 61.599998). PROVISIONAL: its completion is not read.
@@ -234,20 +234,23 @@ fn finish_ai_worker(
         // (c-SEA-1, turn 157).
         // PROVISIONAL: what the wisp's second record is was not read.
         let first = !s.table.ai_worker_completion_retained.contains_key(&owner);
+        let hero = crate::data::is_hero(type_id);
         let completion_count = if type_id == i32::from_be_bytes(*b"ewsp") && first {
             2
         } else {
             1
         };
-        let completion = s
-            .table
-            .take_n(tick, completion_count, "AI worker completion");
-        s.table.defer(completion[0], "AI worker completion");
-        s.table
-            .ai_worker_completion_retained
-            .entry(owner)
-            .or_default()
-            .extend(completion[1..].iter().copied());
+        if !hero {
+            let completion = s
+                .table
+                .take_n(tick, completion_count, "AI worker completion");
+            s.table.defer(completion[0], "AI worker completion");
+            s.table
+                .ai_worker_completion_retained
+                .entry(owner)
+                .or_default()
+                .extend(completion[1..].iter().copied());
+        }
         // The walk its first order gave up is freed at that first update,
         // even in the tick of the training's end (c-SEA-1: 15966, 15967 at
         // 30.269310).
@@ -260,8 +263,24 @@ fn finish_ai_worker(
             }
         }
         super::regions::test_unit(&mut s, unit);
-    }
+        hero.then_some(unit)
+    };
     super::regions::dispatch(vm, state);
+    // A hero's completion is the training's finish event, whose triggers
+    // run (c-SEA-1: the Blademaster's 27209 and 27210 at 124.265144, the
+    // melee hero's item 27211 .. 27216).
+    if let Some(unit) = made {
+        super::begin_event(state);
+        fire(
+            vm,
+            state,
+            EVENT_PLAYER_UNIT_TRAIN_FINISH,
+            hall,
+            Some(unit),
+            Some(type_id),
+        );
+        super::end_event(state);
+    }
 }
 
 fn player_state(state: &State, player: i32, which: i32) -> i32 {
@@ -310,7 +329,11 @@ fn fire(
             && player == owner
         {
             let filter_context = Context {
-                filter_unit: Some(building),
+                filter_unit: if event == EVENT_PLAYER_UNIT_TRAIN_FINISH {
+                    trained_unit.or(Some(building))
+                } else {
+                    Some(building)
+                },
                 triggering_player: Some(owner_handle),
                 event_id: Some(event),
                 ..Context::default()

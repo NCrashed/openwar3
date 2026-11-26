@@ -2361,6 +2361,16 @@ impl<'a> Game<'a> {
             s.table.now = s.ticks;
         }
         attack::held_impacts(&mut self.vm, &self.state);
+        // So do the timers of the engine that expire by the next tick's
+        // clock: they fire as the clock passes them, before the turn's
+        // checksum (c-SEA-1: the Blademaster's training ending at
+        // 124.265144, in checkpoint 1238 of 124.269913).
+        let clock = self.state.borrow().move_clock;
+        if self.state.borrow().ticks > 1 {
+            self.state.borrow_mut().move_clock = add(clock, crate::timers::TICK);
+        }
+        training::fire_engine_timers(&mut self.vm, &self.state);
+        self.state.borrow_mut().move_clock = clock;
         let mut s = self.state.borrow_mut();
         s.ticks -= 1;
         s.table.now = s.ticks;

@@ -138,6 +138,37 @@ and cluster at the worker's next update, which searches again. A wisp
 already harvesting took only three objects in the same pass, freed in
 the next tick.
 
+**A hero trained by a computer player (`c-SEA-1`, the Blademaster
+`Obla` 2041/27154 at the Orc Altar of Storms, world 124.265144,
+55 s after its start at queue 69.266663).** 63 objects in this order:
+
+1. the unit, 25 objects: the hero first, its parts, the abilities
+   `Amov` and `Aatk` (two draws of the game generators among them and
+   one of the script generator after them), four more parts, the
+   inventory `AInv`, two tasks and a unit reference list;
+2. the computer player's tail for the unit, 9 objects: its AI state,
+   a stop order (851972), a task action, four tasks, a task action and
+   a unit reference list. Between the AI state and the stop order the
+   AI picks the hero's first skill (SPEC-0035): two objects, the
+   ability (`AOmi` here) and one more;
+3. the AI's order to move to its captain (851974, then a move order
+   851986 on the captain): order, task, target, task action, a task
+   with the order's parameter, nine search tasks, a task action, and
+   a walk's three (the helper freed at once, its entry taken again by
+   one more object);
+4. the training-finished event (one object), and a trigger run (one
+   object): the trigger's filter sees the trained hero as
+   `GetFilterUnit`, so a hero test passes. The trigger's actions
+   (`GetTrainedUnit`, `GetOwningPlayer`, `GetPlayerId`,
+   `UnitAddItemById`) give the hero an item, here a Town Portal scroll:
+   six objects, among them the item's ability `AItp` (the fifth).
+
+In the same tick the two objects kept since the hero's training start
+(SPEC-0026, the training entry) are freed first, then two of the
+unit's parts, its two tasks, the tail's task actions, four tasks and
+stop order, the captain order's order and task, six of its search
+tasks and its task action, and last the trigger run and the event.
+
 ### Cancelling
 
 The order 851976 (`cancel`; from the interface key Escape: replay

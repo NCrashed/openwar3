@@ -27,6 +27,13 @@ s, the same in `Custom_V1`).
   (`reqLevel` 1, `levelSkip` 0): levels 1, 2, 3 at hero levels 1, 3, 5.
   Resurrection (`AHre`, `reqLevel` 6, one level): at hero level 6.
 - A call that the rules do not allow spends nothing.
+- A computer player's new hero learns its first skill at once, inside
+  its training end (SPEC-0027): the AI asks its script for the skill
+  (the script reads `GetHeroLevelAI` and `GetHeroId`) and the chosen
+  ability is learned with the hero's skill point. It takes two
+  objects: the ability, then one more. `c-SEA-1`, the Orc AI's
+  Blademaster at 124.265144: Mirror Image (`AOmi`). The choice is the
+  script's (its skill list was not read here).
 
 Measured (test RYA): a paladin raised level by level with `SetHeroLevel`
 and, at each level, four attempts each of `AHhb` and `AHre`: the ability

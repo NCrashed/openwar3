@@ -766,6 +766,18 @@ impl ObjectTable {
         }
     }
 
+    /// The deferred frees due by `tick`, freed now (before a payment of a
+    /// mine later in the tick, `harvest::pay_mines`).
+    pub fn flush_due(&mut self, tick: u64) {
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)
+            .into_iter()
+            .partition(|&(t, _, _)| t <= tick);
+        self.deferred = later;
+        for (_, entry, tag) in due {
+            self.free(tick, entry, tag);
+        }
+    }
+
     pub fn flush(&mut self, tick: u64) {
         self.early.clear();
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred)

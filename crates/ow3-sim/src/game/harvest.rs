@@ -2596,6 +2596,13 @@ fn pay_mines(state: &mut State) {
                     count_change(state, mine, at, Some(w), None);
                 }
                 (_, Some(e)) => {
+                    // The critters' moves due before it come first, and the frees of
+                    // this tick's events before it (c-SEA-1: nsea 9708 at 83.707245
+                    // before the entangled mine's payment at 83.70742; a critter's
+                    // end of wander at 82.7028 before the payment at 82.70732).
+                    super::widgets::critters_before(state, Some(e));
+                    let tick = state.table.now;
+                    state.table.flush_due(tick);
                     let crossing = state.paying.get(&mine).is_some_and(|p| p.crossing);
                     if crossing {
                         paid(state, mine);

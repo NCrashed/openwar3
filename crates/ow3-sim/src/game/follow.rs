@@ -1378,6 +1378,19 @@ fn decide(
         follow.patience = 0;
         return Steer::Walk(to_world(target));
     }
+    // A walk to a building blocked where it touches the building arrives
+    // there: the mark of reach, and it stands this update (c-SEA-1: peon
+    // 10461 pushed next to its mine at 90.263603, its look-ahead meeting
+    // the pusher, waiting from 90.293587). PROVISIONAL: read on this one.
+    if follow.final_goal
+        && walker.building.is_some()
+        && !shared.building.is_empty()
+        && touches(&shared.building, at, class)
+    {
+        follow.touching = true;
+        follow.local.clear();
+        return Steer::Arrived;
+    }
     // Moving units in the way: wait for them, or make the slower ones of
     // the same class wait.
     let mut examined = BTreeSet::new();

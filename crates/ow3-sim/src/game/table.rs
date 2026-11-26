@@ -92,6 +92,10 @@ pub struct ObjectTable {
     /// The harvest order of an AI builder released by its finished
     /// building (`construction_finished`).
     pub ai_builder_released: bool,
+    /// The next AI harvest order is a new wood worker's that found no place
+    /// for it: one more record, 852660, after the first part
+    /// (`harvest_ordered`).
+    pub ai_harvest_no_place: bool,
     /// The first worker assigned after `ClearHarvestAI` has its temporary
     /// order state cleaned between the two cleanup groups of the accepted
     /// building plan (c-SEA-1, hub #15).
@@ -286,6 +290,7 @@ impl ObjectTable {
             ai_harvest_fewer: 0,
             ai_harvest_reassigning: false,
             ai_builder_released: false,
+            ai_harvest_no_place: false,
             ai_harvest_cleanup_armed: false,
             ai_harvest_cleanup: Vec::new(),
             ai_harvest_cleanup_owner: None,
@@ -375,6 +380,11 @@ impl ObjectTable {
     }
 
     /// A new object takes an entry; gives the entry.
+
+    /// The first `n` entries of the free list, the next taken first.
+    pub fn free_head(&self, n: usize) -> Vec<u32> {
+        self.free.iter().rev().take(n).copied().collect()
+    }
     pub fn take(&mut self, tick: u64, tag: &'static str) -> u32 {
         let entry = self.free.pop().unwrap_or_else(|| {
             self.size += 1;
@@ -868,7 +878,7 @@ pub struct UnitEntries {
     /// finish (`construction_finished`).
     pub undead_finish: Vec<u32>,
     /// Five records of an AI building made by a peon or wisp, its 16th to
-    /// 20th (from 0; the Moon Well's 15th to 19th), freed 0.884514 s after
+    /// 20th (from 0; a supply building's 15th to 19th), freed 0.884514 s after
     /// its finish (`construction_finished`).
     pub finish_effect: Vec<u32>,
     pub first_helper: Option<u32>,
@@ -2057,14 +2067,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             finish_effect: if building.is_some()
                 && (state.table.ai_other_constructing || state.table.ai_wisp_constructing)
             {
-                // The Moon Well's (`ai_wisp_constructing`) are one record
-                // earlier (c-SEA-1: 14616 .. 14620 at 68.795403). PROVISIONAL:
-                // read by the checksums of turns 686 to 689.
-                let first = if state.table.ai_wisp_constructing {
-                    15
-                } else {
-                    16
-                };
+                // A supply building's are one record earlier (c-SEA-1: the Moon
+                // Well's 14616 .. 14620 at 68.795403, the first Orc Burrow's
+                // 14801 .. 14805 at 70.1, read by the free list at 76.416214).
+                // PROVISIONAL: why is not read.
+                let supply = state
+                    .data
+                    .units
+                    .get(&type_id)
+                    .is_some_and(|t| t.food_made > 0);
+                let first = if supply { 15 } else { 16 };
                 entries[first..first + 5].to_vec()
             } else {
                 Vec::new()
@@ -3138,7 +3150,11 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
     order_ended(state, h);
     // On a tree 12 parts, the last 4 freed at once (c-RYP-1 at 1.5 s).
     // PROVISIONAL: the tree's kept parts' ends are taken as the mine's.
-    let n = if tree { 12 } else { 14 } - state.table.ai_harvest_fewer;
+    // A new wood worker's order that found no place for it has the record
+    // 852660 after its first part, freed before it (c-SEA-1: peon 10494 at
+    // 71.099136, 20762 freed before 20761). PROVISIONAL: read on this one.
+    let no_place = std::mem::take(&mut state.table.ai_harvest_no_place);
+    let n = if tree { 12 } else { 14 } - state.table.ai_harvest_fewer + usize::from(no_place);
     let parts = state.table.take_n(tick, n, "harvest: order start");
     let extra = state.table.ai_harvest_extra;
     let extras = state.table.take_n(tick, extra, "AI harvest");
@@ -3151,7 +3167,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
         // (c-SEA-1, hub #15).
         let paid = extra == 0;
         let no_world_target = extra == 4;
-        let first_temporary = usize::from(no_world_target);
+        let first_temporary = usize::from(no_world_target) + usize::from(no_place);
         for &entry in parts[..=first_temporary].iter().rev() {
             state.table.defer(entry, "AI harvest: replaced order");
         }
@@ -3207,11 +3223,7 @@ pub(super) fn harvest_ordered(state: &mut super::State, h: u32, tree: bool) {
                     .rev()
                     .copied()
                     .collect();
-                let order_start = if no_world_target {
-                    first_temporary + 1
-                } else {
-                    1
-                };
+                let order_start = first_temporary + 1;
                 e.order = parts[order_start..kept_end - 2]
                     .iter()
                     .rev()

@@ -9,7 +9,9 @@
 //! - `OW3_REPLAY`: the replay (default `c-SEA-1`), for all probes.
 //! - `table`: `OW3_TABLE=from..to`, the object table's takes and frees
 //!   (`TB tick new entry creation tag`) and the clock of each tick (`CLK`)
-//!   in those ticks, with the object table of the melee AI tests.
+//!   in those ticks, with the object table of the melee AI tests, and the
+//!   first 24 entries of the free list after tick `to` (`FREE`); with
+//!   `OW3_FREE` set, after every tick from `from` on (`FREEAT`).
 //! - `units`: `OW3_UNITS=tick`, every unit at that tick (`U handle owner
 //!   type x y facing order`); with `OW3_TRACK=handle`, also that unit at
 //!   every tick from `OW3_FROM` (`T tick x y order`).
@@ -65,7 +67,14 @@ fn table() {
     with_replay(|replay, map, program| {
         let table = ObjectTable::new(640, Vec::new(), 640);
         let mut playback = Playback::with_table(program, map, replay, Some(table)).unwrap();
-        while playback.game.ticks() <= to && playback.step_tick() {}
+        let every = std::env::var("OW3_FREE").is_ok();
+        while playback.game.ticks() <= to && playback.step_tick() {
+            let t = playback.game.ticks();
+            if every && t >= from {
+                eprintln!("FREEAT {t} {:?}", playback.game.table_free_head(24));
+            }
+        }
+        eprintln!("FREE {to} {:?}", playback.game.table_free_head(24));
         for (t, c) in playback.game.table_clocks() {
             if (from..=to).contains(&t) {
                 eprintln!("CLK {t} {:.9}", f32::from_bits(c));

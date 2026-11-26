@@ -3516,6 +3516,12 @@ impl<'a> Game<'a> {
         self.state.borrow().table.log.clone().unwrap_or_default()
     }
 
+    /// The first `n` entries of the object table's free list, the next
+    /// taken first.
+    pub fn table_free_head(&self, n: usize) -> Vec<u32> {
+        self.state.borrow().table.free_head(n)
+    }
+
     /// The names of the natives called since the table was set with its log.
     pub fn table_calls(&self) -> Vec<&'static str> {
         self.state.borrow().table.call_log.clone()
@@ -4579,12 +4585,21 @@ fn register_ai_natives(
     );
     let assigned = Rc::new(RefCell::new(BTreeSet::<u32>::new()));
     let harvest_cycle = Rc::new(RefCell::new(0usize));
+    // The AI's harvest record of each worker: this pass's value and the
+    // memory of the previous pass, gold or wood. ClearHarvestAI moves the
+    // value into the memory; a call counts the workers whose memory is its
+    // resource before it takes new ones (c-SEA-1: the Orc passes from 0.1 to
+    // 71.1, `c-SEA-1.orc-harvest-state.tsv`).
+    let values = Rc::new(RefCell::new(BTreeMap::<u32, harvest::Resource>::new()));
+    let memory = Rc::new(RefCell::new(BTreeMap::<u32, harvest::Resource>::new()));
     let clear = assigned.clone();
     let clear_cycle = harvest_cycle.clone();
     let cleared = state.clone();
+    let (clear_values, clear_memory) = (values.clone(), memory.clone());
     add(
         "native ClearHarvestAI takes nothing returns nothing",
         Rc::new(move |_, _| {
+            *clear_memory.borrow_mut() = std::mem::take(&mut *clear_values.borrow_mut());
             clear.borrow_mut().clear();
             *clear_cycle.borrow_mut() += 1;
             table::ai_harvest_cleared(&mut cleared.borrow_mut());
@@ -4594,6 +4609,7 @@ fn register_ai_natives(
     let harvesting = state.clone();
     let gold_workers = assigned.clone();
     let gold_cycle = harvest_cycle.clone();
+    let (gold_values, gold_memory) = (values.clone(), memory.clone());
     add(
         "native HarvestGold takes integer town, integer peons returns nothing",
         Rc::new(move |_, args| {
@@ -4623,6 +4639,11 @@ fn register_ai_natives(
                                 && !u.movement.is_some_and(|m| m.ai_worker_produced)
                         }) && harvest::ai_gold_assigned(&state, h, mine, settled)
                             && !gold_workers.borrow().contains(&h)
+                            // A worker that does not pay for its gold counts
+                            // only when the previous pass had it on gold.
+                            && (harvest::pays_for(&state, h, mine)
+                                || gold_memory.borrow().get(&h)
+                                    == Some(&harvest::Resource::Gold))
                     })
                     .take(wanted)
                     .collect()
@@ -4630,6 +4651,9 @@ fn register_ai_natives(
                 Vec::new()
             };
             gold_workers.borrow_mut().extend(existing.iter().copied());
+            for &h in &existing {
+                gold_values.borrow_mut().insert(h, harvest::Resource::Gold);
+            }
             // Each call puts that many more workers on gold: those already on
             // it count only if no earlier call of the pass counted them
             // (c-SEA-1: the Night Elf HarvestGold(0, 1) after HarvestGold(0,
@@ -4666,7 +4690,8 @@ fn register_ai_natives(
                                     && !state.released.iter().any(|&(w, _)| w == h)
                                     && !harvest::ai_gold_ordered(&state, h, mine)
                                     && (u.movement.is_none()
-                                        || harvest::carried(&state, h).is_some()))
+                                        || harvest::carried(&state, h).is_some()
+                                        || harvest::builder_released(&state, h)))
                     }) && harvest::can_harvest(&state, h, mine)
                 })
                 .take(remaining)
@@ -4726,6 +4751,9 @@ fn register_ai_natives(
                     .all(|&worker| harvest::carried(&state, worker).is_some())
             {
                 gold_workers.borrow_mut().extend(workers.iter().copied());
+                for &h in &workers {
+                    gold_values.borrow_mut().insert(h, harvest::Resource::Gold);
+                }
                 return Ok(None);
             }
             for worker in workers {
@@ -4744,6 +4772,9 @@ fn register_ai_natives(
                     if let Some(slot) = slot {
                         gold_workers.borrow_mut().insert(slot);
                         gold_workers.borrow_mut().insert(worker);
+                        gold_values
+                            .borrow_mut()
+                            .insert(worker, harvest::Resource::Gold);
                         worker = slot;
                     }
                 }
@@ -4796,6 +4827,14 @@ fn register_ai_natives(
                         }
                     }
                     gold_workers.borrow_mut().insert(worker);
+                    // A renewed trained worker is a new wood worker of the pass
+                    // whose order found no tree (c-SEA-1: 10609 at 31.095781).
+                    let value = if renewed.contains(&worker) {
+                        harvest::Resource::Lumber
+                    } else {
+                        harvest::Resource::Gold
+                    };
+                    gold_values.borrow_mut().insert(worker, value);
                     assigned_now += 1;
                 } else {
                     state.table.ai_harvest_reassigning = false;
@@ -4808,12 +4847,43 @@ fn register_ai_natives(
     let harvesting = state.clone();
     let wood_workers = assigned.clone();
     let wood_cycle = harvest_cycle.clone();
+    let (wood_values, wood_memory) = (values.clone(), memory.clone());
     add(
         "native HarvestWood takes integer town, integer peons returns nothing",
         Rc::new(move |_, args| {
             let wanted = integer(&args[1]).max(0) as usize;
             let mut state = harvesting.borrow_mut();
             let repeat = *wood_cycle.borrow() > 1;
+            // The plain workers the previous pass had on wood count first,
+            // newest first, with no order; one on a build order is skipped
+            // (c-SEA-1: 10461 and 11967 at 71.099136).
+            let counted: Vec<u32> = state
+                .units
+                .iter()
+                .rev()
+                .copied()
+                .filter(|h| !wood_workers.borrow().contains(h))
+                .filter(|&h| {
+                    wood_memory.borrow().get(&h) == Some(&harvest::Resource::Lumber)
+                        && !harvest::is_wisp(&state, h)
+                        && state.unit(Some(h)).is_some_and(|u| {
+                            u.owner == player
+                                && u.alive
+                                && state.data.units.get(&u.type_id).is_some_and(|t| t.worker)
+                                && !u.movement.is_some_and(|m| {
+                                    matches!(m.order, movement::Order::Build { .. })
+                                })
+                        })
+                })
+                .take(wanted)
+                .collect();
+            for &h in &counted {
+                wood_workers.borrow_mut().insert(h);
+                wood_values
+                    .borrow_mut()
+                    .insert(h, harvest::Resource::Lumber);
+            }
+            let wanted = wanted - counted.len();
             let workers: Vec<(u32, Option<u32>)> = state
                 .units
                 .iter()
@@ -4854,6 +4924,7 @@ fn register_ai_natives(
                 })
                 .take(wanted)
                 .collect();
+            let taken = workers.len();
             for (worker, tree) in workers {
                 match tree {
                     Some(tree) => {
@@ -4866,6 +4937,9 @@ fn register_ai_natives(
                             }
                             movement::ai_reassigned(&mut state, worker, repeat);
                             wood_workers.borrow_mut().insert(worker);
+                            wood_values
+                                .borrow_mut()
+                                .insert(worker, harvest::Resource::Lumber);
                         } else {
                             state.table.ai_harvest_reassigning = false;
                         }
@@ -4877,6 +4951,9 @@ fn register_ai_natives(
                             state.table.defer(entry, "AI wood assignment");
                         }
                         wood_workers.borrow_mut().insert(worker);
+                        wood_values
+                            .borrow_mut()
+                            .insert(worker, harvest::Resource::Lumber);
                     }
                     None => {
                         // With no tree on the map the engine still records a
@@ -4902,8 +4979,54 @@ fn register_ai_natives(
                             follow::reassign_local(&mut state, worker);
                         }
                         wood_workers.borrow_mut().insert(worker);
+                        wood_values
+                            .borrow_mut()
+                            .insert(worker, harvest::Resource::Lumber);
                     }
                 }
+                state.table.ai_harvest_extra = 0;
+            }
+            // A released builder the pass has not taken is a new wood worker.
+            // With no tree for it, its order goes to its town's mine and
+            // takes the no-place record first (c-SEA-1: peon 10494 in
+            // HarvestWood(0, 10) at 71.099136, 20762). PROVISIONAL: read on
+            // this one; which workers count as new is read on released
+            // builders only.
+            let released: Vec<u32> = state
+                .units
+                .iter()
+                .rev()
+                .copied()
+                .filter(|h| !wood_workers.borrow().contains(h))
+                .filter(|&h| {
+                    harvest::builder_released(&state, h)
+                        && state
+                            .unit(Some(h))
+                            .is_some_and(|u| u.owner == player && u.alive)
+                })
+                .take(wanted.saturating_sub(taken))
+                .collect();
+            for worker in released {
+                let Some(mine) = ai_town_mine(&state, player, 0) else {
+                    break;
+                };
+                state.table.ai_harvest_extra = 3;
+                state.table.ai_harvest_no_place = true;
+                table::ai_harvest_reassigning(&mut state, worker);
+                if harvest::order_harvest(&mut state, worker, mine) {
+                    if repeat {
+                        table::retain_repeated_harvest_arrival(&mut state, worker);
+                        table::retain_repeated_harvest_walk(&mut state, worker);
+                    }
+                    movement::ai_reassigned(&mut state, worker, repeat);
+                    wood_workers.borrow_mut().insert(worker);
+                    wood_values
+                        .borrow_mut()
+                        .insert(worker, harvest::Resource::Lumber);
+                } else {
+                    state.table.ai_harvest_reassigning = false;
+                }
+                state.table.ai_harvest_no_place = false;
                 state.table.ai_harvest_extra = 0;
             }
             Ok(None)

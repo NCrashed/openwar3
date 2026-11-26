@@ -62,6 +62,13 @@ A spec pull request needs a reviewer who checks:
 3. The behaviour is testable: either a test vector, a replay-based oracle, or a
    reproducible in-game experiment is described.
 
+Every new spec or spec edit from an analyst gets this review before it is
+committed, also when the edit is small and arrives without a pull request.
+The implementer reads the whole diff. A passage that fails point 2 is
+neither committed nor implemented: it goes back to the analyst with the
+exact lines, to be restated as behaviour. Answers to questions, such as the
+notes that come with a test vector, follow the same rules as a spec.
+
 ## Game data
 
 Users supply data from their own legally obtained copy. The repository never

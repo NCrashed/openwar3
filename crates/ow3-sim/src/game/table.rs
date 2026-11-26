@@ -7962,19 +7962,23 @@ pub(super) fn construction_finished(
             .unwrap_or_default();
         if let Some((&release_last, release)) = release.split_last() {
             let wisp = super::harvest::is_wisp(state, builder);
-            // A Night Elf supply building first takes three of its own: the
-            // first is freed after the third last of the five, the others
-            // stay (c-SEA-1: the Moon Well's 20335 .. 20337 at 67.907997).
-            // PROVISIONAL: read on this one; what the two kept are is not
-            // read.
+            // A supply building first takes records of its own, which stay:
+            // an Orc Burrow two, a Moon Well three, the first of them freed
+            // after the third last of the five (c-SEA-1: the Burrow's 20475,
+            // 20476 at 69.197777; the Moon Well's 20335 .. 20337 at
+            // 67.907997). PROVISIONAL: read on these two; what the kept ones
+            // are is not read.
             let supply = state
                 .unit(Some(building))
                 .and_then(|u| state.data.units.get(&u.type_id))
                 .is_some_and(|t| t.food_made > 0);
-            let own = if wisp && supply {
-                state.table.take_n(tick, 3, "AI construction: supply")
-            } else {
-                Vec::new()
+            let own = match (supply, wisp) {
+                (false, _) => Vec::new(),
+                (true, true) => state.table.take_n(tick, 3, "AI construction: supply"),
+                (true, false) => {
+                    state.table.take_n(tick, 2, "AI construction: supply");
+                    Vec::new()
+                }
             };
             let finish = state.table.take(tick, "AI construction: finished");
             // A Night Elf building takes three more for each idle wisp of

@@ -2057,6 +2057,9 @@ impl AiEngine {
         due.sort_by_key(|&(expiry, order, ..)| (expiry, order));
         let mut next_sleep = self.next_sleep;
         for (time, _, context, mut thread) in due {
+            // The critters' wanders due before it come first (c-SEA-1: nsea
+            // 9516 at q 111.098152 before the AI wake at q 111.099998).
+            widgets::critters_before(&mut state.borrow_mut(), Some(time));
             // Its natives see the queue at its expiry (SPEC-0027, "Timers of
             // the engine").
             let outer = state.borrow_mut().timers.enter(time);

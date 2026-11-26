@@ -70,6 +70,45 @@ standing.
 A local search that met an occupied cell counts as having met an
 unpassable cell (SPEC-0020, step 2).
 
+### Town markers of the melee AI
+
+When a computer player's melee AI starts (`StartMeleeAI`, during map
+initialization, before the first tick), the game places two standing
+markers for that player's town. They are not units, items or
+destructables, have no owner visible to scripts and no table record,
+and nothing else in the game refers to them. With H the centre of the
+player's starting town hall and M the centre of its gold mine:
+
+- the **mine marker** at the midpoint (H + M) / 2;
+- the **back marker** 300 from H on the side away from the mine,
+  H + 300 * (H - M) / |H - M|.
+
+Each occupies one cell, the cell that contains its point (a point on a
+cell corner gives the cell above and to the right of it). Its kind is
+the ground kind only, so it closes that cell for searches whose set
+contains the ground kind (a unit's ordinary walk, a wisp's walk, the
+placement of a produced unit). It does not close the cell for a search
+of the gathering kind only (a worker returning to its tree or mine,
+SPEC-0020). It never moves, so the local search, seeing a point and
+the look-ahead check all see it.
+
+Read in the game (`c-SEA-1`). The three computer players got their
+markers in slot order, each pair inside its own `StartMeleeAI`:
+
+| player | hall, mine | back marker, cell | mine marker, cell |
+|---|---|---|---|
+| 1 (Orc) | (8768, 8640), (9280, 9216) | (8568.69, 8415.78), (651, 646) | (9024, 8928), (666, 663) |
+| 2 (Undead) | (8768, 4800), (9088, 4096) | (8643.86, 5073.11), (654, 542) | (8928, 4448), (663, 523) |
+| 3 (Night Elf) | (8640, -6208), (8960, -5760) | (8465.63, -6452.12), (648, 182) | (8800, -5984), (659, 197) |
+
+These six are the only markers on the map. They stay unchanged from
+0.035 through at least 61.1. The Undead AI's first ghoul order (AI
+move at 1.0) goes to its mine marker. Two Night Elf marker cells
+matter in `c-SEA-1`:
+
+- cell (648, 182) shifts where the Tree of Life places wisp 2219;
+- cell (659, 197) shapes wisp 10114's search from the mine.
+
 ### Blocked by a unit
 
 When the look-ahead check of a unit `A` fails, the units occupying the
@@ -304,6 +343,11 @@ tested: the check is free and nobody waits.
    pushed aside.
 5. When the cluster flag that makes members of one cluster compare
    speeds (instead of the examining member always waiting) is set.
+6. The town markers of the melee AI: which mine is used when several
+   are near the hall, whether markers are added, moved or removed later
+   (an expansion, a lost hall), and whether their creation takes table
+   records of its own (`c-SEA-1` already matches the map-start records
+   without modelling them).
 
 ## Sources
 
@@ -317,6 +361,9 @@ tested: the check is free and nobody waits.
 - Replay `c-RXD-1.w3g` (creeps chasing harvesting peasants), 2026-10-20:
   creation of the movement clusters, the order of the updates and the
   local paths read in the running game during playback.
+- Replay `c-SEA-1.w3g`, 2026-11-26: the town markers, read from the
+  pathing state of the running game during map initialization and at
+  0.035, 0.11, 1.0 and 61.1.
 
 ## Verification
 

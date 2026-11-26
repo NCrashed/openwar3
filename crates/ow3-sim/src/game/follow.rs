@@ -323,6 +323,9 @@ fn others(state: &State, h: u32) -> Others {
                         | super::movement::Order::Return { .. }
                 )
             });
+    // After its standby, with the ground kind too (c-SEA-1: the Orc mine
+    // marker's cell (666, 663) in peon 11229's search of 117.263763).
+    let gathering = gathering && !super::harvest::standby_walk(state, h);
     if !gathering {
         others.markers.extend(state.town_markers.iter().copied());
         others.standing.extend(state.town_markers.iter().copied());
@@ -819,6 +822,7 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         follow
     });
     let at_tree = super::harvest::at_tree(state, walker.handle);
+    let standby_walk = super::harvest::standby_walk(state, walker.handle);
     // The tree's cells that can be touched: not those also covered by a
     // tree created later, whose entries come first there and close the
     // cell (c-RYP-1: peasant 3's search of 4929).
@@ -862,13 +866,17 @@ fn steer_in_grid(state: &mut State, walker: &Walker, tick: u64, search_only: boo
         // its first arrival there and the end of its first work (SPEC-0020,
         // "Trees in the local search"; c-RYP-1: peasant 0 at 313 and 3993,
         // peasant 5 at 1315).
-        building: footprint.map(|f| f.0).unwrap_or_else(|| {
-            if at_tree {
-                Vec::new()
-            } else {
-                tree_cells.clone()
-            }
-        }),
+        // Nor its mine after its standby (`harvest::standby_walk`).
+        building: footprint
+            .map(|f| f.0)
+            .filter(|_| !standby_walk)
+            .unwrap_or_else(|| {
+                if at_tree {
+                    Vec::new()
+                } else {
+                    tree_cells.clone()
+                }
+            }),
         tree: tree_cells,
         group,
         kind,

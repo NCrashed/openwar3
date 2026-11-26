@@ -130,6 +130,12 @@ pub struct Harvest {
     /// pass has given it one since: the AI does not count it as a gold
     /// worker (c-SEA-1: peon 11299, released at 61.5, reassigned at 62.1).
     released: bool,
+    /// Walking to its mine again after its standby (`standby`), until it
+    /// arrives: its searches close the cells of the ground kind and of the
+    /// gathering kind, the mine's gathering layer closing before its
+    /// footprint, so it does not touch the mine (c-SEA-1: peon 11229's
+    /// search of 117.263763, round to the mine's east side).
+    standby_walk: bool,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -957,6 +963,10 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
         walk_back(state, h);
         return;
     }
+    if let Some(mut g) = get(state, h).filter(|g| g.standby_walk) {
+        g.standby_walk = false;
+        set(state, h, Some(g));
+    }
     let tick = state.ticks;
     if let Some(mut g) = get(state, h)
         && g.starting_mine_at.is_some_and(|at| tick < at)
@@ -967,7 +977,7 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
     }
     // Pushed aside in this tick, it stands by (`standby`).
     if state.pushed.get(&h) == Some(&tick) {
-        state.mine_standby.push((h, 0, tick + UPDATE, 0));
+        state.mine_standby.push((h, 0, tick + UPDATE, 0, 0));
         return;
     }
     // Its update cycle, from the update at or after its arrival.
@@ -1798,6 +1808,11 @@ fn take_another_tree(state: &mut State, h: u32, from_tree: bool) {
 /// of its first work: its local search does not end touching its tree.
 pub(super) fn at_tree(state: &State, h: u32) -> bool {
     get(state, h).is_some_and(|g| g.at_tree)
+}
+
+/// Whether worker `h` walks to its mine again after its standby.
+pub(super) fn standby_walk(state: &State, h: u32) -> bool {
+    get(state, h).is_some_and(|g| g.standby_walk)
 }
 
 /// What worker `h` carries, for the interface.
@@ -2825,14 +2840,17 @@ pub(super) fn ai_gathering(state: &mut State, h: u32) {
 /// mine, before the tick's updates (c-SEA-1: peon 11229, arrived at
 /// 116.724060 and put on (9168, 9008)): at its next update three records,
 /// the third freed 0.0001 s later, and it stands with its path emptied;
-/// 0.5 s of queue time later three more; at its next update after that
-/// it walks to its mine again.
+/// 0.5 s of queue time later a walk of three, and the second of the first
+/// three (an order-parameter task) freed; at its next update after that it
+/// walks to its mine again, closing the ground and gathering kinds
+/// (`standby_walk`).
 ///
-/// PROVISIONAL: read on this one; what the records are is not read.
+/// PROVISIONAL: read on this one; what the first three records are is not
+/// all read.
 pub(super) fn standby(state: &mut State) {
     let tick = state.ticks;
     let mut kept = Vec::new();
-    for (h, stage, at, q) in std::mem::take(&mut state.mine_standby) {
+    for (h, stage, at, q, task) in std::mem::take(&mut state.mine_standby) {
         let t = state.table.now;
         match stage {
             0 if at <= tick => {
@@ -2856,20 +2874,37 @@ pub(super) fn standby(state: &mut State) {
                 }
                 state.paths.remove(&h);
                 // 0.5 s on: 100 ticks (117.253769 after 116.754044).
-                kept.push((h, 1, tick + 100, u32::try_from(tick).unwrap_or(u32::MAX)));
+                kept.push((
+                    h,
+                    1,
+                    tick + 100,
+                    u32::try_from(tick).unwrap_or(u32::MAX),
+                    r[1],
+                ));
             }
             1 if at <= tick => {
-                state.table.take_n(t, 3, "mine standby");
+                // A walk, its first record freed at once, then the order-
+                // parameter task of the first stage, 0.0001 s later
+                // (c-SEA-1: 26327..26329 at 117.253769, 26327 freed at
+                // once, 26251 at 117.253868).
+                // PROVISIONAL: the other two kept, their end not read.
+                let r = state.table.take_n(t, 3, "mine standby: walk");
+                state.table.free(t, r[0], "mine standby: walk");
+                state.table.defer(task, "mine standby: task");
                 // Its next update, in the phase of the first stage's.
                 let first = u64::from(q);
                 let next = first + UPDATE * ((tick - first) / UPDATE + 1);
-                kept.push((h, 2, next, q));
+                kept.push((h, 2, next, q, task));
             }
             2 if at <= tick => {
                 state.ai_path_priority.insert(h);
+                if let Some(mut g) = get(state, h) {
+                    g.standby_walk = true;
+                    set(state, h, Some(g));
+                }
                 walk_to_work(state, h);
             }
-            _ => kept.push((h, stage, at, q)),
+            _ => kept.push((h, stage, at, q, task)),
         }
     }
     state.mine_standby.extend(kept);

@@ -1342,8 +1342,8 @@ pub struct State {
     town_markers: Vec<(i32, i32)>,
     /// Workers pushed aside in the tick of their arrival at a mine, in their
     /// standby: worker, stage, the tick its next stage is due and the tick
-    /// of its first stage (`harvest::standby`).
-    pub(super) mine_standby: Vec<(u32, u8, u64, u32)>,
+    /// of its first stage, and its order-parameter record (`harvest::standby`).
+    pub(super) mine_standby: Vec<(u32, u8, u64, u32, u32)>,
     /// Workers pushed aside, with the tick (`harvest::push_aside`).
     pub(super) pushed: BTreeMap<u32, u64>,
     /// Where each computer player's melee AI keeps its captain: its mine

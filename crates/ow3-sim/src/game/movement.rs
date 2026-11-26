@@ -8282,3 +8282,28 @@ mod tests {
         }
     }
 }
+
+/// The melee AI orders unit `h` to its captain's place `target` again at
+/// queue time `at`, between the unit's updates: it moves on by its velocity
+/// to `at`, stops there and searches at its next update; its order shown is
+/// the AI's move (c-SEA-1: ghoul 10641 at 80.0, (8542.170, 4054.391),
+/// searched at 80.004242).
+///
+/// PROVISIONAL: read on this one.
+pub(super) fn captain_reordered(state: &mut State, h: u32, at: u32, target: [u32; 2]) {
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h)
+        && let Some(m) = u.movement.as_mut()
+    {
+        m.commit(at);
+        m.velocity = [0, 0];
+        m.walking = false;
+        [u.x, u.y] = absolute(m.origin, min);
+    }
+    // Its walk's records are the order's own (`table::ai_captain_reorders`).
+    state.ai_path_priority.insert(h);
+    order(state, h, Order::Point, ORDER_MOVE, target);
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        u.shown_order = Some((851_988, state.ticks));
+    }
+}

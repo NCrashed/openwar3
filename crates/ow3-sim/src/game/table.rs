@@ -2677,7 +2677,7 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
         .ai_captain_moves
         .retain(|&(at, _)| f32::from_bits(at) > f32::from_bits(next));
     let tick = state.table.now;
-    for (_, h) in due {
+    for (at, h) in due {
         let arrival = state.table.take_n(tick, 3, "AI captain: arrival");
         state.table.free(tick, arrival[0], "AI captain: arrival");
         let made = state.table.take_n(tick, 17, "AI captain: order");
@@ -2701,6 +2701,13 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
         }
         for &e in arrival[1..].iter().rev() {
             state.table.defer_at(tick + 6, e, "AI captain: arrival");
+        }
+        let captain = state
+            .unit(Some(h))
+            .and_then(|u| state.ai_captains.get(&u.owner))
+            .copied();
+        if let Some(captain) = captain {
+            super::movement::captain_reordered(state, h, at, captain);
         }
     }
 }

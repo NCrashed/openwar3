@@ -339,8 +339,16 @@ fn others(state: &State, h: u32) -> Others {
         // Waiting from the update after its arrival (c-SDE-1: unit 3,
         // arrived at 50.395519, not in unit 7's search of 50.428490 but
         // hiding its goal at 50.548485, hub #15).
-        for o in super::harvest::waiting(state).chain(super::harvest::at_work_on_trees(state)) {
-            if !super::harvest::standing_at_work(state, o) {
+        // So is a worker in its standby at its mine (c-SEA-1: peon 11229 at
+        // (670.5, 665.5) in peon 2276's search of 116.814).
+        let standby: Vec<u32> = state.mine_standby.iter().map(|s| s.0).collect();
+        for o in super::harvest::waiting(state)
+            .chain(super::harvest::at_work_on_trees(state))
+            .chain(standby)
+        {
+            if !super::harvest::standing_at_work(state, o)
+                && !state.mine_standby.iter().any(|s| s.0 == o)
+            {
                 continue;
             }
             let Some(u) = state.unit(Some(o)) else {

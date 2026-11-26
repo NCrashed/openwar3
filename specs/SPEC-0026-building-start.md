@@ -336,13 +336,20 @@ player's peon record went from (2147483647, 7, 0, 0, 7, 0, 8) to
 (2147483647, 7, 1, 0, 7, 0, 8) in the tick of the AI's
 `SetProduce(1, opeo, -1)` (world 31.265752792), which queued a peon at
 the Great Hall, and G changed with it (C7218CD9 -> 47218CD9).
-A hero queued for training does not count in `q2`: at the Night Elf
-player's `SetProduce(1, Emoo, -1)` (Priestess of the Moon at the Altar
-of Elders, queue 61.599998 in `c-SEA-1`) neither the `Emoo` record
-(1, 0, 0, 0, 0, 0, 8) nor the `HERO` record (3, 0, 0, 0, 0, 0, 0)
-changed, while the wisp queued in the same wake raised the `ewsp`
-record's `q2` from 0 to 1. The player had no hero yet; whether a later
-hero counts was not read.
+A hero counts in `q2` once its training starts, as other units do. A
+hero order that cannot start because the player's food is used up
+does not count. In `c-SEA-1` the Night Elf player's
+`SetProduce(1, Emoo, -1)` (Priestess of the Moon at the Altar of
+Elders, queue 61.599998) and the Orc player's `SetProduce(1, Obla, -1)`
+at 63.27 came with 10 of 10 food used. Each made four transient
+records and changed neither the hero's record nor the `HERO` record.
+For the Priestess these were (1, 0, 0, 0, 0, 0, 8) and
+(3, 0, 0, 0, 0, 0, 0); the wisp queued in the same wake still raised
+the `ewsp` record's `q2` from 0 to 1. The Orc's
+`SetProduce(1, Obla, -1)` at queue 69.266663, after its first Burrow
+had raised the food cap, returned 1 and started the Blademaster. It
+made six records, two of them kept, and changed
+the `Obla` record. G changed in that turn (43A4E1CD -> 03A4E1CD).
 
 ### Other races
 

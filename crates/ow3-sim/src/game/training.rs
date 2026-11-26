@@ -215,6 +215,18 @@ fn finish_ai_worker(
         super::widgets::type_record(&mut s, owner, type_id, |record| {
             record[2] = record[2].saturating_sub(1);
         });
+        // A trained unit that is no worker goes to its AI's captain, before
+        // the completion's record (c-SEA-1: ghoul 10641 at 79.429451 to
+        // (8928, 4448)).
+        let worker = s
+            .data
+            .units
+            .get(&type_id)
+            .is_some_and(|t| super::table::worker(&s, t));
+        if !worker && let Some(&captain) = s.ai_captains.get(&owner) {
+            super::movement::point_order(&mut s, unit, "move", captain);
+            super::table::ai_captain_ordered(&mut s, unit);
+        }
         let tick = s.table.now;
         // A trained worker has one completion record (SPEC-0027, "End of
         // training": the peons of 15.100 and 30.263). The first wisp has a

@@ -1340,6 +1340,9 @@ pub struct State {
     /// markers of the melee AI"): standing for searches of the ground
     /// kind, not for workers in the gathering cycle.
     town_markers: Vec<(i32, i32)>,
+    /// Where each computer player's melee AI keeps its captain: its mine
+    /// marker (c-SEA-1: the Undead's at (8928, 4448)).
+    pub(super) ai_captains: BTreeMap<i32, [u32; 2]>,
     /// Those initial miners after the observed wait transition. Their
     /// measured placement is outside another starting worker's local route.
     ai_mine_waiting: BTreeSet<u32>,
@@ -1548,6 +1551,7 @@ impl State {
             ai_supply_builders: BTreeSet::new(),
             ai_mine_waits: Vec::new(),
             town_markers: Vec::new(),
+            ai_captains: BTreeMap::new(),
             ai_mine_waiting: BTreeSet::new(),
             marked: std::collections::BTreeSet::new(),
             engine_timers: BTreeMap::new(),
@@ -3966,6 +3970,7 @@ fn town_markers(state: &mut State, player: i32) {
         add(h[1], div(mul(far, d[1]), length)),
     ];
     let min = [state.world_bounds[0], state.world_bounds[1]];
+    state.ai_captains.insert(player, mid);
     for p in [back, mid] {
         let at = movement::relative(p, min).map(|c| mul(c, (1.0f32 / 32.0).to_bits()));
         state.town_markers.push(crate::path::cell_of(at));

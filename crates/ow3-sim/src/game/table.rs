@@ -1576,9 +1576,18 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     // 51, hub #15).
     let last = usize::from((!building && !is_worker) || (building && roots_type(state, t)));
     let tick = state.table.now;
+    // A trained unit that is no worker has seven where the others have
+    // nine, freed in the same order without the last two (c-SEA-1: ghoul
+    // 10641 at 79.429451, 21778 .. 21784).
+    // PROVISIONAL: read on this one.
+    let nine = if state.table.training_made && !building && !is_worker {
+        7
+    } else {
+        9
+    };
     let tail = state
         .table
-        .take_n(tick, kept + 9 + growth + last, "computer unit");
+        .take_n(tick, kept + nine + growth + last, "computer unit");
     if state.table.ai_ancient_constructing {
         state.table.ai_ancient_tail = tail;
         return;
@@ -1647,9 +1656,12 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     for k in ks {
         state.table.defer(grown[k], "computer unit");
     }
-    let nine = &tail[kept + growth..kept + growth + 9];
-    for k in [1, 6, 5, 4, 3, 2, 0, 8, 7] {
-        state.table.defer(nine[k], "computer unit");
+    let freed = &tail[kept + growth..kept + growth + nine];
+    for k in [1, 6, 5, 4, 3, 2, 0, 8, 7]
+        .into_iter()
+        .filter(|&k| k < nine)
+    {
+        state.table.defer(freed[k], "computer unit");
     }
 }
 
@@ -1906,11 +1918,16 @@ pub(super) fn unit_made(state: &mut super::State, h: u32) {
             .units
             .get(&type_id)
             .is_some_and(|t| t.abilities.contains(&i32::from_be_bytes(*b"Ashm")));
-        // A trained acolyte has one more than one made at the map's start
+        // A trained Undead unit has one more than one made at the map's start
         // (c-SEA-1: acolytes 10269 at 15.100 and 10076 at 32.433, 26
-        // before the computer player's tail).
+        // before the computer player's tail; ghoul 10641 at 79.429451, 22).
         // PROVISIONAL: what the extra object is was not read.
-        let trained = state.table.training_made && type_id == i32::from_be_bytes(*b"uaco");
+        let trained = state.table.training_made
+            && state
+                .data
+                .units
+                .get(&type_id)
+                .is_some_and(|t| t.race == "undead");
         match read_body(state, type_id) {
             Some(total) => total.saturating_sub(UNIT.count) + usize::from(trained),
             None => own_abilities(state, type_id).saturating_sub(1) + usize::from(shadowmeld),
@@ -2588,6 +2605,29 @@ pub(super) fn game_order(state: &mut super::State, h: u32) {
         e.order = ability[..6].iter().rev().copied().collect();
         e.game_order = true;
         e.game_objects = vec![order, extra];
+    }
+}
+
+/// A unit the melee AI just trained is ordered to its captain (c-SEA-1:
+/// ghoul 10641 at 79.429451, 21786 .. 21804): the AI's per-unit order and
+/// its task, freed task first, 13 parts of the move, the last six freed,
+/// the walk, and one more object kept.
+///
+/// PROVISIONAL: read on this one; when the kept ones go is not read.
+pub(super) fn ai_captain_ordered(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let order = state.table.take(tick, "AI captain: order");
+    let task = state.table.take(tick, "AI captain: task");
+    let parts = state.table.take_n(tick, 13, "AI captain: move");
+    walk_made_at_order(state, h);
+    state.table.take(tick, "AI captain: kept");
+    state.table.defer(task, "AI captain: task");
+    state.table.defer(order, "AI captain: order");
+    for &e in parts[7..].iter().rev() {
+        state.table.defer(e, "AI captain: move");
+    }
+    if let Some(e) = entries(state, h) {
+        e.order = parts[..7].iter().rev().copied().collect();
     }
 }
 

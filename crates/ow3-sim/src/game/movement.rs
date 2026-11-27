@@ -57,6 +57,8 @@ const UPDATE: u64 = 6;
 /// after `main`).
 const PHASE: u64 = 1;
 const FIRST_UPDATE: u64 = 7;
+/// The tick of the melee AI's first pass, at 0.1.
+const AI_FIRST_PASS: u64 = 21;
 
 /// 0.0300000012 (one unit in the last place above the nearest float to
 /// 0.03): the time of the first update of the cycle and its period
@@ -281,6 +283,8 @@ pub struct Moving {
     /// from its finished building, stands for the whole next
     /// update, not merely the lost movement tick of an ordinary restart.
     pub(super) ai_restart: bool,
+    /// That restart walks on by the turn window (`ai_reassigned`).
+    pub(super) ai_restart_walks: bool,
     /// A reserved Undead AI builder keeps its outward order but stands at
     /// its assignment pose until the corresponding construction boundary.
     ai_held: bool,
@@ -680,6 +684,7 @@ fn order(state: &mut State, h: u32, order: Order, order_id: i32, target: [u32; 2
             skip: false,
             ai_standing: false,
             ai_restart: false,
+            ai_restart_walks: false,
             ai_held: false,
             stop_after_step: false,
             halt_next: false,
@@ -2883,6 +2888,11 @@ pub(super) fn ai_reassigned(state: &mut State, h: u32, repeated: bool) {
         m.ai_worker_produced = false;
         m.ai_standing = !m.restart && m.replaced;
         m.ai_restart = m.restart && initial;
+        // At the AI's first pass of 0.1 the walk from the map start goes on
+        // by the turn window alone, losing no tick (c-SEA-2: peasants 12132
+        // and 12272 walk from 0.12; c-SEA-1: peon 11229 turns to 0.15).
+        // PROVISIONAL: why the later ones stand a whole update is not read.
+        m.ai_restart_walks = m.ai_restart && state.ticks <= AI_FIRST_PASS;
         // A later one does not restart a walking worker: it steps on at
         // once, losing no tick.
         if !initial {
@@ -3692,6 +3702,7 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
         m.commit(state.move_clock);
         let ai_standing = std::mem::take(&mut m.ai_standing);
         let ai_restart = std::mem::take(&mut m.ai_restart);
+        let restart_walks = std::mem::take(&mut m.ai_restart_walks);
         // The regions are tested at the commit (SPEC-0049).
         super::regions::committed(state, h, m.origin);
         // The walk objects it gave up are freed at its update (SPEC-0024).
@@ -4795,7 +4806,15 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                             } else {
                                 window
                             };
-                            motion(&mut m, to, !ai_restart, speed, limit, turn_rate, window);
+                            motion(
+                                &mut m,
+                                to,
+                                !ai_restart || restart_walks,
+                                speed,
+                                limit,
+                                turn_rate,
+                                window,
+                            );
                         }
                         // No motion, but the heading turns (SPEC-0020).
                         follow::Steer::Stand(to) => {

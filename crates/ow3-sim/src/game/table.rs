@@ -389,12 +389,12 @@ impl ObjectTable {
         self.next
     }
 
-    /// A new object takes an entry; gives the entry.
-
     /// The first `n` entries of the free list, the next taken first.
     pub fn free_head(&self, n: usize) -> Vec<u32> {
         self.free.iter().rev().take(n).copied().collect()
     }
+
+    /// A new object takes an entry; gives the entry.
     pub fn take(&mut self, tick: u64, tag: &'static str) -> u32 {
         let entry = self.free.pop().unwrap_or_else(|| {
             self.size += 1;

@@ -1261,7 +1261,9 @@ pub(super) fn ai_build_order(
         )
     } else if type_id == oalt || type_id == i32::from_be_bytes(*b"halt") {
         (
-            280,
+            // The Human altar starts by the distance rule at its builder's visit
+            // (`start_ai_build_at_visit`).
+            if type_id == oalt { 280 } else { u64::MAX / 2 },
             [
                 add(hall.x, 544.0f32.to_bits()),
                 add(hall.y, 32.0f32.to_bits()),
@@ -1389,19 +1391,7 @@ pub(super) fn ai_build_order(
             unit.entries.walk_ready = true;
         }
     }
-    let cleanup = if type_id == oalt {
-        let path_owner = state.units.iter().rev().copied().find(|&h| {
-            state
-                .unit(Some(h))
-                .is_some_and(|u| u.owner == owner && !u.entries.walk.is_empty())
-        });
-        match path_owner.and_then(|h| state.unit(Some(h))) {
-            Some(u) => u.entries.walk.clone(),
-            _ => Vec::new(),
-        }
-    } else {
-        Vec::new()
-    };
+    let cleanup: Vec<u32> = Vec::new();
     // Orc and Night Elf builders walk to their accepted plan with the build
     // order replacing the harvest order at its next movement update (c-SEA-1,
     // Orc peon vector, hub #15). An Undead builder takes a plain build order
@@ -1569,81 +1559,8 @@ pub(super) fn start_buildings(state: &mut State) {
         .into_iter()
         .partition(|(at, _, _, _, _, _, _, _)| *at <= state.ticks);
     state.ai_builds = later;
-    for (_, worker, type_id, site, start, build_order, followup, cleanup) in plans {
-        super::harvest::builder_started(state, worker);
-        state.moving.retain(|&h| h != worker);
-        state.paths.remove(&worker);
-        // A builder that walked to its site keeps the heading of that walk
-        // as its facing (c-SEA-1: acolyte 10269 at 1.1109 from 37.527592).
-        let walked = state
-            .unit(Some(worker))
-            .and_then(|u| u.movement)
-            .map(|m| normal(m.heading));
-        if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
-            (u.x, u.y, u.facing) = (start[0], start[1], start[2]);
-            u.movement = None;
-            u.harvest = None;
-            u.entries.build_order = vec![build_order];
-        }
-        let undead = state
-            .unit(Some(worker))
-            .and_then(|u| state.data.units.get(&u.type_id))
-            .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
-        let other = matches!(
-            &type_id.to_be_bytes(),
-            b"oalt" | b"eate" | b"emow" | b"otrb" | b"halt"
-        );
-        let wisp = type_id == i32::from_be_bytes(*b"emow");
-        state.table.ai_constructing = undead;
-        state.table.ai_other_constructing = other;
-        state.table.ai_wisp_constructing = wisp;
-        state.table.ai_ancient_constructing = type_id == i32::from_be_bytes(*b"eaom");
-        let building = start_construction(state, worker, type_id, site);
-        state.table.ai_constructing = false;
-        state.table.ai_other_constructing = false;
-        state.table.ai_wisp_constructing = false;
-        state.table.ai_ancient_constructing = false;
-        if building.is_some() {
-            for object in state.objects.values_mut() {
-                if let Object::Unit(u) = object {
-                    u.entries.walk.retain(|entry| !cleanup.contains(entry));
-                }
-            }
-            for entry in cleanup {
-                state
-                    .table
-                    .free(state.table.now, entry, "AI build: assignment walk");
-            }
-            if type_id == i32::from_be_bytes(*b"usep")
-                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
-            {
-                u.x = add(site[0], 176.0f32.to_bits());
-                u.y = add(site[1], (-48.0f32).to_bits());
-                // c-SEA-1: put at (8752, 4176) at the start of 1.349999, its
-                // walk still going.
-                u.facing = start[2];
-            } else if type_id == i32::from_be_bytes(*b"uaod")
-                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
-            {
-                // c-SEA-1: put at (9264, 5040) at the start of 37.527592.
-                u.x = add(site[0], (-48.0f32).to_bits());
-                u.y = add(site[1], (-112.0f32).to_bits());
-                if let Some(heading) = walked {
-                    u.facing = heading;
-                }
-            } else if type_id == i32::from_be_bytes(*b"oalt")
-                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
-            {
-                u.facing = 5.581_044_f32.to_bits();
-            } else if type_id == i32::from_be_bytes(*b"eate")
-                && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
-            {
-                u.facing = 5.585_423_5_f32.to_bits();
-            }
-            state
-                .ai_build_followups
-                .push((state.ticks + UPDATE, followup));
-        }
+    for plan in plans {
+        start_ai_build(state, plan);
     }
 
     for (h, type_id, site) in std::mem::take(&mut state.starting) {
@@ -3622,6 +3539,24 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
             continue;
         }
         visited = Some(h);
+        // A builder's accepted plan starts at its own visit, among the
+        // batch's walks (c-SEA-1: the Orc Altar at 1.499999 before peon
+        // 11259's walk; SPEC-0026).
+        {
+            let mut due = Vec::new();
+            let mut later = Vec::new();
+            for mut p in std::mem::take(&mut state.ai_builds) {
+                if p.1 == h && (p.0 <= state.ticks || builder_at_site(state, &mut p)) {
+                    due.push(p);
+                } else {
+                    later.push(p);
+                }
+            }
+            state.ai_builds = later;
+            for plan in due {
+                start_ai_build(state, plan);
+            }
+        }
         // A worker that delivered in its update takes its new order at its
         // next one (c-RXI-1: the frees of 2665).
         if super::harvest::at_update(state, h) {
@@ -8336,4 +8271,106 @@ pub(super) fn captain_reordered(state: &mut State, h: u32, at: u32, target: [u32
     if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
         u.shown_order = Some((851_988, state.ticks));
     }
+}
+
+/// A melee AI's accepted building plan starts its construction (`start_buildings`, or at its builder's visit in the update batch).
+fn start_ai_build(state: &mut State, plan: super::AiBuild) {
+    let (_, worker, type_id, site, start, build_order, followup, cleanup) = plan;
+    super::harvest::builder_started(state, worker);
+    state.moving.retain(|&h| h != worker);
+    state.paths.remove(&worker);
+    // A builder that walked to its site keeps the heading of that walk
+    // as its facing (c-SEA-1: acolyte 10269 at 1.1109 from 37.527592).
+    let walked = state
+        .unit(Some(worker))
+        .and_then(|u| u.movement)
+        .map(|m| normal(m.heading));
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&worker) {
+        (u.x, u.y, u.facing) = (start[0], start[1], start[2]);
+        u.movement = None;
+        u.harvest = None;
+        u.entries.build_order = vec![build_order];
+    }
+    let undead = state
+        .unit(Some(worker))
+        .and_then(|u| state.data.units.get(&u.type_id))
+        .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
+    let other = matches!(
+        &type_id.to_be_bytes(),
+        b"oalt" | b"eate" | b"emow" | b"otrb" | b"halt"
+    );
+    let wisp = type_id == i32::from_be_bytes(*b"emow");
+    state.table.ai_constructing = undead;
+    state.table.ai_other_constructing = other;
+    state.table.ai_wisp_constructing = wisp;
+    state.table.ai_ancient_constructing = type_id == i32::from_be_bytes(*b"eaom");
+    let building = start_construction(state, worker, type_id, site);
+    state.table.ai_constructing = false;
+    state.table.ai_other_constructing = false;
+    state.table.ai_wisp_constructing = false;
+    state.table.ai_ancient_constructing = false;
+    if building.is_some() {
+        for object in state.objects.values_mut() {
+            if let Object::Unit(u) = object {
+                u.entries.walk.retain(|entry| !cleanup.contains(entry));
+            }
+        }
+        for entry in cleanup {
+            state
+                .table
+                .free(state.table.now, entry, "AI build: assignment walk");
+        }
+        if type_id == i32::from_be_bytes(*b"usep")
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+        {
+            u.x = add(site[0], 176.0f32.to_bits());
+            u.y = add(site[1], (-48.0f32).to_bits());
+            // c-SEA-1: put at (8752, 4176) at the start of 1.349999, its
+            // walk still going.
+            u.facing = start[2];
+        } else if type_id == i32::from_be_bytes(*b"uaod")
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+        {
+            // c-SEA-1: put at (9264, 5040) at the start of 37.527592.
+            u.x = add(site[0], (-48.0f32).to_bits());
+            u.y = add(site[1], (-112.0f32).to_bits());
+            if let Some(heading) = walked {
+                u.facing = heading;
+            }
+        } else if type_id == i32::from_be_bytes(*b"oalt")
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+        {
+            u.facing = 5.581_044_f32.to_bits();
+        } else if type_id == i32::from_be_bytes(*b"eate")
+            && let Some(Object::Unit(u)) = state.objects.get_mut(&worker)
+        {
+            u.facing = 5.585_423_5_f32.to_bits();
+        }
+        state
+            .ai_build_followups
+            .push((state.ticks + UPDATE, followup));
+    }
+}
+
+/// Whether a builder walking to its plan's site starts the building at
+/// this visit: the first update at which it is within 100 of the site
+/// (SPEC-0026; c-SEA-2: the Human Altar of Kings at 1.949998, its builder
+/// 96.2 from the site, 101.4 an update before). The builder starts where
+/// it stands, facing its walk.
+/// PROVISIONAL: used for the Human altar only; the other races' plans keep
+/// their measured delays.
+fn builder_at_site(state: &mut State, plan: &mut super::AiBuild) -> bool {
+    if plan.2 != i32::from_be_bytes(*b"halt") || !state.update_now {
+        return false;
+    }
+    let Some(u) = state.unit(Some(plan.1)) else {
+        return false;
+    };
+    let (dx, dy) = (sub(u.x, plan.3[0]), sub(u.y, plan.3[1]));
+    let near = real_of(add(mul(dx, dx), mul(dy, dy))) <= 100.0 * 100.0;
+    if near {
+        let facing = u.movement.map_or(u.facing, |m| m.heading);
+        plan.4 = [u.x, u.y, facing];
+    }
+    near
 }

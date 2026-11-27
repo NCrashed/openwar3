@@ -1022,7 +1022,7 @@ enum Task {
 pub type AgentRecord = (u64, u32, [u32; 2], [u32; 2], u32, [u32; 2]);
 
 /// Game state shared with the natives.
-type AiBuild = (u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>);
+pub(super) type AiBuild = (u64, u32, i32, [u32; 2], [u32; 3], u32, Vec<u32>, Vec<u32>);
 
 pub struct State {
     pub clock: FrameClock,
@@ -4847,7 +4847,6 @@ fn register_ai_natives(
                     };
                     distance(a).total_cmp(&distance(b))
                 });
-            let mut assigned_now = already;
             // A later pass that sees more than one returning gold carrier
             // leaves their active return orders alone. They still count
             // toward this pass's assignment total (c-SEA-1, turn 62).
@@ -4913,14 +4912,6 @@ fn register_ai_natives(
                     if reserved_undead_builder || reserved_supply_builder {
                         movement::hold_ai_order(&mut state, worker);
                     }
-                    // The second ordinary-mine worker of the first melee-AI
-                    // pass reaches the occupied mine at 1.470 s on
-                    // IceCrown. Preserve that local-path result until the
-                    // path search itself is reproduced (c-SEA-1, hub #15).
-                    if !repeat && !paid && assigned_now == 1 {
-                        let at = state.ticks + 273;
-                        state.ai_mine_waits.push((at, worker, mine));
-                    }
                     if paid {
                         state.table.ai_harvest_fewer =
                             usize::from(!harvest::is_wisp(&state, worker));
@@ -4942,7 +4933,6 @@ fn register_ai_natives(
                         harvest::Resource::Gold
                     };
                     gold_values.borrow_mut().insert(worker, value);
-                    assigned_now += 1;
                 } else {
                     state.table.ai_harvest_reassigning = false;
                 }

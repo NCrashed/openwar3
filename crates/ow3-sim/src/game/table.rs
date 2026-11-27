@@ -4600,6 +4600,21 @@ pub(super) fn chase_walk_ended(state: &mut super::State, h: u32) {
 /// `walk_dropped` at the unit's update of this tick, whenever it is
 /// handled: freed at its next update (c-RXI-1: workers going in or
 /// starting to wait at 871, their walks freed at 877).
+/// Worker `h` starts to wait at a mine: its walk comes to rest and goes at
+/// the visit of its movement an update later, after the frees its wait
+/// start defers (SPEC-0029; c-SEA-1: peon 10494's 30883, 30882 at
+/// 158.723969 after its wait start of 158.694031).
+pub(super) fn walk_rests_at_wait(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let before: usize = entries(state, h).map_or(0, |e| e.stale.len());
+    walk_dropped_at_update(state, h);
+    if let Some(e) = entries(state, h) {
+        for (at, _) in e.stale.iter_mut().skip(before) {
+            *at = (*at).max(tick + 5);
+        }
+    }
+}
+
 pub(super) fn walk_dropped_at_update(state: &mut super::State, h: u32) {
     let started = std::mem::replace(&mut state.updates_started, state.ticks);
     walk_dropped(state, h);

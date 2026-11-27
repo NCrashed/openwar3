@@ -824,7 +824,7 @@ pub(super) fn tick(vm: &mut Vm, state: &Rc<RefCell<State>>) {
         for w in std::mem::take(&mut s.harvest_waiters) {
             super::table::harvest_waits(&mut s, w);
             super::table::harvest_arrived(&mut s, w);
-            super::table::walk_dropped_at_update(&mut s, w);
+            super::table::walk_rests_at_wait(&mut s, w);
         }
     }
     // The rest of the work on trees; the hits are timers of the queue, in
@@ -1931,7 +1931,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
     turn_started(state, h);
     super::table::harvest_waits(state, h);
     super::table::harvest_arrived(state, h);
-    super::table::walk_dropped_at_update(state, h);
+    super::table::walk_rests_at_wait(state, h);
     if starting_computer {
         state.paths.remove(&h);
         if let Some(Object::Unit(worker)) = state.objects.get_mut(&h) {

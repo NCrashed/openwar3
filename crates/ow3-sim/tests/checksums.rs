@@ -186,7 +186,12 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          to its end matches with the object table started as the game has it \
          (tests/objects.rs, power_building_checksums); this test runs without it",
     ),
-    ("c-SBW-1.w3g", "Bladestorm and Earthquake: not matched yet"),
+    (
+        "c-SBW-1.w3g",
+        "the Bladestorm and Earthquake test: every turn checksum to its end matches with \
+         the object table started as the game has it (tests/objects.rs, \
+         bladestorm_earthquake_checksums); this test runs without it",
+    ),
     (
         "c-SBX-1.w3g",
         "the Animate Dead and Death and Decay test: every turn checksum to its end \
@@ -329,7 +334,9 @@ const UNSPECIFIED: &[(&str, &str)] = &[
     ),
     (
         "c-SEA-1.w3g",
-        "three computer players running the standard melee AI on IceCrown for 180 seconds: its first twenty-five turns match (objects.rs, melee_ai_start_checksums), the rest is not matched yet",
+        "three computer players running the standard melee AI on IceCrown for 180 seconds: \
+         every turn checksum to its end matches with the object table started as the game \
+         has it (tests/objects.rs, melee_ai_checksums); this test runs without it",
     ),
     (
         "c-SBH-1.w3g",

@@ -21,7 +21,7 @@ grep -rn "PROVISIONAL" crates/ow3-sim/src
 grep -rn "hub #" crates/ow3-sim/src
 ```
 
-State as of November 2026: 356 `PROVISIONAL` comments and about 300
+State as of November 2026: 388 `PROVISIONAL` comments and about 300
 `hub #` references in `ow3-sim`, most of them in the mechanics of the
 test maps, which match their replays.
 
@@ -29,7 +29,8 @@ test maps, which match their replays.
 
 These are the fits on the current front, the melee AI game `c-SEA-1`
 (three computer players, 180 s). Each row names where the fit lives and
-the question that would replace it with a rule.
+the question that would replace it with a rule. All 1794 turns of the
+game match; these fits hold that match up.
 
 ### Buildings of the AI
 
@@ -60,3 +61,21 @@ the question that would replace it with a rule.
 | The records of `RecycleGuardPosition` and the recycled guard's order at 1.0 | `table::guard_position_recycled` | What order 851988 is and which timer gives it. |
 | The production plan objects of the town hall (`ai_production`) and the retained records of produced workers (`ai_worker_completion_retained`) | `table` | The records of the AI's production requests, as a rule. |
 | The haunted mine's record chain anchored at the first paid placement | `table` (`ai_paid_records`) | The anchors 0.279999763 and 1.089998960 offered by the analyst. |
+
+### Heroes and the captain
+
+| Fit | Where | Question |
+| --- | --- | --- |
+| A computer player's new hero stands, turned to the captain, and does not search until the AI's re-order | `State::ai_heroes_held`, `movement` | Why its first move to the captain is never searched (a point it cannot walk to?). |
+| The turn in place of such a hero snaps to the last part of the angle; the game stops short of it (1.8 for 1.89) | `movement::motion` | The rule of a turn in place that ends short. |
+| A hero that learned Searing Arrows takes one more order record (852174) after its captain walk | `table::ai_captain_ordered` | Which order it is (an autocast?) and which abilities give it. |
+| The AI's order again at the arrival at the captain: seven records, freed among the re-order's | `table::ai_captain_arrived` | The kinds of the seven, read on the Blademaster only. |
+
+### Workers at the mine
+
+| Fit | Where | Question |
+| --- | --- | --- |
+| The standby of a worker pushed in the tick of its arrival: three records, then a walk of three, then its walk back | `harvest::standby` | What the first three records are; read on peon 11229 only. |
+| The end of the walk after a standby: arrived when the update's turn of 0.6 brings the worker within 0.2 of the mine | `follow::decide` (`Shared::standby`) | The arrival test of a walk that does not touch its target. |
+| A unit with a walk started does not count for a re-placement, its path found standing in for "started" | `widgets::placed_again` | Whether a gathering worker without a walk counts; whether the re-placement at a mine exit gives the same. |
+| The re-placement is made at a gold delivery only | `harvest::deliver` | SPEC-0029 says a mine exit too; no exit of c-SEA-1 needed it. |

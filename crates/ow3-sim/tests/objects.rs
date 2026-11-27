@@ -768,68 +768,7 @@ fn melee_start_checksums() {
 /// `c-SEA-1`: three computer players running the standard melee AI on
 /// (12)IceCrown for 180 seconds: every turn checksum.
 #[test]
-#[ignore = "not matched yet"]
 fn melee_ai_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", None) {
-        assert_eq!(first, None, "the first differing turn {first:?}");
-    }
-}
-
-/// `c-SEA-1`'s synchronous initialization, first 0.100 s resumption of
-/// the three standard melee AI scripts, first paid-worker placement and
-/// the queued ordinary-mine state, the first entangled-mine arrivals, the
-/// recycled starting-ghoul transition, the first three AI construction
-/// starts, their compact engine updates, the next ordinary-mine wait, the
-/// later retained entangled-mine record update and the first Undead builder
-/// release, the second AI harvest-assignment pass and the following worker
-/// production-plan update, and the next retained-record update before an
-/// ordinary-mine exit, the following silent AI-plan retry, and the next
-/// movement-only intervals through the next table boundary and the first
-/// retained assignment cleanup, the next periodic retained-record update and
-/// the first later resource delivery, a critter wander and the delayed release
-/// of four production-plan records, and the first Orc mine exit with its
-/// following retained-placement update and its movement-only continuation:
-/// the next full AI resumption, its retained supply construction start and
-/// its following movement-only interval, the next Orc mine exit releasing
-/// the retained production-plan records, and the next Orc delivery alongside
-/// the Undead supply plan's final worker update, its builder release and the
-/// surrounding neutral wander starts, the first fully unaffordable build
-/// query, the concurrent sea-critter wander and the two later wander endings
-/// around a paid-worker retained-record refresh, the retained starting peon's
-/// first ordinary delivery, and the settled harvest plans' next idle-acolyte
-/// assignment, the next critter wander completion, and the following Orc
-/// delivery after its occupied-mine pace interval, through the released
-/// Acolyte's later haunted-mine placement and the resulting periodic ability
-/// refresh at checkpoint 106, its continued three-worker cadence through
-/// checkpoint 131, the on-boundary critter update before checkpoint 132,
-/// the first AI-produced workers' completion, and their first follow-up AI
-/// assignments and retained-record lifecycles, then the first retained
-/// construction-update record and the fourth Orc gold cycle, then the first
-/// Orc Burrow construction start and the concurrent gold delivery through
-/// checkpoint 193, then the retained construction state and its movement-only
-/// continuation through checkpoint 195, then the Burrow's first alarm check
-/// through checkpoint 199, then the haunted mine's payment on the world clock
-/// through checkpoint 216, then the critters' given-up wander moves and the AI
-/// threads at their timer expiries through checkpoint 237, then the critters'
-/// own high-level search table through checkpoint 247, then the entangled
-/// mine's payments from its wisps' countdown through checkpoint 281, then the
-/// critters' waits drawn at their arrivals through checkpoint 300, then the AI
-/// threads' deferred frees with the tick's others through checkpoint 302, then the
-/// AI peon's training on the movement clock through checkpoint 310, then the
-/// renewed order of a newly trained worker through checkpoint 312, then a
-/// building under construction counted once by the AI through checkpoint 314,
-/// then the Undead AI's Altar of Darkness through checkpoint 323, then a trained
-/// worker's first update in its own tick through checkpoint 324, then the Undead
-/// builder seeing its player's workers through checkpoint 330, then the Night
-/// Elf AI's Ancient of War through checkpoint 346, then deliveries at the
-/// update batch after it moved a tick later through checkpoint 351, then
-/// buildings blocking walkers as occupants through checkpoint 380, then an
-/// acolyte keeping its build order through checkpoint 414, then the builder's
-/// facing from its walk through checkpoint 461, then the map start's full cleanup
-/// through checkpoint 484, then the haunted mine's counts at the tick's clock
-/// through checkpoint 486, and on to every turn of the replay (1794).
-#[test]
-fn melee_ai_start_checksums() {
     if let Some(first) = turn_checksums("c-SEA-1", None) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }

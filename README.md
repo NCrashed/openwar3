@@ -18,11 +18,11 @@ player in a script VM of its own. A viewer shows the maps in 3D, and you
 can select units and order them. There is no full melee game yet, and no
 multiplayer.
 
-The main work now is the melee reference game c-SEA-1: three computer
-opponents (Orc, Undead and Night Elf) play for 180 s, building their
-bases, training workers and harvesting gold. Its first 598 turns, the
-first 60.1 s, match the game bit for bit, every turn checksum included.
-That is a third of the game.
+The melee reference game c-SEA-1 now matches the game bit for bit to its
+end: three computer opponents (Orc, Undead and Night Elf) play for 180 s,
+building their bases, training workers and their first heroes and
+harvesting gold, and all 1794 turn checksums match. The Human race has no
+computer player in it yet.
 
 What is checked against the game:
 
@@ -48,8 +48,10 @@ What is checked against the game:
   Entangling Roots: 1276 changes, 161 turns);
 - in the melee AI game c-SEA-1, the computer players' gold workers
   (peons, acolytes on a haunted mine, wisps on an entangled mine), their
-  first buildings and trained workers, and the critters wandering the
-  map match every turn checksum to 60.1 s (598 of 1794 turns).
+  buildings, trained workers and first heroes (with the skill their
+  script picks and the melee Town Portal scroll), their units sent to
+  the AI's captain, and the critters wandering the map match every turn
+  checksum of the 180 s game (1794 turns).
 
 ## Roadmap
 
@@ -60,7 +62,7 @@ What is checked against the game:
 3. **Simulation that matches the game exactly.** Every mechanic checked
    against replays, down to the turn checksum. In progress: movement,
    combat, creeps, Human economy and the first heroes are done; the
-   melee AI's opening for Orc, Undead and Night Elf matches to 60.1 s.
+   melee AI's first 180 s for Orc, Undead and Night Elf match in full.
 4. **Full melee game.** All four races, buildings, upgrades, items, all
    abilities, computer opponents. Started: the computer opponents'
    economy and first buildings for three races.

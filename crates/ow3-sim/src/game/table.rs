@@ -1583,6 +1583,7 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
         return;
     };
     let is_worker = !building && worker(state, t);
+    let roots = roots_type(state, t);
     // Two kept, a town hall too (c-SCC-1: the necropolis, call 3099, hub
     // #15).
     let kept = 2;
@@ -1600,7 +1601,7 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     };
     // A rooting building takes the last one too (c-SCC-1: the tree of life's
     // 51, hub #15).
-    let last = usize::from((!building && !is_worker) || (building && roots_type(state, t)));
+    let last = usize::from((!building && !is_worker) || (building && roots));
     let tick = state.table.now;
     // A trained unit that is no worker has seven where the others have
     // nine, freed in the same order without the last two (c-SEA-1: ghoul
@@ -1611,9 +1612,23 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
     } else {
         9
     };
-    let tail = state
-        .table
-        .take_n(tick, kept + nine + growth + last, "computer unit");
+    // A computer player's trained hero learns the skill its AI chose
+    // between the first two and the rest (SPEC-0035; c-SEA-1: the
+    // Blademaster's Mirror Image 27180, 27181 at 124.265144).
+    let skill = if state.table.training_made && !building && crate::data::is_hero(type_id) {
+        state.ai_first_skills.remove(&(owner, type_id))
+    } else {
+        None
+    };
+    let mut tail = state.table.take_n(tick, kept, "computer unit");
+    if let Some(skill) = skill {
+        super::heroes::select_skill(state, h, skill);
+    }
+    tail.extend(
+        state
+            .table
+            .take_n(tick, nine + growth + last, "computer unit"),
+    );
     if state.table.ai_ancient_constructing {
         state.table.ai_ancient_tail = tail;
         return;
@@ -1659,7 +1674,7 @@ fn computer_tail(state: &mut super::State, h: u32, owner: i32, type_id: i32, bui
         state.table.ai_construction_tail = tail.get(10).copied();
         return;
     }
-    if building && roots_type(state, t) {
+    if building && roots {
         if let Some(&entry) = tail.last() {
             state.table.ai_production.insert(h, entry);
         }
@@ -3164,11 +3179,21 @@ pub(super) fn item_ordered(state: &mut super::State, h: u32) {
 /// the hero, kept; the last of the order's kept parts goes before the
 /// pick-up event (`item_picked_end` the rest).
 pub(super) fn item_picked(state: &mut super::State, h: u32, item: u32) {
+    item_held(state, item);
+    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
+    if let Some(o) = first {
+        state.table.defer(o, "item order: start");
+    }
+}
+
+/// An item comes into a hero's inventory: its ability object, and for an
+/// item with charges a limit watch on them, kept (c-SBQ-1: the potion's
+/// 1242; c-SEA-1: the Blademaster's Town Portal scroll, AItp 27215 and
+/// 27216).
+/// PROVISIONAL: read for items with one charge.
+pub(super) fn item_held(state: &mut super::State, item: u32) {
     let tick = state.table.now;
     let ability = state.table.take(tick, "item ability");
-    // An item with charges a limit watch on them, kept (c-SBQ-1: the
-    // potion's 1242).
-    // PROVISIONAL: read for one item with one charge.
     let charged = match state.objects.get(&item) {
         Some(super::Object::Item(i)) => {
             state.data.item_uses.get(&i.type_id).is_some_and(|&u| u > 0)
@@ -3178,10 +3203,6 @@ pub(super) fn item_picked(state: &mut super::State, h: u32, item: u32) {
     let watch = charged.then(|| state.table.take(tick, "item: limit watch"));
     if let Some(super::Object::Item(i)) = state.objects.get_mut(&item) {
         i.held = std::iter::once(ability).chain(watch).collect();
-    }
-    let first = entries(state, h).and_then(|e| (!e.order.is_empty()).then(|| e.order.remove(0)));
-    if let Some(o) = first {
-        state.table.defer(o, "item order: start");
     }
 }
 

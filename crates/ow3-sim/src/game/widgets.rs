@@ -2518,35 +2518,36 @@ pub(super) fn register(add: &mut impl FnMut(&str, NativeFn), state: &Rc<RefCell<
         state,
         "native CreateItem takes integer itemid, real x, real y returns item",
         |vm, state, args| {
-            let mut state = state.borrow_mut();
-            let type_id = integer(&args[0]);
-            if !state.data.items.is_empty() && !state.data.items.contains_key(&type_id) {
+            let made = make_item(
+                &mut state.borrow_mut(),
+                integer(&args[0]),
+                [real(&args[1]), real(&args[2])],
+            );
+            Ok(Some(Value::Handle(made)))
+        }
+    );
+    // A unit is given an item: made at the unit and held at once, its
+    // ability and charge watch with it (SPEC-0027; c-SEA-1: the melee
+    // trigger's Town Portal scroll for the Blademaster, 27211 .. 27216).
+    // PROVISIONAL: a full inventory and a unit without one are not read.
+    native!(
+        add,
+        state,
+        "native UnitAddItemById takes unit whichUnit, integer itemId returns item",
+        |vm, state, args| {
+            let mut s = state.borrow_mut();
+            let Some(unit) = handle(&args[0]).filter(|&h| s.unit(Some(h)).is_some()) else {
                 return Ok(Some(Value::Handle(None)));
+            };
+            let at = s.unit(Some(unit)).map_or([0, 0], |u| [u.x, u.y]);
+            let made = make_item(&mut s, integer(&args[1]), at);
+            if let Some(item) = made {
+                if let Some(Object::Item(i)) = s.objects.get_mut(&item) {
+                    i.carried_by = Some(unit);
+                }
+                super::table::item_held(&mut s, item);
             }
-            let life = state
-                .data
-                .items
-                .get(&type_id)
-                .copied()
-                .unwrap_or(UNKNOWN_LIFE);
-            // Its four objects of the engine's table: the item and three
-            // path-side objects (c-SBQ-1: the claws' and the potion's at the map
-            // start), kept while it exists.
-            let tick = state.table.now;
-            let objects = state.table.take_n(tick, 4, "item");
-            let charges = state.data.item_uses.get(&type_id).copied().unwrap_or(0);
-            let h = state.create(Object::Item(Item {
-                type_id,
-                x: real(&args[1]),
-                y: real(&args[2]),
-                life,
-                carried_by: None,
-                charges,
-                objects,
-                held: Vec::new(),
-            }));
-            state.items.push(h);
-            Ok(Some(Value::Handle(Some(h))))
+            Ok(Some(Value::Handle(made)))
         }
     );
     native!(
@@ -3043,4 +3044,34 @@ mod tests {
             -12256.0
         );
     }
+}
+
+/// A new item of type `type_id` at `at`: its four objects of the engine's
+/// table, the item and three path-side objects (c-SBQ-1: the claws' and the
+/// potion's at the map start), kept while it exists.
+fn make_item(state: &mut State, type_id: i32, at: [u32; 2]) -> Option<u32> {
+    if !state.data.items.is_empty() && !state.data.items.contains_key(&type_id) {
+        return None;
+    }
+    let life = state
+        .data
+        .items
+        .get(&type_id)
+        .copied()
+        .unwrap_or(UNKNOWN_LIFE);
+    let tick = state.table.now;
+    let objects = state.table.take_n(tick, 4, "item");
+    let charges = state.data.item_uses.get(&type_id).copied().unwrap_or(0);
+    let h = state.create(Object::Item(Item {
+        type_id,
+        x: at[0],
+        y: at[1],
+        life,
+        carried_by: None,
+        charges,
+        objects,
+        held: Vec::new(),
+    }));
+    state.items.push(h);
+    Some(h)
 }

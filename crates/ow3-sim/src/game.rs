@@ -1344,6 +1344,12 @@ pub struct State {
     /// standby: worker, stage, the tick its next stage is due and the tick
     /// of its first stage, and its order-parameter record (`harvest::standby`).
     pub(super) mine_standby: Vec<(u32, u8, u64, u32, u32)>,
+    /// The melee AI's hero skill function of each player (`SetHeroLevels`),
+    /// the hero it is asked about (`GetHeroId`, `GetHeroLevelAI`), and
+    /// the first skill it chose for a hero type (SPEC-0035).
+    pub(super) ai_hero_levels: BTreeMap<i32, usize>,
+    pub(super) ai_hero_asked: (i32, i32),
+    pub(super) ai_first_skills: BTreeMap<(i32, i32), i32>,
     /// Workers pushed aside, with the tick (`harvest::push_aside`).
     pub(super) pushed: BTreeMap<u32, u64>,
     /// Where each computer player's melee AI keeps its captain: its mine
@@ -1558,6 +1564,9 @@ impl State {
             ai_mine_waits: Vec::new(),
             town_markers: Vec::new(),
             mine_standby: Vec::new(),
+            ai_hero_levels: BTreeMap::new(),
+            ai_hero_asked: (0, 0),
+            ai_first_skills: BTreeMap::new(),
             pushed: BTreeMap::new(),
             ai_captains: BTreeMap::new(),
             ai_mine_waiting: BTreeSet::new(),
@@ -1955,6 +1964,43 @@ impl AiSleepQueue {
 }
 
 impl AiEngine {
+    /// The first skill each computer hero in training will learn: its
+    /// player's script function asked for level 1 of its type (SPEC-0035),
+    /// ahead of the training's end (the function only reads).
+    fn first_skills(&mut self, state: &Rc<RefCell<State>>) {
+        let due: Vec<(i32, i32)> = state
+            .borrow()
+            .engine_timers
+            .values()
+            .filter_map(|t| match *t {
+                training::EngineTimer::AiWorker { owner, type_id, .. }
+                    if crate::data::is_hero(type_id) =>
+                {
+                    Some((owner, type_id))
+                }
+                _ => None,
+            })
+            .filter(|k| !state.borrow().ai_first_skills.contains_key(k))
+            .collect();
+        for (owner, type_id) in due {
+            let Some(function) = state.borrow().ai_hero_levels.get(&owner).copied() else {
+                continue;
+            };
+            let Some(context) = self.contexts.iter_mut().find(|c| c.player == owner) else {
+                continue;
+            };
+            state.borrow_mut().ai_hero_asked = (type_id, 1);
+            if let Ok((Outcome::Finished(Some(Value::Integer(skill))), _)) =
+                context.vm.start_thread(function, Vec::new())
+            {
+                state
+                    .borrow_mut()
+                    .ai_first_skills
+                    .insert((owner, type_id), skill);
+            }
+        }
+    }
+
     fn from_map(map: &Map) -> Result<Self, LoadError> {
         let mut templates = BTreeMap::new();
         for name in ["human.ai", "orc.ai", "undead.ai", "elf.ai"] {
@@ -2369,6 +2415,7 @@ impl<'a> Game<'a> {
         if self.state.borrow().ticks > 1 {
             self.state.borrow_mut().move_clock = add(clock, crate::timers::TICK);
         }
+        self.ai.borrow_mut().first_skills(&self.state);
         training::fire_engine_timers(&mut self.vm, &self.state);
         self.state.borrow_mut().move_clock = clock;
         let mut s = self.state.borrow_mut();
@@ -2529,6 +2576,7 @@ impl<'a> Game<'a> {
         }
         // Timers of the engine come before the script's (SPEC-0027): the
         // ends of trainings and constructions.
+        self.ai.borrow_mut().first_skills(&self.state);
         training::fire_engine_timers(&mut self.vm, &self.state);
         table::work_ends_due(&mut self.state.borrow_mut());
         self.park();
@@ -4103,6 +4151,28 @@ fn register_ai_natives(
         );
     };
 
+    // The hero skill choice of the AI script (SPEC-0035): its function,
+    // called when a hero of the player is made, reads the hero asked about.
+    let levels = state.clone();
+    add(
+        "native SetHeroLevels takes code func returns nothing",
+        Rc::new(move |_, args| {
+            if let Some(function) = code(&args[0]) {
+                levels.borrow_mut().ai_hero_levels.insert(player, function);
+            }
+            Ok(None)
+        }),
+    );
+    let asked = state.clone();
+    add(
+        "native GetHeroId takes nothing returns integer",
+        Rc::new(move |_, _| Ok(Some(Value::Integer(asked.borrow().ai_hero_asked.0)))),
+    );
+    let asked = state.clone();
+    add(
+        "native GetHeroLevelAI takes nothing returns integer",
+        Rc::new(move |_, _| Ok(Some(Value::Integer(asked.borrow().ai_hero_asked.1)))),
+    );
     add(
         "native GetAiPlayer takes nothing returns integer",
         Rc::new(move |_, _| Ok(Some(Value::Integer(player)))),

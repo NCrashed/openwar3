@@ -236,7 +236,7 @@ pub(super) fn ability_level(state: &State, u: &super::Unit, ability: i32) -> i32
 /// level allows it: level `k` needs hero level `reqLevel + s * (k - 1)`,
 /// `s` the ability's `levelSkip` or else `HeroAbilityLevelSkip`
 /// (SPEC-0035).
-fn select_skill(state: &mut State, h: u32, ability: i32) {
+pub(super) fn select_skill(state: &mut State, h: u32, ability: i32) {
     let Some(u) = state
         .unit(Some(h))
         .filter(|u| u.alive && is_hero(u.type_id))

@@ -4831,7 +4831,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                         }
                         follow::Steer::Arrived => {}
                     }
-                    if ai_restart {
+                    // (Not at the first pass: the walk of its search goes on.)
+                    // (Not at the first pass: the walk of its search goes on.)
+                    if ai_restart && !restart_walks {
                         follow::reassign_local(state, h);
                     }
                 }

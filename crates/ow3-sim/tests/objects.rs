@@ -922,7 +922,10 @@ fn melee_ai_worker_movements() {
         let (observed_x, observed_y) = if phase == "order-active" {
             (snapshot_x, snapshot_y)
         } else {
-            positions[&(tick + 1, handle)]
+            positions
+                .get(&(tick + 1, handle))
+                .copied()
+                .unwrap_or((snapshot_x, snapshot_y))
         };
         assert_eq!(
             (

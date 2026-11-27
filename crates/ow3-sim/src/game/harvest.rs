@@ -980,6 +980,9 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
         && g.starting_mine_at.is_some_and(|at| tick < at)
     {
         g.starting_mine_reached = Some(state.timers.time());
+        // It starts at its next update, as any worker (c-SEA-2: peasants
+        // 12132 and 12272 at 0.45 and 0.48, the Orc peons at 0.57).
+        g.starting_mine_at = g.starting_mine_at.map(|at| at.min(tick + 1));
         set(state, h, Some(g));
         return;
     }
@@ -1012,7 +1015,9 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
     // #15).
     if !entry.waiting.contains(&h) {
         entry.waiting.push(h);
-        entry.starting.push((h, tick + UPDATE));
+        entry
+            .starting
+            .push((h, if phase > tick { phase } else { tick + UPDATE }));
         if !free {
             state.objects_change_in(tick + UPDATE);
         }

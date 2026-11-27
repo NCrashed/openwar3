@@ -8632,3 +8632,43 @@ pub(super) fn watch_check_key(state: &super::State, h: u32) -> (u32, u32) {
         })
         .unwrap_or((u32::MAX, u32::MAX))
 }
+
+/// Unit `h`, ordered again to its AI's captain, arrives there and its move
+/// ends: the AI gives its order again, seven objects, freed 0.0001 s later
+/// among the re-order's own; the re-order's walk an update later, its
+/// late record one more on (c-SEA-1: the Blademaster at 126.383751,
+/// 27543 .. 27549, frees 27371, 27545 .. 27543, 27370 .. 27367, 27365,
+/// 27546, 27380, 27548, 27549, 27547; 27379, 27378 at 126.413734 and 27363
+/// at 126.443718).
+/// PROVISIONAL: read on this one; what the seven are is read by kind only.
+pub(super) fn ai_captain_arrived(state: &mut super::State, h: u32) {
+    let tick = state.table.now;
+    let (own, walk, late) = entries(state, h)
+        .map(|e| {
+            (
+                std::mem::take(&mut e.captain_cleanup),
+                std::mem::take(&mut e.captain_walk),
+                e.captain_late.take(),
+            )
+        })
+        .unwrap_or_default();
+    // (A computer tail's last, first in the list, stays.)
+    let own = if own.len() > 7 { &own[1..] } else { &own[..] };
+    let new = state.table.take_n(tick, 7, "AI captain: arrived");
+    if let [retained, m8, m7, m6, m5, m4, m2] = *own {
+        for e in [
+            m8, new[2], new[1], new[0], m7, m6, m5, m4, m2, new[3], retained, new[5], new[6],
+            new[4],
+        ] {
+            state.table.defer(e, "AI captain: arrived");
+        }
+    }
+    for e in walk {
+        state.table.defer_at(tick + 6, e, "AI captain: walk");
+    }
+    if let Some(e) = late {
+        state
+            .table
+            .defer_at(tick + 12, e, "AI captain: late record");
+    }
+}

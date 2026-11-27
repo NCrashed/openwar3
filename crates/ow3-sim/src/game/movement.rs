@@ -4744,7 +4744,10 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                     // straight without one.
                     // A held member does not follow its path; it turns
                     // towards its place (SPEC-0025).
-                    let mut steer = if held {
+                    // A computer player's new hero stands and turns to its
+                    // captain until the re-order (`State::ai_heroes_held`).
+                    // PROVISIONAL: why it does not search is not read.
+                    let mut steer = if held || state.ai_heroes_held.contains(&h) {
                         follow::Steer::Stand(goal)
                     } else if state.grid.is_some() {
                         follow::steer(state, &walker(goal), tick)
@@ -4921,6 +4924,9 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 } else if attack_move {
                     super::table::attack_move_arrived(state, h, None);
                     super::table::walk_dropped(state, h);
+                } else if !u.entries.captain_cleanup.is_empty() && u.harvest.is_none() {
+                    // At its AI's captain after the re-order.
+                    super::table::ai_captain_arrived(state, h);
                 } else if !u.entries.order.is_empty() && u.harvest.is_none() {
                     // (A worker at its mine: its order and walk go on to its
                     // going in, `harvest::start_waiting`.)
@@ -8300,6 +8306,7 @@ pub(super) fn captain_reordered(state: &mut State, h: u32, at: u32, target: [u32
         m.walking = false;
         [u.x, u.y] = absolute(m.origin, min);
     }
+    state.ai_heroes_held.remove(&h);
     // Its walk's records are the order's own (`table::ai_captain_reorders`).
     state.ai_path_priority.insert(h);
     order(state, h, Order::Point, ORDER_MOVE, target);

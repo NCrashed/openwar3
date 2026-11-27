@@ -1350,6 +1350,10 @@ pub struct State {
     pub(super) ai_hero_levels: BTreeMap<i32, usize>,
     pub(super) ai_hero_asked: (i32, i32),
     pub(super) ai_first_skills: BTreeMap<(i32, i32), i32>,
+    /// The computer players' new heroes, standing turned to their captain
+    /// until the AI's re-order (c-SEA-1: the Blademaster from 124.265144
+    /// to 125.004509 at (9168, 8496); the Priestess from 124.599960).
+    pub(super) ai_heroes_held: BTreeSet<u32>,
     /// Workers pushed aside, with the tick (`harvest::push_aside`).
     pub(super) pushed: BTreeMap<u32, u64>,
     /// Where each computer player's melee AI keeps its captain: its mine
@@ -1567,6 +1571,7 @@ impl State {
             ai_hero_levels: BTreeMap::new(),
             ai_hero_asked: (0, 0),
             ai_first_skills: BTreeMap::new(),
+            ai_heroes_held: BTreeSet::new(),
             pushed: BTreeMap::new(),
             ai_captains: BTreeMap::new(),
             ai_mine_waiting: BTreeSet::new(),

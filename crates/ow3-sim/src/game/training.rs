@@ -226,6 +226,9 @@ fn finish_ai_worker(
         if !worker && let Some(&captain) = s.ai_captains.get(&owner) {
             super::movement::point_order(&mut s, unit, "move", captain);
             super::table::ai_captain_ordered(&mut s, unit);
+            if crate::data::is_hero(type_id) {
+                s.ai_heroes_held.insert(unit);
+            }
         }
         let tick = s.table.now;
         // A trained worker has one completion record (SPEC-0027, "End of

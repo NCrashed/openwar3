@@ -459,8 +459,11 @@ enters a mine, so that its trip fits the mine's cycle. Each worker
 keeps a 10 s timer, its current speed bonus `b`, the time of its last
 trip `W` and the bonus `bW` it had during that trip (all 0 at the
 start; the timer not running). With `M` the mine's mining duration
-(`DataB` of `Agld`, 1.0) and `K = 5.0`, at the moment the worker goes
-into the mine (SPEC-0004 operations):
+(`DataB` of `Agld`, 1.0) and `K = 5.0`, at the moment the worker
+starts its turn at the mine (SPEC-0004 operations): when it goes in
+at once, or, if the mine is busy, when it starts waiting there. Going
+in after a wait does not compute again, and neither does being sent
+aside to stand by:
 
 1. `r` = the remaining time of the timer (0 if it never ran or has
    expired); `t = sub(sub(10, r), M)`: the time since its last entry
@@ -487,6 +490,14 @@ values of every entry read in the game: worker 5 entered at 4.350 s
 speed 190 -> 228, 1.14 per tick from its next walk) and 21.117 s (`s`
 = 6.799768 * 1.2 + 7.96992 = 16.12964, `q` 2.016 -> 1.2). A worker
 whose last entry was more than 10 s earlier goes back to bonus 0.
+
+Measured in replay `c-SEA-1` (orc peon 11229): it started waiting at
+the mine at 106.914 s (`r` 0.910, `t` 8.090, `s` 19.343, `q` 2.418 ->
+1.2, so `b` stays 0.2) and went in only at 112.47. The timer ran out
+at 116.914, 10 s after the wait start. Sent to stand by at 116.754, it
+kept `b`. It started waiting again at 119.513 with the timer expired
+(`r` 0): `b`, `W` and `bW` became 0 and its speed 228 -> 190 at once,
+for its walk back at 125.5. A delivery changes nothing.
 
 ### Where the resources go
 

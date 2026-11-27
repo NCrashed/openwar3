@@ -326,6 +326,12 @@ fn others(state: &State, h: u32) -> Others {
     // After its standby, with the ground kind too (c-SEA-1: the Orc mine
     // marker's cell (666, 663) in peon 11229's search of 117.263763).
     let gathering = gathering && !super::harvest::standby_walk(state, h);
+    // Nor a computer's starting worker on its first walk from the map
+    // start, which searches with the ground kind (c-SEA-2: peasant 12064's
+    // search of 0.03, shut north by the Human mine marker).
+    let gathering = gathering
+        && (super::harvest::passes_through(state, h)
+            || !super::harvest::starting_computer_harvest(state, h));
     if !gathering {
         others.markers.extend(state.town_markers.iter().copied());
         others.standing.extend(state.town_markers.iter().copied());

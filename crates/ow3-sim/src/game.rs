@@ -4024,7 +4024,8 @@ fn ai_unit_count(state: &State, player: i32, type_id: i32, done: bool) -> i32 {
 /// The two town markers a computer player's melee AI places as it starts
 /// (SPEC-0021, "Town markers of the melee AI"): with H its town hall and M
 /// its gold mine, one at (H + M) / 2 and one 300 from H away from M. Each
-/// holds the cell of its point.
+/// holds the cell of its point, placed as a unit of size class 0 off the
+/// units standing there (`widgets::marker_place`).
 /// PROVISIONAL: the mine is the town's nearest (open question 6).
 fn town_markers(state: &mut State, player: i32) {
     use ow3_math::natives::sqrt;
@@ -4050,6 +4051,7 @@ fn town_markers(state: &mut State, player: i32) {
     let min = [state.world_bounds[0], state.world_bounds[1]];
     state.ai_captains.insert(player, mid);
     for p in [back, mid] {
+        let p = widgets::marker_place(state, p);
         let at = movement::relative(p, min).map(|c| mul(c, (1.0f32 / 32.0).to_bits()));
         state.town_markers.push(crate::path::cell_of(at));
     }

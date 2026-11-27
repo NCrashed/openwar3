@@ -291,10 +291,22 @@ pub(super) fn placed_again(state: &State, h: u32) -> Option<(u32, u32)> {
 }
 
 fn ring_place(state: &State, type_id: i32, at: [u32; 2], except: Option<u32>) -> (u32, u32) {
-    use crate::path::{occupied_cells, size_class};
     let Some(t) = state.data.units.get(&type_id).filter(|t| !t.building) else {
         return (at[0], at[1]);
     };
+    ring_place_class(state, crate::path::size_class(t.collision), at, except)
+}
+
+/// Where a melee AI's town marker stands: its point placed as a unit of
+/// size class 0 (SPEC-0021, "Town markers of the melee AI"; c-SEA-2: the
+/// Human mine marker off peasant 12064, (8896, -9888) -> (8944, -9840)).
+pub(super) fn marker_place(state: &State, at: [u32; 2]) -> [u32; 2] {
+    let (x, y) = ring_place_class(state, 0, at, None);
+    [x, y]
+}
+
+fn ring_place_class(state: &State, class: u8, at: [u32; 2], except: Option<u32>) -> (u32, u32) {
+    use crate::path::{occupied_cells, size_class};
     let min = [state.world_bounds[0], state.world_bounds[1]];
     let cells = |p: [u32; 2]| super::follow::to_cells(super::movement::relative(p, min));
     let mut taken = std::collections::BTreeSet::new();
@@ -313,7 +325,7 @@ fn ring_place(state: &State, type_id: i32, at: [u32; 2], except: Option<u32>) ->
             taken.extend(occupied_cells(cells([u.x, u.y]), size_class(d.collision)));
         }
     }
-    let class = size_class(t.collision);
+
     let free = |c: [u32; 2]| occupied_cells(c, class).iter().all(|k| !taken.contains(k));
     let here = cells(at);
     if free(here) {

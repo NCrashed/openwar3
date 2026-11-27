@@ -2687,11 +2687,25 @@ pub(super) fn ai_captain_ordered(state: &mut super::State, h: u32) {
     let next = (f32::from_bits(state.timers.time()).floor() + 1.0).to_bits();
     state.table.ai_captain_moves.push((next, h));
     walk_made_at_order(state, h);
+    // A hero that learned Searing Arrows has an order record more, freed
+    // with the move's (c-SEA-1: the Priestess of the Moon's 27289, order
+    // 852174 without a target, at 124.599960; the Blademaster's Mirror
+    // Image none).
+    // PROVISIONAL: read on this one; presumably its autocast.
+    let arrows = state.unit(Some(h)).is_some_and(|u| {
+        u.skills
+            .iter()
+            .any(|&(a, _)| &ability_code(state, a) == b"AHfa")
+    });
+    let autocast = arrows.then(|| state.table.take(tick, "AI captain: autocast order"));
     state.table.take(tick, "AI captain: kept");
     state.table.defer(task, "AI captain: task");
     state.table.defer(order, "AI captain: order");
     for &e in parts[7..].iter().rev() {
         state.table.defer(e, "AI captain: move");
+    }
+    if let Some(e) = autocast {
+        state.table.defer(e, "AI captain: autocast order");
     }
     if let Some(e) = entries(state, h) {
         e.order = parts[..7].iter().rev().copied().collect();

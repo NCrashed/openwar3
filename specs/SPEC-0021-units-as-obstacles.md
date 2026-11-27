@@ -83,13 +83,27 @@ player's starting town hall and M the centre of its gold mine:
 - the **back marker** 300 from H on the side away from the mine,
   H + 300 * (H - M) / |H - M|.
 
+Each marker is put on its point by the occupied-ground placement of
+SPEC-0013 ("Position"), as a unit of size class 0 (one cell). If the
+cell of the point lies in the footprint of a unit standing there at
+that moment, the marker goes to the centre of the first free cell of
+the ring search around that cell. Otherwise it stays on the point.
+`c-SEA-2` (a fifth player, Human, at start location 4): H (8576, -9664),
+M (9216, -10112). The mine marker's point (8896, -9888) is in cell (662,
+75), inside the footprint of peasant 12064 (class 1, standing at its
+start place (8953.75, -9864.50), cells 662..663 x 74..75). Ring 1 gives
+(662, 74), (663, 74) and (663, 75) in that footprint, and (663, 76) free,
+so the marker stands at (8944, -9840). Its back marker (8330.23,
+-9491.97) and the six markers of players 1 to 3 (the same values as in
+`c-SEA-1`) stay on their points.
+
 Each occupies one cell, the cell that contains its point (a point on a
 cell corner gives the cell above and to the right of it). Its kind is
 the ground kind only, so it closes that cell for searches whose set
 contains the ground kind (a unit's ordinary walk, a wisp's walk, the
 placement of a produced unit). It does not close the cell for a search
 of the gathering kind only (a worker returning to its tree or mine,
-SPEC-0020). It never moves, so the local search, seeing a point and
+SPEC-0020). After its placement it never moves, so the local search, seeing a point and
 the look-ahead check all see it.
 
 Read in the game (`c-SEA-1`). The three computer players got their

@@ -2739,6 +2739,10 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
         .ai_captain_moves
         .retain(|&(at, _)| f32::from_bits(at) > f32::from_bits(next));
     let tick = state.table.now;
+    // The frees of all of them after all their takes (c-SEA-1: the
+    // Blademaster's and the Priestess's re-orders at 125.0, their frees at
+    // 125.000099).
+    let mut frees = Vec::new();
     for (at, h) in due {
         let arrival = state.table.take_n(tick, 3, "AI captain: arrival");
         state.table.free(tick, arrival[0], "AI captain: arrival");
@@ -2765,7 +2769,7 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
             .chain(old)
             .chain(made[9..=14].iter().rev().copied());
         for e in freed {
-            state.table.free(tick, e, "AI captain: order");
+            frees.push(e);
         }
         // The old walk goes at the unit's visit of this tick, given up
         // before it.
@@ -2774,8 +2778,13 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
             e.stale
                 .extend(walk.into_iter().map(|entry| (before, entry)));
         }
-        for &e in arrival[1..].iter().rev() {
-            state.table.defer_at(tick + 6, e, "AI captain: arrival");
+        // The arrival is the new walk: its other two go at the unit's visit
+        // an update later, the units in the order of their visits (c-SEA-1:
+        // the Priestess's 27383, 27382, then the Blademaster's 27362, 27361
+        // at 125.034492).
+        if let Some(e) = entries(state, h) {
+            e.stale
+                .extend(arrival[1..].iter().rev().map(|&entry| (tick + 5, entry)));
         }
         let captain = state
             .unit(Some(h))
@@ -2784,6 +2793,19 @@ pub(super) fn ai_captain_reorders(state: &mut super::State, next: u32) {
         if let Some(captain) = captain {
             super::movement::captain_reordered(state, h, at, captain);
         }
+        // (Keyed by the new movement's walk, the newest first.)
+        let given = state
+            .unit(Some(h))
+            .and_then(|u| u.movement)
+            .map(|m| m.given);
+        for &e in &arrival[1..] {
+            if let Some(given) = given {
+                state.table.walk_key.insert(e, given);
+            }
+        }
+    }
+    for e in frees {
+        state.table.free(tick, e, "AI captain: order");
     }
 }
 

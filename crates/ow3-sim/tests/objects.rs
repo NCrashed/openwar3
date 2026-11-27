@@ -827,10 +827,10 @@ fn melee_ai_checksums() {
 /// acolyte keeping its build order through checkpoint 414, then the builder's
 /// facing from its walk through checkpoint 461, then the map start's full cleanup
 /// through checkpoint 484, then the haunted mine's counts at the tick's clock
-/// through checkpoint 486.
+/// through checkpoint 486, and on to every turn of the replay (1794).
 #[test]
 fn melee_ai_start_checksums() {
-    if let Some(first) = turn_checksums("c-SEA-1", Some(1627)) {
+    if let Some(first) = turn_checksums("c-SEA-1", None) {
         assert_eq!(first, None, "the first differing turn {first:?}");
     }
 }

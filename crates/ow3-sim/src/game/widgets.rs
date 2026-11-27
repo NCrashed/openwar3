@@ -284,7 +284,7 @@ pub(super) fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32
 /// occupied ground, the other units standing counted (SPEC-0029, "Placed
 /// again at a delivery and at a mine exit"; c-SEA-1: peon 11229 at
 /// 128.960861 next to the Blademaster, to (8976, 8912)).
-/// PROVISIONAL: whether walking units count is not read; they do not.
+/// Units walking, or with a walk started, do not count.
 pub(super) fn placed_again(state: &State, h: u32) -> Option<(u32, u32)> {
     let u = state.unit(Some(h))?;
     Some(ring_place(state, u.type_id, [u.x, u.y], Some(h)))
@@ -305,7 +305,10 @@ fn ring_place(state: &State, type_id: i32, at: [u32; 2], except: Option<u32>) ->
         let Some(d) = state.data.units.get(&u.type_id) else {
             continue;
         };
-        let walking = except.is_some() && u.movement.is_some_and(|m| m.velocity != [0, 0]);
+        // (Nor one that started a walk, turning in place still: c-SEA-1,
+        // peon 11229 for 11089 at 161.273666.)
+        let walking = except.is_some()
+            && (u.movement.is_some_and(|m| m.velocity != [0, 0]) || state.paths.contains_key(&o));
         if Some(o) != except && !walking && u.alive && !u.hidden && !d.building {
             taken.extend(occupied_cells(cells([u.x, u.y]), size_class(d.collision)));
         }

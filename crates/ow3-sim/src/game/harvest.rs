@@ -1631,6 +1631,12 @@ fn deliver(state: &mut State, h: u32) {
     let target = back.filter(|&t| is_mine(state, t) || is_tree(state, t));
     g.target = target;
     set(state, h, Some(g));
+    // At a delivery of gold it is placed again where it stands, off a
+    // standing unit's footprint (SPEC-0029, "Placed again at a delivery
+    // and at a mine exit").
+    if target.is_some_and(|t| is_mine(state, t)) {
+        replace(state, h);
+    }
     if target.is_none() || !walk_to_work(state, h) {
         movement::stop(state, h);
     } else if target.is_some_and(|t| is_tree(state, t)) {
@@ -2965,4 +2971,26 @@ fn turn_started(state: &mut State, h: u32) {
         set(state, h, Some(g));
         pace_at(state, h, at);
     }
+}
+
+/// Worker `h` placed again by the occupied-ground rule: moved to the
+/// centre of the first free cell, standing, its path dropped
+/// (`widgets::placed_again`).
+fn replace(state: &mut State, h: u32) {
+    let Some(at) = super::widgets::placed_again(state, h) else {
+        return;
+    };
+    let min = [state.world_bounds[0], state.world_bounds[1]];
+    let moved = state.unit(Some(h)).is_some_and(|u| (u.x, u.y) != at);
+    if !moved {
+        return;
+    }
+    if let Some(Object::Unit(u)) = state.objects.get_mut(&h) {
+        (u.x, u.y) = at;
+        if let Some(m) = u.movement.as_mut() {
+            m.origin = relative([at.0, at.1], min);
+            m.velocity = [0, 0];
+        }
+    }
+    state.paths.remove(&h);
 }

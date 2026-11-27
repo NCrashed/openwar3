@@ -277,6 +277,20 @@ pub(super) fn create_unit_by_script(
 /// Where a new unit of `type_id` at the snapped point `at` stands
 /// (`create_unit_by_script`).
 pub(super) fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32, u32) {
+    ring_place(state, type_id, at, None)
+}
+
+/// Unit `h` placed again where it stands by the rule of a new unit on
+/// occupied ground, the other units standing counted (SPEC-0029, "Placed
+/// again at a delivery and at a mine exit"; c-SEA-1: peon 11229 at
+/// 128.960861 next to the Blademaster, to (8976, 8912)).
+/// PROVISIONAL: whether walking units count is not read; they do not.
+pub(super) fn placed_again(state: &State, h: u32) -> Option<(u32, u32)> {
+    let u = state.unit(Some(h))?;
+    Some(ring_place(state, u.type_id, [u.x, u.y], Some(h)))
+}
+
+fn ring_place(state: &State, type_id: i32, at: [u32; 2], except: Option<u32>) -> (u32, u32) {
     use crate::path::{occupied_cells, size_class};
     let Some(t) = state.data.units.get(&type_id).filter(|t| !t.building) else {
         return (at[0], at[1]);
@@ -291,7 +305,8 @@ pub(super) fn off_other_units(state: &State, type_id: i32, at: [u32; 2]) -> (u32
         let Some(d) = state.data.units.get(&u.type_id) else {
             continue;
         };
-        if u.alive && !u.hidden && !d.building {
+        let walking = except.is_some() && u.movement.is_some_and(|m| m.velocity != [0, 0]);
+        if Some(o) != except && !walking && u.alive && !u.hidden && !d.building {
             taken.extend(occupied_cells(cells([u.x, u.y]), size_class(d.collision)));
         }
     }

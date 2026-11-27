@@ -339,6 +339,11 @@ const UNSPECIFIED: &[(&str, &str)] = &[
          has it (tests/objects.rs, melee_ai_checksums); this test runs without it",
     ),
     (
+        "c-SEA-2.w3g",
+        "c-SEA-1 with a fourth computer player, Human: not matched yet (tests/objects.rs, \
+         melee_ai_human_checksums)",
+    ),
+    (
         "c-SBH-1.w3g",
         "the Human spell test (Flame Strike): every turn checksum to its end matches with \
          the object table started as the game has it (tests/objects.rs, \

@@ -7189,7 +7189,8 @@ pub(super) fn unit_removed(state: &mut super::State, h: u32) {
 pub(super) fn first_call(state: &mut super::State, name: &'static str) {
     let n = match name {
         "CreateTimer" => 8,
-        "SetStartLocPrio" => 13,
+        // And one per player in the game after the config (`players_loaded`).
+        "SetStartLocPrio" => 9,
         _ => return,
     };
     // Only in the map's loading (c-SCA-1: its first CreateTimer at 1.0 s takes
@@ -8686,4 +8687,19 @@ pub(super) fn ai_captain_arrived(state: &mut super::State, h: u32) {
             .table
             .defer_at(tick + 12, e, "AI captain: late record");
     }
+}
+
+/// The slots are filled after a config that set start location priorities:
+/// one record per player in the game (c-SEA-1: 664 .. 667 for players 0 ..
+/// 3; c-SEA-2: 664 .. 668 with a fifth player).
+/// PROVISIONAL: whether users and computers both count is not separated.
+pub(super) fn players_loaded(state: &mut super::State) {
+    if !state.table.first_calls.contains("SetStartLocPrio") {
+        return;
+    }
+    let players = (0..super::players::PLAYABLE)
+        .filter(|&id| state.setup.slots[id as usize].present)
+        .count();
+    let tick = state.table.now;
+    state.table.take_n(tick, players, "players in the game");
 }

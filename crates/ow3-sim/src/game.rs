@@ -2247,6 +2247,7 @@ impl<'a> Game<'a> {
             ));
         }
         self.state.borrow_mut().setup.fill();
+        table::players_loaded(&mut self.state.borrow_mut());
         self.run("main");
         self.init_ended();
         Ok(())
@@ -2272,6 +2273,7 @@ impl<'a> Game<'a> {
                 ));
             }
             state.setup.fill_lobby(lobby, local);
+            table::players_loaded(&mut state);
         }
         self.run("main");
         self.init_ended();

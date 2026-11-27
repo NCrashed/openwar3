@@ -774,6 +774,16 @@ fn melee_ai_checksums() {
     }
 }
 
+/// `c-SEA-2`: c-SEA-1 with a fourth computer player, Human: every turn
+/// checksum.
+#[test]
+#[ignore = "not matched yet"]
+fn melee_ai_human_checksums() {
+    if let Some(first) = turn_checksums("c-SEA-2", None) {
+        assert_eq!(first, None, "the first differing turn {first:?}");
+    }
+}
+
 /// The supplied race scripts resume at the 0.100 world-clock boundary and
 /// start their player-bound worker-assignment threads in player order.
 #[test]

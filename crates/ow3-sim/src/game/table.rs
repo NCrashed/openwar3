@@ -115,6 +115,9 @@ pub struct ObjectTable {
     /// the later mixed post-AI cleanup batch. Their origin is known; this
     /// storage does not assign ownership of that batch (c-SEA-1, turn 13).
     pub recycled_guard_cleanup: Vec<u32>,
+    pub recycled_guard_late: Option<u32>,
+    pub recycled_guard_unit: Option<u32>,
+    pub recycled_guard_walk: Vec<u32>,
     /// Units ordered to their AI's captain: the queue time of their next
     /// order there (`ai_captain_reorders`).
     pub ai_captain_moves: Vec<(u32, u32)>,
@@ -300,6 +303,9 @@ impl ObjectTable {
             ai_worker_completion_retained: std::collections::BTreeMap::new(),
             retained_harvest_cleanup: None,
             recycled_guard_cleanup: Vec::new(),
+            recycled_guard_late: None,
+            recycled_guard_unit: None,
+            recycled_guard_walk: Vec::new(),
             ai_captain_moves: Vec::new(),
             late_entangled_records: Vec::new(),
             late_entangled_mine: None,
@@ -3622,11 +3628,38 @@ pub(super) fn ai_wood_without_target(state: &mut super::State, h: u32) {
             )
         })
         .unwrap_or_default();
-    let retained = if own.is_empty() {
+    let own_empty = own.is_empty();
+    if own_empty {
+        state.table.recycled_guard_unit = None;
+    }
+    let retained = if own_empty {
         std::mem::take(&mut state.table.recycled_guard_cleanup)
     } else {
         own
     };
+    // The recycled guard's new walk goes at its next
+    // visit after this order (`recycled_guards_arrived`).
+    if own_empty {
+        let walk = std::mem::take(&mut state.table.recycled_guard_walk);
+        let next = super::movement::next_update_after(tick);
+        // Visited first of the batch's walks (c-SEA-1: 12568, 12567 at
+        // 1.109999 before the walks of 12399 and 12295).
+        // PROVISIONAL: why it goes first is not read.
+        for &w in &walk {
+            state.table.walk_key.insert(w, u64::MAX);
+        }
+        if let Some(e) = entries(state, h) {
+            e.stale.extend(walk.into_iter().map(|w| (tick, w)));
+            e.stale_update = Some(next);
+        }
+        // Its late record at the visit after that (c-SEA-1: 12552 at
+        // 1.139999; c-SEA-2: 13153 at 1.409999).
+        if let Some(e) = state.table.recycled_guard_late.take() {
+            state
+                .table
+                .defer_at(next + 6, e, "recycled guard: late record");
+        }
+    }
     for e in walk {
         state.table.defer_at(tick + 1, e, "AI captain: walk");
     }
@@ -3880,16 +3913,23 @@ pub(super) fn recycled_guards_arrived(state: &mut super::State) {
                 .table
                 .free_at_q(retained_at, entry, "recycled guard: retained");
         }
-        let pair_at = ow3_math::add(state.update_time, 0.115f32.to_bits());
-        for &entry in [made[16], made[15]].iter() {
-            state
-                .table
-                .free_at_q(pair_at, entry, "recycled guard: deferred pair");
+        // Its late record and its new walk go with its next order: the record
+        // among that order's deferred frees, the walk at its visit an update
+        // later (c-SEA-1: at the pass of 1.1; c-SEA-2: at 1.35).
+        state.table.recycled_guard_late = Some(made[0]);
+        state.table.recycled_guard_walk = vec![made[16], made[15]];
+        // And it walks to its AI's captain at once, its move ending there
+        // as a captain's (`recycled_guard_ended`; c-SEA-2: ghoul 11533 from
+        // 1.0, its move ending at 1.349999 short of the Undead marker).
+        state.table.recycled_guard_unit = Some(h);
+        let captain = state
+            .unit(Some(h))
+            .and_then(|u| state.ai_captains.get(&u.owner))
+            .copied();
+        if let Some(captain) = captain {
+            let at = state.timers.time();
+            super::movement::captain_reordered(state, h, at, captain);
         }
-        let late_at = ow3_math::add(state.update_time, 0.135f32.to_bits());
-        state
-            .table
-            .free_at_q(late_at, made[0], "recycled guard: late record");
     }
 }
 
@@ -8704,4 +8744,34 @@ pub(super) fn players_loaded(state: &mut super::State) {
         .count();
     let tick = state.table.now;
     state.table.take_n(tick, players, "players in the game");
+}
+
+/// The recycled guard's move to its AI's captain ends before another
+/// order: the seven records of a captain's arrival, freed among the guard's
+/// own, its walk an update later and its late record one more on
+/// (`ai_captain_arrived`; c-SEA-2: ghoul 11533 at 1.349999, 13193 ..
+/// 13199, the walk 13169, 13168 at 1.379999, 13153 at 1.409999).
+pub(super) fn recycled_guard_ended(state: &mut super::State, h: u32) {
+    if state.table.recycled_guard_unit != Some(h) {
+        return;
+    }
+    state.table.recycled_guard_unit = None;
+    let own = std::mem::take(&mut state.table.recycled_guard_cleanup);
+    let walk = std::mem::take(&mut state.table.recycled_guard_walk);
+    let late = state.table.recycled_guard_late.take();
+    let tick = state.table.now;
+    // Its walk at its visit an update later, first of the batch's walks
+    // (c-SEA-2: 13169, 13168 at 1.379999 before the acolyte's 12778, 12777;
+    // as at its next order in c-SEA-1, `ai_wood_without_target`).
+    for &w in &walk {
+        state.table.walk_key.insert(w, u64::MAX);
+    }
+    let next = super::movement::next_update_after(tick);
+    if let Some(e) = entries(state, h) {
+        e.captain_cleanup = own;
+        e.captain_late = late;
+        e.stale.extend(walk.into_iter().map(|w| (tick, w)));
+        e.stale_update = Some(next);
+    }
+    ai_captain_arrived(state, h);
 }

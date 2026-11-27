@@ -4945,6 +4945,8 @@ pub(super) fn updates(_vm: &mut Vm, state: &mut State) {
                 } else if attack_move {
                     super::table::attack_move_arrived(state, h, None);
                     super::table::walk_dropped(state, h);
+                } else if state.table.recycled_guard_unit == Some(h) && u.harvest.is_none() {
+                    super::table::recycled_guard_ended(state, h);
                 } else if !u.entries.captain_cleanup.is_empty() && u.harvest.is_none() {
                     // At its AI's captain after the re-order.
                     super::table::ai_captain_arrived(state, h);

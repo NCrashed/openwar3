@@ -515,6 +515,29 @@ footmen were created every 8 s; deliveries 10, 10, 10, 10, 10, 7, 7, 4,
 usual table: up to 50 food none, 51 to 80 low, from 81 high) were not
 measured at their borders, and lumber was not tested.
 
+**Placed again at a delivery and at a mine exit.** At each delivery of
+gold and each time a worker comes out of a gold mine, the worker is
+placed again at its own position by the occupied-ground rule of
+SPEC-0013 ("Position"). It stays where it is unless its footprint
+overlaps the footprint of a standing unit. If it does, it moves to the
+first free cell of the ring search around its own cell, at the centre
+of that cell, with velocity 0 and its path dropped, in the same update.
+Measured in replay `c-SEA-1`:
+
+- peon 11229 (class 1) ends its walk back at (9018.85, 8883.93), path
+  cell (665, 661), next to the Blademaster (class 2) standing at
+  (9043.62, 8867.35), cell (666, 661). At its delivery (128.960861) ring
+  1 is tried as bottom (665, 660), (666, 660), right (666, 661),
+  (666, 662), top (665, 662), (664, 662). The first five overlap the
+  Blademaster's footprint, so the peon is put on the centre of
+  (664, 662), (8976, 8912);
+- this is the only moved one of 122 deliveries and 119 mine exits of
+  the replay up to 129 s
+  (`game-data/1.27b/replays/c-SEA-1.worker-replacements.tsv`).
+
+Cells are numbered from the map's lower left corner (world =
+`32 * cell - 12288` on this map).
+
 ### New orders while carrying
 
 A peasant that carries gold and is ordered elsewhere (`move`) keeps the

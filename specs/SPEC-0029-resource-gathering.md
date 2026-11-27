@@ -418,6 +418,17 @@ free, and peasant 5 went on from its centre (-1104, 80) (the log shows
 the new position in tick 1118). Other workers started waiting in ticks 871 (two),
 1075, 1105 and 1177 with nobody on their cells: nothing moved.
 
+The worker's walk to the mine comes to rest when it starts to wait.
+Its path and cluster are freed at the next visit of its movement
+(SPEC-0018, "at rest"), one update (6 ticks) after the wait start.
+They are not freed with the frees that the wait start itself defers.
+`c-SEA-1`:
+- peon 10494/14061 starts to wait at 158.694031 (take 31223, deferred
+  frees 30875, 30874 at queue 158.699020); its walk's 30883, 30882 are
+  freed at 158.723969;
+- peon 11229/11237 starts to wait at 130.582489; its walk's 27744,
+  27743 are freed at 130.612427.
+
 This search counts other units differently from the exit search: a
 footprint is refused only by the cells of waiting workers (and of the
 worker that starts to wait); walking units, first-walk workers

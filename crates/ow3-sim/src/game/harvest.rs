@@ -140,6 +140,10 @@ pub struct Harvest {
     /// it starts to wait at its mine (c-SEA-1: peon 11229's 26250, taken
     /// at 116.754044, freed after its wait record of 119.512527).
     standby_task: Option<u32>,
+    /// Reached a busy mine: its pace comes at its turn's start there, its
+    /// wait start or its going in at its next update (SPEC-0029, "Speed
+    /// on gold trips"; c-SEA-1: peon 11229 at 119.512527).
+    pace_at_wait: Option<u32>,
 }
 
 /// Who is inside a mine, until when, and who waits at it.
@@ -994,7 +998,13 @@ fn arrive_at_mine(state: &mut State, h: u32, mine: u32, reached_at: Option<u32>)
         .mines
         .get(&mine)
         .is_none_or(|entry| entry.inside.is_none());
-    pace_at(state, h, reached_at.unwrap_or_else(|| state.timers.time()));
+    // One that waits has its pace at its wait start (SPEC-0029).
+    if free {
+        pace_at(state, h, reached_at.unwrap_or_else(|| state.timers.time()));
+    } else if let Some(mut g) = get(state, h) {
+        g.pace_at_wait = Some(reached_at.unwrap_or_else(|| state.timers.time()));
+        set(state, h, Some(g));
+    }
     let entry = state.mines.entry(mine).or_default();
     // At its next update it takes the mine if it is free then, else it
     // starts to wait, in the update order of that tick (`at_update`;
@@ -1885,6 +1895,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         // (`enter_mines`).
         mine.inside = Some((h, tick, add(state.update_time, IN_MINE_TIME)));
         state.ai_mine_waiting.remove(&h);
+        turn_started(state, h);
         super::table::harvest_entered(state, h);
         super::table::harvest_arrived(state, h);
         super::table::walk_dropped_at_update(state, h);
@@ -1911,6 +1922,7 @@ pub(super) fn at_update(state: &mut State, h: u32) -> bool {
         }
         return false;
     }
+    turn_started(state, h);
     super::table::harvest_waits(state, h);
     super::table::harvest_arrived(state, h);
     super::table::walk_dropped_at_update(state, h);
@@ -1966,12 +1978,14 @@ fn start_waiting(state: &mut State) {
         };
         if goes_in {
             state.ai_mine_waiting.remove(&w);
+            turn_started(state, w);
         }
         // One that goes in is hidden by the entries of this tick.
         if !goes_in {
             // Its walk to the mine ends here, after those going in
             // (`leave_mines`; SPEC-0024; c-RXI-1: worker 4 at 871).
             state.harvest_waiters.push(w);
+            turn_started(state, w);
             push_aside(state, w);
             if let Some(reached_at) = get(state, w).and_then(|g| g.starting_mine_reached) {
                 pace_at(state, w, reached_at);
@@ -2940,4 +2954,15 @@ pub(super) fn standby(state: &mut State) {
         }
     }
     state.mine_standby.extend(kept);
+}
+
+/// Worker `h` starts its turn at a mine it reached busy, waiting or going
+/// in: its pace now (`Harvest::pace_at_wait`).
+fn turn_started(state: &mut State, h: u32) {
+    if let Some(mut g) = get(state, h)
+        && let Some(at) = g.pace_at_wait.take()
+    {
+        set(state, h, Some(g));
+        pace_at(state, h, at);
+    }
 }

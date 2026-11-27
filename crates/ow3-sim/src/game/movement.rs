@@ -1259,7 +1259,7 @@ pub(super) fn ai_build_order(
                 add(hall.y, (-576.0f32).to_bits()),
             ],
         )
-    } else if type_id == oalt {
+    } else if type_id == oalt || type_id == i32::from_be_bytes(*b"halt") {
         (
             280,
             [
@@ -1408,7 +1408,7 @@ pub(super) fn ai_build_order(
     // below.
     if matches!(
         &type_id.to_be_bytes(),
-        b"oalt" | b"eate" | b"emow" | b"otrb"
+        b"oalt" | b"eate" | b"emow" | b"otrb" | b"halt"
     ) {
         // A builder taken from its place at a haunted mine stops counting
         // there (SPEC-0029; c-SEA-1: acolyte 10269 at 31.430725).
@@ -1591,7 +1591,7 @@ pub(super) fn start_buildings(state: &mut State) {
             .is_some_and(|unit_type| unit_type.race.eq_ignore_ascii_case("undead"));
         let other = matches!(
             &type_id.to_be_bytes(),
-            b"oalt" | b"eate" | b"emow" | b"otrb"
+            b"oalt" | b"eate" | b"emow" | b"otrb" | b"halt"
         );
         let wisp = type_id == i32::from_be_bytes(*b"emow");
         state.table.ai_constructing = undead;

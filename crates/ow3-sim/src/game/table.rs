@@ -76,7 +76,7 @@ pub struct ObjectTable {
     /// The pathing parts of each destructable, freed when it dies.
     pub destructable_paths: std::collections::BTreeMap<u32, Vec<u32>>,
     /// A gold mine had a worker inside (its object taken).
-    pub mine_used: bool,
+    pub mine_used: std::collections::BTreeSet<u32>,
     /// The idle workers of the computer whose new worker's harvest order is
     /// being given (`computer_harvest_ordered`), or none.
     pub computer_harvest: Option<usize>,
@@ -287,7 +287,7 @@ impl ObjectTable {
             walks_due: Vec::new(),
             walk_key: std::collections::BTreeMap::new(),
             walk_pending: std::collections::BTreeMap::new(),
-            mine_used: false,
+            mine_used: std::collections::BTreeSet::new(),
             computer_harvest: None,
             ai_harvest_extra: 0,
             ai_harvest_fewer: 0,
@@ -3937,13 +3937,15 @@ fn computer_harvest_ordered(state: &mut super::State, h: u32, idle: usize) {
 }
 
 /// A worker comes to a gold mine first: an object made once, kept to the
-/// end (c-RXI-1: 1144 at 871, with four objects of the second pool).
-/// PROVISIONAL: whether per mine or per game, and at the first arrival
+/// end, once per mine (c-RXI-1: 1144 at 871, with four objects of the
+/// second pool; c-SEA-2: the Human peasant at 0.45 and the Orc peon at
+/// 0.57 at their own mines).
+/// PROVISIONAL: whether per mine or per player, and at the first arrival
 /// or entry, is not separated.
-pub(super) fn harvest_entered(state: &mut super::State, _h: u32) {
+pub(super) fn harvest_entered(state: &mut super::State, h: u32) {
     let tick = state.table.now;
-    if !state.table.mine_used {
-        state.table.mine_used = true;
+    let mine = super::harvest::target_of(state, h).unwrap_or(0);
+    if state.table.mine_used.insert(mine) {
         state.table.take(tick, "gold mine: in use");
     }
 }

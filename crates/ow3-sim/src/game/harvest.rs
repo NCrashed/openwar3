@@ -2999,3 +2999,8 @@ fn replace(state: &mut State, h: u32) {
     }
     state.paths.remove(&h);
 }
+
+/// The mine or tree worker `h` works.
+pub(super) fn target_of(state: &State, h: u32) -> Option<u32> {
+    get(state, h).and_then(|g| g.target)
+}

@@ -545,6 +545,14 @@ Measured in replay `c-SEA-1`:
 - this is the only moved one of 122 deliveries and 119 mine exits of
   the replay up to 129 s
   (`game-data/1.27b/replays/c-SEA-1.worker-replacements.tsv`).
+- a unit that has started a walk does not count, even while it still
+  turns in place with velocity 0. Peon 11089 (class 1) delivers at
+  161.273666 at (8981.48, 8892.96), cell (664, 661). Peon 11229 (class
+  1) stands on (8976.00, 8912.00), cell (664, 662), and its footprints
+  overlap 11089's in row 661. But 11229 searched its walk to the mine at
+  161.213791 and is still turning. 11089 is not moved
+  (`game-data/1.27b/replays/c-SEA-1.peon11089-deliver-161.tsv`). Whether
+  a gathering worker would count without a walk was not read.
 
 Cells are numbered from the map's lower left corner (world =
 `32 * cell - 12288` on this map).
